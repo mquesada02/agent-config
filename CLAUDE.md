@@ -70,7 +70,7 @@ Issue types:
 
 1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
 2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it makes no more changes.
-3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2.
+3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2. A comment-only or wording change does not restart the count, and minor findings are listed for the user instead of fixed.
 4. If you're unsure of anything, ask the user.
 
 ## 7. General workflow for any task
@@ -98,7 +98,7 @@ If any of the Orca workers needs grilling, it must escalate the grilling session
 
 ## 8. Git contribution
 
-When committing code, creating PRs, or commenting on a PR or issue, you must remove all Claude Code attribution (`Co-Authored-By: Claude` trailers and the `Generated with Claude Code` line).
+Never add Claude Code attribution to commits, PRs or comments. The `attribution` setting already blanks it; remove any that still appears.
 When committing code, you must use the /smart-commits skill.
 When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
@@ -133,3 +133,7 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 Do not poll with filler commands like `echo`, `true`, or `sleep` loops.
 If you spawned a background shell, Monitor, subagent, or Orca worker, you will be notified when it finishes. Wait for that notification.
 Blocking Orca CLI wait commands are allowed. They are not polling.
+
+## 13. Deleting files
+
+Never use `rm -rf` or other recursive deletes. Move the target to a dated backup folder (`<dir>-backup-YYYY-MM-DD/`) and tell the user the path, so they can delete it themselves.
