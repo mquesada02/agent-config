@@ -14,7 +14,8 @@ The `.gitignore` file ignores everything and then allows these files:
 | `settings.json` | Claude Code settings: plugins, permissions, hooks, output style |
 | `hooks/force-model-invocation.sh` | Startup hook: keeps plugin and claude.ai skills model-invocable after updates |
 | `hooks/update-orca-skills.sh` | Startup hook: refreshes the Orca skills once a day |
-| `skills/*/SKILL.md` | My skills (see [Third-party skills](#third-party-skills)) |
+| `skills/*/SKILL.md` | My skills (see [Third-party content](#third-party-content)) |
+| `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` | This file and the license texts |
 
 Everything else stays local. This includes session logs, credentials, caches,
 other hook scripts, and `skills/synced/` (skills that claude.ai syncs).
@@ -47,13 +48,15 @@ other hook scripts, and `skills/synced/` (skills that claude.ai syncs).
 - Claude Code and Orca rewrite `settings.json`. Review the diff before you
   commit it.
 
-## Third-party skills
+## Third-party content
 
-These skills are copies of files from other projects. They keep their original
-licenses, and the license of this repository does not cover them:
+These files are copies of content from other projects. They keep their original
+licenses, and the license of this repository does not cover them. The full
+license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-| Skill | Source | License |
+| File | Source | License |
 |---|---|---|
+| `CLAUDE.md`, sections 1 to 4 | [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | MIT (stated in its README) |
 | `skills/computer-use` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
 | `skills/orca-cli` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
 | `skills/orchestration` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
@@ -61,5 +64,5 @@ licenses, and the license of this repository does not cover them:
 
 ## License
 
-[MIT](LICENSE), for my own files only. See [Third-party skills](#third-party-skills)
+[MIT](LICENSE), for my own files only. See [Third-party content](#third-party-content)
 for the files that it does not cover.
