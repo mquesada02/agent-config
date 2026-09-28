@@ -247,7 +247,7 @@
     "padding": 0
   },
   "enabledPlugins": {
-    "caveman@caveman": true,
+    "caveman@caveman": false,
     "mattpocock-skills@mattpocock": true,
     "i-have-adhd@i-have-adhd": true
   },
@@ -277,5 +277,11 @@
   "awaySummaryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "theme": "dark",
-  "switchModelsOnFlag": true
+  "switchModelsOnFlag": true,
+  "outputStyle": "Simplified Technical English",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  }
 }
