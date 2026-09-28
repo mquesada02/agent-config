@@ -62,32 +62,38 @@ If you're unsure if something works, or you want to do a cheap test before provi
 
 ## 6. Code review
 
-The user will ask you to run /mattpocock-skills:code-review in a loop. You must follow it exactly as it's mentioned:
+After implementing code, always run this review loop:
 
-1. You implemented some code
-2. You run /mattpocock-skills:code-review
-3. If any of the axis report any issues (even judgement, cosmetic, low severity issues), you **MUST** verify the fixes first, making sure they don't introduce new bugs (similar to Section 3 of this document), apply those fixes, and repeat step 2 until two consecutive clean runs appear.
-4. If you're unsure of anything, you can always ask the user.
+Issue types:
+- **Blocking**: bugs, logic errors, missing cases, spec mismatches.
+- **Minor**: cosmetic, naming, style, judgement calls.
+
+1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
+2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it proposes nothing.
+3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2.
+4. If you're unsure of anything, ask the user.
 
 ## 7. General workflow for any task
 
 **Note**: _grilling_ refers to the /mattpocock-skills:grilling skill, already included in the /mattpocock-skills:wayfinder skill.
 
+**Exception:** for small tasks (estimated under ~50 changed lines), skip steps 1–5: implement directly, then run the section 6 review loop.
+
 When implementing any task, you must do these steps in the corresponding order:
 
 1. /mattpocock-skills:wayfinder to create a general map for the task.
 2. /mattpocock-skills:to-spec after grilling the user, for the general spec.
-3. Review the spec with subagents using the axises from /mattpocock-skills:code-review . Use the same logic described on section 6 of this document.
+3. Review the spec with subagents using the axes from /mattpocock-skills:code-review. Use only the correctness phase of section 6, then apply the recorded minor issues.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
-5.3. Review the spec with subagents using the axises from /mattpocock-skills:code-review . Use the same logic described on section 6 of this document.
+5.3. Review the spec with subagents using the axes from /mattpocock-skills:code-review. Use only the correctness phase of section 6, then apply the recorded minor issues.
 5.4. After the spec comes out clean, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
-5.6. Review the implementation of the spec with subagents using the axises from /mattpocock-skills:code-review . Use the same logic described on section 6 of this document.
+5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review . Use the same logic described on section 6 of this document.
 
-After starting step 5, the original session acts as an **coordinator** of the Orca workers it dispatched.
-The violation or skip of any of these steps will result in a penalty for the agent.
+After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
+These steps are mandatory.
 If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the output to the agent.
 
 ## 8. Git contribution
@@ -101,7 +107,7 @@ After doing the merge, you must delete the remote branch, git switch to the **ba
 
 ## 9. Model selection
 
-When spawning subagents, make sure to use Sonnet models for token reduction.
+When spawning subagents or Orca workers, make sure to use Sonnet models for token reduction. For Orca workers, check `orca-ide skills get orca-cli` for how to set the model.
 
 ## 10. Worktrees
 
@@ -109,16 +115,16 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
 - Every Orca ticket worker gets its own child worktree.
 - Outside a git repository, skip worktrees and work in place.
+- Exception: config repositories (`~/.claude`, dotfiles): edit in place, no worktree.
 - After the branch is merged, delete the worktree (see section 8).
 
 ## 11. Task delegation
 
-- Use built-in subagents (Agent tool) ONLY for /mattpocock-skills:code-review runs. That includes the spec reviews in section 7, steps 3, 5.3 and 5.6.
+- Use built-in subagents (Agent tool) ONLY for /mattpocock-skills:code-review runs. That includes the reviews in section 7, steps 3, 5.3 and 5.5.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.
   - /orca-cli: full handoffs, spawning agents in child worktrees, reading or sending to terminals.
 - Outside a git repository, ask the user before delegating to Orca workers.
-- Section 9 applies to both. `worktree create --agent claude` has no model flag, so start Orca workers with `terminal create --command "claude --model sonnet"`.
 
 ## 12. No polling
 
