@@ -68,6 +68,8 @@ Issue types:
 - **Blocking**: bugs, logic errors, missing cases, spec mismatches.
 - **Minor**: cosmetic, naming, style, judgement calls.
 
+The main session decides the final type. A spec mismatch is always blocking, whatever the reviewer called it.
+
 1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
 2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it makes no more changes.
 3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2. A comment-only or wording change does not restart the count, and minor findings are listed for the user instead of fixed.
@@ -108,7 +110,7 @@ After merging: delete the remote branch, remove the worktree (section 10), then 
 
 ## 9. Model selection
 
-When spawning subagents or Orca workers, make sure to use Sonnet models for token reduction. For Orca workers, check `orca-ide skills get orca-cli` for how to set the model.
+When spawning subagents or Orca workers, make sure to use Sonnet models for token reduction. For Orca workers, the /orca-cli skill explains how to set the model.
 
 ## 10. Worktrees
 
@@ -133,6 +135,7 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 Do not poll with filler commands like `echo`, `true`, or `sleep` loops.
 If you spawned a background shell, Monitor, subagent, or Orca worker, you will be notified when it finishes. Wait for that notification.
 Blocking Orca CLI wait commands are allowed. They are not polling.
+A notification with nothing new needs only a text reply, not a tool call.
 
 ## 13. Deleting files
 
