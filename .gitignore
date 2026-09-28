@@ -1,3 +1,5 @@
 *
 !.gitignore
 !CLAUDE.md
+!hooks/
+!hooks/force-model-invocation.sh
