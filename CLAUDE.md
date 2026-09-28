@@ -69,7 +69,7 @@ Issue types:
 - **Minor**: cosmetic, naming, style, judgement calls.
 
 1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
-2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it proposes nothing.
+2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it makes no more changes.
 3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2.
 4. If you're unsure of anything, ask the user.
 
@@ -90,7 +90,7 @@ When implementing any task, you must do these steps in the corresponding order:
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
 5.3. Review the spec with subagents using the axes from /mattpocock-skills:code-review. Use only the correctness phase of section 6, then apply the recorded minor issues.
 5.4. After the spec comes out clean, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
-5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review . Use the same logic described on section 6 of this document.
+5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 These steps are mandatory.
@@ -98,7 +98,8 @@ If any of the Orca workers needs grilling, it must escalate the grilling session
 
 ## 8. Git contribution
 
-When committing code, creating PRs, creating comments on a PR or issue, you must remove any "Created with Claude Code" trailer AND use the /smart-commits skill.
+When committing code, creating PRs, or commenting on a PR or issue, you must remove all Claude Code attribution (`Co-Authored-By: Claude` trailers and the `Generated with Claude Code` line).
+When committing code, you must use the /smart-commits skill.
 When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
 - if not, create a merge commit 
@@ -121,6 +122,7 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 ## 11. Task delegation
 
 - Use built-in subagents (Agent tool) ONLY for /mattpocock-skills:code-review runs. That includes the reviews in section 7, steps 3, 5.3 and 5.5.
+- Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.
   - /orca-cli: full handoffs, spawning agents in child worktrees, reading or sending to terminals.
