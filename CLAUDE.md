@@ -136,4 +136,6 @@ Blocking Orca CLI wait commands are allowed. They are not polling.
 
 ## 13. Deleting files
 
-Never use `rm -rf` or other recursive deletes. Move the target to a dated backup folder (`<dir>-backup-YYYY-MM-DD/`) and tell the user the path, so they can delete it themselves.
+Never use `rm -rf` or other recursive deletes. To remove something:
+- If it may be needed again, move it to a dated backup folder (`<dir>-backup-YYYY-MM-DD/`) and tell the user the path.
+- If it must go, move it to `/tmp`, which the system clears, or give the user the command to delete it manually.
