@@ -8,3 +8,5 @@
 !skills/**
 skills/synced/
 !settings.json
+!README.md
+!LICENSE
