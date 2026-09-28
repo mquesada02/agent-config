@@ -94,7 +94,7 @@ When implementing any task, you must do these steps in the corresponding order:
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 These steps are mandatory.
-If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the output to the agent.
+If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
 
 ## 8. Git contribution
 
@@ -104,7 +104,7 @@ When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
 - if not, create a merge commit 
 
-After doing the merge, you must delete the remote branch, git switch to the **base** branch, pull the remote changes and delete the local branch as well.
+After merging: delete the remote branch, remove the worktree (section 10), then in the main checkout switch to the **base** branch, pull, and delete the local branch.
 
 ## 9. Model selection
 
@@ -117,7 +117,7 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 - Every Orca ticket worker gets its own child worktree.
 - Outside a git repository, skip worktrees and work in place.
 - Exception: config repositories (`~/.claude`, dotfiles): edit in place, no worktree.
-- After the branch is merged, delete the worktree (see section 8).
+- After the branch is merged, delete the worktree before deleting the local branch (see section 8).
 
 ## 11. Task delegation
 
