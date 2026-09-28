@@ -79,8 +79,8 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/update-orca-skills.sh",
-            "async": true,
-            "timeout": 330
+            "timeout": 330,
+            "async": true
           }
         ]
       }
@@ -248,83 +248,14 @@
   },
   "enabledPlugins": {
     "caveman@caveman": true,
-    "claude-mem@thedotmack": false,
-    "context-mode@context-mode": false,
-    "equity-research@financial-services-plugins": false,
-    "financial-analysis@financial-services-plugins": false,
-    "frontend-design@claude-plugins-official": false,
-    "investment-banking@financial-services-plugins": false,
-    "private-equity@financial-services-plugins": false,
-    "superpowers@claude-plugins-official": false,
-    "typescript-lsp@claude-plugins-official": false,
-    "ui-ux-pro-max@ui-ux-pro-max-skill": false,
-    "voltagent-biz@voltagent-subagents": false,
-    "voltagent-core-dev@voltagent-subagents": false,
-    "voltagent-data-ai@voltagent-subagents": false,
-    "voltagent-domains@voltagent-subagents": false,
-    "voltagent-infra@voltagent-subagents": false,
-    "voltagent-qa-sec@voltagent-subagents": false,
-    "wealth-management@financial-services-plugins": false,
-    "python-development@claude-code-workflows": false,
-    "javascript-typescript@claude-code-workflows": false,
-    "backend-development@claude-code-workflows": false,
-    "kubernetes-operations@claude-code-workflows": false,
-    "cloud-infrastructure@claude-code-workflows": false,
-    "security-scanning@claude-code-workflows": false,
-    "comprehensive-review@claude-code-workflows": false,
-    "full-stack-orchestration@claude-code-workflows": false,
-    "figma@claude-plugins-official": false,
     "mattpocock-skills@mattpocock": true,
-    "i-have-adhd@i-have-adhd": true,
-    "code-simplifier@claude-plugins-official": false
+    "i-have-adhd@i-have-adhd": true
   },
   "extraKnownMarketplaces": {
     "caveman": {
       "source": {
         "source": "github",
         "repo": "JuliusBrussee/caveman"
-      }
-    },
-    "context-mode": {
-      "source": {
-        "source": "github",
-        "repo": "mksglu/context-mode"
-      }
-    },
-    "financial-services-plugins": {
-      "source": {
-        "source": "github",
-        "repo": "anthropics/financial-services-plugins"
-      }
-    },
-    "superpowers-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "obra/superpowers-marketplace"
-      }
-    },
-    "thedotmack": {
-      "source": {
-        "source": "github",
-        "repo": "thedotmack/claude-mem"
-      }
-    },
-    "ui-ux-pro-max-skill": {
-      "source": {
-        "source": "github",
-        "repo": "nextlevelbuilder/ui-ux-pro-max-skill"
-      }
-    },
-    "voltagent-subagents": {
-      "source": {
-        "source": "github",
-        "repo": "VoltAgent/awesome-claude-code-subagents"
-      }
-    },
-    "claude-code-workflows": {
-      "source": {
-        "source": "github",
-        "repo": "wshobson/agents"
       }
     },
     "mattpocock": {
