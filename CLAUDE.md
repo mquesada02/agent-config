@@ -87,7 +87,9 @@ The main session decides the final type. A spec mismatch is always blocking, wha
 
 **Note**: _grilling_ refers to the /mattpocock-skills:grilling skill, already included in the /mattpocock-skills:wayfinder skill.
 
-**Exception:** for small tasks (estimated under ~50 changed lines), skip steps 1–5: implement directly, then run the section 6 review loop.
+**Exception:** for small tasks (estimated under ~50 changed lines), skip steps 1–5: implement directly, then run the section 6 review loop. Judge this once, for the whole task, before step 1. Once tickets exist, every ticket runs steps 5.1 to 5.5 in full, even a small one.
+
+**Specs and tickets:** publish them to the issue tracker that /mattpocock-skills:setup-matt-pocock-skills configured for the repository. If none is configured, ask the user.
 
 When implementing any task, you must do these steps in the corresponding order:
 
@@ -103,6 +105,7 @@ When implementing any task, you must do these steps in the corresponding order:
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
 If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
 
@@ -124,7 +127,7 @@ When spawning subagents or Orca workers, make sure to use Sonnet models for toke
 
 Always work inside a git worktree, for every task, including one-line fixes and non-code changes. Never work directly in the main checkout.
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
-- Every Orca ticket worker gets its own child worktree.
+- Every Orca ticket worker gets its own child worktree: its parent (lineage) is the coordinator's worktree, and its git base is the repository's default branch, not the coordinator's branch.
 - Outside a git repository, skip worktrees and work in place.
 - Exception: config repositories (`~/.claude`, dotfiles): edit in place, no worktree.
 - After the branch is merged, delete the worktree before deleting the local branch (see section 8).
