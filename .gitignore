@@ -3,7 +3,8 @@
 !CLAUDE.md
 !hooks/
 !hooks/force-model-invocation.sh
-!hooks/update-orca-skills.sh
+!scripts/
+!scripts/update-orca-skills.sh
 !skills/
 !skills/**
 skills/synced/
