@@ -4,6 +4,9 @@
 # overwrite these files, so this runs at every fresh session start; a file reset
 # mid-session is fixed from the next session on.
 # i-have-adhd is excluded: its own hook already loads it every session.
+# Workaround: skillOverrides has no "force on" value, so the hook edits Claude
+# Code's internal plugin-cache and synced-skill folders, which any release can
+# change. Replace it if Claude Code adds a setting to allow model invocation.
 exec 2>/dev/null  # a session-start hook must stay silent
 flag='^disable-model-invocation:[[:space:]]+true([[:space:]]+#.*|[[:space:]]*)$'
 grep -rlZE "$flag" --include=SKILL.md --exclude-dir=i-have-adhd \
