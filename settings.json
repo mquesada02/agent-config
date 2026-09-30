@@ -65,17 +65,6 @@
         ]
       },
       {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/update-orca-skills.sh",
-            "timeout": 330,
-            "async": true
-          }
-        ]
-      },
-      {
         "hooks": [
           {
             "type": "command",
@@ -249,7 +238,8 @@
   "enabledPlugins": {
     "caveman@caveman": false,
     "mattpocock-skills@mattpocock": true,
-    "i-have-adhd@i-have-adhd": true
+    "i-have-adhd@i-have-adhd": true,
+    "context-mode@context-mode": true
   },
   "extraKnownMarketplaces": {
     "caveman": {
