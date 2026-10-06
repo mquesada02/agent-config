@@ -1,6 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "skillListingBudgetFraction": 0.05,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "permissions": {
     "allow": [],
     "deny": [
@@ -261,17 +266,12 @@
       }
     }
   },
+  "outputStyle": "Simplified Technical English",
   "feedbackDrafts": "off",
   "effortLevel": "xhigh",
   "autoCompactWindow": 1000000,
   "awaySummaryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "theme": "dark",
-  "switchModelsOnFlag": true,
-  "outputStyle": "Simplified Technical English",
-  "attribution": {
-    "commit": "",
-    "pr": "",
-    "sessionUrl": false
-  }
+  "switchModelsOnFlag": true
 }
