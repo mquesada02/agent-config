@@ -12,3 +12,10 @@ skills/synced/
 !README.md
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+!.claude/
+!docs/
+!docs/agents/
+!docs/agents/*.md
+!CONTEXT.md
+!docs/adr/
+!docs/adr/*.md
