@@ -164,3 +164,11 @@ Docker containers and volumes are durable. They stay on disk after the session e
 - Before you remove any worktree, run `docker compose ls -a` and remove each stack whose config files are in that worktree with `docker compose -p <NAME> down -v`, where `<NAME>` is the stack name from that list. Compose names the stack after the folder by default, so no later run uses its volumes. If the stack can hold data that the user wants, ask first.
 - Before you finish, check with `docker ps -a` and `docker volume ls -f dangling=true` that you left no container or volume behind. Exception: a long-lived development stack that you left running or stopped with `docker compose stop`.
 - Remove only the containers and volumes that you created, or that belong to a worktree you remove. Never run any `docker ... prune` command.
+
+## 15. Artificial CPU load
+
+Artificial CPU load (busy loops, `stress-ng`, "burners") keeps running after the session ends and slows the PC for the user.
+- Use at most half of the cores: start at most `nproc / 2` burners, one per core, pinned with `taskset -c` to cores `0` to `nproc / 2 - 1`. Pin the code under test to the same cores: a host process with `taskset -c`, a container with `--cpuset-cpus`. The other cores stay free.
+- Wrap each burner in `timeout` of at most 30 minutes. Start new burners if you need more time. A short timeout stops orphaned burners if your session dies.
+- Write the PIDs that you start to a file in your scratchpad: each Bash call starts a new shell, so `$!` is lost. Before you finish, kill only the PIDs whose command (`ps -o args= -p <PID>`) is still your burner. Then check again the same way that none of them is still your burner. Do not use `pgrep -f` for this check: it also matches the shell that runs it.
+- If the problem does not reproduce at this load, ask the user. Never raise the load by yourself.
