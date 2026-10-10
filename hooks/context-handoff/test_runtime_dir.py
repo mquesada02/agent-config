@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,11 +22,15 @@ class DriverTestCase(unittest.TestCase):
         os.mkdir(self.tmp)
         self.folder = os.path.join(self.tmp, "claude-context-handoff")
 
-    def drive(self, body, cwd=None, **env):
-        script = os.path.join(self.root, "driver.py")
+    def write_driver(self, name, body):
+        script = os.path.join(self.root, name)
         header = f"import json, os, sys\nsys.path.append({HERE!r})\nimport runtime_dir\n"
-        with open(script, "w") as handle:
+        with open(script, "w", encoding="utf-8") as handle:
             handle.write(header + textwrap.dedent(body))
+        return script
+
+    def drive(self, body, cwd=None, **env):
+        script = self.write_driver("driver.py", body)
         full_env = {"PATH": "/usr/bin:/bin", "TMPDIR": self.tmp}
         full_env.update(env)
         full_env = {key: value for key, value in full_env.items() if value is not None}  # TMPDIR=None leaves it unset
@@ -135,6 +140,116 @@ class WriteAtomicTest(DriverTestCase):
             print(json.dumps([raised, sorted(os.listdir(fd))]))
         """
         self.assertEqual(self.drive(body), [True, ["a.window"]])
+
+
+class ReadFileTest(DriverTestCase):
+    def test_returns_text_and_none_for_a_missing_file(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            runtime_dir.write_atomic(fd, "a.window", "h\u00e9llo")
+            print(json.dumps([runtime_dir.read_file(fd, "a.window"), runtime_dir.read_file(fd, "missing")]))
+        """
+        self.assertEqual(self.drive(body), ["h\u00e9llo", None])
+
+    def test_refuses_a_symlink_a_fifo_an_oversize_file_and_bad_utf8(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            runtime_dir.write_atomic(fd, "real", "x")
+            os.symlink("real", "link", dir_fd=fd)
+            os.mkfifo("fifo", 0o600, dir_fd=fd)
+            runtime_dir.write_atomic(fd, "big", "x" * (64 * 1024 + 1))
+            with os.fdopen(os.open("bad", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=fd), "wb") as handle:
+                handle.write(b"\\xff\\xfe")
+            result = {}
+            for name in ("link", "fifo", "big", "bad"):
+                try:
+                    runtime_dir.read_file(fd, name)
+                    result[name] = "read"
+                except (OSError, ValueError):
+                    result[name] = "raised"
+            runtime_dir.write_atomic(fd, "exact", "x" * (64 * 1024))
+            result["exact"] = len(runtime_dir.read_file(fd, "exact"))
+            print(json.dumps(result))
+        """
+        self.assertEqual(self.drive(body), {"link": "raised", "fifo": "raised", "big": "raised", "bad": "raised", "exact": 64 * 1024})
+
+
+class LockFileTest(DriverTestCase):
+    def test_creates_the_lock_file_with_mode_0600(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            lock = runtime_dir.lock_file(fd, "s.lock")
+            os.close(lock)
+            print(json.dumps(oct(os.stat("s.lock", dir_fd=fd).st_mode & 0o7777)))
+        """
+        self.assertEqual(self.drive(body), "0o600")
+
+    def test_a_second_lock_waits_until_the_first_is_closed(self):
+        # The processes are ordered through files, not time. The holder creates "released" before it closes the lock, so a waiter
+        # that got the lock without waiting would not find the file.
+        holder = """
+            import time
+            fd = runtime_dir.open_runtime_dir()
+            lock = runtime_dir.lock_file(fd, "s.lock")
+            open(os.path.join(os.environ["SIGNALS"], "held"), "w").close()
+            while not os.path.exists(os.path.join(os.environ["SIGNALS"], "waiting")):
+                time.sleep(0.01)
+            open(os.path.join(os.environ["SIGNALS"], "released"), "w").close()
+            os.close(lock)
+            print("null")
+        """
+        waiter = """
+            fd = runtime_dir.open_runtime_dir()
+            open(os.path.join(os.environ["SIGNALS"], "waiting"), "w").close()
+            lock = runtime_dir.lock_file(fd, "s.lock")
+            print(json.dumps(os.path.exists(os.path.join(os.environ["SIGNALS"], "released"))))
+        """
+        signals = os.path.join(self.root, "signals")
+        os.mkdir(signals)
+        env = {"PATH": "/usr/bin:/bin", "TMPDIR": self.tmp, "SIGNALS": signals}
+        scripts = {"holder": self.write_driver("holder.py", holder), "waiter": self.write_driver("waiter.py", waiter)}
+        first = subprocess.Popen([sys.executable, "-I", scripts["holder"]], env=env, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(first.kill)
+        while not os.path.exists(os.path.join(signals, "held")):
+            self.assertIsNone(first.poll())
+            time.sleep(0.01)
+        second = subprocess.Popen([sys.executable, "-I", scripts["waiter"]], env=env, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(second.kill)
+        out, _ = second.communicate(timeout=30)
+        first.communicate(timeout=30)
+        self.assertEqual(json.loads(out), True)
+
+    def test_a_lock_that_stays_taken_raises_after_the_bounded_wait(self):
+        body = """
+            import time
+            runtime_dir.LOCK_WAIT_SECONDS = 0.3
+            fd = runtime_dir.open_runtime_dir()
+            first = runtime_dir.lock_file(fd, "s.lock")
+            start = time.monotonic()
+            try:
+                runtime_dir.lock_file(fd, "s.lock")
+                raised = False
+            except BlockingIOError:
+                raised = True
+            print(json.dumps([raised, time.monotonic() - start < 3]))
+        """
+        self.assertEqual(self.drive(body), [True, True])
+
+    def test_refuses_a_fifo_and_a_symlink(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            os.mkfifo("f.lock", 0o600, dir_fd=fd)
+            os.symlink("elsewhere", "l.lock", dir_fd=fd)
+            result = []
+            for name in ("f.lock", "l.lock"):
+                try:
+                    runtime_dir.lock_file(fd, name)
+                    result.append("locked")
+                except OSError:
+                    result.append("raised")
+            print(json.dumps(result))
+        """
+        self.assertEqual(self.drive(body), ["raised", "raised"])
 
 
 if __name__ == "__main__":
