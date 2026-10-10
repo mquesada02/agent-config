@@ -248,7 +248,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "ccstatusline",
+    "command": "python3 -I ~/.claude/hooks/context-handoff/statusline.py",
     "padding": 0
   },
   "enabledPlugins": {
