@@ -99,6 +99,17 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/block-aws-credentials.py",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "SubagentStart": [
