@@ -4,6 +4,8 @@
 !hooks/
 !hooks/force-model-invocation.sh
 !hooks/block-aws-credentials.py
+!hooks/context-handoff/
+!hooks/context-handoff/*.py
 !scripts/
 !scripts/update-orca-skills.sh
 !skills/
