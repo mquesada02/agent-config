@@ -358,6 +358,51 @@ class OutsideOrcaTerminalTest(LaunchTestCase):
         self.assertFalse(any("orchestration" in call["argv"] for call in self.calls()))
 
 
+class SharedRolePathTest(LaunchTestCase):
+    """The plain and coordinator roles share one launcher path: every case runs for both roles."""
+
+    ROLES = ("plain", "coordinator")
+
+    def run_roles(self, handle=OLD_HANDLE, cwd=None):
+        """Launch once per role, each with a fresh call log. Yields (role, status, text)."""
+        for role in self.ROLES:
+            with self.subTest(role=role):
+                if os.path.exists(self.log_path):
+                    os.remove(self.log_path)
+                overrides = {"role": role, "cwd": cwd} if cwd else {"role": role}
+                status, text = self.launch(self.arguments(**overrides), handle=handle)
+                self.assertFalse(any("orchestration" in call["argv"] for call in self.calls()))
+                yield role, status, text
+
+    def test_start_in_an_orca_terminal(self):
+        for _role, status, text in self.run_roles():
+            self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+            self.assertEqual(self.names(), ["status", "worktree list", "terminal show", "terminal create", "terminal wait", "terminal send"])
+            self.assertEqual(self.option(self.call("terminal create"), "--command"),
+                "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
+            self.assertEqual(self.option(self.call("terminal send"), "--text"), self.prompt_with_handle())
+            self.assertEqual(self.read("manual"), self.manual_text())
+
+    def test_start_outside_an_orca_terminal(self):
+        for _role, status, text in self.run_roles(handle=None):
+            self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+            self.assertEqual(self.option(self.call("terminal send"), "--text"), self.prompt_without_handle())
+
+    def test_manual_case_for_stopped_orca(self):
+        self.scenario["status"] = reply({"app": {"running": False}, "runtime": {"reachable": True}})
+        for _role, status, text in self.run_roles():
+            self.assertEqual((status, text), ("manual", "no Orca: " + self.manual_text()))
+            self.assertEqual(self.read("manual"), self.manual_text())
+            self.assertNotIn("terminal create", self.names())
+
+    def test_manual_case_for_a_cwd_that_orca_does_not_manage(self):
+        elsewhere = os.path.join(self.root, "elsewhere")
+        os.mkdir(elsewhere)
+        for _role, status, _text in self.run_roles(cwd=elsewhere):
+            self.assertEqual(status, "manual")
+            self.assertNotIn("terminal create", self.names())
+
+
 class ManualCaseTest(LaunchTestCase):
     def assert_manual(self):
         status, text = self.launch()
@@ -541,7 +586,7 @@ class FailureTest(LaunchTestCase):
 
 class EarlyFailureTest(LaunchTestCase):
     def test_roles_that_are_not_supported(self):
-        for role in ("coordinator", "worker", "bogus", "r" * 400):
+        for role in ("worker", "bogus", "r" * 400):
             with self.subTest(role=role[:12]):
                 status, text = self.launch(self.arguments(role=role))
                 self.assertEqual((status, text), ("failed", f"successor failed: role {role[:300]} is not supported yet"))

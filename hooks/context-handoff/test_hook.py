@@ -869,9 +869,15 @@ class InstructionTest(HookTestCase):
         self.seed_over_threshold()
         return self.run_hook("Stop", **fields)["reason"]
 
-    def test_step_4_gives_the_plain_role(self):
+    def test_step_4_gives_the_plain_and_coordinator_roles(self):
         reason = self.reason()
-        self.assertIn("First replace the word ROLE_SLOT as the role blocks say. For a plain session (not an Orca coordinator or worker), the role is `plain`.", reason)
+        self.assertIn("First replace the word ROLE_SLOT as the role blocks say. For a plain session (not an Orca coordinator or worker), the role is `plain`."
+                      " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`.", reason)
+        self.assertNotIn("`worker`", reason)  # the worker slot stays empty
+
+    def test_the_re_block_repeats_the_instruction(self):
+        first = self.reason()
+        self.assertEqual(self.run_hook("Stop")["reason"], first)
 
     def test_step_3_has_the_state_layout_with_the_filled_values(self):
         reason = self.reason()
@@ -882,16 +888,49 @@ class InstructionTest(HookTestCase):
         self.assertIn(f"   - predecessor transcript_path: {self.transcript}", reason)
         self.assertIn("Write unknown for a field that you do not know. Run no command to find it", reason)
 
-    def test_step_3_has_the_successor_steps_for_the_plain_role_only(self):
+    def test_step_3_has_the_successor_steps_for_the_plain_and_coordinator_roles(self):
         reason = self.reason()
         self.assertIn('under the heading "Successor steps"', reason)
         self.assertIn("check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`)", reason)
         self.assertIn("if any takeover step fails, keep the old terminal open, tell the user what failed, and stop", reason)
-        self.assertIn("1. Read the handoff.", reason)
+        self.assertIn("Plain session only:\n   1. Read the handoff.", reason)
         self.assertIn("then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.", reason)
         self.assertIn("3. Continue the work.", reason)
-        self.assertNotIn("run-use", reason)  # the coordinator and worker slots are empty
-        self.assertNotIn("worker_done", reason)
+        self.assertNotIn("Plain session:", reason)
+        self.assertNotIn("worker_done", reason)  # the worker slot is empty
+
+    def test_step_3_has_the_coordinator_fields_after_the_core_and_before_the_steps(self):
+        reason = self.reason()
+        lead_in = "A coordinator adds these fields after the core fields, one per line, in this order:"
+        fields = ("Run ID", "active Dispatches, each with its Task ID, or none", "unacked delivery IDs, each with every message in it, or none.",
+                  "unanswered questions and escalations that wait for an answer, or none", "the next CLAUDE.md section-7 step per ticket")
+        self.assertLess(reason.index("the review phase (CLAUDE.md section 6)"), reason.index(lead_in))
+        position = reason.index(lead_in)
+        for field in fields:
+            self.assertIn("   - " + field, reason[position:])
+            self.assertLess(position, reason.index("   - " + field, position))
+            position = reason.index("   - " + field, position)
+        self.assertLess(position, reason.index("Successor steps"))
+        for text in ("Name each message by its Orca message ID, its sender and its subject, and mark it done or not done.",
+                     "The successor matches a message by its message ID, because the delivery IDs change at redelivery.",
+                     "Write unknown for a field of this list that you do not know; run no command to find it."):
+            self.assertIn(text, reason)
+
+    def test_step_3_has_the_coordinator_steps_after_the_plain_steps(self):
+        reason = self.reason()
+        label = "Coordinator (use these steps instead of the plain steps):"
+        self.assertLess(reason.index("3. Continue the work."), reason.index(label))
+        steps = reason[reason.index(label):reason.index("4. Run this command")]
+        parts = ("1. Read the handoff. It holds the Run ID.", "2. Check the Run ID with `run-show --id <Run ID>`. Then bind the Run with `run-use --id <Run ID>`.",
+                 "`consumer_fenced`", "its `task-create` and `worker-start` fail.", "3. Check the old terminal handle that your first prompt names", "then close that terminal.",
+                 "4. Run `check`. Unacked deliveries return under new delivery IDs.", "`task-list` and `worker-show`", "do not act on that ID.",
+                 "5. Skip the messages that the handoff marks as done. Match them by message ID.")
+        position = 0
+        for part in parts:
+            self.assertIn(part, steps[position:])
+            position = steps.index(part, position)
+        self.assertLess(steps.index("`run-use --id"), steps.index("close that terminal"))  # the close comes after the bind
+        self.assertLess(reason.index("if any takeover step fails, keep the old terminal open"), reason.index(label))
 
     def test_the_state_layout_comes_before_step_4_and_the_command_is_last(self):
         reason = self.reason()
