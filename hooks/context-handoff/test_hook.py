@@ -20,7 +20,7 @@ NO_RESULT = "launcher gave no result; check Orca for a successor terminal before
 RESULTS = {
     "ok": "ok context handoff done: successor term_abc",
     "failed": "failed successor failed: the Orca call timed out; the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md; start the successor with cd /w && claude 'Read it'",
-    "escalation-failed": "escalation-failed successor term_abc waits; tell the coordinator: orca orchestration worker-stop --dispatch d1",
+    "escalation-failed": "escalation-failed successor term_abc waits; tell the coordinator: 1) orca orchestration worker-stop --dispatch d1; the coordinator may already have the escalation, so check its inbox before you run them",
     "manual": "manual no Orca: the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md; start the successor with cd /w && claude 'Read it'",
 }
 WINDOW = 100000  # a window file with this size puts the 80% line at 80000 tokens
@@ -869,11 +869,14 @@ class InstructionTest(HookTestCase):
         self.seed_over_threshold()
         return self.run_hook("Stop", **fields)["reason"]
 
-    def test_step_4_gives_the_plain_and_coordinator_roles(self):
+    def test_step_4_gives_the_three_roles(self):
         reason = self.reason()
         self.assertIn("First replace the word ROLE_SLOT as the role blocks say. For a plain session (not an Orca coordinator or worker), the role is `plain`."
-                      " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`.", reason)
-        self.assertNotIn("`worker`", reason)  # the worker slot stays empty
+                      " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`."
+                      " For an Orca worker (a session that Orca dispatched under a Task, with an injected preamble), the role is `worker`: replace the word ROLE_SLOT with"
+                      " `worker` and then four more words copied from the preamble, in this order and each in single quotes: your own terminal handle (the `--from` value),"
+                      " the Task ID, the Dispatch ID, and your coordinator's terminal handle."
+                      " If a value contains a single quote or a control character, do not run the command; tell the user.", reason)
 
     def test_the_re_block_repeats_the_instruction(self):
         first = self.reason()
@@ -897,7 +900,36 @@ class InstructionTest(HookTestCase):
         self.assertIn("then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.", reason)
         self.assertIn("3. Continue the work.", reason)
         self.assertNotIn("Plain session:", reason)
-        self.assertNotIn("worker_done", reason)  # the worker slot is empty
+
+    def test_step_3_has_the_worker_fields_after_the_core_and_before_the_coordinator_fields(self):
+        reason = self.reason()
+        lead_in = "A worker adds these fields after the core fields, one per line, in this order:"
+        fields = ("the injected Orca preamble, copied exactly (terminal handle, Task ID, Dispatch ID, `ask` command, coordinator handle)",
+                  "any ask that waits for an answer, with its message ID, or none")
+        self.assertLess(reason.index("the review phase (CLAUDE.md section 6)"), reason.index(lead_in))
+        position = reason.index(lead_in)
+        for field in fields:
+            self.assertLess(position, reason.index("   - " + field, position))
+            position = reason.index("   - " + field, position)
+        self.assertLess(position, reason.index("A coordinator adds these fields"))
+        self.assertIn("Write unknown for a field of this list that you do not know; run no command to find it.", reason[reason.index(lead_in):reason.index("A coordinator adds")])
+
+    def test_step_3_has_the_worker_steps_after_the_coordinator_steps(self):
+        reason = self.reason()
+        label = "Worker (use these steps instead of the plain steps):"
+        self.assertLess(reason.index("5. Skip the messages that the handoff marks as done"), reason.index(label))
+        steps = reason[reason.index(label):reason.index("4. Run this command")]
+        parts = ("1. Wait for the new Dispatch. It arrives soon. Do nothing else and set no timeout: the coordinator may be busy or handing over.",
+                 "2. When it arrives, check the Task ID and the new Dispatch ID of the new preamble with `worker-show --dispatch <new Dispatch ID>`, then read the handoff before you act on the Task.",
+                 "Use neither the old Dispatch ID nor the old terminal handle in any Orca call.",
+                 "3. Do the Task under the new preamble. An ask from the old Dispatch is closed. If the handoff names such an ask and you still need the answer, ask again under the new Dispatch.",
+                 "4. Send `worker_done` with the IDs from the new preamble.",
+                 "The coordinator's commands close the old terminal: a worker never closes it.")
+        position = 0
+        for part in parts:
+            self.assertIn(part, steps[position:])
+            position = steps.index(part, position)
+        self.assertLess(reason.index("if any takeover step fails, keep the old terminal open"), reason.index(label))
 
     def test_step_3_has_the_coordinator_fields_after_the_core_and_before_the_steps(self):
         reason = self.reason()
@@ -924,7 +956,7 @@ class InstructionTest(HookTestCase):
         parts = ("1. Read the handoff. It holds the Run ID.", "2. Check the Run ID with `run-show --id <Run ID>`. Then bind the Run with `run-use --id <Run ID>`.",
                  "`consumer_fenced`", "its `task-create` and `worker-start` fail.", "3. Check the old terminal handle that your first prompt names", "then close that terminal.",
                  "4. Run `check`. Unacked deliveries return under new delivery IDs.", "`task-list` and `worker-show`", "do not act on that ID.",
-                 "5. Skip the messages that the handoff marks as done. Match them by message ID.")
+                 "5. Skip the messages that the handoff marks as done. Match them by message ID. Ack each delivery once all of its messages are done or handled.")
         position = 0
         for part in parts:
             self.assertIn(part, steps[position:])

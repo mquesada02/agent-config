@@ -6,8 +6,6 @@
 # Three maintenance points:
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
-# - CLAUDE_CODE_DISABLE_TERMINAL_TITLE: an undocumented variable that launch.py sets in the successor start command. If Claude Code
-#   renames it, the successor title (ending in the handoff count) stops sticking after its first turn.
 # The hook and launch.py share these literals without a shared module: the file names .launch and .manual, the word
 # "started", the result status words, and the successor marker being the predecessor's handoff path. Change them together.
 import json
@@ -29,7 +27,7 @@ ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
 MARKER_VARIABLE = "CONTEXT_HANDOFF_SUCCESSOR"  # set by the launcher in the successor's start command: the predecessor's handoff path
 HOOK_DIR = os.path.dirname(os.path.realpath(__file__))
 LAUNCHER = os.path.join(HOOK_DIR, "launch.py")
-# escalation-failed is reserved for the worker launcher path (ticket #19); the plain and coordinator paths never emit it
+# escalation-failed is emitted only by the worker launcher path; the plain and coordinator paths never emit it
 STATUS_WORDS = ("ok", "failed", "escalation-failed", "manual")
 HANDOFF_SUFFIX = ".handoff.md"
 NO_RESULT_TEXT = "launcher gave no result; check Orca for a successor terminal before you start one"
@@ -45,7 +43,7 @@ MODEL_WINDOWS = {
     "claude-opus-4-7": 1000000,
 }
 
-# Text slots of the block instruction. The worker slots are empty until their ticket fills them; the hook logic does not change.
+# Text slots of the block instruction, one set per role; the hook logic does not depend on them.
 STATE_CORE = """
    The State section has these fields, one per line:
    - session type: plain, worker or coordinator
@@ -58,7 +56,11 @@ STATE_CORE = """
    - links to the map, the spec and the ticket in progress
    - the review phase (CLAUDE.md section 6) and its round count
    Write unknown for a field that you do not know. Run no command to find it: step 1 allows no other Bash command."""
-WORKER_STATE_BLOCK = ""  # appended to the State fields, before the coordinator block
+WORKER_STATE_BLOCK = """
+   A worker adds these fields after the core fields, one per line, in this order:
+   - the injected Orca preamble, copied exactly (terminal handle, Task ID, Dispatch ID, `ask` command, coordinator handle)
+   - any ask that waits for an answer, with its message ID, or none
+   Write unknown for a field of this list that you do not know; run no command to find it."""  # appended to the State fields, before the coordinator block
 COORDINATOR_STATE_BLOCK = """
    A coordinator adds these fields after the core fields, one per line, in this order:
    - Run ID
@@ -83,11 +85,21 @@ COORDINATOR_SUCCESSOR_STEPS = """
    2. Check the Run ID with `run-show --id <Run ID>`. Then bind the Run with `run-use --id <Run ID>`. This fences the predecessor: its `check --wait` ends with `consumer_fenced`, and its `task-create` and `worker-start` fail.
    3. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.
    4. Run `check`. Unacked deliveries return under new delivery IDs. Check each Task and Dispatch ID from the handoff with `task-list` and `worker-show` before you act on it. If such a check fails, tell the user and do not act on that ID.
-   5. Skip the messages that the handoff marks as done. Match them by message ID."""  # appended after the plain steps
-WORKER_SUCCESSOR_STEPS = ""  # appended after the coordinator steps
+   5. Skip the messages that the handoff marks as done. Match them by message ID. Ack each delivery once all of its messages are done or handled."""  # appended after the plain steps
+WORKER_SUCCESSOR_STEPS = """
+   Worker (use these steps instead of the plain steps):
+   1. Wait for the new Dispatch. It arrives soon. Do nothing else and set no timeout: the coordinator may be busy or handing over. (The prompt that starts you says the same.)
+   2. When it arrives, check the Task ID and the new Dispatch ID of the new preamble with `worker-show --dispatch <new Dispatch ID>`, then read the handoff before you act on the Task. Use neither the old Dispatch ID nor the old terminal handle in any Orca call.
+   3. Do the Task under the new preamble. An ask from the old Dispatch is closed. If the handoff names such an ask and you still need the answer, ask again under the new Dispatch.
+   4. Send `worker_done` with the IDs from the new preamble.
+   The coordinator's commands close the old terminal: a worker never closes it."""  # appended after the coordinator steps
 PLAIN_ROLE_BLOCK = " For a plain session (not an Orca coordinator or worker), the role is `plain`."  # appended to step 4
 COORDINATOR_ROLE_BLOCK = " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`."  # appended to step 4, after the plain block
-WORKER_ROLE_BLOCK = ""  # appended to step 4, after the coordinator block
+WORKER_ROLE_BLOCK = (
+    " For an Orca worker (a session that Orca dispatched under a Task, with an injected preamble), the role is `worker`: replace the word ROLE_SLOT with"
+    " `worker` and then four more words copied from the preamble, in this order and each in single quotes: your own terminal handle (the `--from` value),"
+    " the Task ID, the Dispatch ID, and your coordinator's terminal handle. If a value contains a single quote or a control character, do not run the command; tell the user."
+)  # appended to step 4, after the coordinator block
 
 runtime_dir = None  # imported inside run(), so a missing shared module fails open instead of crashing
 
