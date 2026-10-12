@@ -184,9 +184,15 @@ class PlainSuccessTest(LaunchTestCase):
         command = self.option(create, "--command")
         self.assertEqual(
             command,
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium",
+            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium",
         )
         self.assertNotIn("Read ", command)  # the prompt is sent after the idle wait
+
+    def test_the_manual_command_carries_neither_the_marker_nor_the_title_variable(self):
+        self.launch()
+        manual = self.read("manual")
+        self.assertNotIn("CONTEXT_HANDOFF_SUCCESSOR", manual)
+        self.assertNotIn("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", manual)
 
     def test_files_exist_before_create(self):
         self.launch()
@@ -208,7 +214,9 @@ class PlainSuccessTest(LaunchTestCase):
     def test_empty_model_mode_and_effort_pass_no_flag(self):
         status, _ = self.launch(self.arguments(model="", permission_mode="", effort=""))
         self.assertEqual(status, "ok")
-        self.assertEqual(self.option(self.call("terminal create"), "--command"), "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude")
+        self.assertEqual(self.option(self.call("terminal create"), "--command"),
+            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude",
+        )
         self.assertIn(shlex.quote(self.prompt_without_handle()), self.read("manual"))
         self.assertNotIn("--model", self.read("manual"))
 
@@ -225,7 +233,7 @@ class PlainSuccessTest(LaunchTestCase):
         self.assertEqual(status, "ok")
         create = self.call("terminal create")
         self.assertEqual(self.option(create, "--worktree"), "path:" + self.worktree)
-        self.assertEqual(shlex.split(self.option(create, "--command"))[1], "CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff)
+        self.assertEqual(shlex.split(self.option(create, "--command"))[1:3], ["CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff, "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"])
         self.assertEqual(self.read("manual"), self.manual_text().replace(shlex.quote(self.cwd), shlex.quote(cwd)))
 
     def test_non_ascii_text_and_slash_models(self):

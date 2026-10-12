@@ -271,7 +271,8 @@ class Launch:
         if worktree is None:
             return "manual", "no Orca: " + self.manual
 
-        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " " + shlex.join(self.claude)
+        # The title variable keeps the ↻<n> title: Claude Code rewrites the terminal title after its first turn otherwise (tenth amendment on #8).
+        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 " + shlex.join(self.claude)
         created = self.call(["terminal", "create", "--worktree", "path:" + worktree, "--title=" + self.title(), "--command", start_command])
         handle = created.get("result", "terminal", "handle")
         if not valid_handle(handle):

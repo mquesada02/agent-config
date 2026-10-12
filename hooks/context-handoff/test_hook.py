@@ -15,6 +15,14 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "hook.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
+LAUNCHER = os.path.join(os.path.realpath(HERE), "launch.py")
+NO_RESULT = "launcher gave no result; check Orca for a successor terminal before you start one"
+RESULTS = {
+    "ok": "ok context handoff done: successor term_abc",
+    "failed": "failed successor failed: the Orca call timed out; the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md; start the successor with cd /w && claude 'Read it'",
+    "escalation-failed": "escalation-failed successor term_abc waits; tell the coordinator: orca orchestration worker-stop --dispatch d1",
+    "manual": "manual no Orca: the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md; start the successor with cd /w && claude 'Read it'",
+}
 WINDOW = 100000  # a window file with this size puts the 80% line at 80000 tokens
 GOOD_STATE = {"events": 0, "triggered": False, "reblocks": 0, "calls_since_block": 0, "done": False, "command": "", "handoff": ""}
 TRIGGERED_STATE = {**GOOD_STATE, "events": 4, "triggered": True, "command": "python3 -I x ROLE_SLOT", "handoff": "/h"}
@@ -130,7 +138,7 @@ class ThresholdTest(HookTestCase):
         self.assertIn(f"exactly this path: {handoff} ", reason)
         self.assertIn("Put the State section first", reason)
         self.assertIn("timeout of 120000 ms", reason)
-        self.assertEqual(len(reason.splitlines()), 6)  # intro, four steps, command: the empty slots add no text
+        self.assertEqual(reason.splitlines()[-1], self.command_line(output))  # the launcher command stays on its own last line
         state = self.state()
         self.assertTrue(state["triggered"])
         self.assertEqual(state["handoff"], handoff)
@@ -572,11 +580,361 @@ class TranscriptScanTest(HookTestCase):
         self.assertLess(time.monotonic() - start, 5)  # 5 s is a smoke bound for a shared PC; the run takes about 0.1 s
 
 
+class LauncherTestCase(HookTestCase):
+    def setUp(self):
+        super().setUp()
+        self.seed("state", TRIGGERED_STATE)
+
+    def launcher_command(self, session=SESSION, script=LAUNCHER, role="plain"):
+        return "python3 -I " + shlex.join([script, session, self.folder, "/h", "claude-sonnet-5-5", "auto", "medium", "/work/repo", role])
+
+    def launcher_call(self, response, command=None, **fields):
+        return self.run_hook("PostToolUse", tool_name="Bash", tool_input={"command": command or self.launcher_command()}, tool_response=response, **fields)
+
+    def seed_raw_launch(self, data):
+        self.make_folder()
+        with open(os.path.join(self.folder, SESSION + ".launch"), "wb") as handle:
+            handle.write(data)
+
+
+class LauncherCallTest(LauncherTestCase):
+    def test_each_result_status_halts_with_the_text_after_the_status_word(self):
+        for status, line in RESULTS.items():
+            text = line[len(status) + 1:]
+            for name, response in (("object", {"stdout": line + "\n", "stderr": "", "interrupted": False}), ("string", line + "\n"), ("blank lines", {"stdout": "\n  " + line + "  \n\n"})):
+                with self.subTest(status=status, shape=name):
+                    self.seed("state", TRIGGERED_STATE)
+                    output = self.launcher_call(response)
+                    self.assert_halt(output)
+                    self.assertEqual(output["stopReason"], text)
+                    self.assertTrue(self.state()["done"])
+
+    def test_failed_and_manual_texts_name_the_handoff_path_and_the_start_command(self):
+        for status in ("failed", "manual"):
+            with self.subTest(status=status):
+                self.seed("state", TRIGGERED_STATE)
+                reason = self.launcher_call({"stdout": RESULTS[status] + "\n"})["stopReason"]
+                self.assertIn("the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md", reason)
+                self.assertIn("start the successor with cd /w && claude", reason)
+
+    def test_two_spaces_after_the_status_word_are_stripped(self):
+        self.assertEqual(self.launcher_call({"stdout": "ok  context handoff done: successor t1\n"})["stopReason"], "context handoff done: successor t1")
+
+    def test_responses_without_one_parsable_line_give_the_no_result_halt(self):
+        bad = ["", None, [], {}, {"stdout": ""}, {"stdout": None}, {"stdout": {"x": 1}}, {"stdout": "ok a\nok b"}, {"stdout": "nonsense"}, {"stdout": "ok"},
+               {"stdout": "ok   "}, {"stdout": "okay fine"}, 5, {"stdout": "garbled \x00 ok x"}]
+        for response in bad:
+            with self.subTest(response=response):
+                self.seed("state", TRIGGERED_STATE)
+                output = self.launcher_call(response)
+                self.assert_halt(output)
+                self.assertEqual(output["stopReason"], NO_RESULT)
+
+    def test_other_bash_calls_are_ordinary_calls(self):
+        ordinary = {
+            "mentions the script": f"cat {shlex.quote(LAUNCHER)}",
+            "other session": self.launcher_command(session="other"),
+            "other script": self.launcher_command(script="/elsewhere/launch.py"),
+            "too short": "python3 -I " + shlex.quote(LAUNCHER),
+            "wrapped": "cd /x && " + self.launcher_command(),
+            "not splittable": "python3 -I 'unterminated",
+            "no python": self.launcher_command().replace("python3 -I", "python -I"),
+            "no -I": self.launcher_command().replace("python3 -I", "python3"),
+        }
+        for name, command in ordinary.items():
+            with self.subTest(name=name):
+                self.seed("state", TRIGGERED_STATE)
+                self.assertIsNone(self.launcher_call({"stdout": RESULTS["ok"]}, command=command))
+                self.assertEqual(self.state()["calls_since_block"], 1)
+        self.seed("state", TRIGGERED_STATE)
+        self.assertIsNone(self.run_hook("PostToolUse", tool_name="Read", tool_input={"command": self.launcher_command()}, tool_response=RESULTS["ok"]))
+        for tool_input in (None, {"command": 5}, {"command": None}, "x", {}):
+            with self.subTest(tool_input=tool_input):
+                self.assertIsNone(self.run_hook("PostToolUse", tool_name="Bash", tool_input=tool_input, tool_response=RESULTS["ok"]))
+
+    def test_the_result_line_wins_over_the_launch_file(self):
+        self.seed("launch", "started\n")
+        output = self.launcher_call({"stdout": RESULTS["ok"] + "\n"})
+        self.assertEqual(output["stopReason"], "context handoff done: successor term_abc")
+
+    def test_a_halted_session_stays_silent(self):
+        self.launcher_call({"stdout": RESULTS["ok"]})
+        for event in ("Stop", "PostToolUse"):
+            self.assertIsNone(self.run_hook(event))
+        self.assertIsNone(self.launcher_call({"stdout": RESULTS["failed"]}))
+
+    def test_a_launcher_call_while_not_triggered_is_an_ordinary_call_below_80_percent(self):
+        self.seed("state", GOOD_STATE)
+        self.seed_window()
+        self.write_transcript([assistant(100)])
+        self.seed("launch", "started\n")  # a stray launch file is ignored while not triggered
+        self.assertIsNone(self.launcher_call({"stdout": RESULTS["ok"]}))
+        self.assertIsNone(self.run_hook("Stop"))
+        self.assertFalse(self.state()["triggered"])
+        self.assertFalse(self.state()["done"])
+
+    def test_a_launcher_call_while_not_triggered_at_80_percent_triggers_the_block(self):
+        self.seed("state", GOOD_STATE)
+        self.seed_over_threshold()
+        self.assert_block(self.launcher_call({"stdout": RESULTS["ok"]}))
+        self.assertTrue(self.state()["triggered"])
+
+
+class LaunchFileTest(LauncherTestCase):
+    """The launch file shapes: A started only, B started and a result line, C other, D missing, E unreadable."""
+
+    def events(self):
+        yield "Stop", lambda: self.run_hook("Stop")
+        yield "PostToolUse", lambda: self.run_hook("PostToolUse")
+        yield "launcher call", lambda: self.launcher_call({"stdout": "garbled"})
+
+    def check(self, content, expected):
+        for name, run in self.events():
+            with self.subTest(content=content, event=name):
+                self.seed("state", TRIGGERED_STATE)
+                if content is None:
+                    path = os.path.join(self.folder, SESSION + ".launch")
+                    if os.path.exists(path):
+                        os.remove(path)
+                else:
+                    self.seed_raw_launch(content if isinstance(content, bytes) else content.encode())
+                output = run()
+                expected_for_event = expected[name] if isinstance(expected, dict) else expected
+                if expected_for_event == "block":
+                    self.assert_block(output)
+                elif expected_for_event is None:
+                    self.assertIsNone(output)
+                else:
+                    self.assert_halt(output)
+                    self.assertEqual(output["stopReason"], expected_for_event)
+
+    def test_shape_a_gives_the_no_result_halt(self):
+        self.check("started\n", NO_RESULT)
+        self.check("  started  \n\n", NO_RESULT)
+
+    def test_shape_b_gives_the_text_of_the_result_line(self):
+        self.check("started\nok context handoff done: successor t9\n", "context handoff done: successor t9")
+        self.check("started\n\nmanual no Orca: the handoff file is at /h\n\n", "no Orca: the handoff file is at /h")
+
+    def test_shape_c_gives_the_no_result_halt(self):
+        for content in ("started\nok\n", "started\nok a\nok b\n", "garbage\n", "started\nbad line\n", "", "\n", "ok context handoff done: x\n"):
+            self.check(content, NO_RESULT)
+
+    def test_shape_d_re_blocks_on_stop_is_quiet_on_a_call_and_halts_a_launcher_call(self):
+        self.check(None, {"Stop": "block", "PostToolUse": None, "launcher call": NO_RESULT})
+
+    def test_shape_e_fails_open_except_for_a_launcher_call(self):
+        self.check(b"started\n\xff\xfe", {"Stop": None, "PostToolUse": None, "launcher call": NO_RESULT})
+        self.check(b"started\n" + b"x" * (64 * 1024 + 1), {"Stop": None, "PostToolUse": None, "launcher call": NO_RESULT})
+
+    def test_shape_e_leaves_the_state_unchanged(self):
+        self.seed("state", TRIGGERED_STATE)
+        self.seed_raw_launch(b"\xff")
+        self.assertIsNone(self.run_hook("Stop"))
+        self.assertIsNone(self.run_hook("PostToolUse"))
+        self.assertEqual(self.state(), TRIGGERED_STATE)
+
+    def test_a_launch_file_that_is_a_directory_is_shape_e(self):
+        os.mkdir(os.path.join(self.folder, SESSION + ".launch"))
+        self.assertIsNone(self.run_hook("Stop"))
+        self.assertEqual(self.state(), TRIGGERED_STATE)
+
+    def test_the_launch_file_is_ignored_in_another_session(self):
+        self.seed("launch", "started\n", session="other")
+        self.assert_block(self.run_hook("Stop"))
+
+
+class LoopGuardTest(HookTestCase):
+    PREDECESSOR = "99999999-8888-7777-6666-555555555555"
+    MANUAL = "the handoff file is at /h; start the successor with cd /w && claude 'Read it'"
+
+    def setUp(self):
+        super().setUp()
+        self.marker = os.path.join(self.folder, self.PREDECESSOR + ".handoff.md")
+        self.seed("manual", self.MANUAL + "\n", session=self.PREDECESSOR)
+        self.seed_over_threshold()
+
+    def run_marked(self, marker=None, event="Stop", **fields):
+        return self.run_hook(event, env=self.env(CONTEXT_HANDOFF_SUCCESSOR=self.marker if marker is None else marker), **fields)
+
+    def generic(self, percent=90):
+        return f"handoff loop: context already at {percent}% after takeover"
+
+    def test_the_first_event_at_80_percent_with_the_marker_halts_with_the_manual_text(self):
+        output = self.run_marked()
+        self.assert_halt(output)
+        self.assertEqual(output["stopReason"], self.generic() + "; " + self.MANUAL)
+        state = self.state()
+        self.assertTrue(state["done"])
+        self.assertFalse(state["triggered"])
+        self.assertEqual(state["events"], 1)
+        self.assertIsNone(self.run_marked())
+        self.assertIsNone(self.run_marked(event="PostToolUse"))
+
+    def test_the_percent_is_rounded_down(self):
+        self.write_transcript([assistant(80999)])
+        self.assertEqual(self.run_marked()["stopReason"], self.generic(80) + "; " + self.MANUAL)
+
+    def test_the_guard_also_fires_on_a_post_tool_use_event(self):
+        self.assert_halt(self.run_marked(event="PostToolUse"))
+
+    def test_no_marker_empty_marker_or_a_later_event_gives_the_block(self):
+        self.assert_block(self.run_hook("Stop"))
+        self.seed_window(session="empty")
+        self.assert_block(self.run_marked(marker="", session="empty"))
+        self.seed_window(session="later")
+        self.seed("state", {**GOOD_STATE, "events": 1}, session="later")
+        self.assert_block(self.run_marked(session="later"))
+
+    def test_a_successor_with_a_first_event_below_80_percent_hands_over_normally_later(self):
+        self.write_transcript([assistant(100)])
+        self.assertIsNone(self.run_marked())
+        self.write_transcript([assistant(90000)])
+        self.assert_block(self.run_marked())
+
+    def test_no_guard_without_a_transcript_measure(self):
+        os.remove(self.transcript)
+        self.assertIsNone(self.run_marked())
+        self.assertEqual(self.state()["events"], 1)
+        self.write_transcript([assistant(90000)])
+        self.assert_block(self.run_marked())
+
+    def test_the_window_table_is_the_fallback(self):
+        os.remove(os.path.join(self.folder, SESSION + ".window"))
+        self.write_transcript([assistant(800000, model="claude-sonnet-5-5-20260101")])
+        self.assertEqual(self.run_marked()["stopReason"], self.generic(80) + "; " + self.MANUAL)
+
+    def test_a_marker_that_cannot_be_trusted_gives_only_the_generic_text(self):
+        other = os.path.join(self.root, "other", "claude-context-handoff")
+        os.makedirs(other, mode=0o700)
+        with open(os.path.join(other, self.PREDECESSOR + ".manual"), "w") as handle:
+            handle.write("OTHER FOLDER TEXT")
+        os.symlink(os.path.join(other, self.PREDECESSOR + ".handoff.md"), os.path.join(self.folder, self.PREDECESSOR + ".handoff.md"))  # same name as the manual file owner: only a real-path check sees that it leaves the folder
+        os.mkdir(os.path.join(self.folder, "sub"))
+        for guarded in ("abc", "bad id", "", "rel"):  # readable manual files that a missing name or session id check would show
+            with open(os.path.join(self.folder, guarded + ".manual"), "w") as handle:
+                handle.write("UNGUARDED TEXT")
+        cases = {
+            "relative": "claude-context-handoff/rel.handoff.md",
+            "another folder": os.path.join(other, self.PREDECESSOR + ".handoff.md"),
+            "through ..": os.path.join(self.folder, "sub", "..", "..", "other", "claude-context-handoff", self.PREDECESSOR + ".handoff.md"),
+            "through a symlink": os.path.join(self.folder, self.PREDECESSOR + ".handoff.md"),
+            "not a handoff name": os.path.join(self.folder, "abc12345678901"),  # without the name check, the last 11 characters would be cut and abc.manual read
+            "invalid session id": os.path.join(self.folder, "bad id.handoff.md"),
+            "empty session id": os.path.join(self.folder, ".handoff.md"),
+            "below the folder": os.path.join(self.folder, "sub", self.PREDECESSOR + ".handoff.md"),
+            "the folder": self.folder,
+        }
+        for name, marker in cases.items():
+            with self.subTest(name=name):
+                session = "g-" + name.replace(" ", "-").replace("..", "dots")
+                self.seed_window(session=session)
+                output = self.run_marked(marker=marker, session=session, run_cwd=self.tmp)  # the cwd makes the relative marker point into the folder
+                self.assertEqual(output["stopReason"], self.generic())
+
+    def test_a_missing_empty_or_unsafe_manual_file_gives_the_generic_text(self):
+        manual = os.path.join(self.folder, self.PREDECESSOR + ".manual")
+        os.remove(manual)
+        self.assertEqual(self.run_marked()["stopReason"], self.generic())
+        def write(data):
+            with open(manual, "wb") as handle:
+                handle.write(data)
+
+        cases = {
+            "empty": lambda: write(b""),
+            "blank": lambda: write(b" \n"),
+            "not utf-8": lambda: write(b"\xff"),
+            "over the limit": lambda: write(b"x" * (64 * 1024 + 1)),
+            "symlink": lambda: os.symlink(os.path.join(self.root, "target"), manual),
+            "fifo": lambda: os.mkfifo(manual),
+            "directory": lambda: os.mkdir(manual),
+        }
+        with open(os.path.join(self.root, "target"), "w") as handle:
+            handle.write("TARGET TEXT")
+        for name, make in cases.items():
+            with self.subTest(name=name):
+                if os.path.lexists(manual):
+                    if os.path.isdir(manual) and not os.path.islink(manual):
+                        os.rmdir(manual)
+                    else:
+                        os.remove(manual)
+                make()
+                session = "m-" + name.replace(" ", "-")
+                self.seed_window(session=session)
+                self.assertEqual(self.run_marked(session=session)["stopReason"], self.generic())
+
+
+class InstructionTest(HookTestCase):
+    def reason(self, **fields):
+        self.seed_over_threshold()
+        return self.run_hook("Stop", **fields)["reason"]
+
+    def test_step_4_gives_the_plain_role(self):
+        reason = self.reason()
+        self.assertIn("First replace the word ROLE_SLOT as the role blocks say. For a plain session (not an Orca coordinator or worker), the role is `plain`.", reason)
+
+    def test_step_3_has_the_state_layout_with_the_filled_values(self):
+        reason = self.reason()
+        for field in ("session type: plain, worker or coordinator", "cwd and worktree path", "git branch", "model, permission mode and effort: copy them from the command in step 4",
+                      "predecessor Orca terminal handle, or none", "links to the map, the spec and the ticket in progress", "the review phase (CLAUDE.md section 6) and its round count"):
+            self.assertIn("   - " + field, reason)
+        self.assertIn(f"   - predecessor session_id: {SESSION}", reason)
+        self.assertIn(f"   - predecessor transcript_path: {self.transcript}", reason)
+        self.assertIn("Write unknown for a field that you do not know. Run no command to find it", reason)
+
+    def test_step_3_has_the_successor_steps_for_the_plain_role_only(self):
+        reason = self.reason()
+        self.assertIn('under the heading "Successor steps"', reason)
+        self.assertIn("check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`)", reason)
+        self.assertIn("if any takeover step fails, keep the old terminal open, tell the user what failed, and stop", reason)
+        self.assertIn("1. Read the handoff.", reason)
+        self.assertIn("then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.", reason)
+        self.assertIn("3. Continue the work.", reason)
+        self.assertNotIn("run-use", reason)  # the coordinator and worker slots are empty
+        self.assertNotIn("worker_done", reason)
+
+    def test_the_state_layout_comes_before_step_4_and_the_command_is_last(self):
+        reason = self.reason()
+        self.assertLess(reason.index("The State section has these fields"), reason.index("4. Run this command"))
+        self.assertLess(reason.index("Successor steps"), reason.index("4. Run this command"))
+        self.assertTrue(reason.splitlines()[-1].startswith("python3 -I "))
+        self.assertEqual(sum(line.startswith("python3 -I ") for line in reason.splitlines()), 1)
+
+    def test_a_path_with_a_line_break_or_control_character_is_written_as_unknown(self):
+        for index, name in enumerate(("tr\nans.jsonl", "tr\u2028ans.jsonl", "tr\x1bans.jsonl", "tr\u202eans.jsonl", "tr\rans.jsonl")):
+            with self.subTest(name=name):
+                session = f"c-{index}"
+                path = os.path.join(self.root, name)
+                self.write_transcript([assistant(90000)], path=path)
+                self.seed_window(session=session)
+                reason = self.run_hook("Stop", session=session, transcript_path=path)["reason"]
+                self.assertIn("   - predecessor transcript_path: unknown", reason.splitlines())
+
+    def test_a_missing_or_empty_transcript_path_on_a_re_block_is_written_as_unknown(self):
+        for transcript_path in (None, ""):
+            with self.subTest(transcript_path=transcript_path):
+                self.seed("state", TRIGGERED_STATE)
+                reason = self.run_hook("Stop", transcript_path=transcript_path)["reason"]
+                self.assertIn("   - predecessor transcript_path: unknown", reason.splitlines())
+                self.assertIn(f"   - predecessor session_id: {SESSION}", reason.splitlines())
+
+    def test_a_lock_timeout_does_not_count_an_event_with_the_launcher_rules_in_place(self):
+        self.seed("state", TRIGGERED_STATE)
+        self.seed("launch", "started\n")
+        lock = os.open(os.path.join(self.folder, SESSION + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.assertIsNone(self.run_hook("Stop"))
+        self.assertEqual(self.state(), TRIGGERED_STATE)
+
+
 class NoTestSwitchTest(unittest.TestCase):
     def test_the_hook_reads_only_the_documented_environment(self):
         with open(HOOK) as handle:
             source = handle.read()
-        self.assertEqual(source.count("os.environ"), 1)  # only CLAUDE_CODE_SESSION_ATTENDED; TMPDIR is read in runtime_dir
+        self.assertEqual(source.count("os.environ"), 2)  # CLAUDE_CODE_SESSION_ATTENDED and CONTEXT_HANDOFF_SUCCESSOR; TMPDIR is read in runtime_dir
+        self.assertIn('"CLAUDE_CODE_SESSION_ATTENDED"', source)
+        self.assertIn('"CONTEXT_HANDOFF_SUCCESSOR"', source)
 
 
 if __name__ == "__main__":

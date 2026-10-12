@@ -3,15 +3,20 @@
 # ignored instruction, and halts the session after 3 re-blocks. It runs on Stop and PostToolUse and must never break a
 # session: any internal error gives no output and exit 0 (auto-compact stays the backstop).
 #
-# Two maintenance points:
+# Three maintenance points:
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
+# - CLAUDE_CODE_DISABLE_TERMINAL_TITLE: an undocumented variable that launch.py sets in the successor start command. If Claude Code
+#   renames it, the successor title (ending in the handoff count) stops sticking after its first turn.
+# The hook and launch.py share these literals without a shared module: the file names .launch and .manual, the word
+# "started", the result status words, and the successor marker being the predecessor's handoff path. Change them together.
 import json
 import math
 import os
 import shlex
 import stat
 import sys
+import unicodedata
 
 THRESHOLD_PERCENT = 80
 REBLOCK_GRACE_CALLS = 10  # PostToolUse calls since the last block before the next re-block
@@ -21,7 +26,13 @@ CHUNK_BYTES = 256 * 1024
 MAX_SCAN_BYTES = 8 * 1024 * 1024
 MAX_LINE_BYTES = 4 * 1024 * 1024
 ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
+MARKER_VARIABLE = "CONTEXT_HANDOFF_SUCCESSOR"  # set by the launcher in the successor's start command: the predecessor's handoff path
 HOOK_DIR = os.path.dirname(os.path.realpath(__file__))
+LAUNCHER = os.path.join(HOOK_DIR, "launch.py")
+# escalation-failed is reserved for the coordinator and worker launcher paths (tickets #18 and #19); the plain path never emits it
+STATUS_WORDS = ("ok", "failed", "escalation-failed", "manual")
+HANDOFF_SUFFIX = ".handoff.md"
+NO_RESULT_TEXT = "launcher gave no result; check Orca for a successor terminal before you start one"
 
 # Model-id prefixes with a native 1M window (Fable 5+, Sonnet 5+, Haiku 5.5, Opus 4.7+, per the Claude Code model list). A model id matches a prefix when it
 # equals it or continues with "-". Only listed prefixes match, so a newer model must be added here. Models whose window
@@ -34,9 +45,34 @@ MODEL_WINDOWS = {
     "claude-opus-4-7": 1000000,
 }
 
-# Open text slots of the block instruction. Later tickets fill them; the hook logic does not change.
-STATE_LAYOUT_AND_SUCCESSOR_STEPS = ""  # appended to step 3
-PLAIN_ROLE_BLOCK = ""  # appended to step 4
+# Text slots of the block instruction. The coordinator and worker slots are empty until their tickets fill them; the hook logic does not change.
+STATE_CORE = """
+   The State section has these fields, one per line:
+   - session type: plain, worker or coordinator
+   - cwd and worktree path
+   - git branch
+   - model, permission mode and effort: copy them from the command in step 4
+   - predecessor session_id: {session_id}
+   - predecessor transcript_path: {transcript_path}
+   - predecessor Orca terminal handle, or none
+   - links to the map, the spec and the ticket in progress
+   - the review phase (CLAUDE.md section 6) and its round count
+   Write unknown for a field that you do not know. Run no command to find it: step 1 allows no other Bash command."""
+WORKER_STATE_BLOCK = ""  # appended to the State fields, before the coordinator block
+COORDINATOR_STATE_BLOCK = ""  # appended to the State fields, after the worker block
+SUCCESSOR_STEPS_INTRO = """
+   Then copy these successor steps word for word into the handoff, under the heading "Successor steps":"""
+SUCCESSOR_COMMON_STEPS = """
+   Every role: check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`). A worker does this after its new Dispatch arrives.
+   Every role: if any takeover step fails, keep the old terminal open, tell the user what failed, and stop. The takeover is done when you have read the handoff (and, for a coordinator, bound the Run)."""
+PLAIN_SUCCESSOR_STEPS = """
+   Plain session:
+   1. Read the handoff.
+   2. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.
+   3. Continue the work."""
+COORDINATOR_SUCCESSOR_STEPS = ""  # appended after the plain steps
+WORKER_SUCCESSOR_STEPS = ""  # appended after the coordinator steps
+PLAIN_ROLE_BLOCK = " For a plain session (not an Orca coordinator or worker), the role is `plain`."  # appended to step 4
 COORDINATOR_ROLE_BLOCK = ""  # appended to step 4, after the plain block
 WORKER_ROLE_BLOCK = ""  # appended to step 4, after the coordinator block
 
@@ -143,18 +179,30 @@ def _text(value):
 def launcher_command(data, session_id, handoff, model):
     effort = data.get("effort")
     effort_level = effort.get("level") if isinstance(effort, dict) else ""
-    launcher = os.path.join(HOOK_DIR, "launch.py")
-    values = [launcher, session_id, runtime_dir.runtime_dir_path(), handoff, model, _text(data.get("permission_mode")), _text(effort_level), _text(data.get("cwd"))]
+    values = [LAUNCHER, session_id, runtime_dir.runtime_dir_path(), handoff, model, _text(data.get("permission_mode")), _text(effort_level), _text(data.get("cwd"))]
     return "python3 -I " + " ".join(shlex.quote(value) for value in values) + " ROLE_SLOT"
 
 
-def block(state):
+def _field(value):
+    """A hook-input value for the instruction text: one line without control characters, else `unknown`."""
+    if not isinstance(value, str) or value.splitlines() != [value] or any(unicodedata.category(char).startswith("C") for char in value):
+        return "unknown"
+    return value
+
+
+def state_layout(data):
+    core = STATE_CORE.format(session_id=_field(data.get("session_id")), transcript_path=_field(data.get("transcript_path")))
+    steps = SUCCESSOR_COMMON_STEPS + PLAIN_SUCCESSOR_STEPS + COORDINATOR_SUCCESSOR_STEPS + WORKER_SUCCESSOR_STEPS
+    return core + WORKER_STATE_BLOCK + COORDINATOR_STATE_BLOCK + SUCCESSOR_STEPS_INTRO + steps
+
+
+def block(state, data):
     command, handoff = state["command"], state["handoff"]
     reason = "\n".join([
         f"The context is at {THRESHOLD_PERCENT}% of the window. Hand over to a successor session now. Follow these steps in order.",
         "1. Stop the current work. From now on the only allowed Orca CLI call is the coordinator's `ack` (step 2); the only other allowed command is the launcher (step 4).",
         "2. If you are an Orca coordinator, ack only the deliveries that you fully handled.",
-        f"3. Run /mattpocock-skills:handoff. Write the handoff to exactly this path: {handoff} . Put the State section first.{STATE_LAYOUT_AND_SUCCESSOR_STEPS}",
+        f"3. Run /mattpocock-skills:handoff. Write the handoff to exactly this path: {handoff} . Put the State section first.{state_layout(data)}",
         f"4. Run this command with the Bash tool, with a timeout of {BASH_TIMEOUT_MS} ms. First replace the word ROLE_SLOT as the role blocks say.{PLAIN_ROLE_BLOCK}{COORDINATOR_ROLE_BLOCK}{WORKER_ROLE_BLOCK}",
         command,
     ])
@@ -181,7 +229,30 @@ def load_state(dir_fd, session_id):
     return loaded  # unknown keys stay, so a later ticket can add fields
 
 
-def check_threshold(dir_fd, data, session_id, state):
+def marker_manual_text(dir_fd, marker):
+    """Return the manual file text next to the marker's handoff path, or None. The marker is read only inside the runtime folder."""
+    try:
+        if not os.path.isabs(marker):
+            return None
+        real = os.path.realpath(marker)
+        if os.path.dirname(real) != os.path.realpath(runtime_dir.runtime_dir_path()) or not os.path.basename(real).endswith(HANDOFF_SUFFIX):
+            return None
+        marker_session = os.path.basename(real)[: -len(HANDOFF_SUFFIX)]
+        if not runtime_dir.valid_session_id(marker_session):
+            return None
+        text = runtime_dir.read_file(dir_fd, marker_session + ".manual")
+    except (OSError, ValueError):
+        return None
+    return (text or "").strip() or None
+
+
+def loop_halt(state, dir_fd, percent, marker):
+    text = f"handoff loop: context already at {percent}% after takeover"
+    manual = marker_manual_text(dir_fd, marker)
+    return halt(state, f"{text}; {manual}" if manual else text)
+
+
+def check_threshold(dir_fd, data, session_id, state, first_event):
     window = read_window(dir_fd, session_id)
     measure = scan_transcript(data.get("transcript_path"))
     if measure is None:
@@ -190,13 +261,77 @@ def check_threshold(dir_fd, data, session_id, state):
     size, model = window if window else (model_window(transcript_model), transcript_model)
     if size is None or tokens * 100 < size * THRESHOLD_PERCENT:
         return None
-    state["handoff"] = os.path.join(runtime_dir.runtime_dir_path(), session_id + ".handoff.md")
+    marker = os.environ.get(MARKER_VARIABLE)
+    if marker and first_event:
+        return loop_halt(state, dir_fd, tokens * 100 // size, marker)
+    state["handoff"] = os.path.join(runtime_dir.runtime_dir_path(), session_id + HANDOFF_SUFFIX)
     state["command"] = launcher_command(data, session_id, state["handoff"], model)
     state.update(triggered=True, reblocks=0, calls_since_block=0)
-    return block(state)
+    return block(state, data)
 
 
-def triggered_output(event, state):
+def halt(state, text):
+    state["done"] = True
+    return {"continue": False, "stopReason": text}
+
+
+def is_launcher_call(data, session_id):
+    tool_input = data.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if data.get("tool_name") != "Bash" or not isinstance(command, str):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    return len(words) >= 4 and words[:3] == ["python3", "-I", LAUNCHER] and words[3] == session_id
+
+
+def parse_result_line(line):
+    """Return the text after the status word of a result line, or None."""
+    word, _, text = line.strip().partition(" ")
+    text = text.strip()
+    return text if word in STATUS_WORDS and text else None
+
+
+def nonblank_lines(text):
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def response_result(response):
+    """Return the result text of a launcher call's tool_response, or None when it has no single parsable result line."""
+    text = response.get("stdout") if isinstance(response, dict) else response
+    lines = nonblank_lines(text) if isinstance(text, str) else []
+    return parse_result_line(lines[0]) if len(lines) == 1 else None
+
+
+def read_launch(dir_fd, session_id):
+    """Return (shape, result text): A started only, B started and a result line, C other, D no file. An unreadable file raises."""
+    text = runtime_dir.read_file(dir_fd, session_id + ".launch")
+    if text is None:
+        return "D", None
+    lines = nonblank_lines(text)
+    if lines == ["started"]:
+        return "A", None
+    result = parse_result_line(lines[1]) if len(lines) == 2 and lines[0] == "started" else None
+    return ("B", result) if result else ("C", None)
+
+
+def triggered_output(dir_fd, event, state, data, session_id):
+    launcher_call = event == "PostToolUse" and is_launcher_call(data, session_id)
+    result = response_result(data.get("tool_response")) if launcher_call else None
+    shape = None
+    if not result:
+        try:
+            shape, result = read_launch(dir_fd, session_id)
+        except (OSError, ValueError):
+            if not launcher_call:
+                raise  # fail open: no output and no state write
+            # unreadable launch file on a launcher call: no shape, so the no-result halt below
+    if result:
+        return halt(state, result)
+    if launcher_call or shape in ("A", "C"):
+        return halt(state, NO_RESULT_TEXT)
     if event == "PostToolUse":
         state["calls_since_block"] += 1
         if state["calls_since_block"] < REBLOCK_GRACE_CALLS:
@@ -204,10 +339,8 @@ def triggered_output(event, state):
     if state["reblocks"] < MAX_REBLOCKS:
         state["reblocks"] += 1
         state["calls_since_block"] = 0
-        return block(state)
-    state["done"] = True
-    text = f"handoff failed: no launcher call after {MAX_REBLOCKS} reminders; write the handoff, replace ROLE_SLOT, then run: {state['command']}"
-    return {"continue": False, "stopReason": text}
+        return block(state, data)
+    return halt(state, f"handoff failed: no launcher call after {MAX_REBLOCKS} reminders; write the handoff, replace ROLE_SLOT, then run: {state['command']}")
 
 
 def emit(output):
@@ -225,11 +358,12 @@ def handle_event(dir_fd, data, session_id):
     state = load_state(dir_fd, session_id)
     if state["done"]:
         return
+    first_event = state["events"] == 0
     state["events"] += 1
     if state["triggered"]:
-        output = triggered_output(data["hook_event_name"], state)
+        output = triggered_output(dir_fd, data["hook_event_name"], state, data, session_id)
     else:
-        output = check_threshold(dir_fd, data, session_id, state)
+        output = check_threshold(dir_fd, data, session_id, state, first_event)
     runtime_dir.write_atomic(dir_fd, session_id + ".state", json.dumps(state))  # before any output; a failure gives no output
     if output:
         emit(output)
