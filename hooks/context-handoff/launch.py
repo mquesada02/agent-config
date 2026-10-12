@@ -4,7 +4,7 @@
 # result line ("<status word> <user text>") for the hook. It always exits 0 and writes nothing to stderr.
 #
 # Arguments: session_id runtime_dir handoff model permission_mode effort cwd role
-# Only the plain role is implemented here; the coordinator and worker roles are rejected until their tickets add them.
+# The plain and coordinator roles share one path. The worker role is rejected until its ticket adds it.
 import json
 import math
 import os
@@ -249,7 +249,7 @@ class Launch:
 
     def execute(self):
         """Steps 4 to 13. Returns (status word, user text)."""
-        if self.role != "plain":
+        if self.role not in ("plain", "coordinator"):
             return self.failed(f"role {self.role[:ERROR_CHARS]} is not supported yet")  # only the role value is cut
         try:
             info = os.lstat(self.session + ".handoff.md", dir_fd=self.dir_fd)
