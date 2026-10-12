@@ -3,11 +3,12 @@
 # ignored instruction, and halts the session after 3 re-blocks. It runs on Stop and PostToolUse and must never break a
 # session: any internal error gives no output and exit 0 (auto-compact stays the backstop).
 #
-# Three maintenance points:
+# Two maintenance points:
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
 # The hook and launch.py share these literals without a shared module: the file names .launch and .manual, the word
-# "started", the result status words, and the successor marker being the predecessor's handoff path. Change them together.
+# "started", the result status words, the successor marker being the predecessor's handoff path, and the 80% in the worker escalation text.
+# Change them together.
 import json
 import math
 import os
