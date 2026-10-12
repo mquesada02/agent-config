@@ -4,7 +4,9 @@
 # result line ("<status word> <user text>") for the hook. It always exits 0 and writes nothing to stderr.
 #
 # Arguments: session_id runtime_dir handoff model permission_mode effort cwd role
-# The plain and coordinator roles share one path. The worker role is rejected until its ticket adds it.
+# The role worker adds four more: worker_handle task_id dispatch_id coordinator_handle.
+# The plain and coordinator roles share one path. The worker role follows the same path, checks its Dispatch with worker-show
+# first, and sends an escalation to the coordinator after the successor has taken its prompt.
 import json
 import math
 import os
@@ -30,12 +32,14 @@ CLI_FALLBACK = "orca-ide"  # never bare `orca` outside an Orca terminal: there i
 
 LINE_SEPARATORS = "  "
 ARGUMENT_NAMES = ("session_id", "runtime_dir", "handoff", "model", "permission_mode", "effort", "cwd", "role")
+WORKER_ARGUMENT_NAMES = ("worker_handle", "task_id", "dispatch_id", "coordinator_handle")
+ROLES = ("plain", "coordinator", "worker")
 FLAG_NAMES = ("--model", "--permission-mode", "--effort")
 VALUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]*")
 HANDLE_PATTERN = re.compile(r"[A-Za-z0-9_.:][A-Za-z0-9_.:-]*")
 TITLE_NUMBER_PATTERN = re.compile(r"(.*) ↻([0-9]{1,6})", re.DOTALL)
 
-# Successor prompts (the text the user approved). The worker prompt is first used by the worker ticket.
+# Successor prompts (the text the user approved).
 PROMPT_WITH_HANDLE = "Read {handoff} and follow it. You are the successor of Orca terminal {handle}. Close that terminal only after your takeover is done."
 PROMPT_WITHOUT_HANDLE = "Read {handoff} and follow it. The session you replace did not run in an Orca terminal. When your takeover is done, tell the user to close the old session."
 WORKER_PROMPT = "You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {handoff} before you act on it."
@@ -78,12 +82,18 @@ def valid_handle(handle):
 
 def check_arguments(argv):
     """Return the reason the arguments are invalid, or None. The reason names an argument, never its value."""
-    if len(argv) != len(ARGUMENT_NAMES):
-        return f"expected {len(ARGUMENT_NAMES)} arguments"
-    session, folder, handoff, model, mode, effort, cwd, _role = argv
-    for name, value in zip(ARGUMENT_NAMES, argv):
+    base = len(ARGUMENT_NAMES)
+    worker = len(argv) >= base and argv[base - 1] == "worker"
+    names = ARGUMENT_NAMES + WORKER_ARGUMENT_NAMES if worker else ARGUMENT_NAMES
+    if len(argv) != len(names):
+        return f"expected {len(names)} arguments"
+    session, folder, handoff, model, mode, effort, cwd, _role = argv[:base]
+    for name, value in zip(names, argv):
         if clean(value) != value:
             return f"{name} has a control character"
+    for name, value in zip(WORKER_ARGUMENT_NAMES, argv[base:]):
+        if not valid_handle(value):
+            return f"{name} is not valid"
     if not runtime_dir.valid_session_id(session):
         return "session_id is not valid"
     for name, path in (("runtime_dir", folder), ("handoff", handoff), ("cwd", cwd)):
@@ -143,7 +153,10 @@ def successor_title(title):
 class Launch:
     def __init__(self, argv, start, dir_fd):
         self.dir_fd = dir_fd
-        self.session, self.folder, self.handoff, self.model, self.mode, self.effort, self.cwd, self.role = argv
+        self.session, self.folder, self.handoff, self.model, self.mode, self.effort, self.cwd, self.role = argv[: len(ARGUMENT_NAMES)]
+        self.worker = self.role == "worker"
+        if self.worker:
+            self.worker_handle, self.task, self.dispatch, self.coordinator = argv[len(ARGUMENT_NAMES):]
         self.claude = claude_arguments(self.model, self.mode, self.effort)
         self.work_end = start + WORK_SECONDS
         self.total_end = start + OVERALL_SECONDS
@@ -151,6 +164,8 @@ class Launch:
         self.old_handle = old_handle if valid_handle(old_handle) else ""
         self.cli = None
         self.created = None  # the handle of the terminal this launcher created, until the prompt is confirmed
+        self.successor = None  # the handle of the successor, from the confirmed prompt on
+        self.worktree = self.cwd  # the Orca worktree path for the coordinator commands; the cwd until the worktree is known
         self.manual = None
 
     def call(self, arguments, limit=CALL_SECONDS, until=None, minimum=MIN_CALL_SECONDS):
@@ -199,14 +214,51 @@ class Launch:
 
     def prompt(self):
         # Manual commands always use the without-handle prompt (user decision), so only the Orca start uses the handle.
-        return PROMPT_WITH_HANDLE.format(handoff=self.handoff, handle=self.old_handle) if self.old_handle else self.prompt_without_handle()
+        if self.old_handle and not self.worker:
+            return PROMPT_WITH_HANDLE.format(handoff=self.handoff, handle=self.old_handle)
+        return self.prompt_without_handle()
 
     def prompt_without_handle(self):
+        if self.worker:
+            return WORKER_PROMPT.format(handoff=self.handoff)  # a worker successor waits for its Dispatch; it has no old handle to close
         return PROMPT_WITHOUT_HANDLE.format(handoff=self.handoff)
+
+    def coordinator_commands(self, successor):
+        """The one-line text of the exact commands that replace the worker. `successor` is the handle, or the placeholder text."""
+        cli = shlex.join(self.cli or [CLI_FALLBACK])
+        new = shlex.quote(successor) if valid_handle(successor) else successor  # the placeholder is inserted unquoted
+        stop = f"{cli} orchestration worker-stop --dispatch {shlex.quote(self.dispatch)}"
+        abandon = f"{cli} orchestration worker-abandon --dispatch {shlex.quote(self.dispatch)}"
+        close = f"{cli} terminal close --terminal {shlex.quote(self.worker_handle)}"
+        start = (
+            f"{cli} orchestration worker-start --task {shlex.quote(self.task)} --retry-of {shlex.quote(self.dispatch)}"
+            f" --worktree {shlex.quote('path:' + self.worktree)} --terminal {new}"
+        )
+        return clean(f"1) {stop}; 2) if step 1 returns stop_unknown (the worker ran on a reused terminal): {abandon}, then {close}; 3) {start}")
 
     def manual_text(self):
         command = "cd " + shlex.quote(self.cwd) + " && " + shlex.join(self.claude + [self.prompt_without_handle()])
-        return f"the handoff file is at {self.handoff}; start the successor with {command}"
+        text = f"the handoff file is at {self.handoff}; start the successor with {command}"
+        if not self.worker:
+            return text
+        return (
+            f"{text} in an Orca terminal of the worktree (its handle is the value of $ORCA_TERMINAL_HANDLE there);"
+            f" then tell coordinator {self.coordinator}: {self.coordinator_commands('<new handle>')}"
+        )
+
+    def write_manual(self):
+        """Write the manual file. Returns the failure (status word, text) or None."""
+        manual = self.manual_text()
+        try:
+            runtime_dir.write_atomic(self.dir_fd, self.session + ".manual", manual)
+        except OSError:
+            return self.failed("cannot write the manual file")
+        self.manual = manual
+        return None
+
+    def early_failed(self, error):
+        """A worker failure before its IDs are verified: no manual part and no commands, only the handoff path."""
+        return "failed", f"successor failed: {error}; the handoff file is at {self.handoff}"
 
     def failed(self, error, note=None):
         parts = ["successor failed: " + error]
@@ -247,10 +299,26 @@ class Launch:
         title = shown.get("result", "terminal", "title") if shown else None
         return successor_title(title if isinstance(title, str) else "claude")
 
+    def check_dispatch(self, worktree):
+        """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. Writes the worker manual file. Returns the failure or None."""
+        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch])
+        if not shown.ok:
+            return self.early_failed(shown.error)
+        if (shown.get("result", "dispatch", "id"), shown.get("result", "dispatch", "taskId"), shown.get("result", "dispatch", "assigneeHandle")) != (
+            self.dispatch, self.task, self.worker_handle
+        ):
+            return self.early_failed("the Dispatch does not match the worker handle and Task")
+        if clean(worktree) != worktree:  # the path is printed into the commands
+            return self.early_failed("worktree path has a control character")
+        self.worktree = worktree
+        return self.write_manual()
+
     def execute(self):
         """Steps 4 to 13. Returns (status word, user text)."""
-        if self.role not in ("plain", "coordinator"):
-            return self.failed(f"role {self.role[:ERROR_CHARS]} is not supported yet")  # only the role value is cut
+        if self.role not in ROLES:
+            return self.failed(f"role {self.role[:ERROR_CHARS]} is not supported")  # only the role value is cut
+        if self.worker and self.old_handle != self.worker_handle:  # a missing or invalid variable counts as a mismatch
+            return self.early_failed("worker handle is not this terminal")
         try:
             info = os.lstat(self.session + ".handoff.md", dir_fd=self.dir_fd)
             usable = stat.S_ISREG(info.st_mode) and info.st_size > 0
@@ -258,21 +326,25 @@ class Launch:
             usable = False
         if not usable:
             return self.failed("the handoff file is missing or empty")
-        manual = self.manual_text()
-        try:
-            runtime_dir.write_atomic(self.dir_fd, self.session + ".manual", manual)
-        except OSError:
-            return self.failed("cannot write the manual file")
-        self.manual = manual
         self.cli = self.resolve_cli()
+        if not self.worker:  # a worker writes its manual file only after worker-show: until then its IDs are only what the model typed
+            failure = self.write_manual()
+            if failure:
+                return failure
         if not self.cli:
-            return self.failed("ORCA_CLI_COMMAND is invalid")
+            return self.early_failed("ORCA_CLI_COMMAND is invalid") if self.worker else self.failed("ORCA_CLI_COMMAND is invalid")
         worktree = self.worktree_path()
         if worktree is None:
-            return "manual", "no Orca: " + self.manual
+            failure = self.write_manual() if self.worker else None  # nothing can be verified without Orca: the text uses the IDs as typed and the cwd (maybe a sub-folder) as the worktree path
+            return failure or ("manual", "no Orca: " + self.manual)
+        if self.worker:
+            failure = self.check_dispatch(worktree)
+            if failure:
+                return failure
 
-        # The title variable keeps the ↻<n> title: Claude Code rewrites the terminal title after its first turn otherwise (tenth amendment on #8).
-        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 " + shlex.join(self.claude)
+        # No CLAUDE_CODE_DISABLE_TERMINAL_TITLE here (thirteenth amendment on #8): Orca reads Claude's title mark for idle detection, so the variable
+        # breaks the tui-idle wait and worker-start --terminal after the successor's first turn. The ↻<n> title therefore lasts until that turn.
+        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " " + shlex.join(self.claude)
         created = self.call(["terminal", "create", "--worktree", "path:" + worktree, "--title=" + self.title(), "--command", start_command])
         handle = created.get("result", "terminal", "handle")
         if not valid_handle(handle):
@@ -291,7 +363,31 @@ class Launch:
         if not (isinstance(stages, list) and "turn_started" in stages):
             return self.failed(sent.error if not sent.ok else "the successor did not take the prompt", self.close_created())
         self.created = None
+        self.successor = handle
+        if self.worker:
+            return self.escalate()
         return "ok", f"context handoff done: successor {handle}"
+
+    def escalate(self):
+        """Send the escalation from the worker's own terminal, without --to: it goes to the Run mailbox, which survives a coordinator handover."""
+        body = (
+            f"Worker {self.worker_handle} (Task {self.task}, Dispatch {self.dispatch}) reached 80% of its context. Its successor {self.successor}"
+            f" waits in terminal {self.successor} for a dispatch; the handoff file is at {self.handoff}."
+            f" For coordinator {self.coordinator}, run: {self.coordinator_commands(self.successor)}"
+        )
+        sent = self.call(
+            [
+                "orchestration", "send", "--from", self.worker_handle, "--type", "escalation", "--subject", f"Worker handover: successor {self.successor}",
+                "--body", clean(body), "--task-id", self.task, "--dispatch-id", self.dispatch,
+            ]
+        )
+        return ("ok", f"context handoff done: successor {self.successor}") if sent.ok else self.escalation_failed()
+
+    def escalation_failed(self):
+        return "escalation-failed", (
+            f"successor {self.successor} waits; tell the coordinator: {self.coordinator_commands(self.successor)};"
+            " the coordinator may already have the escalation, so check its inbox before you run them"
+        )
 
     def run(self):
         """Steps 3 to 13 with the launch file. Never raises."""
@@ -302,8 +398,11 @@ class Launch:
         try:
             result = self.execute()
         except Exception as error:
-            note = self.close_created() if self.created else None
-            result = self.failed(one_line(str(error) or type(error).__name__), note)
+            if self.worker and self.successor:  # the prompt is confirmed: the live successor must not be orphaned
+                result = self.escalation_failed()
+            else:
+                note = self.close_created() if self.created else None
+                result = self.failed(one_line(str(error) or type(error).__name__), note)
         try:
             runtime_dir.write_atomic(self.dir_fd, self.session + ".launch", "started\n" + result[0] + " " + result[1] + "\n")
         except OSError:
