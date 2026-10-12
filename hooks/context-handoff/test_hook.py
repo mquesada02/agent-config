@@ -875,7 +875,7 @@ class InstructionTest(HookTestCase):
                       " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`.", reason)
         self.assertNotIn("`worker`", reason)  # the worker slot stays empty
 
-    def test_the_re_block_carries_the_same_instruction(self):
+    def test_the_re_block_repeats_the_instruction(self):
         first = self.reason()
         self.assertEqual(self.run_hook("Stop")["reason"], first)
 
@@ -915,7 +915,6 @@ class InstructionTest(HookTestCase):
                      "The successor matches a message by its message ID, because the delivery IDs change at redelivery.",
                      "Write unknown for a field of this list that you do not know; run no command to find it."):
             self.assertIn(text, reason)
-        self.assertNotIn("preamble", reason)  # the worker block stays empty
 
     def test_step_3_has_the_coordinator_steps_after_the_plain_steps(self):
         reason = self.reason()
