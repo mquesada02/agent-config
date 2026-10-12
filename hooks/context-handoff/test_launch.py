@@ -154,6 +154,20 @@ class LaunchTestCase(unittest.TestCase):
         self.assertIsNone(self.read("launch"))
         self.assertIsNone(self.read("manual"))
 
+    def launch_with_failing_temp_files(self, allowed, args=None):
+        scenario_path = os.path.join(self.root, "scenario.json")
+        with open(scenario_path, "w") as handle:
+            json.dump(self.scenario, handle)
+        env = self.env(STUB_SCENARIO=scenario_path)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)] + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=60
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout.count(b"\n"), 1, result.stdout)
+        status, _, text = result.stdout.decode()[:-1].partition(" ")
+        return status, text
+
     def option(self, call, flag):
         return call["argv"][call["argv"].index(flag) + 1]
 
@@ -163,8 +177,8 @@ class LaunchTestCase(unittest.TestCase):
     def prompt_without_handle(self):
         return f"Read {self.handoff} and follow it. The session you replace did not run in an Orca terminal. When your takeover is done, tell the user to close the old session."
 
-    def manual_command(self, cwd=None, model="claude-sonnet-5-5[1m]"):
-        parts = ["claude", "--model", model, "--permission-mode", "auto", "--effort", "medium", self.prompt_without_handle()]
+    def manual_command(self, cwd=None, model="claude-sonnet-5-5[1m]", prompt=None):
+        parts = ["claude", "--model", model, "--permission-mode", "auto", "--effort", "medium", prompt or self.prompt_without_handle()]
         return "cd " + shlex.quote(cwd or self.cwd) + " && " + " ".join(shlex.quote(part) for part in parts)
 
     def manual_text(self):
@@ -683,20 +697,6 @@ runpy.run_path(launch, run_name="__main__")
 
 
 class TemporaryFileFailureTest(LaunchTestCase):
-    def launch_with_failing_temp_files(self, allowed, args=None):
-        scenario_path = os.path.join(self.root, "scenario.json")
-        with open(scenario_path, "w") as handle:
-            json.dump(self.scenario, handle)
-        env = self.env(STUB_SCENARIO=scenario_path)
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)] + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=60
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, b"")
-        self.assertEqual(result.stdout.count(b"\n"), 1, result.stdout)
-        status, _, text = result.stdout.decode()[:-1].partition(" ")
-        return status, text
-
     def test_failure_before_any_call_gives_failed_not_manual(self):
         status, text = self.launch_with_failing_temp_files(0)
         self.assertEqual(status, "failed")
@@ -773,6 +773,15 @@ class TimingTest(LaunchTestCase):
 WORKER_NAMES = ("worker_handle", "task_id", "dispatch_id", "coordinator_handle")
 
 
+class NoTestSwitchTest(unittest.TestCase):
+    def test_the_launcher_reads_only_the_documented_environment(self):
+        with open(LAUNCH) as handle:
+            source = handle.read()
+        self.assertEqual(source.count("os.environ"), 2)  # ORCA_TERMINAL_HANDLE and ORCA_CLI_COMMAND; TMPDIR is read in runtime_dir
+        self.assertIn('"ORCA_TERMINAL_HANDLE"', source)
+        self.assertIn('"ORCA_CLI_COMMAND"', source)
+
+
 class WorkerTestCase(LaunchTestCase):
     def worker_arguments(self, **override):
         values = dict(zip(WORKER_NAMES, (OLD_HANDLE, TASK, DISPATCH, COORDINATOR)))
@@ -795,10 +804,8 @@ class WorkerTestCase(LaunchTestCase):
         return f"You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {self.handoff} before you act on it."
 
     def worker_manual_text(self, worktree=None):
-        parts = ["claude", "--model", "claude-sonnet-5-5[1m]", "--permission-mode", "auto", "--effort", "medium", self.worker_prompt()]
-        command = "cd " + shlex.quote(self.cwd) + " && " + " ".join(shlex.quote(part) for part in parts)
         return (
-            f"the handoff file is at {self.handoff}; start the successor with {command} in an Orca terminal of the worktree"
+            f"the handoff file is at {self.handoff}; start the successor with {self.manual_command(prompt=self.worker_prompt())} in an Orca terminal of the worktree"
             f" (its handle is the value of $ORCA_TERMINAL_HANDLE there); then tell coordinator {COORDINATOR}: {self.commands('<new handle>', worktree)}"
         )
 
@@ -900,16 +907,9 @@ class WorkerEscalationFailureTest(WorkerTestCase):
         self.assertLess(time.monotonic() - begin, 30)
 
     def test_an_unexpected_exception_after_the_prompt(self):
-        scenario_path = os.path.join(self.root, "scenario.json")
-        with open(scenario_path, "w") as handle:
-            json.dump(self.scenario, handle)
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, "7"] + self.worker_arguments(), env=self.env(STUB_SCENARIO=scenario_path), capture_output=True, timeout=60
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, b"")
-        status, _, text = result.stdout.decode()[:-1].partition(" ")
-        self.assertEqual(result.stdout.count(b"\n"), 1)
+        # 7 temporary files, one per Orca call before the escalation: status, worktree list, worker-show, terminal show, create, wait and send.
+        # A new call earlier in the worker flow changes this number; the assertion on the last logged call below then fails.
+        status, text = self.launch_with_failing_temp_files(7, self.worker_arguments())
         self.assertEqual((status, text), ("escalation-failed", self.escalation_failed_text()))
         self.assertEqual(self.names()[-1], "terminal send")  # the 8th temporary file failed before the escalation call ran
         self.assertNotIn("terminal close", self.names())
@@ -960,9 +960,8 @@ class WorkerPreCheckTest(WorkerTestCase):
                 self.setUp()
                 worktree = os.path.join(self.root, name)  # Orca lists a symlink with the odd name; the cwd is clean, below its target
                 os.symlink(self.worktree, worktree)
-                cwd = self.cwd
                 self.scenario["worktree list"] = reply({"worktrees": [{"path": worktree, "isArchived": False, "isBare": False, "hostId": "local"}], "truncated": False})
-                status, text = self.launch(self.worker_arguments(cwd=cwd))
+                status, text = self.launch(self.worker_arguments())
                 self.assert_early_failure(status, text, "worktree path has a control character")
 
     def test_a_missing_handoff_file(self):
@@ -1012,7 +1011,7 @@ class WorkerArgumentsTest(WorkerTestCase):
 
     def test_bad_values(self):
         for name in WORKER_NAMES:
-            for bad in ("-lead", "a b", "a;b", "a\nb", "a b", "a\x85b", "", "x/y"):
+            for bad in ("-lead", "a b", "a;b", "a\nb", "a\u2028b", "a\x85b", "", "x/y"):
                 with self.subTest(name=name, bad=bad):
                     status, text = self.launch(self.worker_arguments(**{name: bad}))
                     self.assertEqual(status, "failed")

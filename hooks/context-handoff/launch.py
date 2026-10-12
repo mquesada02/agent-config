@@ -214,9 +214,9 @@ class Launch:
 
     def prompt(self):
         # Manual commands always use the without-handle prompt (user decision), so only the Orca start uses the handle.
-        if self.worker:
-            return self.prompt_without_handle()
-        return PROMPT_WITH_HANDLE.format(handoff=self.handoff, handle=self.old_handle) if self.old_handle else self.prompt_without_handle()
+        if self.old_handle and not self.worker:
+            return PROMPT_WITH_HANDLE.format(handoff=self.handoff, handle=self.old_handle)
+        return self.prompt_without_handle()
 
     def prompt_without_handle(self):
         if self.worker:
@@ -238,11 +238,12 @@ class Launch:
 
     def manual_text(self):
         command = "cd " + shlex.quote(self.cwd) + " && " + shlex.join(self.claude + [self.prompt_without_handle()])
+        text = f"the handoff file is at {self.handoff}; start the successor with {command}"
         if not self.worker:
-            return f"the handoff file is at {self.handoff}; start the successor with {command}"
+            return text
         return (
-            f"the handoff file is at {self.handoff}; start the successor with {command} in an Orca terminal of the worktree"
-            f" (its handle is the value of $ORCA_TERMINAL_HANDLE there); then tell coordinator {self.coordinator}: {self.coordinator_commands('<new handle>')}"
+            f"{text} in an Orca terminal of the worktree (its handle is the value of $ORCA_TERMINAL_HANDLE there);"
+            f" then tell coordinator {self.coordinator}: {self.coordinator_commands('<new handle>')}"
         )
 
     def write_manual(self):
@@ -334,7 +335,7 @@ class Launch:
             return self.early_failed("ORCA_CLI_COMMAND is invalid") if self.worker else self.failed("ORCA_CLI_COMMAND is invalid")
         worktree = self.worktree_path()
         if worktree is None:
-            failure = self.write_manual() if self.worker else None  # nothing can be verified without Orca: the text uses the unverified IDs
+            failure = self.write_manual() if self.worker else None  # nothing can be verified without Orca: the text uses the IDs as typed and the cwd (maybe a sub-folder) as the worktree path
             return failure or ("manual", "no Orca: " + self.manual)
         if self.worker:
             failure = self.check_dispatch(worktree)
