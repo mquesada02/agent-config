@@ -14,6 +14,9 @@ LAUNCH = os.path.join(HERE, "launch.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
 OLD_HANDLE = "term_old"
 NEW_HANDLE = "term_new"
+TASK = "task_abc123"
+DISPATCH = "ctx_abc123"
+COORDINATOR = "term_coord"
 
 # A stand-in for the Orca CLI. It logs each call (with a snapshot of the launch and manual files at that moment) and
 # answers from a scenario file: {"<command words>": {"out": <json or raw text>, "sleep": s, "exit": n, "grandchild": bool, "dir_over": path}}.
@@ -29,7 +32,7 @@ for name in os.listdir(folder):
 with open(os.environ["STUB_LOG"], "a") as handle:
     handle.write(json.dumps({"prog": os.path.basename(sys.argv[0]), "argv": argv, "files": snapshot}) + "\n")
 scenario = json.load(open(os.environ["STUB_SCENARIO"]))
-key = " ".join(argv[:2]) if argv[0] in ("terminal", "worktree") else argv[0]
+key = " ".join(argv[:2]) if argv[0] in ("terminal", "worktree", "orchestration") else argv[0]
 entry = scenario.get(key, {"out": {"ok": False, "error": {"code": "unexpected", "message": "unexpected call " + key}}, "exit": 1})
 if entry.get("dir_over"):
     if os.path.exists(entry["dir_over"]):
@@ -89,6 +92,8 @@ class LaunchTestCase(unittest.TestCase):
             "terminal wait": reply({"wait": {"satisfied": True}}),
             "terminal send": reply({"send": {"prompt": {"stages": ["input_accepted", "turn_started"]}}}),
             "terminal close": reply({"close": {"handle": NEW_HANDLE}}),
+            "orchestration worker-show": reply({"dispatch": {"id": DISPATCH, "taskId": TASK, "assigneeHandle": OLD_HANDLE, "status": "dispatched"}}),
+            "orchestration send": reply({"message": {"id": "msg_1"}}),
         }
 
     def arguments(self, **override):
@@ -132,7 +137,7 @@ class LaunchTestCase(unittest.TestCase):
             return [json.loads(line) for line in handle]
 
     def names(self):
-        return [" ".join(call["argv"][:2]) if call["argv"][0] in ("terminal", "worktree") else call["argv"][0] for call in self.calls()]
+        return [" ".join(call["argv"][:2]) if call["argv"][0] in ("terminal", "worktree", "orchestration") else call["argv"][0] for call in self.calls()]
 
     def call(self, name):
         return self.calls()[self.names().index(name)]
@@ -184,11 +189,12 @@ class PlainSuccessTest(LaunchTestCase):
         command = self.option(create, "--command")
         self.assertEqual(
             command,
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium",
+            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium",
         )
         self.assertNotIn("Read ", command)  # the prompt is sent after the idle wait
+        self.assertNotIn("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", command)  # it breaks Orca's idle detection after the first turn (thirteenth amendment on #8)
 
-    def test_the_manual_command_carries_neither_the_marker_nor_the_title_variable(self):
+    def test_the_manual_command_carries_no_marker_and_no_title_variable(self):
         self.launch()
         manual = self.read("manual")
         self.assertNotIn("CONTEXT_HANDOFF_SUCCESSOR", manual)
@@ -215,7 +221,7 @@ class PlainSuccessTest(LaunchTestCase):
         status, _ = self.launch(self.arguments(model="", permission_mode="", effort=""))
         self.assertEqual(status, "ok")
         self.assertEqual(self.option(self.call("terminal create"), "--command"),
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude",
+            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude",
         )
         self.assertIn(shlex.quote(self.prompt_without_handle()), self.read("manual"))
         self.assertNotIn("--model", self.read("manual"))
@@ -233,7 +239,7 @@ class PlainSuccessTest(LaunchTestCase):
         self.assertEqual(status, "ok")
         create = self.call("terminal create")
         self.assertEqual(self.option(create, "--worktree"), "path:" + self.worktree)
-        self.assertEqual(shlex.split(self.option(create, "--command"))[1:3], ["CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff, "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"])
+        self.assertEqual(shlex.split(self.option(create, "--command"))[1:3], ["CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff, "claude"])
         self.assertEqual(self.read("manual"), self.manual_text().replace(shlex.quote(self.cwd), shlex.quote(cwd)))
 
     def test_non_ascii_text_and_slash_models(self):
@@ -379,7 +385,7 @@ class SharedRolePathTest(LaunchTestCase):
             self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
             self.assertEqual(self.names(), ["status", "worktree list", "terminal show", "terminal create", "terminal wait", "terminal send"])
             self.assertEqual(self.option(self.call("terminal create"), "--command"),
-                "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
+                "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
             self.assertEqual(self.option(self.call("terminal send"), "--text"), self.prompt_with_handle())
             self.assertEqual(self.read("manual"), self.manual_text())
 
@@ -586,10 +592,10 @@ class FailureTest(LaunchTestCase):
 
 class EarlyFailureTest(LaunchTestCase):
     def test_roles_that_are_not_supported(self):
-        for role in ("worker", "bogus", "r" * 400):
+        for role in ("bogus", "r" * 400):
             with self.subTest(role=role[:12]):
                 status, text = self.launch(self.arguments(role=role))
-                self.assertEqual((status, text), ("failed", f"successor failed: role {role[:300]} is not supported yet"))
+                self.assertEqual((status, text), ("failed", f"successor failed: role {role[:300]} is not supported"))
                 self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
                 self.assertIsNone(self.read("manual"))
                 self.assertEqual(self.calls(), [])
@@ -677,13 +683,13 @@ runpy.run_path(launch, run_name="__main__")
 
 
 class TemporaryFileFailureTest(LaunchTestCase):
-    def launch_with_failing_temp_files(self, allowed):
+    def launch_with_failing_temp_files(self, allowed, args=None):
         scenario_path = os.path.join(self.root, "scenario.json")
         with open(scenario_path, "w") as handle:
             json.dump(self.scenario, handle)
         env = self.env(STUB_SCENARIO=scenario_path)
         result = subprocess.run(
-            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)] + self.arguments(), env=env, capture_output=True, timeout=60
+            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)] + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=60
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, b"")
@@ -762,6 +768,274 @@ class TimingTest(LaunchTestCase):
         self.assertEqual(self.names()[-1], "terminal close")
         self.assertNotIn("terminal send", self.names())
         self.assertTrue(text.endswith(self.manual_text()), text)
+
+
+WORKER_NAMES = ("worker_handle", "task_id", "dispatch_id", "coordinator_handle")
+
+
+class WorkerTestCase(LaunchTestCase):
+    def worker_arguments(self, **override):
+        values = dict(zip(WORKER_NAMES, (OLD_HANDLE, TASK, DISPATCH, COORDINATOR)))
+        values.update({name: value for name, value in override.items() if name in WORKER_NAMES})
+        base = {name: value for name, value in override.items() if name not in WORKER_NAMES}
+        return self.arguments(role="worker", **base) + list(values.values())
+
+    def worker_launch(self, **extra_env):
+        return self.launch(self.worker_arguments(), **extra_env)
+
+    def commands(self, successor, worktree=None, cli="orca"):
+        worktree = worktree or self.worktree
+        return (
+            f"1) {cli} orchestration worker-stop --dispatch {DISPATCH}; 2) if step 1 returns stop_unknown (the worker ran on a reused terminal): "
+            f"{cli} orchestration worker-abandon --dispatch {DISPATCH}, then {cli} terminal close --terminal {OLD_HANDLE}; "
+            f"3) {cli} orchestration worker-start --task {TASK} --retry-of {DISPATCH} --worktree {shlex.quote('path:' + worktree)} --terminal {successor}"
+        )
+
+    def worker_prompt(self):
+        return f"You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {self.handoff} before you act on it."
+
+    def worker_manual_text(self, worktree=None):
+        parts = ["claude", "--model", "claude-sonnet-5-5[1m]", "--permission-mode", "auto", "--effort", "medium", self.worker_prompt()]
+        command = "cd " + shlex.quote(self.cwd) + " && " + " ".join(shlex.quote(part) for part in parts)
+        return (
+            f"the handoff file is at {self.handoff}; start the successor with {command} in an Orca terminal of the worktree"
+            f" (its handle is the value of $ORCA_TERMINAL_HANDLE there); then tell coordinator {COORDINATOR}: {self.commands('<new handle>', worktree)}"
+        )
+
+    def escalation_failed_text(self):
+        return (
+            f"successor {NEW_HANDLE} waits; tell the coordinator: {self.commands(NEW_HANDLE)};"
+            " the coordinator may already have the escalation, so check its inbox before you run them"
+        )
+
+    def early_failed_text(self, error):
+        return f"successor failed: {error}; the handoff file is at {self.handoff}"
+
+    def assert_early_failure(self, status, text, error=None):
+        self.assertEqual(status, "failed")
+        self.assertTrue(text.startswith("successor failed: "), text)
+        self.assertTrue(text.endswith(f"; the handoff file is at {self.handoff}"), text)
+        if error:
+            self.assertEqual(text, self.early_failed_text(error))
+        self.assertNotIn("worker-stop", text)
+        self.assertIsNone(self.read("manual"))
+        self.assertNotIn("terminal create", self.names())
+        self.assertNotIn("orchestration send", self.names())
+
+
+class WorkerSuccessTest(WorkerTestCase):
+    def test_call_order_start_command_and_prompt(self):
+        status, text = self.worker_launch()
+        self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        self.assertEqual(
+            self.names(),
+            ["status", "worktree list", "orchestration worker-show", "terminal show", "terminal create", "terminal wait", "terminal send", "orchestration send"],
+        )
+        self.assertEqual(self.option(self.call("terminal create"), "--command"),
+            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
+        self.assertEqual(self.option(self.call("terminal send"), "--text"), self.worker_prompt())
+        self.assertEqual(self.option(self.call("orchestration worker-show"), "--dispatch"), DISPATCH)
+        self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
+
+    def test_the_worker_prompt_does_not_depend_on_the_title_lookup(self):
+        self.scenario["terminal show"] = failure("no title")
+        self.assertEqual(self.worker_launch()[0], "ok")
+        self.assertEqual(self.option(self.call("terminal send"), "--text"), self.worker_prompt())
+
+    def test_escalation_call(self):
+        self.worker_launch()
+        call = self.call("orchestration send")
+        self.assertEqual(self.option(call, "--from"), OLD_HANDLE)
+        self.assertEqual(self.option(call, "--type"), "escalation")
+        self.assertEqual(self.option(call, "--task-id"), TASK)
+        self.assertEqual(self.option(call, "--dispatch-id"), DISPATCH)
+        self.assertEqual(self.option(call, "--subject"), f"Worker handover: successor {NEW_HANDLE}")
+        self.assertNotIn("--to", call["argv"])
+        self.assertEqual(
+            self.option(call, "--body"),
+            f"Worker {OLD_HANDLE} (Task {TASK}, Dispatch {DISPATCH}) reached 80% of its context. Its successor {NEW_HANDLE} waits in terminal {NEW_HANDLE}"
+            f" for a dispatch; the handoff file is at {self.handoff}. For coordinator {COORDINATOR}, run: {self.commands(NEW_HANDLE)}",
+        )
+
+    def test_the_commands_use_the_orca_worktree_not_the_cwd_below_it(self):
+        self.worker_launch()
+        body = self.option(self.call("orchestration send"), "--body")
+        self.assertIn(shlex.quote("path:" + self.worktree), body)
+        self.assertNotIn(self.cwd, body)
+
+    def test_the_manual_file_holds_the_worker_text_with_the_worktree_before_create(self):
+        self.worker_launch()
+        expected = self.worker_manual_text(self.worktree).replace(shlex.quote("path:" + self.cwd), shlex.quote("path:" + self.worktree))
+        self.assertEqual(self.call("terminal create")["files"][SESSION + ".manual"], expected)
+        self.assertEqual(self.read("manual"), expected)
+
+    def test_orca_cli_command_names_the_cli_in_the_commands(self):
+        alias = os.path.join(self.bin, "my cli")
+        shutil.copy(os.path.join(self.bin, "orca-ide"), alias)
+        self.worker_launch(ORCA_CLI_COMMAND=shlex.quote(alias))
+        self.assertTrue(self.option(self.call("orchestration send"), "--body").endswith(self.commands(NEW_HANDLE, cli=shlex.quote(alias))))
+
+    def test_no_other_orchestration_command(self):
+        self.worker_launch()
+        self.assertEqual({name for name in self.names() if name.startswith("orchestration")}, {"orchestration worker-show", "orchestration send"})
+
+
+class WorkerEscalationFailureTest(WorkerTestCase):
+    def assert_waiting_successor(self, status, text):
+        self.assertEqual((status, text), ("escalation-failed", self.escalation_failed_text()))
+        self.assertNotIn("terminal close", self.names())
+        self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
+
+    def test_a_failed_escalation(self):
+        for entry in (failure("no mailbox"), {"out": "garbage"}, {"out": []}):
+            with self.subTest(entry=entry):
+                self.scenario["orchestration send"] = entry
+                self.assert_waiting_successor(*self.worker_launch())
+                os.remove(self.log_path)
+
+    def test_a_hung_escalation_is_killed_at_its_limit(self):
+        self.scenario["orchestration send"]["sleep"] = 60
+        begin = time.monotonic()
+        self.assert_waiting_successor(*self.worker_launch())
+        self.assertLess(time.monotonic() - begin, 30)
+
+    def test_an_unexpected_exception_after_the_prompt(self):
+        scenario_path = os.path.join(self.root, "scenario.json")
+        with open(scenario_path, "w") as handle:
+            json.dump(self.scenario, handle)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, "7"] + self.worker_arguments(), env=self.env(STUB_SCENARIO=scenario_path), capture_output=True, timeout=60
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        status, _, text = result.stdout.decode()[:-1].partition(" ")
+        self.assertEqual(result.stdout.count(b"\n"), 1)
+        self.assertEqual((status, text), ("escalation-failed", self.escalation_failed_text()))
+        self.assertEqual(self.names()[-1], "terminal send")  # the 8th temporary file failed before the escalation call ran
+        self.assertNotIn("terminal close", self.names())
+
+
+class WorkerPreCheckTest(WorkerTestCase):
+    def test_worker_show_failures_create_nothing(self):
+        wrong = lambda **change: reply({"dispatch": {"id": DISPATCH, "taskId": TASK, "assigneeHandle": OLD_HANDLE, **change}})
+        cases = {
+            "call failed": failure("no such thing"),
+            "not found": failure("Worker Dispatch ctx_abc123 was not found.", "dispatch_not_found"),
+            "other dispatch": wrong(id="ctx_other"),
+            "other task": wrong(taskId="task_other"),
+            "other assignee": wrong(assigneeHandle="term_other"),
+            "missing assignee": reply({"dispatch": {"id": DISPATCH, "taskId": TASK}}),
+            "wrong shape": reply("x"),
+            "garbage": {"out": "garbage"},
+        }
+        for name, entry in cases.items():
+            with self.subTest(name=name):
+                self.scenario["orchestration worker-show"] = entry
+                status, text = self.worker_launch()
+                self.assert_early_failure(status, text)
+                self.assertEqual(self.names(), ["status", "worktree list", "orchestration worker-show"])
+                self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
+                os.remove(self.log_path)
+
+    def test_the_mismatch_text(self):
+        self.scenario["orchestration worker-show"] = reply({"dispatch": {"id": "ctx_other", "taskId": TASK, "assigneeHandle": OLD_HANDLE}})
+        status, text = self.worker_launch()
+        self.assertEqual(text, self.early_failed_text("the Dispatch does not match the worker handle and Task"))
+
+    def test_the_terminal_handle_must_be_this_terminal(self):
+        for handle in (None, "term_other", "-bad", "bad\nhandle"):
+            with self.subTest(handle=handle):
+                status, text = self.launch(self.worker_arguments(), handle=handle)
+                self.assert_early_failure(status, text, "worker handle is not this terminal")
+                self.assertEqual(self.calls(), [])
+
+    def test_an_invalid_orca_cli_command_has_no_manual_part(self):
+        status, text = self.worker_launch(ORCA_CLI_COMMAND="'unbalanced")
+        self.assert_early_failure(status, text, "ORCA_CLI_COMMAND is invalid")
+        self.assertEqual(self.calls(), [])
+
+    def test_a_worktree_path_with_a_line_break_character(self):
+        for name in ("wt\nx", "wt x"):
+            with self.subTest(name=name):
+                self.setUp()
+                worktree = os.path.join(self.root, name)  # Orca lists a symlink with the odd name; the cwd is clean, below its target
+                os.symlink(self.worktree, worktree)
+                cwd = self.cwd
+                self.scenario["worktree list"] = reply({"worktrees": [{"path": worktree, "isArchived": False, "isBare": False, "hostId": "local"}], "truncated": False})
+                status, text = self.launch(self.worker_arguments(cwd=cwd))
+                self.assert_early_failure(status, text, "worktree path has a control character")
+
+    def test_a_missing_handoff_file(self):
+        os.remove(self.handoff)
+        self.assertEqual(self.worker_launch()[1], "successor failed: the handoff file is missing or empty")
+        self.assertEqual(self.calls(), [])
+
+
+class WorkerManualCaseTest(WorkerTestCase):
+    def test_orca_not_running(self):
+        self.scenario["status"] = reply({"app": {"running": False}, "runtime": {"reachable": True}})
+        status, text = self.worker_launch()
+        self.assertEqual((status, text), ("manual", "no Orca: " + self.worker_manual_text(self.cwd)))
+        self.assertEqual(self.read("manual"), self.worker_manual_text(self.cwd))
+        self.assertEqual(self.names(), ["status"])
+        self.assertIn("--terminal <new handle>", text)  # the placeholder is inserted unquoted
+        self.assertIn("$ORCA_TERMINAL_HANDLE", text)
+
+    def test_a_cwd_that_orca_does_not_manage(self):
+        elsewhere = os.path.join(self.root, "elsewhere")
+        os.mkdir(elsewhere)
+        status, text = self.launch(self.worker_arguments(cwd=elsewhere))
+        self.assertEqual(status, "manual")
+        self.assertNotIn("orchestration worker-show", self.names())
+        self.assertNotIn("terminal create", self.names())
+        self.assertIn(shlex.quote("path:" + elsewhere), text)
+
+
+class WorkerArgumentsTest(WorkerTestCase):
+    def test_wrong_counts(self):
+        full = self.worker_arguments()
+        cases = {
+            "worker with 8": self.arguments(role="worker"),
+            "worker with 9": full[:9],
+            "worker with 11": full[:11],
+            "worker with 13": full + ["x"],
+            "plain with 12": self.arguments(role="plain") + ["a", "b", "c", "d"],
+            "coordinator with 12": self.arguments(role="coordinator") + ["a", "b", "c", "d"],
+            "unknown role with 12": self.arguments(role="bogus") + ["a", "b", "c", "d"],
+        }
+        for name, args in cases.items():
+            with self.subTest(name=name):
+                status, text = self.launch(args)
+                self.assertEqual(status, "failed")
+                self.assertTrue(text.startswith("successor failed: invalid arguments: expected "), text)
+                self.assert_nothing_called_or_written()
+
+    def test_bad_values(self):
+        for name in WORKER_NAMES:
+            for bad in ("-lead", "a b", "a;b", "a\nb", "a b", "a\x85b", "", "x/y"):
+                with self.subTest(name=name, bad=bad):
+                    status, text = self.launch(self.worker_arguments(**{name: bad}))
+                    self.assertEqual(status, "failed")
+                    self.assertTrue(text.startswith("successor failed: invalid arguments: "), text)
+                    if bad.strip():
+                        self.assertNotIn(bad, text)
+                    self.assert_nothing_called_or_written()
+
+
+class WorkerTimingTest(WorkerTestCase):
+    def test_a_work_deadline_after_the_prompt_gives_escalation_failed(self):
+        # The limits are constants (no test-only switch), so this case takes real time: about 83 s of wall time and almost no CPU.
+        # Five calls take 5 s each, the idle wait 55 s and the prompt send 3 s; under 3 s are left, so no escalation call is made.
+        for name in ("status", "worktree list", "orchestration worker-show", "terminal show", "terminal create"):
+            self.scenario[name]["sleep"] = 5
+        self.scenario["terminal wait"]["sleep"] = 55
+        self.scenario["terminal send"]["sleep"] = 3
+        begin = time.monotonic()
+        status, text = self.launch(self.worker_arguments(), timeout=110)
+        self.assertLess(time.monotonic() - begin, 100)
+        self.assertEqual((status, text), ("escalation-failed", self.escalation_failed_text()))
+        self.assertNotIn("orchestration send", self.names())
+        self.assertNotIn("terminal close", self.names())
 
 
 if __name__ == "__main__":
