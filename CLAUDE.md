@@ -101,7 +101,7 @@ Plan-review loop:
 (b) Apply the recorded Minor findings.
 (c) Run the final phase until 2 consecutive rounds have no Blocking finding. List new Minor findings for the user instead of fixing them.
 (d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
-This loop uses no `/simplify`. It differs from section 6 on purpose: it has no quality phase, so a final-phase Blocking finding goes back to the correctness phase.
+This loop uses no `/simplify`. It differs from section 6 on purpose in two ways. It has no quality phase, so a final-phase Blocking finding goes back to the correctness phase. A Blocking fix that changes only wording also restarts the count, because in a spec the wording is the content.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
@@ -114,6 +114,7 @@ After starting step 5, the original session acts as a **coordinator** of the Orc
 Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
 If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
+A worker has no direct channel to the user. Where a rule says to list something for the user, the worker lists it in its `worker_done` report, and the coordinator passes it to the user.
 
 ## 8. Git contribution
 
@@ -140,7 +141,7 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 
 ## 11. Task delegation
 
-- Use built-in subagents (Agent tool) ONLY for these review runs:
+- Use built-in subagents (Agent tool) only for these review runs:
   - /plan-review runs: section 7, steps 3 and 5.3.
   - /mattpocock-skills:code-review runs: section 6 and section 7, step 5.5.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
