@@ -37,7 +37,7 @@ The `.gitignore` file ignores everything and then allows these files:
 | `settings.json` | Claude Code settings: plugins, permissions, hooks, output style |
 | `hooks/force-model-invocation.sh` | Startup hook: keeps plugin and claude.ai skills model-invocable after updates |
 | `hooks/block-aws-credentials.py` | Tool-call hook: blocks the calls that could print AWS (Amazon Web Services) credentials into a session |
-| `hooks/context-handoff/*.py` | Context hook: before the context window fills up, it blocks the session and asks it to hand over to a new session. The folder also holds the launcher, the status-line wrapper, a shared module, and the tests |
+| `hooks/context-handoff/*.py` | Context hook: before the context window is full, it blocks the session with an instruction to hand off to a new session. The folder also holds the launcher, the status-line wrapper, a shared module (`runtime_dir.py`), and the tests |
 | `.claude/CLAUDE.md`, `docs/agents/*.md` | Settings for the skills in this repository: where issues live, the triage labels, and the domain docs |
 | `scripts/update-orca-skills.sh` | Updates the Orca skills to a pinned commit, on request |
 | `skills/*/SKILL.md` | My skills (see [Third-party content](#third-party-content)) |
@@ -62,7 +62,7 @@ other hook scripts, and `skills/synced/` (skills that claude.ai syncs).
      installer creates the `hooks/cbm-*` scripts that `settings.json` runs.
    - Node.js and the `ccstatusline` package (`npm install -g ccstatusline`),
      for the status line.
-   - Python 3 (`python3`), for the `.py` scripts in `hooks/`.
+   - Python 3.8 or newer (`python3`), for the `.py` scripts in `hooks/`.
    - bash 4.4 or newer, git 2.32 or newer, `tar`, `grep`, `awk` and GNU coreutils
      (for `sort -V`). The hooks and the update script use them.
 4. Start Claude Code and run `/plugin` to install any plugin from
