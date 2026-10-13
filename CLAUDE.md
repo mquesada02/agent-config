@@ -95,17 +95,22 @@ When implementing any task, you must do these steps in the corresponding order:
 
 1. /mattpocock-skills:wayfinder to create a general map for the task.
 2. /mattpocock-skills:to-spec after grilling the user, for the general spec.
-3. Review the spec with subagents using the axes from /mattpocock-skills:code-review. Use only the correctness phase of section 6, then apply the recorded minor issues.
+3. Review the spec with `/plan-review spec general` (its inputs: the spec, the map, the map's resolved decision tickets, and the user's request as a link plus a word-for-word quote). Run the plan-review loop below. The main section 7 session applies every fix to the spec issue body, before any dispatch. This loop differs from section 6 on purpose: it has no quality phase and no `/simplify`, so a final-phase Blocking finding goes back to the correctness phase.
+Plan-review loop:
+(a) Run the correctness phase until 2 consecutive rounds have no Blocking finding. Record the Minor findings.
+(b) Apply the recorded Minor findings.
+(c) Run the final phase until 2 consecutive rounds have no Blocking finding. List new Minor findings for the user instead of fixing them.
+(d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
-5.3. Review the spec with subagents using the axes from /mattpocock-skills:code-review. Use only the correctness phase of section 6, then apply the recorded minor issues.
+5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: a final-phase Blocking finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
 5.4. After the spec comes out clean, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
-Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
 If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
 
@@ -134,7 +139,9 @@ Always work inside a git worktree, for every task, including one-line fixes and 
 
 ## 11. Task delegation
 
-- Use built-in subagents (Agent tool) ONLY for /mattpocock-skills:code-review runs. That includes the reviews in section 7, steps 3, 5.3 and 5.5.
+- Use built-in subagents (Agent tool) ONLY for these review runs:
+  - /plan-review runs: section 7, steps 3 and 5.3.
+  - /mattpocock-skills:code-review runs: section 6 and section 7, step 5.5.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.
