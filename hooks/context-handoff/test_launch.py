@@ -1051,7 +1051,7 @@ class WorkerTestCase(LaunchTestCase):
     def commands(self, successor, worktree=None, cli="orca"):
         worktree = worktree or self.worktree
         return (
-            f"1) {cli} orchestration worker-stop --dispatch {DISPATCH}; 2) if step 1 returns stop_unknown (the worker ran on a reused terminal): "
+            f"1) {cli} orchestration worker-stop --dispatch {DISPATCH}; 2) if step 1 returns stop_unknown (normal after the first handover of a Task: every successor Dispatch is started with worker-start --terminal, and such a Dispatch returns stop_unknown): "
             f"{cli} orchestration worker-abandon --dispatch {DISPATCH}, then {cli} terminal close --terminal {OLD_HANDLE}; "
             f"3) {cli} orchestration worker-start --task {TASK} --retry-of {DISPATCH} --worktree {shlex.quote('path:' + worktree)} --terminal {successor}"
         )
