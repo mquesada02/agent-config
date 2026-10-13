@@ -96,16 +96,10 @@ class ClaudeMdWiringTest(unittest.TestCase):
         block = self.step3.lower().split(LOOP_MARKER, 1)[1]
         for word in (
             "correctness phase", "final phase", "2 consecutive rounds", "no blocking",
-            "apply the recorded minor", "list", "count at zero",
+            "apply the recorded minor", "count at zero", "uses no `/simplify`", "differs from section 6",
         ):
             self.assertIn(word, block)
         self.assertEqual(re.findall(r"^\(([a-d])\) ", block, re.M), ["a", "b", "c", "d"])
-
-    def test_step_3_says_no_simplify_and_differs_from_section_6(self):
-        text = self.step3.lower()
-        self.assertIn("/simplify", text)
-        self.assertIn("no ", text.split("/simplify")[0][-30:])
-        self.assertIn("differs from section 6", text)
 
     def test_step_53_states_the_restart_rule(self):
         self.assertIn("count at zero", self.step53.lower())

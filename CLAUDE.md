@@ -95,12 +95,13 @@ When implementing any task, you must do these steps in the corresponding order:
 
 1. /mattpocock-skills:wayfinder to create a general map for the task.
 2. /mattpocock-skills:to-spec after grilling the user, for the general spec.
-3. Review the spec with `/plan-review spec general` (its inputs: the spec, the map, the map's resolved decision tickets, and the user's request as a link plus a word-for-word quote). Run the plan-review loop below. The main section 7 session applies every fix to the spec issue body, before any dispatch. This loop differs from section 6 on purpose: it has no quality phase and no `/simplify`, so a final-phase Blocking finding goes back to the correctness phase.
+3. Review the spec with `/plan-review spec general` (its inputs: the spec, the map, the map's resolved decision tickets, and the user's request as a link plus a word-for-word quote). Run the plan-review loop below. The main section 7 session applies every fix to the spec issue body, before any dispatch.
 Plan-review loop:
 (a) Run the correctness phase until 2 consecutive rounds have no Blocking finding. Record the Minor findings.
 (b) Apply the recorded Minor findings.
 (c) Run the final phase until 2 consecutive rounds have no Blocking finding. List new Minor findings for the user instead of fixing them.
 (d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
+This loop uses no `/simplify`. It differs from section 6 on purpose: it has no quality phase, so a final-phase Blocking finding goes back to the correctness phase.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
