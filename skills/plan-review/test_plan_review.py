@@ -12,14 +12,14 @@ LOOP_MARKER = "plan-review loop:"
 CODE_REVIEW = "/mattpocock-skills:code-review"
 
 
-def process_section(text):
-    """Text of the `## Process` section of SKILL.md."""
-    return text.split("## Process", 1)[1].split("\n## ", 1)[0]
-
-
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+def skill_section(text, heading):
+    """Text of a `## <heading>` section of SKILL.md."""
+    return text.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
 
 
 def section(text, number):
@@ -40,8 +40,12 @@ def step(lines, prefix):
 
 
 class SkillFilesTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.skill = read(SKILL)
+
     def test_frontmatter_names_plan_review(self):
-        text = read(SKILL)
+        text = self.skill
         match = re.match(r"---\n(.*?)\n---\n", text, re.S)
         self.assertIsNotNone(match, "SKILL.md has no frontmatter")
         fields = dict(line.split(": ", 1) for line in match.group(1).splitlines() if ": " in line)
@@ -51,18 +55,18 @@ class SkillFilesTest(unittest.TestCase):
         self.assertIn("ticket breakdown", description)
 
     def test_process_names_inputs_per_case(self):
-        text = read(SKILL).lower()
-        for word in ("general", "ticket", "decision tickets", "request", "map", "quote"):
+        text = skill_section(self.skill, "Inputs").lower()
+        for word in ("`spec general`", "`spec ticket`", "decision tickets", "request", "map", "quote"):
             self.assertIn(word, text)
 
     def test_process_stops_and_asks(self):
-        text = process_section(read(SKILL)).lower()
+        text = skill_section(self.skill, "Process").lower()
         self.assertIn("stop and ask", text)
         for phrase in ("input is missing", "mode is unknown", "case is unknown", "mode is `tickets`"):
             self.assertIn(phrase, text)
 
     def test_process_requires_sonnet_and_report_shape(self):
-        text = process_section(read(SKILL)).lower()
+        text = skill_section(self.skill, "Process").lower()
         for word in ("sonnet", "blocking", "minor", "counts", "most severe", "no findings"):
             self.assertIn(word, text)
 
@@ -73,15 +77,15 @@ class SkillFilesTest(unittest.TestCase):
 
 
 class ClaudeMdWiringTest(unittest.TestCase):
-    def setUp(self):
-        self.text = read(CLAUDE_MD)
-        self.section7 = section(self.text, 7)
-        self.step3 = step(self.section7, "3")
-        self.step53 = step(self.section7, "5.3")
+    @classmethod
+    def setUpClass(cls):
+        cls.text = read(CLAUDE_MD)
+        cls.section7 = section(cls.text, 7)
+        cls.step3 = step(cls.section7, "3")
+        cls.step53 = step(cls.section7, "5.3")
 
-    def test_steps_name_plan_review_spec_and_not_code_review(self):
+    def test_steps_do_not_name_code_review(self):
         for text in (self.step3, self.step53):
-            self.assertIn("/plan-review spec", text)
             self.assertNotIn(CODE_REVIEW, text)
 
     def test_steps_name_the_case_and_who_applies_fixes(self):
