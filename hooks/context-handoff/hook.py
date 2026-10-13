@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Context hook: at 80% of the model's context window it blocks the session with the handoff instruction, re-blocks an
+# Context hook: at 40% of the model's context window it blocks the session with the handoff instruction, re-blocks an
 # ignored instruction, and halts the session after 3 re-blocks. It runs on Stop and PostToolUse and must never break a
 # session: any internal error gives no output and exit 0 (auto-compact stays the backstop).
 #
@@ -7,7 +7,7 @@
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
 # The hook and launch.py share these literals without a shared module: the file names .launch and .manual, the word
-# "started", the result status words, the successor marker being the predecessor's handoff path, the 80% in the worker escalation text,
+# "started", the result status words, the successor marker being the predecessor's handoff path, the 40% in the worker escalation text,
 # and the one-line cleaning rule: every character in a Unicode "other" category (category starting with C) and U+2028 and U+2029 become one space.
 # Change them together.
 import json
@@ -18,7 +18,7 @@ import stat
 import sys
 import unicodedata
 
-THRESHOLD_PERCENT = 80
+THRESHOLD_PERCENT = 40
 REBLOCK_GRACE_CALLS = 10  # PostToolUse calls since the last block before the next re-block
 MAX_REBLOCKS = 3
 BASH_TIMEOUT_MS = 120000

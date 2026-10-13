@@ -23,7 +23,7 @@ RESULTS = {
     "escalation-failed": "escalation-failed successor term_abc waits; tell the coordinator: 1) orca orchestration worker-stop --dispatch d1; the coordinator may already have the escalation, so check its inbox before you run them",
     "manual": "manual no Orca: the handoff file is at /tmp/x/claude-context-handoff/S.handoff.md; start the successor with cd /w && claude 'Read it'",
 }
-WINDOW = 100000  # a window file with this size puts the 80% line at 80000 tokens
+WINDOW = 100000  # a window file with this size puts the 40% line at 40000 tokens
 GOOD_STATE = {"events": 0, "triggered": False, "reblocks": 0, "calls_since_block": 0, "done": False, "command": "", "handoff": ""}
 TRIGGERED_STATE = {**GOOD_STATE, "events": 4, "triggered": True, "command": "python3 -I x ROLE_SLOT", "handoff": "/h"}
 
@@ -141,16 +141,16 @@ class ModuleSearchPathTest(HookTestCase):
 
 
 class ThresholdTest(HookTestCase):
-    def test_below_80_percent_gives_no_output_but_counts_the_event(self):
+    def test_below_40_percent_gives_no_output_but_counts_the_event(self):
         self.seed_window()
-        self.write_transcript([assistant(79999)])
+        self.write_transcript([assistant(39999)])
         self.assertIsNone(self.run_hook())
         self.assertEqual(self.state()["events"], 1)
         self.assertFalse(self.state()["triggered"])
 
-    def test_exactly_80_percent_blocks_with_the_instruction(self):
+    def test_exactly_40_percent_blocks_with_the_instruction(self):
         self.seed_window()
-        self.write_transcript([assistant(80000)])
+        self.write_transcript([assistant(40000)])
         output = self.run_hook()
         self.assert_block(output)
         reason = output["reason"]
@@ -169,7 +169,7 @@ class ThresholdTest(HookTestCase):
 
     def test_usage_adds_input_and_both_cache_counts(self):
         self.seed_window()
-        entry = {"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 1000, "cache_read_input_tokens": 70000, "cache_creation_input_tokens": 9000}}}
+        entry = {"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 500, "cache_read_input_tokens": 35000, "cache_creation_input_tokens": 4500}}}
         self.write_transcript([json.dumps(entry)])
         self.assert_block(self.run_hook())
 
@@ -215,13 +215,13 @@ class ThresholdTest(HookTestCase):
 class WindowTest(HookTestCase):
     def test_window_file_comes_before_the_table_and_keeps_the_model_suffix(self):
         self.seed_window(size=100000, model_id="claude-sonnet-5-5[1m]")
-        self.write_transcript([assistant(80000, model="claude-sonnet-5-5")])
+        self.write_transcript([assistant(40000, model="claude-sonnet-5-5")])
         self.assertEqual(self.command_args(self.run_hook())[6], "claude-sonnet-5-5[1m]")
 
     def test_table_is_used_without_a_window_file_and_gives_the_transcript_model(self):
-        self.write_transcript([assistant(799999, model="claude-sonnet-5-5-20260101")])
+        self.write_transcript([assistant(399999, model="claude-sonnet-5-5-20260101")])
         self.assertIsNone(self.run_hook())
-        self.write_transcript([assistant(800000, model="claude-sonnet-5-5-20260101")])
+        self.write_transcript([assistant(400000, model="claude-sonnet-5-5-20260101")])
         self.assertEqual(self.command_args(self.run_hook())[6], "claude-sonnet-5-5-20260101")
 
     def test_table_prefix_boundaries(self):
@@ -282,7 +282,7 @@ class WindowTest(HookTestCase):
 
     def test_whole_float_size_is_accepted_as_an_integer(self):
         self.seed("window", json.dumps({"context_window_size": 100000.0, "model_id": "m"}))
-        self.write_transcript([assistant(80000)])
+        self.write_transcript([assistant(40000)])
         self.assert_block(self.run_hook())
 
 
@@ -687,7 +687,7 @@ class LauncherCallTest(LauncherTestCase):
             self.assertIsNone(self.run_hook(event))
         self.assertIsNone(self.launcher_call({"stdout": RESULTS["failed"]}))
 
-    def test_a_launcher_call_while_not_triggered_is_an_ordinary_call_below_80_percent(self):
+    def test_a_launcher_call_while_not_triggered_is_an_ordinary_call_below_40_percent(self):
         self.seed("state", GOOD_STATE)
         self.seed_window()
         self.write_transcript([assistant(100)])
@@ -697,7 +697,7 @@ class LauncherCallTest(LauncherTestCase):
         self.assertFalse(self.state()["triggered"])
         self.assertFalse(self.state()["done"])
 
-    def test_a_launcher_call_while_not_triggered_at_80_percent_triggers_the_block(self):
+    def test_a_launcher_call_while_not_triggered_at_40_percent_triggers_the_block(self):
         self.seed("state", GOOD_STATE)
         self.seed_over_threshold()
         self.assert_block(self.launcher_call({"stdout": RESULTS["ok"]}))
@@ -796,7 +796,7 @@ class LoopGuardTest(HookTestCase):
     def generic(self, percent=90):
         return f"handoff loop: context already at {percent}% after takeover"
 
-    def test_the_first_event_at_80_percent_with_the_marker_halts_with_the_manual_text(self):
+    def test_the_first_event_at_40_percent_with_the_marker_halts_with_the_manual_text(self):
         output = self.run_marked()
         self.assert_halt(output)
         self.assertEqual(output["stopReason"], self.generic() + "; " + self.MANUAL)
@@ -808,8 +808,8 @@ class LoopGuardTest(HookTestCase):
         self.assertIsNone(self.run_marked(event="PostToolUse"))
 
     def test_the_percent_is_rounded_down(self):
-        self.write_transcript([assistant(80999)])
-        self.assertEqual(self.run_marked()["stopReason"], self.generic(80) + "; " + self.MANUAL)
+        self.write_transcript([assistant(40999)])
+        self.assertEqual(self.run_marked()["stopReason"], self.generic(40) + "; " + self.MANUAL)
 
     def test_the_guard_also_fires_on_a_post_tool_use_event(self):
         self.assert_halt(self.run_marked(event="PostToolUse"))
@@ -822,7 +822,7 @@ class LoopGuardTest(HookTestCase):
         self.seed("state", {**GOOD_STATE, "events": 1}, session="later")
         self.assert_block(self.run_marked(session="later"))
 
-    def test_a_successor_with_a_first_event_below_80_percent_hands_over_normally_later(self):
+    def test_a_successor_with_a_first_event_below_40_percent_hands_over_normally_later(self):
         self.write_transcript([assistant(100)])
         self.assertIsNone(self.run_marked())
         self.write_transcript([assistant(90000)])
@@ -837,8 +837,8 @@ class LoopGuardTest(HookTestCase):
 
     def test_the_window_table_is_the_fallback(self):
         os.remove(os.path.join(self.folder, SESSION + ".window"))
-        self.write_transcript([assistant(800000, model="claude-sonnet-5-5-20260101")])
-        self.assertEqual(self.run_marked()["stopReason"], self.generic(80) + "; " + self.MANUAL)
+        self.write_transcript([assistant(400000, model="claude-sonnet-5-5-20260101")])
+        self.assertEqual(self.run_marked()["stopReason"], self.generic(40) + "; " + self.MANUAL)
 
     def test_a_marker_that_cannot_be_trusted_gives_only_the_generic_text(self):
         other = os.path.join(self.root, "other", "claude-context-handoff")

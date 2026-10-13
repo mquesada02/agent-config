@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Launcher: the model runs it when the context hook blocks a session at 80%. It starts the successor session in a new
+# Launcher: the model runs it when the context hook blocks a session at 40%. It starts the successor session in a new
 # Orca terminal in the same worktree, proves that the successor is alive, sends it the prompt, and prints exactly one
 # result line ("<status word> <user text>") for the hook. It always exits 0 and writes nothing to stderr.
 #
@@ -377,7 +377,7 @@ class Launch:
     def escalate(self):
         """Send the escalation from the worker's own terminal, without --to: it goes to the Run mailbox, which survives a coordinator handover."""
         body = (
-            f"Worker {self.worker_handle} (Task {self.task}, Dispatch {self.dispatch}) reached 80% of its context. Its successor {self.successor}"
+            f"Worker {self.worker_handle} (Task {self.task}, Dispatch {self.dispatch}) reached 40% of its context. Its successor {self.successor}"
             f" waits in terminal {self.successor} for a dispatch; the handoff file is at {self.quoted_handoff}."
             f" For coordinator {self.coordinator}, run: {self.coordinator_commands(self.successor)}"
         )
