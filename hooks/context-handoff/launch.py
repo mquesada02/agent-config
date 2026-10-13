@@ -131,7 +131,10 @@ def managed_worktree(listing, cwd):
             continue
         if row.get("isArchived") is True or row.get("isBare") is True or row.get("hostId") != "local":
             continue
-        real = os.path.realpath(path)
+        try:
+            real = os.path.realpath(path)
+        except (ValueError, OSError):  # a bad row (for example a NUL byte in the path) is skipped, not fatal
+            continue
         inside = target == real or (not truncated and target.startswith(real.rstrip("/") + "/"))  # by path component
         if inside and (best is None or len(real) > len(best[0])):
             best = (real, path)
@@ -167,6 +170,7 @@ class Launch:
         self.successor = None  # the handle of the successor, from the confirmed prompt on
         self.worktree = self.cwd  # the Orca worktree path for the coordinator commands; the cwd until the worktree is known
         self.manual = None
+        self.quoted_handoff = shlex.quote(self.handoff)  # every printed or sent text uses this form; the successor marker keeps the raw path
 
     def call(self, arguments, limit=CALL_SECONDS, until=None, minimum=MIN_CALL_SECONDS):
         """Run one Orca CLI call. `arguments` may be a function of the granted seconds. Never raises for a call problem."""
@@ -215,13 +219,13 @@ class Launch:
     def prompt(self):
         # Manual commands always use the without-handle prompt (user decision), so only the Orca start uses the handle.
         if self.old_handle and not self.worker:
-            return PROMPT_WITH_HANDLE.format(handoff=self.handoff, handle=self.old_handle)
+            return PROMPT_WITH_HANDLE.format(handoff=self.quoted_handoff, handle=self.old_handle)
         return self.prompt_without_handle()
 
     def prompt_without_handle(self):
         if self.worker:
-            return WORKER_PROMPT.format(handoff=self.handoff)  # a worker successor waits for its Dispatch; it has no old handle to close
-        return PROMPT_WITHOUT_HANDLE.format(handoff=self.handoff)
+            return WORKER_PROMPT.format(handoff=self.quoted_handoff)  # a worker successor waits for its Dispatch; it has no old handle to close
+        return PROMPT_WITHOUT_HANDLE.format(handoff=self.quoted_handoff)
 
     def coordinator_commands(self, successor):
         """The one-line text of the exact commands that replace the worker. `successor` is the handle, or the placeholder text."""
@@ -238,7 +242,7 @@ class Launch:
 
     def manual_text(self):
         command = "cd " + shlex.quote(self.cwd) + " && " + shlex.join(self.claude + [self.prompt_without_handle()])
-        text = f"the handoff file is at {self.handoff}; start the successor with {command}"
+        text = f"the handoff file is at {self.quoted_handoff}; start the successor with {command}"
         if not self.worker:
             return text
         return (
@@ -258,7 +262,7 @@ class Launch:
 
     def early_failed(self, error):
         """A worker failure before its IDs are verified: no manual part and no commands, only the handoff path."""
-        return "failed", f"successor failed: {error}; the handoff file is at {self.handoff}"
+        return "failed", f"successor failed: {error}; the handoff file is at {self.quoted_handoff}"
 
     def failed(self, error, note=None):
         parts = ["successor failed: " + error]
@@ -372,7 +376,7 @@ class Launch:
         """Send the escalation from the worker's own terminal, without --to: it goes to the Run mailbox, which survives a coordinator handover."""
         body = (
             f"Worker {self.worker_handle} (Task {self.task}, Dispatch {self.dispatch}) reached 80% of its context. Its successor {self.successor}"
-            f" waits in terminal {self.successor} for a dispatch; the handoff file is at {self.handoff}."
+            f" waits in terminal {self.successor} for a dispatch; the handoff file is at {self.quoted_handoff}."
             f" For coordinator {self.coordinator}, run: {self.coordinator_commands(self.successor)}"
         )
         sent = self.call(
