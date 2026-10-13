@@ -697,7 +697,7 @@ class LauncherCallTest(LauncherTestCase):
         self.assertFalse(self.state()["triggered"])
         self.assertFalse(self.state()["done"])
 
-    def test_a_launcher_call_while_not_triggered_at_40_percent_triggers_the_block(self):
+    def test_a_launcher_call_while_not_triggered_over_the_threshold_triggers_the_block(self):
         self.seed("state", GOOD_STATE)
         self.seed_over_threshold()
         self.assert_block(self.launcher_call({"stdout": RESULTS["ok"]}))
@@ -796,7 +796,7 @@ class LoopGuardTest(HookTestCase):
     def generic(self, percent=90):
         return f"handoff loop: context already at {percent}% after takeover"
 
-    def test_the_first_event_at_40_percent_with_the_marker_halts_with_the_manual_text(self):
+    def test_the_first_event_over_the_threshold_with_the_marker_halts_with_the_manual_text(self):
         output = self.run_marked()
         self.assert_halt(output)
         self.assertEqual(output["stopReason"], self.generic() + "; " + self.MANUAL)
