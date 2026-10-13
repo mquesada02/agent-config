@@ -116,6 +116,30 @@ class HookTestCase(unittest.TestCase):
         self.write_transcript([assistant(90000)])
 
 
+# Runs a script as __main__ with a folder holding a shadow `runtime_dir` module first on the search path. The driver never imports the module itself.
+SHADOW_DRIVER = """
+import runpy, sys
+shadow, script = sys.argv[1], sys.argv[2]
+sys.path.insert(0, shadow)
+sys.argv = [script] + sys.argv[3:]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+class ModuleSearchPathTest(HookTestCase):
+    def test_the_real_runtime_dir_module_wins_over_a_shadow_module_earlier_on_the_search_path(self):
+        shadow = os.path.join(self.root, "shadow")
+        os.mkdir(shadow)
+        with open(os.path.join(shadow, "runtime_dir.py"), "w") as handle:
+            handle.write("FOLDER_NAME = 'shadow'\n")
+        self.seed_over_threshold()
+        data = json.dumps(self.hook_input()).encode()
+        result = subprocess.run([sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, HOOK], input=data, env=self.env(), capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assert_block(json.loads(result.stdout))
+
+
 class ThresholdTest(HookTestCase):
     def test_below_80_percent_gives_no_output_but_counts_the_event(self):
         self.seed_window()

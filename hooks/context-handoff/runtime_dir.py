@@ -8,7 +8,7 @@ import stat
 import time
 
 FOLDER_NAME = "claude-context-handoff"
-SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MAX_READ_BYTES = 64 * 1024
 LOCK_WAIT_SECONDS = 5
 LOCK_RETRY_SECONDS = 0.01
@@ -22,7 +22,7 @@ def runtime_dir_path():
 
 
 def valid_session_id(session_id):
-    return isinstance(session_id, str) and SESSION_ID_PATTERN.fullmatch(session_id) is not None
+    return isinstance(session_id, str) and _SESSION_ID_PATTERN.fullmatch(session_id) is not None
 
 
 def open_runtime_dir(path=None):
@@ -50,20 +50,67 @@ def open_runtime_dir(path=None):
     return fd
 
 
+def _close_quietly(file_fd):
+    try:
+        os.close(file_fd)
+    except OSError:
+        pass  # a failed file-object wrap may already have closed it
+
+
+def _unlink_quietly(dir_fd, name):
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def _write_temp(dir_fd, text):
+    """Write text to a new temp file in the folder. Returns its name; the caller owns the file.
+
+    A temp-name collision retries with a new name. The temp file is removed on any failure.
+    """
+    while True:
+        temp_name = secrets.token_hex(8) + ".tmp"
+        try:
+            file_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
+            break
+        except FileExistsError:
+            continue
+    try:
+        try:
+            handle = os.fdopen(file_fd, "w", encoding="utf-8")
+        except BaseException:
+            _close_quietly(file_fd)
+            raise
+        with handle:
+            handle.write(text)
+    except BaseException:
+        _unlink_quietly(dir_fd, temp_name)
+        raise
+    return temp_name
+
+
 def write_atomic(dir_fd, name, text):
     """Write text to `name` inside the folder with a temp file and a rename. The temp file is removed on any failure."""
-    temp_name = secrets.token_hex(8) + ".tmp"
-    file_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
+    temp_name = _write_temp(dir_fd, text)
     try:
-        with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
         os.rename(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except BaseException:
-        try:
-            os.unlink(temp_name, dir_fd=dir_fd)
-        except OSError:
-            pass
+        _unlink_quietly(dir_fd, temp_name)
         raise
+
+
+def create_exclusive(dir_fd, name, text):
+    """Publish `name` in the folder with the full text in one step, only if no entry of that name exists.
+
+    Raises FileExistsError when an entry exists (file, directory, symlink or FIFO; it is left unchanged). Every other
+    OSError propagates unchanged. The temp file is removed in every case; a failed removal is ignored.
+    """
+    temp_name = _write_temp(dir_fd, text)
+    try:
+        os.link(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd, follow_symlinks=False)
+    finally:
+        _unlink_quietly(dir_fd, temp_name)
 
 
 def _open_regular_file(dir_fd, name, flags, mode=0o600):
@@ -87,7 +134,12 @@ def read_file(dir_fd, name):
         file_fd = _open_regular_file(dir_fd, name, os.O_RDONLY)
     except FileNotFoundError:
         return None
-    with os.fdopen(file_fd, "rb") as handle:
+    try:
+        handle = os.fdopen(file_fd, "rb")
+    except BaseException:
+        _close_quietly(file_fd)
+        raise
+    with handle:
         data = handle.read(MAX_READ_BYTES + 1)
     if len(data) > MAX_READ_BYTES:
         raise OSError(f"{name} is over {MAX_READ_BYTES} bytes")

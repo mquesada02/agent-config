@@ -8,6 +8,9 @@ import tempfile
 import textwrap
 import time
 import unittest
+from unittest import mock
+
+import runtime_dir  # in-process tests only; test discovery puts this folder on the search path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -140,6 +143,156 @@ class WriteAtomicTest(DriverTestCase):
             print(json.dumps([raised, sorted(os.listdir(fd))]))
         """
         self.assertEqual(self.drive(body), [True, ["a.window"]])
+
+
+class ModuleSurfaceTest(DriverTestCase):
+    def test_public_names_are_the_old_set_plus_create_exclusive_without_the_session_pattern(self):
+        names = self.drive("print(json.dumps(sorted(n for n, v in vars(runtime_dir).items() if not n.startswith('_') and not hasattr(v, '__spec__'))))")  # modules have __spec__
+        self.assertEqual(
+            set(names),
+            {"FOLDER_NAME", "MAX_READ_BYTES", "LOCK_WAIT_SECONDS", "LOCK_RETRY_SECONDS", "runtime_dir_path", "valid_session_id", "open_runtime_dir", "write_atomic", "create_exclusive", "read_file", "lock_file"},
+        )
+
+
+class CreateExclusiveTest(DriverTestCase):
+    def test_publishes_the_full_content_and_leaves_no_temp_file(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            runtime_dir.create_exclusive(fd, "a.launch", "started\\n")
+            print(json.dumps(sorted(os.listdir(fd))))
+        """
+        self.assertEqual(self.drive(body), ["a.launch"])
+        with open(os.path.join(self.folder, "a.launch")) as handle:
+            self.assertEqual(handle.read(), "started\n")
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.folder, "a.launch")).st_mode), 0o600)
+
+    def test_an_existing_entry_of_any_kind_gives_file_exists_and_stays_unchanged(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            os.chdir(runtime_dir.runtime_dir_path())
+            with open("keep", "w") as handle: handle.write("keep")
+            os.mkdir("d", dir_fd=fd)
+            os.symlink("keep", "link", dir_fd=fd)
+            os.symlink("missing", "dangling", dir_fd=fd)
+            os.mkfifo("fifo", dir_fd=fd)
+            with open("regular", "w") as handle: handle.write("old")
+            result = {}
+            for name in ("regular", "d", "link", "dangling", "fifo"):
+                before = os.lstat(name, dir_fd=fd)
+                try:
+                    runtime_dir.create_exclusive(fd, name, "new")
+                    result[name] = "created"
+                except FileExistsError:
+                    result[name] = "exists"
+                after = os.lstat(name, dir_fd=fd)
+                result[name + " same"] = (before.st_ino, before.st_mode) == (after.st_ino, after.st_mode)
+            result["listing"] = sorted(os.listdir(fd))
+            print(json.dumps(result))
+        """
+        result = self.drive(body)
+        for name in ("regular", "d", "link", "dangling", "fifo"):
+            self.assertEqual(result[name], "exists", name)
+            self.assertTrue(result[name + " same"], name)
+        self.assertEqual(result["listing"], sorted(["regular", "d", "link", "dangling", "fifo", "keep"]))
+        with open(os.path.join(self.folder, "regular")) as handle:
+            self.assertEqual(handle.read(), "old")
+
+    def test_another_operating_system_error_propagates_and_leaves_no_temp_file(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            try:
+                runtime_dir.create_exclusive(fd, "x" * 300, "text")
+                raised = None
+            except OSError as error:
+                raised = [type(error).__name__, error.errno]
+            print(json.dumps([raised, sorted(os.listdir(fd))]))
+        """
+        self.assertEqual(self.drive(body), [["OSError", 36], []])
+
+
+class InProcessFolderTestCase(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder)
+        self.dir_fd = os.open(self.folder, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, self.dir_fd)
+
+
+class DescriptorCloseTest(InProcessFolderTestCase):
+    """In-process: the patch fails only the one file-object wrap and is restored afterwards."""
+
+    def failing_fdopen(self, seen):
+        real = os.fdopen
+
+        def fail_once(file_fd, *args, **kwargs):
+            seen.append(file_fd)
+            if len(seen) == 1:
+                raise OSError("wrap failed")
+            return real(file_fd, *args, **kwargs)
+
+        return fail_once
+
+    def assert_closed(self, file_fd):
+        with self.assertRaises(OSError) as caught:
+            os.fstat(file_fd)
+        self.assertEqual(caught.exception.errno, 9)
+
+    def test_a_failing_wrap_closes_the_descriptor_in_the_read(self):
+        with open(os.path.join(self.folder, "f"), "w") as handle:
+            handle.write("text")
+        seen = []
+        with mock.patch.object(os, "fdopen", self.failing_fdopen(seen)):
+            with self.assertRaises(OSError):
+                runtime_dir.read_file(self.dir_fd, "f")
+        self.assertEqual(len(seen), 1)
+        self.assert_closed(seen[0])
+        self.assertEqual(runtime_dir.read_file(self.dir_fd, "f"), "text")  # the patch is gone
+
+    def test_a_failing_wrap_closes_the_descriptor_in_the_atomic_write_and_the_exclusive_create(self):
+        for write in (lambda: runtime_dir.write_atomic(self.dir_fd, "t", "x"), lambda: runtime_dir.create_exclusive(self.dir_fd, "t", "x")):
+            seen = []
+            with mock.patch.object(os, "fdopen", self.failing_fdopen(seen)):
+                with self.assertRaises(OSError):
+                    write()
+            self.assertEqual(len(seen), 1)
+            self.assert_closed(seen[0])
+            self.assertEqual(os.listdir(self.folder), [])
+        runtime_dir.write_atomic(self.dir_fd, "t", "x")  # the patch is gone
+
+    def test_a_successful_wrap_is_never_closed_by_the_module(self):
+        with open(os.path.join(self.folder, "f"), "w") as handle:
+            handle.write("text")
+        wrapped, closed = [], []
+        real_fdopen, real_close = os.fdopen, os.close
+
+        def record_fdopen(file_fd, *args, **kwargs):
+            wrapped.append(file_fd)
+            return real_fdopen(file_fd, *args, **kwargs)
+
+        def record_close(file_fd):
+            closed.append(file_fd)
+            real_close(file_fd)
+
+        with mock.patch.object(os, "fdopen", record_fdopen), mock.patch.object(os, "close", record_close):
+            runtime_dir.read_file(self.dir_fd, "f")
+            runtime_dir.write_atomic(self.dir_fd, "t", "x")
+            runtime_dir.create_exclusive(self.dir_fd, "u", "x")
+        self.assertEqual(len(wrapped), 3)
+        self.assertEqual(set(wrapped) & set(closed), set())
+
+
+class TempNameCollisionTest(InProcessFolderTestCase):
+    def test_a_taken_temp_name_retries_with_a_new_name(self):
+        with open(os.path.join(self.folder, "aa.tmp"), "w") as handle:
+            handle.write("taken")
+        names = iter(["aa", "bb"])
+        with mock.patch.object(runtime_dir.secrets, "token_hex", lambda size: next(names)):
+            runtime_dir.create_exclusive(self.dir_fd, "t", "text")
+        self.assertEqual(sorted(os.listdir(self.folder)), ["aa.tmp", "t"])
+        with open(os.path.join(self.folder, "aa.tmp")) as handle:
+            self.assertEqual(handle.read(), "taken")
+        with open(os.path.join(self.folder, "t")) as handle:
+            self.assertEqual(handle.read(), "text")
 
 
 class ReadFileTest(DriverTestCase):
