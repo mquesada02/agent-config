@@ -4,6 +4,29 @@ My personal [Claude Code](https://claude.com/claude-code) configuration: global
 rules, skills, hooks, and settings. The repository is the `~/.claude` folder
 itself.
 
+> [!WARNING]
+> **These settings use a lot of tokens.** The `CLAUDE.md` rules add two
+> expensive processes:
+>
+> - **Review loops** (section 6): after Claude implements code, subagents
+>   review it in rounds, until a set number of rounds in a row find no blocking
+>   issue. Then Claude applies the minor findings and runs `/simplify`. Then the
+>   same review runs again. A blocking issue in this final review sends the loop
+>   back to the `/simplify` step.
+> - **Spec and ticket workflow** (section 7): a task that is not small gets a
+>   map, a reviewed spec and tickets. Each ticket then gets its own
+>   [Orca](https://github.com/stablyai/orca) worker. The worker writes a spec
+>   and the code. Subagents review the spec, and the code goes through the
+>   full review loop.
+>
+> You might need to adjust these rules to your plan and budget. The main
+> settings are in `CLAUDE.md`:
+>
+> - Section 6: the number of rounds in a row with no blocking issue.
+> - Section 7: the size limit for small tasks. Small tasks skip this workflow,
+>   but they still run the review loop.
+> - Section 9: the model for subagents and Orca workers.
+
 ## What is tracked
 
 The `.gitignore` file ignores everything and then allows these files:
