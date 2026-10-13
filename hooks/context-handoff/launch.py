@@ -392,7 +392,13 @@ class Launch:
     def run(self):
         """Steps 3 to 13 with the launch file. Never raises."""
         try:
-            runtime_dir.write_atomic(self.dir_fd, self.session + ".launch", "started\n")
+            # The claim: only one run per session gets past it.
+            runtime_dir.create_exclusive(self.dir_fd, self.session + ".launch", "started\n")
+        except FileExistsError:  # an entry of any kind; it is never read, and the refusal writes nothing
+            launch_file = os.path.join(self.folder, self.session + ".launch")
+            return self.failed(
+                f"a launch already ran for this session; read {shlex.quote(launch_file)}; if no successor started, remove that file and run the launcher again"
+            )
         except OSError:
             return self.failed("cannot write the launch file")
         try:
@@ -405,7 +411,7 @@ class Launch:
                 result = self.failed(one_line(str(error) or type(error).__name__), note)
         try:
             runtime_dir.write_atomic(self.dir_fd, self.session + ".launch", "started\n" + result[0] + " " + result[1] + "\n")
-        except OSError:
+        except Exception:
             pass  # the printed line wins; the hook reads it first
         return result
 

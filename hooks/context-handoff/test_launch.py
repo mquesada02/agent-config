@@ -117,18 +117,35 @@ class LaunchTestCase(unittest.TestCase):
         env.update(extra)
         return {key: value for key, value in env.items() if value is not None}
 
-    def launch(self, args=None, handle=OLD_HANDLE, timeout=60, **extra_env):
+    def clear_launch_file(self):
+        """Remove the session's launch file of a former run in this test's folder (any kind of entry; absence is fine)."""
+        path = self.launch_path()
+        try:
+            if stat.S_ISDIR(os.lstat(path).st_mode):
+                os.rmdir(path)
+            else:
+                os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+    def run_launcher(self, command, args=None, handle=OLD_HANDLE, timeout=60, **extra_env):
+        """Run the launcher through `command` (the interpreter, and a driver if any) and return its (status word, text)."""
         scenario_path = os.path.join(self.root, "scenario.json")
         with open(scenario_path, "w") as handle_file:
             json.dump(self.scenario, handle_file)
         env = self.env(handle=handle, STUB_SCENARIO=scenario_path, **extra_env)
-        result = subprocess.run([sys.executable, "-I", LAUNCH] + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=timeout)
+        result = subprocess.run(command + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, b"")
         text = result.stdout.decode("utf-8")
         self.assertTrue(text.endswith("\n") and text.count("\n") == 1, repr(text))
         status, _, rest = text[:-1].partition(" ")
         return status, rest
+
+    def launch(self, args=None, handle=OLD_HANDLE, timeout=60, keep_launch_file=False, **extra_env):
+        if not keep_launch_file:
+            self.clear_launch_file()
+        return self.run_launcher([sys.executable, "-I", LAUNCH], args, handle, timeout, **extra_env)
 
     def calls(self):
         if not os.path.exists(self.log_path):
@@ -155,18 +172,22 @@ class LaunchTestCase(unittest.TestCase):
         self.assertIsNone(self.read("manual"))
 
     def launch_with_failing_temp_files(self, allowed, args=None):
-        scenario_path = os.path.join(self.root, "scenario.json")
-        with open(scenario_path, "w") as handle:
-            json.dump(self.scenario, handle)
-        env = self.env(STUB_SCENARIO=scenario_path)
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)] + (args if args is not None else self.arguments()), env=env, capture_output=True, timeout=60
+        self.clear_launch_file()
+        return self.run_launcher([sys.executable, "-I", "-c", TEMP_FILE_DRIVER, LAUNCH, str(allowed)], args)
+
+    def launch_path(self):
+        return os.path.join(self.folder, SESSION + ".launch")
+
+    def refusal(self):
+        return (
+            f"successor failed: a launch already ran for this session; read {shlex.quote(self.launch_path())};"
+            " if no successor started, remove that file and run the launcher again"
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, b"")
-        self.assertEqual(result.stdout.count(b"\n"), 1, result.stdout)
-        status, _, text = result.stdout.decode()[:-1].partition(" ")
-        return status, text
+
+    def launch_with_driver(self, mode, args=None):
+        """Run the launcher after the driver patched the runtime-folder module. The claim and the other checks stay in the script."""
+        self.clear_launch_file()
+        return self.run_launcher([sys.executable, "-I", "-c", CLAIM_DRIVER, HERE, LAUNCH, mode], args)
 
     def option(self, call, flag):
         return call["argv"][call["argv"].index(flag) + 1]
@@ -577,21 +598,22 @@ class FailureTest(LaunchTestCase):
         self.assertEqual(self.launch()[0], "manual")
 
     def test_launch_file_that_cannot_be_replaced_at_the_end_still_prints_ok(self):
-        self.scenario["terminal send"]["dir_over"] = os.path.join(self.folder, SESSION + ".launch")
+        self.scenario["terminal send"]["dir_over"] = self.launch_path()
         status, text = self.launch()
         self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
         self.assertNotIn("terminal close", self.names())
 
-    def test_manual_file_and_launch_file_write_failures(self):
-        for name in ("launch", "manual"):
-            with self.subTest(name=name):
-                path = os.path.join(self.folder, SESSION + "." + name)
-                os.mkdir(path)
-                status, text = self.launch()
-                self.assertEqual(status, "failed")
-                self.assertTrue(text.startswith(f"successor failed: cannot write the {name} file"), text)
-                self.assertEqual(self.calls(), [])
-                os.rmdir(path)
+    def test_an_existing_launch_file_is_refused_and_a_manual_file_write_failure_fails(self):
+        os.mkdir(self.launch_path())  # a launch file that exists: the claim is refused
+        self.assertEqual(self.launch(keep_launch_file=True), ("failed", self.refusal()))
+        self.assertEqual(self.calls(), [])
+        os.rmdir(self.launch_path())
+        path = os.path.join(self.folder, SESSION + ".manual")
+        os.mkdir(path)
+        status, text = self.launch()
+        self.assertEqual(status, "failed")
+        self.assertTrue(text.startswith("successor failed: cannot write the manual file"), text)
+        self.assertEqual(self.calls(), [])
 
     def test_a_missing_shared_module_gives_one_failed_line(self):
         copy = os.path.join(self.root, "copy")
@@ -613,7 +635,7 @@ class EarlyFailureTest(LaunchTestCase):
                 self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
                 self.assertIsNone(self.read("manual"))
                 self.assertEqual(self.calls(), [])
-                os.remove(os.path.join(self.folder, SESSION + ".launch"))
+                os.remove(self.launch_path())
 
     def test_invalid_arguments_write_nothing_and_call_nothing(self):
         other = os.path.join(self.tmp, "not-the-folder")
@@ -667,11 +689,14 @@ class EarlyFailureTest(LaunchTestCase):
     def test_unsafe_runtime_folder(self):
         for change in (lambda: os.chmod(self.folder, 0o755), lambda: self.swap_for_symlink()):
             with self.subTest(change=change):
+                with open(self.launch_path(), "w") as handle:  # a launch file that exists must stay as it is
+                    handle.write("earlier run\n")
                 change()
-                status, text = self.launch()
+                status, text = self.launch(keep_launch_file=True)
                 self.assertEqual((status, text), ("failed", "successor failed: runtime folder is not safe"))
                 self.assertEqual(self.calls(), [])
-                self.assertEqual([name for name in os.listdir(self.folder) if name.endswith((".launch", ".manual"))] if os.path.isdir(self.folder) else [], [])
+                self.assertEqual([name for name in os.listdir(self.folder) if name.endswith((".launch", ".manual"))] if os.path.isdir(self.folder) else [], [SESSION + ".launch"])
+                self.assertEqual(self.read("launch"), "earlier run\n")
                 self.setUp()
 
     def swap_for_symlink(self):
@@ -692,6 +717,32 @@ def limited(*args, **kwargs):
     return real(*args, **kwargs)
 tempfile.TemporaryFile = limited
 sys.argv = [launch] + sys.argv[3:]
+runpy.run_path(launch, run_name="__main__")
+"""
+
+
+# Runs launch.py unchanged, after it patched the runtime-folder module in the test process. Mode "final-write": every atomic write for the
+# launch file raises a ValueError (the claim does not use the atomic write, so this is the result write). Mode "claim": the exclusive create
+# raises an out-of-space error. The patches are in this driver, not in the script.
+CLAIM_DRIVER = """
+import runpy, sys
+here, launch, mode = sys.argv[1:4]
+sys.path.insert(0, here)
+import runtime_dir
+if mode == "final-write":
+    real = runtime_dir.write_atomic
+    def write_atomic(dir_fd, name, text):
+        if name.endswith(".launch"):
+            raise ValueError("boom")
+        return real(dir_fd, name, text)
+    runtime_dir.write_atomic = write_atomic
+elif mode == "claim":
+    def create_exclusive(dir_fd, name, text):
+        raise OSError(28, "No space left on device")
+    runtime_dir.create_exclusive = create_exclusive
+else:
+    raise SystemExit("unknown mode " + mode)
+sys.argv = [launch] + sys.argv[4:]
 runpy.run_path(launch, run_name="__main__")
 """
 
@@ -737,6 +788,116 @@ class TemporaryFileFailureTest(LaunchTestCase):
         self.assertEqual(status, "failed")
         self.assertTrue(text.endswith(f"; terminal {NEW_HANDLE} may still run; close it before you start the manual command"), text)
         self.assertEqual(self.names()[-1], "terminal wait")
+
+
+def entry_state(path):
+    """Everything about an entry that a refusal must leave unchanged, read without opening a FIFO or following a link."""
+    info = os.lstat(path)
+    extra = None
+    if stat.S_ISLNK(info.st_mode):
+        extra = os.readlink(path)
+    elif stat.S_ISDIR(info.st_mode):
+        extra = sorted(os.listdir(path))
+    elif stat.S_ISREG(info.st_mode) and os.access(path, os.R_OK):
+        with open(path, "rb") as handle:
+            extra = handle.read()
+    return (info.st_mode, info.st_size, info.st_mtime_ns, extra)
+
+
+class SecondLaunchGuardTest(LaunchTestCase):
+    def make_entry(self, kind):
+        path = self.launch_path()
+        if kind == "directory":
+            os.mkdir(path)
+        elif kind == "symlink to a file":
+            os.symlink(self.handoff, path)
+        elif kind == "dangling symlink":
+            os.symlink(os.path.join(self.root, "nowhere"), path)
+        elif kind == "FIFO":
+            os.mkfifo(path)
+        else:
+            with open(path, "w") as handle:
+                handle.write("started\n" if kind == "only started" else "started\nfailed earlier\n")
+            if kind == "unreadable":
+                os.chmod(path, 0)
+
+    def assert_refused(self, args=None, text=None, handle=OLD_HANDLE):
+        before, listing = entry_state(self.launch_path()), sorted(os.listdir(self.folder))
+        self.assertEqual(self.launch(args, handle=handle, keep_launch_file=True), ("failed", text or self.refusal()))
+        self.assertEqual(entry_state(self.launch_path()), before)
+        self.assertEqual(sorted(os.listdir(self.folder)), listing)  # no manual file, no temporary file
+        self.assertEqual(self.calls(), [])
+
+    def test_every_kind_of_existing_launch_file_is_refused(self):
+        for kind in ("readable", "only started", "unreadable", "directory", "symlink to a file", "dangling symlink", "FIFO"):
+            with self.subTest(kind=kind):
+                self.make_entry(kind)
+                self.assert_refused()
+                self.clear_launch_file()
+
+    def test_a_manual_file_that_exists_stays_as_it_is(self):
+        self.make_entry("only started")
+        manual = os.path.join(self.folder, SESSION + ".manual")
+        with open(manual, "w") as handle:
+            handle.write("earlier manual text")
+        before = entry_state(manual)
+        self.assert_refused()
+        self.assertEqual(entry_state(manual), before)
+
+    def test_the_guard_comes_before_the_handoff_and_role_checks(self):
+        self.make_entry("only started")
+        os.remove(self.handoff)
+        self.assert_refused()
+        open(self.handoff, "w").close()
+        self.assert_refused(self.arguments(role="bogus"))
+        self.assert_refused(self.arguments(role="worker") + ["term_other", TASK, DISPATCH, COORDINATOR])  # not this terminal: an early failure without the guard
+
+    def test_an_invalid_argument_and_an_unsafe_folder_keep_their_result(self):
+        self.make_entry("only started")
+        self.assert_refused(self.arguments(model="a;b"), "successor failed: invalid arguments: model has a character that is not allowed")
+        os.chmod(self.folder, 0o755)
+        self.assert_refused(text="successor failed: runtime folder is not safe")
+
+    def test_a_non_operating_system_error_in_the_final_write_still_prints_ok(self):
+        status, text = self.launch_with_driver("final-write")
+        self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        self.assertIn("terminal send", self.names())
+        self.assertEqual(self.read("launch"), "started\n")  # the claim stays: only the result write failed
+
+    def test_a_claim_failure_that_is_not_an_existing_file_gives_the_write_failure(self):
+        status, text = self.launch_with_driver("claim")
+        self.assertEqual((status, text), ("failed", "successor failed: cannot write the launch file"))
+        self.assertEqual(self.calls(), [])
+        self.assertIsNone(self.read("launch"))
+        self.assertIsNone(self.read("manual"))
+
+    def test_a_second_run_is_refused_while_the_first_holds_its_claim(self):
+        self.scenario["status"]["sleep"] = 8  # the first run sits in its first Orca call; the limit of a call is 10 s
+        scenario_path = os.path.join(self.root, "scenario.json")
+        with open(scenario_path, "w") as handle:
+            json.dump(self.scenario, handle)  # written once: the second run must not rewrite it
+        first = subprocess.Popen([sys.executable, "-I", LAUNCH] + self.arguments(), env=self.env(STUB_SCENARIO=scenario_path), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(first.communicate)  # runs after the kill below: reaps the process and closes its pipes
+        self.addCleanup(first.kill)
+        deadline = time.monotonic() + 30
+        while True:  # the stub logs a call before it sleeps, so the entry shows that the first run is inside its call
+            try:
+                if "status" in self.names():
+                    break
+            except ValueError:  # a line that is still being written
+                pass
+            self.assertLess(time.monotonic(), deadline, "the first run made no Orca call")
+            time.sleep(0.05)
+        self.assertEqual(self.read("launch"), "started\n")
+        other_log = os.path.join(self.root, "second.log")
+        second = subprocess.run([sys.executable, "-I", LAUNCH] + self.arguments(), env=self.env(STUB_SCENARIO=scenario_path, STUB_LOG=other_log), capture_output=True, timeout=60)
+        self.assertEqual((second.returncode, second.stderr, second.stdout), (0, b"", ("failed " + self.refusal() + "\n").encode()))
+        self.assertFalse(os.path.exists(other_log))  # the second run made no Orca call
+        self.assertEqual(self.read("launch"), "started\n")
+        out, err = first.communicate(timeout=60)
+        self.assertEqual((first.returncode, err), (0, b""))
+        self.assertEqual(out.decode(), f"ok context handoff done: successor {NEW_HANDLE}\n")
+        self.assertEqual(self.read("launch"), f"started\nok context handoff done: successor {NEW_HANDLE}\n")
 
 
 class TimingTest(LaunchTestCase):
