@@ -646,7 +646,7 @@ class LauncherCallTest(LauncherTestCase):
 
     def test_responses_without_one_parsable_line_give_the_no_result_halt(self):
         bad = ["", None, [], {}, {"stdout": ""}, {"stdout": None}, {"stdout": {"x": 1}}, {"stdout": "ok a\nok b"}, {"stdout": "nonsense"}, {"stdout": "ok"},
-               {"stdout": "ok   "}, {"stdout": "okay fine"}, 5, {"stdout": "garbled \x00 ok x"}]
+               {"stdout": "ok   "}, {"stdout": "okay fine"}, 5, {"stdout": "garbled \x00 ok x"}, {"stdout": "ok a\u2029b"}]
         for response in bad:
             with self.subTest(response=response):
                 self.seed("state", TRIGGERED_STATE)
@@ -739,6 +739,18 @@ class LaunchFileTest(LauncherTestCase):
     def test_shape_b_gives_the_text_of_the_result_line(self):
         self.check("started\nok context handoff done: successor t9\n", "context handoff done: successor t9")
         self.check("started\n\nmanual no Orca: the handoff file is at /h\n\n", "no Orca: the handoff file is at /h")
+
+    def test_control_characters_in_the_result_text_become_spaces_and_the_result_is_trimmed_once(self):
+        self.check("started\nok \x1b\x07a\x1bb\x07\n", "a b")
+
+    def test_a_result_text_of_only_control_characters_gives_the_no_result_halt(self):
+        self.check("started\nok \x1b\x07\n", NO_RESULT)
+
+    def test_a_control_character_between_the_status_word_and_the_text_is_shape_c(self):
+        self.check("started\nok\x1btext\n", NO_RESULT)
+
+    def test_a_paragraph_separator_inside_the_result_text_is_shape_c(self):
+        self.check("started\nok a\u2029b\n", NO_RESULT)
 
     def test_shape_c_gives_the_no_result_halt(self):
         for content in ("started\nok\n", "started\nok a\nok b\n", "garbage\n", "started\nbad line\n", "", "\n", "ok context handoff done: x\n"):
@@ -887,6 +899,19 @@ class LoopGuardTest(HookTestCase):
                 self.seed_window(session=session)
                 self.assertEqual(self.run_marked(session=session)["stopReason"], self.generic())
 
+    def halt_text(self, manual):
+        self.seed("manual", manual, session=self.PREDECESSOR)
+        return self.run_marked()["stopReason"]
+
+    def test_each_control_character_inside_the_manual_text_becomes_a_space(self):
+        self.assertEqual(self.halt_text("the handoff\x1bfile is\x07\x00at /h\u2028x\u2029y"), self.generic() + "; the handoff file is  at /h x y")
+
+    def test_control_characters_at_both_ends_are_trimmed_once(self):
+        self.assertEqual(self.halt_text("\x1b\x07 " + self.MANUAL + " \x00\n"), self.generic() + "; " + self.MANUAL)
+
+    def test_a_manual_text_of_only_control_characters_and_whitespace_gives_the_generic_text(self):
+        self.assertEqual(self.halt_text("\x1b \n\x07\t\u2028"), self.generic())
+
 
 class InstructionTest(HookTestCase):
     def reason(self, **fields):
@@ -896,6 +921,7 @@ class InstructionTest(HookTestCase):
     def test_step_4_gives_the_three_roles(self):
         reason = self.reason()
         self.assertIn("First replace the word ROLE_SLOT as the role blocks say. For a plain session (not an Orca coordinator or worker), the role is `plain`."
+                      " If you have no Orca preamble and own no Orca Run, you are plain."
                       " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`."
                       " For an Orca worker (a session that Orca dispatched under a Task, with an injected preamble), the role is `worker`: replace the word ROLE_SLOT with"
                       " `worker` and then four more words copied from the preamble, in this order and each in single quotes: your own terminal handle (the `--from` value),"
@@ -996,7 +1022,7 @@ class InstructionTest(HookTestCase):
         self.assertEqual(sum(line.startswith("python3 -I ") for line in reason.splitlines()), 1)
 
     def test_a_path_with_a_line_break_or_control_character_is_written_as_unknown(self):
-        for index, name in enumerate(("tr\nans.jsonl", "tr\u2028ans.jsonl", "tr\x1bans.jsonl", "tr\u202eans.jsonl", "tr\rans.jsonl")):
+        for index, name in enumerate(("tr\nans.jsonl", "tr\u2028ans.jsonl", "tr\u2029ans.jsonl", "tr\x1bans.jsonl", "tr\u202eans.jsonl", "tr\rans.jsonl")):
             with self.subTest(name=name):
                 session = f"c-{index}"
                 path = os.path.join(self.root, name)

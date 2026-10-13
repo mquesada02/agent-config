@@ -7,7 +7,8 @@
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
 # The hook and launch.py share these literals without a shared module: the file names .launch and .manual, the word
-# "started", the result status words, the successor marker being the predecessor's handoff path, and the 80% in the worker escalation text.
+# "started", the result status words, the successor marker being the predecessor's handoff path, the 80% in the worker escalation text,
+# and the one-line cleaning rule: every character in a Unicode "other" category (category starting with C) and U+2028 and U+2029 become one space.
 # Change them together.
 import json
 import math
@@ -94,7 +95,7 @@ WORKER_SUCCESSOR_STEPS = """
    3. Do the Task under the new preamble. An ask from the old Dispatch is closed. If the handoff names such an ask and you still need the answer, ask again under the new Dispatch.
    4. Send `worker_done` with the IDs from the new preamble.
    The coordinator's commands close the old terminal: a worker never closes it."""  # appended after the coordinator steps
-PLAIN_ROLE_BLOCK = " For a plain session (not an Orca coordinator or worker), the role is `plain`."  # appended to step 4
+PLAIN_ROLE_BLOCK = " For a plain session (not an Orca coordinator or worker), the role is `plain`. If you have no Orca preamble and own no Orca Run, you are plain."  # appended to step 4
 COORDINATOR_ROLE_BLOCK = " For an Orca coordinator (a session that owns an Orca Run and dispatches workers on it), the role is `coordinator`."  # appended to step 4, after the plain block
 WORKER_ROLE_BLOCK = (
     " For an Orca worker (a session that Orca dispatched under a Task, with an injected preamble), the role is `worker`: replace the word ROLE_SLOT with"
@@ -198,6 +199,11 @@ def _scan_backward(handle):
     return None
 
 
+def clean(text):
+    """The one-line cleaning rule shared with launch.py: each character that the rule names becomes one space."""
+    return "".join(" " if unicodedata.category(char).startswith("C") or char in "\u2028\u2029" else char for char in text)
+
+
 def _text(value):
     return value if isinstance(value, str) else ""
 
@@ -269,7 +275,7 @@ def marker_manual_text(dir_fd, marker):
         text = runtime_dir.read_file(dir_fd, marker_session + ".manual")
     except (OSError, ValueError):
         return None
-    return (text or "").strip() or None
+    return clean(text or "").strip() or None
 
 
 def loop_halt(state, dir_fd, percent, marker):
@@ -340,6 +346,7 @@ def read_launch(dir_fd, session_id):
     if lines == ["started"]:
         return "A", None
     result = parse_result_line(lines[1]) if len(lines) == 2 and lines[0] == "started" else None
+    result = clean(result).strip() if result else None
     return ("B", result) if result else ("C", None)
 
 

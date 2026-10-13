@@ -7,6 +7,8 @@
 # The role worker adds four more: worker_handle task_id dispatch_id coordinator_handle.
 # The plain and coordinator roles share one path. The worker role follows the same path, checks its Dispatch with worker-show
 # first, and sends an escalation to the coordinator after the successor has taken its prompt.
+# The literals that this script and hook.py must keep identical, including the cleaning rule of clean(), are listed in the
+# shared-literals note in the header of hook.py.
 import json
 import math
 import os
