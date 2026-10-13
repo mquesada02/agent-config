@@ -955,14 +955,18 @@ class InstructionTest(HookTestCase):
         reason = self.reason()
         lead_in = "A worker adds these fields after the core fields, one per line, in this order:"
         fields = ("the injected Orca preamble, copied exactly (terminal handle, Task ID, Dispatch ID, `ask` command, coordinator handle)",
-                  "any ask that waits for an answer, with its message ID, or none")
+                  "any ask that waits for an answer, with its message ID, or none",
+                  "asks answered but not yet acted on: each with its message ID and the answer copied word for word, or none")
         self.assertLess(reason.index("the review phase (CLAUDE.md section 6)"), reason.index(lead_in))
         position = reason.index(lead_in)
         for field in fields:
             self.assertLess(position, reason.index("   - " + field, position))
             position = reason.index("   - " + field, position)
         self.assertLess(position, reason.index("A coordinator adds these fields"))
-        self.assertIn("Write unknown for a field of this list that you do not know; run no command to find it.", reason[reason.index(lead_in):reason.index("A coordinator adds")])
+        self.assertIn("Write unknown for a field of this list that you do not know; run no command to find it.\n"
+                      "   Before you write the handoff, fill the field of asks answered but not yet acted on: read the output of every `ask` command that ran in the background and finished."
+                      " Use the Read tool: it is not a command, so step 1 allows it. An answer that is already in your context goes in this field too.",
+                      reason[position:reason.index("A coordinator adds")])
 
     def test_step_3_has_the_worker_steps_after_the_coordinator_steps(self):
         reason = self.reason()
@@ -972,7 +976,8 @@ class InstructionTest(HookTestCase):
         parts = ("1. Wait for the new Dispatch. It arrives soon. Do nothing else and set no timeout: the coordinator may be busy or handing over.",
                  "2. When it arrives, check the Task ID and the new Dispatch ID of the new preamble with `worker-show --dispatch <new Dispatch ID>`, then read the handoff before you act on the Task.",
                  "Use neither the old Dispatch ID nor the old terminal handle in any Orca call.",
-                 "3. Do the Task under the new preamble. An ask from the old Dispatch is closed. If the handoff names such an ask and you still need the answer, ask again under the new Dispatch.",
+                 "3. Do the Task under the new preamble. An ask from the old Dispatch is closed. Act on each answer that the handoff holds.",
+                 "Ask again under the new Dispatch only for an ask that has no answer in the handoff and whose answer you still need.",
                  "4. Send `worker_done` with the IDs from the new preamble.",
                  "The coordinator's commands close the old terminal: a worker never closes it.")
         position = 0

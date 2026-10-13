@@ -62,7 +62,9 @@ WORKER_STATE_BLOCK = """
    A worker adds these fields after the core fields, one per line, in this order:
    - the injected Orca preamble, copied exactly (terminal handle, Task ID, Dispatch ID, `ask` command, coordinator handle)
    - any ask that waits for an answer, with its message ID, or none
-   Write unknown for a field of this list that you do not know; run no command to find it."""  # appended to the State fields, before the coordinator block
+   - asks answered but not yet acted on: each with its message ID and the answer copied word for word, or none
+   Write unknown for a field of this list that you do not know; run no command to find it.
+   Before you write the handoff, fill the field of asks answered but not yet acted on: read the output of every `ask` command that ran in the background and finished. Use the Read tool: it is not a command, so step 1 allows it. An answer that is already in your context goes in this field too."""  # appended to the State fields, before the coordinator block
 COORDINATOR_STATE_BLOCK = """
    A coordinator adds these fields after the core fields, one per line, in this order:
    - Run ID
@@ -92,7 +94,7 @@ WORKER_SUCCESSOR_STEPS = """
    Worker (use these steps instead of the plain steps):
    1. Wait for the new Dispatch. It arrives soon. Do nothing else and set no timeout: the coordinator may be busy or handing over. (The prompt that starts you says the same.)
    2. When it arrives, check the Task ID and the new Dispatch ID of the new preamble with `worker-show --dispatch <new Dispatch ID>`, then read the handoff before you act on the Task. Use neither the old Dispatch ID nor the old terminal handle in any Orca call.
-   3. Do the Task under the new preamble. An ask from the old Dispatch is closed. If the handoff names such an ask and you still need the answer, ask again under the new Dispatch.
+   3. Do the Task under the new preamble. An ask from the old Dispatch is closed. Act on each answer that the handoff holds. Ask again under the new Dispatch only for an ask that has no answer in the handoff and whose answer you still need.
    4. Send `worker_done` with the IDs from the new preamble.
    The coordinator's commands close the old terminal: a worker never closes it."""  # appended after the coordinator steps
 PLAIN_ROLE_BLOCK = " For a plain session (not an Orca coordinator or worker), the role is `plain`. If you have no Orca preamble and own no Orca Run, you are plain."  # appended to step 4
