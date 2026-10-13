@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # Status-line wrapper: saves the context-window size and the full model id for the context hook, then runs ccstatusline
 # with the same stdin. The capture must never change what the status line shows: any capture error is swallowed.
-import json
-import math
-import os
 import subprocess
 import sys
 
 
 def _window_size(data):
+    import math
+
     window = data.get("context_window")
     size = window.get("context_window_size") if isinstance(window, dict) else None
     if isinstance(size, bool) or not isinstance(size, (int, float)):
@@ -20,7 +19,10 @@ def _window_size(data):
 
 def capture(raw):
     # Imported here, inside the caller's guard, so a missing or broken shared module cannot stop the pass-through.
-    sys.path.append(os.path.dirname(os.path.realpath(__file__)))
+    import os
+
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import json
     import runtime_dir
 
     data = json.loads(raw)

@@ -696,6 +696,33 @@ runpy.run_path(launch, run_name="__main__")
 """
 
 
+# Runs a script as __main__ with a folder holding a shadow `runtime_dir` module first on the search path. The driver never imports the module itself.
+SHADOW_DRIVER = """
+import runpy, sys
+shadow, script = sys.argv[1], sys.argv[2]
+sys.path.insert(0, shadow)
+sys.argv = [script] + sys.argv[3:]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+class ModuleSearchPathTest(LaunchTestCase):
+    def test_the_real_runtime_dir_module_wins_over_a_shadow_module_earlier_on_the_search_path(self):
+        shadow = os.path.join(self.root, "shadow")
+        os.mkdir(shadow)
+        with open(os.path.join(shadow, "runtime_dir.py"), "w") as handle:
+            handle.write("FOLDER_NAME = 'shadow'\n")
+        scenario_path = os.path.join(self.root, "scenario.json")
+        with open(scenario_path, "w") as handle:
+            json.dump(self.scenario, handle)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, LAUNCH] + self.arguments(), env=self.env(STUB_SCENARIO=scenario_path), capture_output=True, timeout=60
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout.decode().partition(" ")[0], "ok", result.stdout)
+
+
 class TemporaryFileFailureTest(LaunchTestCase):
     def test_failure_before_any_call_gives_failed_not_manual(self):
         status, text = self.launch_with_failing_temp_files(0)

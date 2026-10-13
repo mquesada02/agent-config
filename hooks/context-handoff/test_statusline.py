@@ -223,6 +223,51 @@ class PassThroughTest(WrapperTestCase):
         self.assertEqual(self.run_wrapper(status_input()).returncode, 126)
 
 
+# Runs a script as __main__ with a folder holding a shadow `runtime_dir` module first on the search path. The driver never imports the module itself.
+SHADOW_DRIVER = """
+import runpy, sys
+shadow, script = sys.argv[1], sys.argv[2]
+sys.path.insert(0, shadow)
+sys.argv = [script] + sys.argv[3:]
+runpy.run_path(script, run_name="__main__")
+"""
+
+# Runs the wrapper as __main__ after blocking one module that only the capture needs (its module-table entry is None, so importing it fails).
+# The pass-through's own modules (subprocess, sys) and the one the shared module reaches (secrets, which loads math) are imported first.
+BLOCK_DRIVER = """
+import runpy, secrets, subprocess, sys
+blocked, script = sys.argv[1], sys.argv[2]
+sys.modules[blocked] = None
+sys.argv = [script]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+class ModuleSearchPathTest(WrapperTestCase):
+    def test_the_real_runtime_dir_module_wins_over_a_shadow_module_earlier_on_the_search_path(self):
+        shadow = os.path.join(self.root, "shadow")
+        os.mkdir(shadow)
+        with open(os.path.join(shadow, "runtime_dir.py"), "w") as handle:
+            handle.write("FOLDER_NAME = 'shadow'\n")
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in}
+        result = subprocess.run([sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, STATUSLINE], input=status_input(), env=env, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.read_window(), {"context_window_size": 1000000, "model_id": "claude-fable-5-1[1m]"})
+
+
+class CaptureOnlyImportTest(WrapperTestCase):
+    def test_a_failing_json_or_math_import_still_passes_the_status_line_through(self):
+        for blocked in ("json", "math"):
+            with self.subTest(blocked=blocked):
+                stdin = status_input()
+                env = {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in}
+                result = subprocess.run([sys.executable, "-I", "-c", BLOCK_DRIVER, blocked, STATUSLINE], input=stdin, env=env, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, b"STATUS-LINE")
+                self.assertEqual(self.stub_received(), stdin)
+                self.assertFalse(os.path.exists(self.window))
+
+
 class BrokenSharedModuleTest(WrapperTestCase):
     def copy_wrapper(self, module_text):
         folder = os.path.join(self.root, "copy")

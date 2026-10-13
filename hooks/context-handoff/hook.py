@@ -401,7 +401,7 @@ def run(data):
         return
     if "agent_id" in data or os.environ.get(ATTENDED_VARIABLE) == "0":
         return
-    sys.path.append(HOOK_DIR)
+    sys.path.insert(0, HOOK_DIR)
     import runtime_dir as module
 
     runtime_dir = module
