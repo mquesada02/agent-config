@@ -1116,7 +1116,7 @@ class WorkerSuccessTest(WorkerTestCase):
         self.assertNotIn("--to", call["argv"])
         self.assertEqual(
             self.option(call, "--body"),
-            f"Worker {OLD_HANDLE} (Task {TASK}, Dispatch {DISPATCH}) reached 80% of its context. Its successor {NEW_HANDLE} waits in terminal {NEW_HANDLE}"
+            f"Worker {OLD_HANDLE} (Task {TASK}, Dispatch {DISPATCH}) reached 40% of its context. Its successor {NEW_HANDLE} waits in terminal {NEW_HANDLE}"
             f" for a dispatch; the handoff file is at {self.quoted_handoff}. For coordinator {COORDINATOR}, run: {self.commands(NEW_HANDLE)}",
         )
 
