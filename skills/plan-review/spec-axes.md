@@ -16,7 +16,7 @@ For step 3, check the quoted request against its link. Quote the source line for
 Read the spec alone. Check that:
 - every decision is testable
 - every acceptance criterion can be checked on its own (in a spec without an acceptance-criteria section: every user story and testing decision)
-- open questions are listed
+- open questions are listed, or the spec says there are none
 - out of scope is stated
 - the spec does not contradict itself
 

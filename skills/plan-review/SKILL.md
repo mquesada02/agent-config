@@ -33,9 +33,9 @@ All inputs are tracker links, never a paraphrase from the caller. The one except
 
 1. Check the mode, the case and the inputs. Stop and ask the caller if an input is missing, if the mode is unknown, if the case is unknown, or if the mode is `tickets`. Never review without the full source.
 2. Read the axis texts for the mode from its reference file.
-3. Spawn one subagent per axis in one message, so they run in parallel. Set a Sonnet model in each Agent call.
+3. Spawn exactly one subagent per axis in one message, so they run in parallel. Set a Sonnet model in each Agent call.
 4. Give each subagent the document link, the source links for its axis and its axis text. Each subagent returns findings labelled Blocking or Minor. Each Fidelity finding quotes its source line.
-5. Report one heading per axis, in the order of the reference file, without merging or reranking. Each axis ends with its Blocking and Minor counts and its most severe finding: the first Blocking finding in report order, else the first Minor finding. An axis with no findings says "No findings" and shows counts of zero.
+5. Report one heading per axis, in the order the reference file lists the axes (spec mode: Fidelity, Clarity, Codebase fit), without merging or reranking. Each axis ends with its Blocking and Minor counts and its most severe finding: the first Blocking finding in report order, else the first Minor finding. An axis with no findings says "No findings" and shows counts of zero.
 
 ## Source for each axis
 

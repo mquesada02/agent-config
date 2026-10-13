@@ -12,6 +12,11 @@ LOOP_MARKER = "plan-review loop:"
 CODE_REVIEW = "/mattpocock-skills:code-review"
 
 
+def process_section(text):
+    """Text of the `## Process` section of SKILL.md."""
+    return text.split("## Process", 1)[1].split("\n## ", 1)[0]
+
+
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
@@ -20,14 +25,16 @@ def read(path):
 def section(text, number):
     """Text of the section whose heading starts with `## <number>.`, up to the next `## ` heading."""
     lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"## {number}."))
+    start = next((i for i, line in enumerate(lines) if line.startswith(f"## {number}.")), None)
+    assert start is not None, f"CLAUDE.md has no section {number}"
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     return lines[start:end]
 
 
 def step(lines, prefix):
     """Lines of a section 7 step: from its number prefix to the next line that starts a step."""
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"{prefix}. "))
+    start = next((i for i, line in enumerate(lines) if line.startswith(f"{prefix}. ")), None)
+    assert start is not None, f"section 7 has no step {prefix}"
     end = next((i for i in range(start + 1, len(lines)) if STEP_PREFIX.match(lines[i])), len(lines))
     return "\n".join(lines[start:end])
 
@@ -49,13 +56,13 @@ class SkillFilesTest(unittest.TestCase):
             self.assertIn(word, text)
 
     def test_process_stops_and_asks(self):
-        text = read(SKILL).lower()
+        text = process_section(read(SKILL)).lower()
         self.assertIn("stop and ask", text)
-        for word in ("missing", "unknown", "`tickets`"):
-            self.assertIn(word, text)
+        for phrase in ("input is missing", "mode is unknown", "case is unknown", "mode is `tickets`"):
+            self.assertIn(phrase, text)
 
     def test_process_requires_sonnet_and_report_shape(self):
-        text = read(SKILL).lower()
+        text = process_section(read(SKILL)).lower()
         for word in ("sonnet", "blocking", "minor", "counts", "most severe", "no findings"):
             self.assertIn(word, text)
 
