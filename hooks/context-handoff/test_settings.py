@@ -24,6 +24,7 @@ class ContextHookRegistrationTest(unittest.TestCase):
             self.settings = json.load(handle)
 
     def only_entry(self, event):
+        self.assertIn(event, self.settings["hooks"], f"settings.json has no hooks.{event} key")
         groups = [
             group
             for group in self.settings["hooks"][event]
@@ -41,6 +42,11 @@ class ContextHookRegistrationTest(unittest.TestCase):
 
     def test_post_tool_use_has_one_context_hook_on_every_tool(self):
         self.assertEqual(self.only_entry("PostToolUse")["matcher"], "*")
+
+    def test_a_missing_event_key_fails_with_a_message_that_names_the_key(self):
+        with self.assertRaises(AssertionError) as caught:
+            self.only_entry("NoSuchEvent")
+        self.assertIn("hooks.NoSuchEvent", str(caught.exception))
 
     def test_the_hook_script_exists(self):
         self.assertTrue(os.path.isfile(repo_path(HOOK_COMMAND)))
