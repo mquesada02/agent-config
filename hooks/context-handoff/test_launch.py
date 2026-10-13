@@ -189,21 +189,43 @@ class LaunchTestCase(unittest.TestCase):
         self.clear_launch_file()
         return self.run_launcher([sys.executable, "-I", "-c", CLAIM_DRIVER, HERE, LAUNCH, mode], args)
 
+    @property
+    def quoted_handoff(self):
+        return shlex.quote(self.handoff)
+
+    def assert_closed(self):
+        self.assertEqual(self.names()[-1], "terminal close")
+        self.assertEqual(self.option(self.calls()[-1], "--terminal"), NEW_HANDLE)
+
+    def use_odd_handoff_folder(self):
+        """Move the runtime folder under a parent with a space and a single quote. Returns the TMPDIR value for that parent."""
+        parent = os.path.join(self.tmp, "o'wn dir")
+        self.folder = os.path.join(parent, "claude-context-handoff")
+        os.makedirs(self.folder, mode=0o700)
+        self.handoff = os.path.join(self.folder, SESSION + ".handoff.md")
+        with open(self.handoff, "w") as handle:
+            handle.write("x")
+        return parent
+
+    def prompt_path(self, text):
+        """The handoff path as a shell reads it from the second word of a prompt."""
+        return shlex.split(text)[1]
+
     def option(self, call, flag):
         return call["argv"][call["argv"].index(flag) + 1]
 
     def prompt_with_handle(self):
-        return f"Read {self.handoff} and follow it. You are the successor of Orca terminal {OLD_HANDLE}. Close that terminal only after your takeover is done."
+        return f"Read {self.quoted_handoff} and follow it. You are the successor of Orca terminal {OLD_HANDLE}. Close that terminal only after your takeover is done."
 
     def prompt_without_handle(self):
-        return f"Read {self.handoff} and follow it. The session you replace did not run in an Orca terminal. When your takeover is done, tell the user to close the old session."
+        return f"Read {self.quoted_handoff} and follow it. The session you replace did not run in an Orca terminal. When your takeover is done, tell the user to close the old session."
 
     def manual_command(self, cwd=None, model="claude-sonnet-5-5[1m]", prompt=None):
         parts = ["claude", "--model", model, "--permission-mode", "auto", "--effort", "medium", prompt or self.prompt_without_handle()]
         return "cd " + shlex.quote(cwd or self.cwd) + " && " + " ".join(shlex.quote(part) for part in parts)
 
     def manual_text(self):
-        return f"the handoff file is at {self.handoff}; start the successor with {self.manual_command()}"
+        return f"the handoff file is at {self.quoted_handoff}; start the successor with {self.manual_command()}"
 
 
 class PlainSuccessTest(LaunchTestCase):
@@ -262,20 +284,45 @@ class PlainSuccessTest(LaunchTestCase):
         self.assertNotIn("--model", self.read("manual"))
 
     def test_paths_with_spaces_and_quotes(self):
-        folder = os.path.join(self.tmp, "o'wn dir", "claude-context-handoff")
-        os.makedirs(folder, mode=0o700)
-        self.folder = folder
-        self.handoff = os.path.join(folder, SESSION + ".handoff.md")
-        with open(self.handoff, "w") as handle:
-            handle.write("x")
+        parent = self.use_odd_handoff_folder()
         cwd = os.path.join(self.worktree, "it's here")
         os.makedirs(cwd)
-        status, _ = self.launch(self.arguments(cwd=cwd), TMPDIR=os.path.join(self.tmp, "o'wn dir"))
+        status, _ = self.launch(self.arguments(cwd=cwd), TMPDIR=parent)
         self.assertEqual(status, "ok")
         create = self.call("terminal create")
         self.assertEqual(self.option(create, "--worktree"), "path:" + self.worktree)
         self.assertEqual(shlex.split(self.option(create, "--command"))[1:3], ["CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff, "claude"])
         self.assertEqual(self.read("manual"), self.manual_text().replace(shlex.quote(self.cwd), shlex.quote(cwd)))
+
+    def assert_manual_keeps_the_path_whole(self):
+        manual = self.read("manual")
+        lead, _, command = manual.partition("; start the successor with ")
+        self.assertEqual(lead, "the handoff file is at " + self.quoted_handoff)
+        self.assertEqual(shlex.split(lead)[-1], self.handoff)
+        prompt = shlex.split(command)[-1]  # the quoted prompt is one word of the manual command
+        self.assertEqual(self.prompt_path(prompt), self.handoff)
+
+    def test_the_handoff_path_is_quoted_whole_in_the_prompt_with_a_handle(self):
+        parent = self.use_odd_handoff_folder()
+        self.assertEqual(self.launch(TMPDIR=parent)[0], "ok")
+        text = self.option(self.call("terminal send"), "--text")
+        self.assertEqual(text, self.prompt_with_handle())
+        self.assertEqual(self.prompt_path(text), self.handoff)
+        self.assert_manual_keeps_the_path_whole()
+
+    def test_the_handoff_path_is_quoted_whole_in_the_prompt_without_a_handle(self):
+        parent = self.use_odd_handoff_folder()
+        self.assertEqual(self.launch(handle=None, TMPDIR=parent)[0], "ok")
+        text = self.option(self.call("terminal send"), "--text")
+        self.assertEqual(text, self.prompt_without_handle())
+        self.assertEqual(self.prompt_path(text), self.handoff)
+        self.assert_manual_keeps_the_path_whole()
+
+    def test_the_start_command_marker_keeps_the_raw_handoff_path(self):
+        parent = self.use_odd_handoff_folder()
+        self.assertEqual(self.launch(TMPDIR=parent)[0], "ok")
+        command = shlex.split(self.option(self.call("terminal create"), "--command"))
+        self.assertEqual(command[1], "CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff)
 
     def test_non_ascii_text_and_slash_models(self):
         cwd = os.path.join(self.worktree, "caf\u00e9 \u21bb")
@@ -499,6 +546,23 @@ class ManualCaseTest(LaunchTestCase):
         self.launch()
         self.assertEqual(self.option(self.call("terminal create"), "--worktree"), "path:" + self.cwd)
 
+    def test_a_row_with_a_nul_byte_is_skipped(self):
+        bad = {"path": self.worktree + "/\u0000x", "hostId": "local"}
+        good = {"path": self.worktree, "hostId": "local"}
+        for rows in ([bad, good], [good, bad]):
+            with self.subTest(first=rows[0] is bad):
+                self.scenario["worktree list"] = reply({"worktrees": rows, "truncated": False})
+                self.assertEqual(self.launch()[0], "ok")
+                self.assertEqual(self.option(self.call("terminal create"), "--worktree"), "path:" + self.worktree)
+                os.remove(self.log_path)
+
+    def test_the_longest_valid_match_still_wins_next_to_a_bad_row(self):
+        bad = {"path": self.worktree + "/\u0000x", "hostId": "local"}
+        rows = [{"path": self.worktree, "hostId": "local"}, bad, {"path": self.cwd, "hostId": "local"}]
+        self.scenario["worktree list"] = reply({"worktrees": rows, "truncated": False})
+        self.assertEqual(self.launch()[0], "ok")
+        self.assertEqual(self.option(self.call("terminal create"), "--worktree"), "path:" + self.cwd)
+
     def test_truncated_list_accepts_only_an_exact_match(self):
         for truncated in (True, None, "yes"):
             with self.subTest(truncated=truncated):
@@ -518,10 +582,6 @@ class ManualCaseTest(LaunchTestCase):
 
 
 class FailureTest(LaunchTestCase):
-    def assert_closed(self):
-        self.assertEqual(self.names()[-1], "terminal close")
-        self.assertEqual(self.option(self.calls()[-1], "--terminal"), NEW_HANDLE)
-
     def test_idle_wait_failures_close_the_terminal(self):
         for entry in (failure("never idle", "timeout"), reply({"wait": {"satisfied": False}}), {"out": "garbage"}, reply("wrong shape")):
             with self.subTest(entry=entry):
@@ -578,6 +638,12 @@ class FailureTest(LaunchTestCase):
         self.assertEqual(status, "failed")
         self.assertLessEqual(len(error), 300)
         self.assertTrue(error.startswith("first second [31m yyy"), error)
+
+    def test_an_error_text_with_a_paragraph_separator_stays_one_line(self):
+        self.scenario["terminal create"] = failure("first\u2029second")
+        status, text = self.launch()  # run_launcher asserts exactly one result line
+        self.assertEqual(status, "failed")
+        self.assertIn("successor failed: first second", text)
 
     def test_wrong_shaped_json_is_a_failure_not_a_crash(self):
         for out in ('{"ok": true, "result": null}', '{"ok": true, "result": [1]}', "[]", "null", '{"ok": "true"}', ""):
@@ -648,6 +714,8 @@ class EarlyFailureTest(LaunchTestCase):
             "newline": self.arguments(model="a\nb"),
             "role newline": self.arguments(role="plain\nx"),
             "u2028": self.arguments(effort="a b"),
+            "u2029": self.arguments(effort="a\u2029b"),
+            "relative handoff": self.arguments(handoff=SESSION + ".handoff.md"),
             "c1": self.arguments(permission_mode="a\x85b"),
             "space in model": self.arguments(model="a b"),
             "semicolon in model": self.arguments(model="a;b"),
@@ -989,11 +1057,11 @@ class WorkerTestCase(LaunchTestCase):
         )
 
     def worker_prompt(self):
-        return f"You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {self.handoff} before you act on it."
+        return f"You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {self.quoted_handoff} before you act on it."
 
     def worker_manual_text(self, worktree=None):
         return (
-            f"the handoff file is at {self.handoff}; start the successor with {self.manual_command(prompt=self.worker_prompt())} in an Orca terminal of the worktree"
+            f"the handoff file is at {self.quoted_handoff}; start the successor with {self.manual_command(prompt=self.worker_prompt())} in an Orca terminal of the worktree"
             f" (its handle is the value of $ORCA_TERMINAL_HANDLE there); then tell coordinator {COORDINATOR}: {self.commands('<new handle>', worktree)}"
         )
 
@@ -1004,12 +1072,12 @@ class WorkerTestCase(LaunchTestCase):
         )
 
     def early_failed_text(self, error):
-        return f"successor failed: {error}; the handoff file is at {self.handoff}"
+        return f"successor failed: {error}; the handoff file is at {self.quoted_handoff}"
 
     def assert_early_failure(self, status, text, error=None):
         self.assertEqual(status, "failed")
         self.assertTrue(text.startswith("successor failed: "), text)
-        self.assertTrue(text.endswith(f"; the handoff file is at {self.handoff}"), text)
+        self.assertTrue(text.endswith(f"; the handoff file is at {self.quoted_handoff}"), text)
         if error:
             self.assertEqual(text, self.early_failed_text(error))
         self.assertNotIn("worker-stop", text)
@@ -1049,8 +1117,20 @@ class WorkerSuccessTest(WorkerTestCase):
         self.assertEqual(
             self.option(call, "--body"),
             f"Worker {OLD_HANDLE} (Task {TASK}, Dispatch {DISPATCH}) reached 80% of its context. Its successor {NEW_HANDLE} waits in terminal {NEW_HANDLE}"
-            f" for a dispatch; the handoff file is at {self.handoff}. For coordinator {COORDINATOR}, run: {self.commands(NEW_HANDLE)}",
+            f" for a dispatch; the handoff file is at {self.quoted_handoff}. For coordinator {COORDINATOR}, run: {self.commands(NEW_HANDLE)}",
         )
+
+    def test_the_handoff_path_is_quoted_whole_in_the_worker_texts(self):
+        parent = self.use_odd_handoff_folder()
+        self.assertEqual(self.worker_launch(TMPDIR=parent)[0], "ok")
+        self.assertEqual(self.option(self.call("terminal send"), "--text"), self.worker_prompt())
+        words = shlex.split(self.worker_prompt())
+        self.assertEqual(words[words.index("read") + 1], self.handoff)
+        self.assertEqual(self.read("manual"), self.worker_manual_text())
+        body = self.option(self.call("orchestration send"), "--body")
+        self.assertIn(f"the handoff file is at {self.quoted_handoff}. For coordinator", body)
+        command = shlex.split(self.option(self.call("terminal create"), "--command"))
+        self.assertEqual(command[1], "CONTEXT_HANDOFF_SUCCESSOR=" + self.handoff)
 
     def test_the_commands_use_the_orca_worktree_not_the_cwd_below_it(self):
         self.worker_launch()
@@ -1125,6 +1205,13 @@ class WorkerPreCheckTest(WorkerTestCase):
                 self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
                 os.remove(self.log_path)
 
+    def test_the_early_failure_text_quotes_the_handoff_path(self):
+        parent = self.use_odd_handoff_folder()
+        self.scenario["orchestration worker-show"] = failure("no such thing")
+        status, text = self.worker_launch(TMPDIR=parent)
+        self.assert_early_failure(status, text, "no such thing")
+        self.assertEqual(shlex.split(text.rsplit("; the handoff file is at ", 1)[1]), [self.handoff])
+
     def test_the_mismatch_text(self):
         self.scenario["orchestration worker-show"] = reply({"dispatch": {"id": "ctx_other", "taskId": TASK, "assigneeHandle": OLD_HANDLE}})
         status, text = self.worker_launch()
@@ -1156,6 +1243,41 @@ class WorkerPreCheckTest(WorkerTestCase):
         os.remove(self.handoff)
         self.assertEqual(self.worker_launch()[1], "successor failed: the handoff file is missing or empty")
         self.assertEqual(self.calls(), [])
+
+
+class WorkerFailureTest(WorkerTestCase):
+    def assert_closed_with_the_manual(self, status, text, note=None):
+        self.assertEqual(status, "failed")
+        self.assertTrue(text.startswith("successor failed: "), text)
+        self.assertTrue(text.endswith("; " + self.worker_manual_text() + (f"; {note}" if note else "")), text)
+        self.assertEqual(self.read("manual"), self.worker_manual_text())
+        self.assert_closed()
+        self.assertNotIn("orchestration send", self.names())
+
+    def test_a_failed_idle_wait_closes_the_terminal(self):
+        for entry in (failure("never idle", "timeout"), reply({"wait": {"satisfied": False}})):
+            with self.subTest(entry=entry):
+                self.scenario["terminal wait"] = entry
+                self.assert_closed_with_the_manual(*self.worker_launch())
+                self.assertNotIn("terminal send", self.names())
+                os.remove(self.log_path)
+
+    def test_a_failed_prompt_send_closes_the_terminal(self):
+        for entry in (failure("no submit"), reply({"send": {"prompt": {"stages": ["input_accepted"]}}})):
+            with self.subTest(entry=entry):
+                self.scenario["terminal send"] = entry
+                self.assert_closed_with_the_manual(*self.worker_launch())
+                os.remove(self.log_path)
+
+    def test_a_failed_close_adds_the_may_still_run_note(self):
+        note = f"terminal {NEW_HANDLE} may still run; close it before you start the manual command"
+        for name, entry in (("terminal wait", failure("never idle")), ("terminal send", failure("no submit"))):
+            with self.subTest(name=name):
+                self.scenario = self.default_scenario()
+                self.scenario["terminal close"] = failure("cannot close")
+                self.scenario[name] = entry
+                self.assert_closed_with_the_manual(*self.worker_launch(), note=note)
+                os.remove(self.log_path)
 
 
 class WorkerManualCaseTest(WorkerTestCase):
@@ -1199,7 +1321,7 @@ class WorkerArgumentsTest(WorkerTestCase):
 
     def test_bad_values(self):
         for name in WORKER_NAMES:
-            for bad in ("-lead", "a b", "a;b", "a\nb", "a\u2028b", "a\x85b", "", "x/y"):
+            for bad in ("-lead", "a b", "a;b", "a\nb", "a\u2028b", "a\u2029b", "a\x85b", "", "x/y"):
                 with self.subTest(name=name, bad=bad):
                     status, text = self.launch(self.worker_arguments(**{name: bad}))
                     self.assertEqual(status, "failed")
