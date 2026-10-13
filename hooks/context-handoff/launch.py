@@ -240,7 +240,7 @@ class Launch:
             f"{cli} orchestration worker-start --task {shlex.quote(self.task)} --retry-of {shlex.quote(self.dispatch)}"
             f" --worktree {shlex.quote('path:' + self.worktree)} --terminal {new}"
         )
-        return clean(f"1) {stop}; 2) if step 1 returns stop_unknown (the worker ran on a reused terminal): {abandon}, then {close}; 3) {start}")
+        return clean(f"1) {stop}; 2) if step 1 returns stop_unknown (normal after the first handover of a Task: every successor Dispatch is started with worker-start --terminal, and such a Dispatch returns stop_unknown): {abandon}, then {close}; 3) {start}")
 
     def manual_text(self):
         command = "cd " + shlex.quote(self.cwd) + " && " + shlex.join(self.claude + [self.prompt_without_handle()])
