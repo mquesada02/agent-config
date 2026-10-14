@@ -51,10 +51,11 @@ class WrapperTestCase(unittest.TestCase):
             handle.write(text)
         os.chmod(path, mode)
 
+    def wrapper_env(self, **extra_env):
+        return {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in, **extra_env}
+
     def run_wrapper(self, stdin, script=STATUSLINE, **extra_env):
-        env = {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in}
-        env.update(extra_env)
-        return subprocess.run([sys.executable, "-I", script], input=stdin, env=env, capture_output=True, timeout=30)
+        return subprocess.run([sys.executable, "-I", script], input=stdin, env=self.wrapper_env(**extra_env), capture_output=True, timeout=30)
 
     def read_window(self):
         with open(self.window) as handle:
@@ -249,7 +250,7 @@ class ModuleSearchPathTest(WrapperTestCase):
         os.mkdir(shadow)
         with open(os.path.join(shadow, "runtime_dir.py"), "w") as handle:
             handle.write("FOLDER_NAME = 'shadow'\n")
-        env = {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in}
+        env = self.wrapper_env()
         result = subprocess.run([sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, STATUSLINE], input=status_input(), env=env, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.read_window(), {"context_window_size": 1000000, "model_id": "claude-fable-5-1[1m]"})
@@ -260,7 +261,7 @@ class CaptureOnlyImportTest(WrapperTestCase):
         for blocked in ("json", "math"):
             with self.subTest(blocked=blocked):
                 stdin = status_input()
-                env = {"PATH": self.bin + ":/usr/bin:/bin", "TMPDIR": self.tmp, "STUB_IN": self.stub_in}
+                env = self.wrapper_env()
                 result = subprocess.run([sys.executable, "-I", "-c", BLOCK_DRIVER, blocked, STATUSLINE], input=stdin, env=env, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, b"STATUS-LINE")
