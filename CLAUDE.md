@@ -101,16 +101,16 @@ When implementing any task, you must do these steps in the corresponding order:
 Plan-review loop:
 (a) Run the correctness phase until 2 consecutive rounds have no Blocking finding. Record the Minor findings.
 (b) Apply the recorded Minor findings.
-(c) Run the final phase until 2 consecutive rounds have no finding, Blocking or Minor.
-(d) If a final-phase round has any finding, fix each Blocking finding and record each Minor finding, then go back to (a) with the count at zero.
-This loop differs from section 6 on purpose in two ways. It has no quality phase and uses no `/simplify`: step (b) only applies the recorded Minor findings. It has no comment-only exception: a wording-only fix restarts the count too, because in a spec the wording is the content.
+(c) Run the final phase until 2 consecutive rounds have no Blocking finding and no new Minor finding. Every Blocking finding fails the round. A Minor finding is not new when it repeats one that step (a) or (d) recorded. It is also not new when a decision on the map already settles it. The session that runs the loop decides whether a Minor finding is new. That session is the main section 7 session, or the worker in step 5.3. That session raises a Minor finding to Blocking when it contradicts a decision on the map. That session also raises a Minor finding to Blocking when it shows a requirement that no test can check. These two raises apply even when the finding is not new.
+(d) If a final-phase round has a Blocking finding or a new Minor finding, fix each Blocking finding and record each new Minor finding, then go back to (a) with the count at zero.
+This loop differs from section 6 on purpose in three ways. It has no quality phase and uses no `/simplify`: step (b) only applies the recorded Minor findings. It has no comment-only exception: a wording-only fix restarts the count too, because in a spec the wording is the content. Its final phase counts only new Minor findings, as step (c) defines them.
 4. /mattpocock-skills:to-tickets after creating the general spec.
-4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3: any final-phase finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
+4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3: a final-phase Blocking finding or a new Minor finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
-5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: any final-phase finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
-5.4. After the spec comes out clean, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
+5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: a final-phase Blocking finding or a new Minor finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
+5.4. After the plan-review loop ends, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.

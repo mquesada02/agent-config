@@ -139,6 +139,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         cls.step3 = step(cls.section7, "3")
         cls.step41 = step(cls.section7, "4.1")
         cls.step53 = step(cls.section7, "5.3")
+        cls.loop_block = cls.step3.lower().partition(LOOP_MARKER)[2]
 
     def test_steps_do_not_name_code_review(self):
         for text in (self.step3, self.step41, self.step53):
@@ -178,13 +179,51 @@ class ClaudeMdWiringTest(unittest.TestCase):
     def test_loop_block_is_stated_once_in_step_3(self):
         markers = [line for line in self.section7 if line.lower().startswith(LOOP_MARKER)]
         self.assertEqual(len(markers), 1)
-        block = self.step3.lower().split(LOOP_MARKER, 1)[1]
+        block = self.loop_block
         for word in (
             "correctness phase", "final phase", "2 consecutive rounds", "no blocking",
             "apply the recorded minor", "count at zero", "uses no `/simplify`", "differs from section 6",
         ):
             self.assertIn(word, block)
         self.assertEqual(re.findall(r"^\(([a-d])\) ", block, re.M), ["a", "b", "c", "d"])
+
+    def loop_step(self, letter):
+        match = re.search(rf"^\({letter}\) (.*)$", self.loop_block, re.M)
+        assert match, f"plan-review loop has no step ({letter})"
+        return match.group(1)
+
+    def test_final_phase_counts_only_new_minors(self):
+        text = self.loop_step("c")
+        for word in (
+            "no blocking finding and no new minor finding",
+            "every blocking finding fails the round",
+            "repeats one that step (a) or (d) recorded",
+            "it is also not new when a decision on the map already settles it",
+        ):
+            self.assertIn(word, text)
+
+    def test_final_phase_raises_minors_to_blocking(self):
+        text = self.loop_step("c")
+        for word in (
+            "the session that runs the loop",
+            "that session is the main section 7 session, or the worker in step 5.3",
+            "raises a minor finding to blocking when it contradicts a decision on the map",
+            "decides whether a minor finding is new",
+            "also raises a minor finding to blocking when it shows a requirement that no test can check",
+            "these two raises apply even when the finding is not new",
+        ):
+            self.assertIn(word, text)
+
+    def test_restart_needs_blocking_or_new_minor(self):
+        text = self.loop_step("d")
+        for word in ("fix each blocking finding", "record each new minor finding"):
+            self.assertIn(word, text)
+        for step_text in (text, self.step41.lower(), self.step53.lower()):
+            self.assertIn("blocking finding or a new minor finding", step_text)
+
+    def test_loop_names_the_new_minor_difference_from_section_6(self):
+        self.assertIn("differs from section 6 on purpose in three ways", self.loop_block)
+        self.assertIn("its final phase counts only new minor findings", self.loop_block)
 
     def test_step_53_states_the_restart_rule(self):
         self.assertIn("count at zero", self.step53.lower())
