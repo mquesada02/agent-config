@@ -7,6 +7,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 CLAUDE_MD = os.path.join(REPO, "CLAUDE.md")
 SKILL = os.path.join(HERE, "SKILL.md")
 SPEC_AXES = os.path.join(HERE, "spec-axes.md")
+TICKETS_AXES = os.path.join(HERE, "tickets-axes.md")
 STEP_PREFIX = re.compile(r"^\d+(\.\d+)?\. ")
 LOOP_MARKER = "plan-review loop:"
 CODE_REVIEW = "/mattpocock-skills:code-review"
@@ -15,6 +16,10 @@ CODE_REVIEW = "/mattpocock-skills:code-review"
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+def axis_headings(path):
+    return re.findall(r"^## (.+)$", read(path), re.M)
 
 
 def skill_section(text, heading):
@@ -58,22 +63,39 @@ class SkillFilesTest(unittest.TestCase):
         text = skill_section(self.skill, "Inputs").lower()
         for word in ("`spec general`", "`spec ticket`", "decision tickets", "request", "map", "quote"):
             self.assertIn(word, text)
+        for word in ("`tickets`", "general spec", "ticket issues"):
+            self.assertIn(word, text)
 
     def test_process_stops_and_asks(self):
         text = skill_section(self.skill, "Process").lower()
         self.assertIn("stop and ask", text)
-        for phrase in ("input is missing", "mode is unknown", "case is unknown", "mode is `tickets`"):
+        for phrase in ("input is missing", "mode is unknown", "case is unknown", "a case word is given"):
             self.assertIn(phrase, text)
 
     def test_process_requires_sonnet_and_report_shape(self):
         text = skill_section(self.skill, "Process").lower()
         for word in ("sonnet", "blocking", "minor", "counts", "most severe", "no findings"):
             self.assertIn(word, text)
+        for phrase in ("fidelity or coverage", "fidelity, clarity, codebase fit", "coverage, slicing, edges"):
+            self.assertIn(phrase, text)
+
+    def test_tickets_mode_is_built(self):
+        self.assertNotIn("not built yet", self.skill.lower())
+        self.assertIn("/plan-review tickets", self.skill.split("\n## ", 1)[0])
+
+    def test_source_and_severity_cover_tickets_mode(self):
+        source = skill_section(self.skill, "Source for each axis")
+        for word in ("Coverage", "Slicing", "Edges"):
+            self.assertIn(word, source)
+        severity = skill_section(self.skill, "Severity").lower()
+        for phrase in ("blocking edge", "horizontal slice"):
+            self.assertIn(phrase, severity)
 
     def test_spec_axes_reference_names_three_axes(self):
-        text = read(SPEC_AXES)
-        headings = re.findall(r"^## (.+)$", text, re.M)
-        self.assertEqual(headings, ["Fidelity", "Clarity", "Codebase fit"])
+        self.assertEqual(axis_headings(SPEC_AXES), ["Fidelity", "Clarity", "Codebase fit"])
+
+    def test_tickets_axes_reference_names_three_axes(self):
+        self.assertEqual(axis_headings(TICKETS_AXES), ["Coverage", "Slicing", "Edges"])
 
 
 class ClaudeMdWiringTest(unittest.TestCase):
@@ -82,11 +104,30 @@ class ClaudeMdWiringTest(unittest.TestCase):
         cls.text = read(CLAUDE_MD)
         cls.section7 = section(cls.text, 7)
         cls.step3 = step(cls.section7, "3")
+        cls.step41 = step(cls.section7, "4.1")
         cls.step53 = step(cls.section7, "5.3")
 
     def test_steps_do_not_name_code_review(self):
-        for text in (self.step3, self.step53):
+        for text in (self.step3, self.step41, self.step53):
             self.assertNotIn(CODE_REVIEW, text)
+
+    def test_step_41_names_tickets_mode_and_who_applies_fixes(self):
+        text = self.step41.lower()
+        self.assertIn("/plan-review tickets", text)
+        for word in (
+            "count at zero", "step 3", "main section 7 session",
+            "before any dispatch", "ticket issues", "blocking edges", "general spec",
+        ):
+            self.assertIn(word, text)
+
+    def test_step_41_sits_between_step_4_and_step_5(self):
+        index = {}
+        for prefix in ("4. ", "4.1. ", "5. "):
+            hits = [i for i, line in enumerate(self.section7) if line.startswith(prefix)]
+            self.assertEqual(len(hits), 1, prefix)
+            index[prefix] = hits[0]
+        self.assertLess(index["4. "], index["4.1. "])
+        self.assertLess(index["4.1. "], index["5. "])
 
     def test_steps_name_the_case_and_who_applies_fixes(self):
         self.assertIn("/plan-review spec general", self.step3)
@@ -97,8 +138,8 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("worker", self.step53.lower())
         self.assertIn("spec issue body", self.step53.lower())
 
-    def test_both_steps_use_the_loop(self):
-        for text in (self.step3, self.step53):
+    def test_all_steps_use_the_loop(self):
+        for text in (self.step3, self.step41, self.step53):
             self.assertIn("plan-review loop", text.lower())
 
     def test_loop_block_is_stated_once_in_step_3(self):
@@ -119,10 +160,21 @@ class ClaudeMdWiringTest(unittest.TestCase):
         sentences = [
             sentence
             for sentence in re.split(r"(?<=[.])\s+", " ".join(self.section7))
-            if "round count of each" in sentence
+            if "section 6 phase" in sentence
         ]
         self.assertEqual(len(sentences), 1)
+        self.assertIn("round count of each", sentences[0].lower())
         self.assertIn("plan-review loop", sentences[0].lower())
+
+    def test_evidence_covers_the_step_41_review(self):
+        sentences = [
+            sentence.lower()
+            for sentence in re.split(r"(?<=[.])\s+", " ".join(self.section7))
+            if "step 4.1" in sentence.lower() and "checks" in sentence.lower()
+        ]
+        self.assertEqual(len(sentences), 1)
+        for phrase in ("plan-review loop", "result", "round count of each", "model of each"):
+            self.assertIn(phrase, sentences[0])
 
     def test_section_11_lists_both_review_kinds(self):
         lines = section(self.text, 11)
@@ -130,7 +182,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         code = [line for line in lines if CODE_REVIEW in line]
         self.assertEqual(len(plan), 1)
         self.assertEqual(len(code), 1)
-        self.assertIn("steps 3 and 5.3", plan[0])
+        self.assertIn("steps 3, 4.1 and 5.3", plan[0])
         self.assertIn("section 6", code[0])
         self.assertIn("5.5", code[0])
 
