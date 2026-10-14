@@ -36,6 +36,16 @@ def section(text, number):
     return lines[start:end]
 
 
+def sentence_with(lines, *markers):
+    """The one sentence of the joined lines that contains every marker, lowercased."""
+    sentences = [
+        s.lower() for s in re.split(r"(?<=[.])\s+", " ".join(lines))
+        if all(m in s.lower() for m in markers)
+    ]
+    assert len(sentences) == 1, f"expected one sentence with {markers}, got {len(sentences)}"
+    return sentences[0]
+
+
 def step(lines, prefix):
     """Lines of a section 7 step: from its number prefix to the next line that starts a step."""
     start = next((i for i, line in enumerate(lines) if line.startswith(f"{prefix}. ")), None)
@@ -69,7 +79,7 @@ class SkillFilesTest(unittest.TestCase):
     def test_process_stops_and_asks(self):
         text = skill_section(self.skill, "Process").lower()
         self.assertIn("stop and ask", text)
-        for phrase in ("input is missing", "mode is unknown", "case is unknown", "a case word is given"):
+        for phrase in ("input is missing", "mode is unknown", "case is missing or unknown", "a case word is given"):
             self.assertIn(phrase, text)
 
     def test_process_requires_sonnet_and_report_shape(self):
@@ -81,15 +91,22 @@ class SkillFilesTest(unittest.TestCase):
 
     def test_tickets_mode_is_built(self):
         self.assertNotIn("not built yet", self.skill.lower())
-        self.assertIn("/plan-review tickets", self.skill.split("\n## ", 1)[0])
+        body = self.skill.split("\n---\n", 1)[1]
+        self.assertIn("/plan-review tickets", body.split("\n## ", 1)[0])
 
     def test_source_and_severity_cover_tickets_mode(self):
         source = skill_section(self.skill, "Source for each axis")
         for word in ("Coverage", "Slicing", "Edges"):
             self.assertIn(word, source)
-        severity = skill_section(self.skill, "Severity").lower()
-        for phrase in ("blocking edge", "horizontal slice"):
-            self.assertIn(phrase, severity)
+        self.assertIn("label wins", skill_section(self.skill, "Severity").lower())
+        axes = read(TICKETS_AXES).lower()
+        for phrase in (
+            "(missing, blocking)", "(extra, minor)", "horizontal slice is blocking",
+            "too big for one worker is blocking", "without them is blocking",
+            "in one ticket is blocking", "missing edge is blocking", "a cycle is blocking",
+            "such a pair is blocking",
+        ):
+            self.assertIn(phrase, axes)
 
     def test_spec_axes_reference_names_three_axes(self):
         self.assertEqual(axis_headings(SPEC_AXES), ["Fidelity", "Clarity", "Codebase fit"])
@@ -157,24 +174,14 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("count at zero", self.step53.lower())
 
     def test_evidence_sentence_covers_the_loop_phases(self):
-        sentences = [
-            sentence
-            for sentence in re.split(r"(?<=[.])\s+", " ".join(self.section7))
-            if "section 6 phase" in sentence
-        ]
-        self.assertEqual(len(sentences), 1)
-        self.assertIn("round count of each", sentences[0].lower())
-        self.assertIn("plan-review loop", sentences[0].lower())
+        sentence = sentence_with(self.section7, "section 6 phase")
+        self.assertIn("round count of each", sentence)
+        self.assertIn("plan-review loop", sentence)
 
     def test_evidence_covers_the_step_41_review(self):
-        sentences = [
-            sentence.lower()
-            for sentence in re.split(r"(?<=[.])\s+", " ".join(self.section7))
-            if "step 4.1" in sentence.lower() and "checks" in sentence.lower()
-        ]
-        self.assertEqual(len(sentences), 1)
+        sentence = sentence_with(self.section7, "step 4.1", "checks")
         for phrase in ("plan-review loop", "result", "round count of each", "model of each"):
-            self.assertIn(phrase, sentences[0])
+            self.assertIn(phrase, sentence)
 
     def test_section_11_lists_both_review_kinds(self):
         lines = section(self.text, 11)
