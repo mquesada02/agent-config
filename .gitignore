@@ -11,6 +11,7 @@
 !skills/
 !skills/**
 skills/synced/
+__pycache__/
 !settings.json
 !README.md
 !LICENSE

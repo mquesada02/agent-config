@@ -16,9 +16,10 @@ LOCK_RETRY_SECONDS = 0.01
 
 def runtime_dir_path():
     # TMPDIR only when it is absolute; the fallback ignores TEMP, TMP and the working directory so that every script resolves the same folder.
+    # The path is normalized because the launcher refuses a runtime folder that is not.
     tmpdir = os.environ.get("TMPDIR")
     base = tmpdir if tmpdir and os.path.isabs(tmpdir) else "/tmp"
-    return os.path.join(base, FOLDER_NAME)
+    return os.path.normpath(os.path.join(base, FOLDER_NAME))
 
 
 def valid_session_id(session_id):

@@ -24,7 +24,16 @@ def axis_headings(path):
 
 def skill_section(text, heading):
     """Text of a `## <heading>` section of SKILL.md."""
-    return text.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
+    match = re.search(rf"^## {re.escape(heading)}$", text, re.M)
+    assert match, f"SKILL.md has no section {heading}"
+    return text[match.end():].split("\n## ", 1)[0]
+
+
+def input_list(inputs, case):
+    """The paragraph of the Inputs section that starts with `case` (a mode and case word in backticks)."""
+    blocks = [block for block in inputs.split("\n\n") if block.startswith(case)]
+    assert len(blocks) == 1, f"expected one input list for {case}, got {len(blocks)}"
+    return blocks[0]
 
 
 def section(text, number):
@@ -69,12 +78,18 @@ class SkillFilesTest(unittest.TestCase):
         self.assertIn("spec", description)
         self.assertIn("ticket breakdown", description)
 
-    def test_process_names_inputs_per_case(self):
-        text = skill_section(self.skill, "Inputs").lower()
-        for word in ("`spec general`", "`spec ticket`", "decision tickets", "request", "map", "quote"):
-            self.assertIn(word, text)
-        for word in ("`tickets`", "general spec", "ticket issues"):
-            self.assertIn(word, text)
+    def test_inputs_name_the_sources_per_case(self):
+        inputs = skill_section(self.skill, "Inputs").lower()
+        cases = {
+            "`spec general`": ("the spec", "the map", "decision tickets", "request", "quote"),
+            "`spec ticket`": ("the spec", "the ticket", "the map"),
+            "`tickets`": ("general spec", "ticket issues"),
+        }
+        for case, words in cases.items():
+            text = input_list(inputs, case)
+            for word in words:
+                with self.subTest(case=case, word=word):
+                    self.assertIn(word, text)
 
     def test_process_stops_and_asks(self):
         text = skill_section(self.skill, "Process").lower()
@@ -84,7 +99,8 @@ class SkillFilesTest(unittest.TestCase):
 
     def test_process_requires_sonnet_and_report_shape(self):
         text = skill_section(self.skill, "Process").lower()
-        for word in ("sonnet", "blocking", "minor", "counts", "most severe", "no findings"):
+        self.assertIn("set a sonnet model in each agent call", text)
+        for word in ("blocking", "minor", "counts", "most severe", "no findings"):
             self.assertIn(word, text)
         for phrase in ("fidelity or coverage", "fidelity, clarity, codebase fit", "coverage, slicing, edges"):
             self.assertIn(phrase, text)
@@ -152,7 +168,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("main section 7 session", self.step3.lower())
         self.assertIn("before any dispatch", self.step3.lower())
         self.assertIn("spec issue body", self.step3.lower())
-        self.assertIn("worker", self.step53.lower())
+        self.assertIn("the worker applies every fix", self.step53.lower())
         self.assertIn("spec issue body", self.step53.lower())
 
     def test_all_steps_use_the_loop(self):
