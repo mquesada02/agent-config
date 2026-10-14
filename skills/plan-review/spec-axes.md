@@ -1,6 +1,6 @@
 # Spec mode axes
 
-Give each subagent its own axis text only. Each finding is labelled Blocking or Minor (see SKILL.md).
+Give each subagent its own axis text and the SKILL.md Severity section, not the other axes. Each finding is labelled Blocking or Minor.
 
 ## Fidelity
 

@@ -11,8 +11,8 @@ Command form: `/plan-review <mode> [case] <links>`. `spec` takes a case word. `t
 
 ## Modes
 
-- `spec`: built. Axes are in [spec-axes.md](spec-axes.md).
-- `tickets`: built. Axes are in [tickets-axes.md](tickets-axes.md).
+- `spec`: axes are in [spec-axes.md](spec-axes.md).
+- `tickets`: axes are in [tickets-axes.md](tickets-axes.md).
 
 ## Inputs
 
@@ -38,7 +38,7 @@ All inputs are tracker links, never a paraphrase from the caller. The one except
 1. Check the mode, the case and the inputs. Stop and ask the caller if an input is missing, if the mode is unknown, if the mode is `spec` and the case is unknown, or if the mode is `tickets` and a case word is given. Never review without the full source.
 2. Read the axis texts for the mode from its reference file.
 3. Spawn exactly one subagent per axis in one message, so they run in parallel. Set a Sonnet model in each Agent call.
-4. Give each subagent the document link, the source links for its axis and its axis text. Each subagent returns findings labelled Blocking or Minor. Each Fidelity or Coverage finding quotes its source line.
+4. Give each subagent the document link, the source links for its axis, its axis text and the Severity section below. Each subagent returns findings labelled Blocking or Minor. Each Fidelity or Coverage finding quotes its source line.
 5. Report one heading per axis, in the order the reference file lists the axes (spec mode: Fidelity, Clarity, Codebase fit; tickets mode: Coverage, Slicing, Edges), without merging or reranking. Each axis ends with its Blocking and Minor counts and its most severe finding: the first Blocking finding in report order, else the first Minor finding. An axis with no findings says "No findings" and shows counts of zero.
 
 ## Source for each axis
@@ -50,10 +50,9 @@ All inputs are tracker links, never a paraphrase from the caller. The one except
 - Slicing: the ticket set, and `CLAUDE.md` section 7 steps 5.1 to 5.5 for what one worker does.
 - Edges: the ticket set and the codebase. The reviewer reads the code.
 
-"Mismatch with the source" means a mismatch with the source that this list names for the axis.
-
 ## Severity
 
 - Blocking: a missing case, a contradiction, a mismatch with the source, an untestable decision, a wrong or missing blocking edge, a horizontal slice.
 - Minor: wording, style, judgement calls.
-- A mismatch with the source is always Blocking.
+- A mismatch with the source is always Blocking. The source is what your source links and your axis text name, including the code or `CLAUDE.md` where your axis text says to read them.
+- Every subagent gets this whole list, but some items belong to one axis only (a blocking edge to Edges, a slice to Slicing). Report findings for your own axis only.

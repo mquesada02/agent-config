@@ -1,6 +1,6 @@
 # Tickets mode axes
 
-Give each subagent its own axis text only. Each finding is labelled Blocking or Minor (see SKILL.md).
+Give each subagent its own axis text and the SKILL.md Severity section, not the other axes. Each finding is labelled Blocking or Minor.
 
 ## Coverage
 
@@ -8,7 +8,9 @@ Compare the general spec with the ticket set. Report:
 - each spec requirement or acceptance criterion that maps to no ticket (missing)
 - each ticket requirement that no line of the spec states, including enabling work or refactoring that the spec does not name (extra)
 
-Quote the source line for each finding.
+Quote the line each finding rests on: the spec line for a missing requirement, the ticket line for an extra one.
+
+Report coverage only. Slice shape, ticket size and blocking edges belong to the other axes.
 
 ## Slicing
 
