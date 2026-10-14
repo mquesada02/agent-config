@@ -1,15 +1,15 @@
 # Spec mode axes
 
-Give each subagent its own axis text only. Each finding is labelled Blocking or Minor (see SKILL.md).
+Give each subagent its own axis text and the SKILL.md Severity section, not the other axes.
 
 ## Fidelity
 
-Compare the spec with its source (see SKILL.md for the source of each case). Report:
+Compare the spec with its source: the source links you were given. Report:
 - requirements in the source that the spec does not have (missing)
 - requirements in the spec that nobody asked for (extra)
 - requirements that contradict the source
 
-For step 3, check the quoted request against its link. Quote the source line for each finding.
+If you were given a quoted request, check it against its link. Quote the source line for each finding.
 
 ## Clarity
 

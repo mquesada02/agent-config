@@ -76,11 +76,13 @@ Issue types:
 - **Blocking**: bugs, logic errors, missing cases, spec mismatches.
 - **Minor**: cosmetic, naming, style, judgement calls.
 
-The main session decides the final type. A spec mismatch is always blocking, whatever the reviewer called it.
+The main session decides the final type, and whether a fix changes only comments or wording. A spec mismatch is always blocking, whatever the reviewer called it.
 
 1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
 2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it makes no more changes.
-3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds have no blocking issues. A blocking issue here means: fix it, then go back to step 2. A comment-only or wording change does not restart the count, and minor findings are listed for the user instead of fixed.
+3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds are clean (no issues). After each round with issues:
+   - If every issue is blocking and every fix changes only comments or wording: apply the fixes and stay in this phase. This round neither counts toward the two nor breaks the run: clean, comment-only, clean is two consecutive clean rounds.
+   - Otherwise: fix the blocking issues, record the minor issues, then go back to step 1 with its two-round count at zero.
 4. If you're unsure of anything, ask the user.
 
 ## 7. General workflow for any task
@@ -99,19 +101,20 @@ When implementing any task, you must do these steps in the corresponding order:
 Plan-review loop:
 (a) Run the correctness phase until 2 consecutive rounds have no Blocking finding. Record the Minor findings.
 (b) Apply the recorded Minor findings.
-(c) Run the final phase until 2 consecutive rounds have no Blocking finding. List new Minor findings for the user instead of fixing them.
-(d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
-This loop uses no `/simplify`. It differs from section 6 on purpose in two ways. It has no quality phase, so a final-phase Blocking finding goes back to the correctness phase. A Blocking fix that changes only wording also restarts the count, because in a spec the wording is the content.
+(c) Run the final phase until 2 consecutive rounds have no finding, Blocking or Minor.
+(d) If a final-phase round has any finding, fix each Blocking finding and record each Minor finding, then go back to (a) with the count at zero.
+This loop differs from section 6 on purpose in two ways. It has no quality phase and uses no `/simplify`: step (b) only applies the recorded Minor findings. It has no comment-only exception: a wording-only fix restarts the count too, because in a spec the wording is the content.
 4. /mattpocock-skills:to-tickets after creating the general spec.
+4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3: any final-phase finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
-5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: a final-phase Blocking finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
+5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: any final-phase finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
 5.4. After the spec comes out clean, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
-Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
 These steps are mandatory.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
@@ -140,7 +143,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
 ## 11. Task delegation
 
 - Use built-in subagents (Agent tool) only for these review runs:
-  - /plan-review runs: section 7, steps 3 and 5.3.
+  - /plan-review runs: section 7, steps 3, 4.1 and 5.3.
   - /mattpocock-skills:code-review runs: section 6 and section 7, step 5.5.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
