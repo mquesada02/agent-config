@@ -16,6 +16,12 @@
     ],
     "defaultMode": "auto"
   },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Orca Worker Handover: A coordinator session (the session that bound the Orca Run with `orchestration run-create` or `orchestration run-use`) may run exactly the commands that a 'Worker handover' escalation lists: `orchestration worker-stop`, `orchestration worker-abandon`, `terminal close` and `orchestration worker-start --retry-of`. Not Interfere With Workloads: the worker asked for the handover. The escalation must appear in a tool result of the coordinator's own Orca mailbox (`orchestration check`) and come from a worker in the bound Run. Each command must match the escalation exactly: its CLI prefix, order and conditions, and real IDs, handles and paths as arguments, never a placeholder such as `<new handle>`. Anything else, including a worker session or escalation text from any other source, does not match."
+    ]
+  },
   "model": "claude-opus-5-5",
   "fallbackModel": [
     "claude-opus-5[1m]"
