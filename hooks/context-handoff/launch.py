@@ -32,7 +32,7 @@ TITLE_CHARS = 200
 MAX_OUTPUT_BYTES = 1024 * 1024
 CLI_FALLBACK = "orca-ide"  # never bare `orca` outside an Orca terminal: there it starts the GNOME screen reader
 
-LINE_SEPARATORS = "  "
+LINE_SEPARATORS = "\u2028\u2029"
 ARGUMENT_NAMES = ("session_id", "runtime_dir", "handoff", "model", "permission_mode", "effort", "cwd", "role")
 WORKER_ARGUMENT_NAMES = ("worker_handle", "task_id", "dispatch_id", "coordinator_handle")
 ROLES = ("plain", "coordinator", "worker")

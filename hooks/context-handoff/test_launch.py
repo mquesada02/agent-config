@@ -19,7 +19,8 @@ DISPATCH = "ctx_abc123"
 COORDINATOR = "term_coord"
 
 # A stand-in for the Orca CLI. It logs each call (with a snapshot of the launch and manual files at that moment) and
-# answers from a scenario file: {"<command words>": {"out": <json or raw text>, "sleep": s, "exit": n, "grandchild": bool, "dir_over": path}}.
+# answers from a scenario file: {"<command words>": {"out": <json or raw text>, "sleep": s, "exit": n, "grandchild": bool, "dir_over": path,
+# "done_file": path (created after the sleep, so a test can tell that the call ran to its end)}}.
 STUB = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys, time
 argv = sys.argv[1:]
@@ -41,6 +42,8 @@ if entry.get("dir_over"):
 if entry.get("grandchild"):
     subprocess.Popen(["sleep", "30"])
 time.sleep(entry.get("sleep", 0))
+if entry.get("done_file"):
+    open(entry["done_file"], "w").close()
 out = entry.get("out", {})
 if "bytes" in entry:
     sys.stdout.buffer.write(bytes.fromhex(entry["bytes"]))
@@ -433,6 +436,7 @@ class TitleTest(LaunchTestCase):
 
     def test_title_is_one_line_and_cut(self):
         self.assertEqual(self.title_of("a b\x1bc"), "a b c ↻1")
+        self.assertEqual(self.title_of("a\u2028b"), "a b ↻1")
         self.assertEqual(self.title_of("x" * 500), "x" * 200 + " ↻1")
 
 
@@ -1025,6 +1029,33 @@ class TimingTest(LaunchTestCase):
         self.assertNotIn("terminal send", self.names())
         self.assertTrue(text.endswith(self.manual_text()), text)
 
+    def slow_setup(self, seconds, wait):
+        """Make status, list, show and create take `seconds` each and the idle wait take `wait`."""
+        for name in ("status", "worktree list", "terminal show", "terminal create"):
+            self.scenario[name]["sleep"] = seconds
+        self.scenario["terminal wait"]["sleep"] = wait
+
+    def test_a_late_send_gets_the_time_left_minus_2_seconds(self):
+        # The limits are constants (no test-only switch), so this case takes real time: about 80 s of wall time and almost
+        # no CPU. Status, list, show and create take 5 s each and the idle wait 58 s, so about 6 s are left for the send.
+        self.slow_setup(5, 58)
+        status, _ = self.launch(timeout=110)
+        self.assertEqual(status, "ok")
+        self.assertIn(int(self.option(self.call("terminal send"), "--wait-submit")), range(3, 6))
+
+    def test_under_3_seconds_left_skips_the_send_and_closes_the_terminal(self):
+        # Real time again: about 85 s. Status, list, show and create take 6.5 s each and the idle wait 56.8 s, so the wait
+        # ends with under 3 s left before the work deadline. The done file shows that the wait ran to its end.
+        done = os.path.join(self.root, "wait-done")
+        self.slow_setup(6.5, 56.8)
+        self.scenario["terminal wait"]["done_file"] = done
+        status, text = self.launch(timeout=110)
+        self.assertTrue(os.path.exists(done))
+        self.assertEqual(status, "failed")
+        self.assertTrue(text.startswith("successor failed: the Orca call timed out"), text)
+        self.assertNotIn("terminal send", self.names())
+        self.assertEqual(self.names()[-1], "terminal close")
+
 
 WORKER_NAMES = ("worker_handle", "task_id", "dispatch_id", "coordinator_handle")
 
@@ -1306,6 +1337,7 @@ class WorkerArgumentsTest(WorkerTestCase):
         cases = {
             "worker with 8": self.arguments(role="worker"),
             "worker with 9": full[:9],
+            "worker with 10": full[:10],
             "worker with 11": full[:11],
             "worker with 13": full + ["x"],
             "plain with 12": self.arguments(role="plain") + ["a", "b", "c", "d"],
