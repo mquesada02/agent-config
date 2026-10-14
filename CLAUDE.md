@@ -103,7 +103,7 @@ Plan-review loop:
 (d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
 This loop uses no `/simplify`. It differs from section 6 on purpose in two ways. It has no quality phase, so a final-phase Blocking finding goes back to the correctness phase. A Blocking fix that changes only wording also restarts the count, because in a spec the wording is the content.
 4. /mattpocock-skills:to-tickets after creating the general spec.
-4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link), before any worker is dispatched. Run the same plan-review loop as in step 3: a final-phase Blocking finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
+4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3: a final-phase Blocking finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
@@ -112,7 +112,7 @@ This loop uses no `/simplify`. It differs from section 6 on purpose in two ways.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
-Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. The coordinator also checks the step 4.1 review before it reports a ticket as done: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent. A worker's claim without evidence counts as not done.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, the model of each review subagent, and, for the step 4.1 review, its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
