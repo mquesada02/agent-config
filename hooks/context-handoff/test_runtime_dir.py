@@ -61,6 +61,13 @@ class RuntimeDirPathTest(DriverTestCase):
         path = self.drive("print(json.dumps(runtime_dir.runtime_dir_path()))", TMPDIR=None)
         self.assertEqual(path, "/tmp/claude-context-handoff")
 
+    def test_a_tmpdir_that_is_not_normalized_gives_a_normalized_path(self):
+        # The launcher refuses a runtime folder that is not normalized, so every script must build the same normalized path.
+        for tmpdir in (self.tmp + "/./x", self.tmp + "//x", self.tmp + "/y/../x"):
+            with self.subTest(tmpdir=tmpdir):
+                path = self.drive("print(json.dumps(runtime_dir.runtime_dir_path()))", TMPDIR=tmpdir)
+                self.assertEqual(path, os.path.join(self.tmp, "x", "claude-context-handoff"))
+
 
 class SessionIdTest(DriverTestCase):
     def test_only_plain_ascii_tokens_are_valid(self):
