@@ -28,8 +28,10 @@ GOOD_STATE = {"events": 0, "triggered": False, "reblocks": 0, "calls_since_block
 TRIGGERED_STATE = {**GOOD_STATE, "events": 4, "triggered": True, "command": "python3 -I x ROLE_SLOT", "handoff": "/h"}
 
 
-def assistant(tokens=0, model="claude-sonnet-5-5", **extra):
-    entry = {"type": "assistant", "message": {"model": model, "usage": {"input_tokens": tokens, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}
+def assistant(tokens=0, model="claude-sonnet-5-5", usage=None, **extra):
+    if usage is None:
+        usage = {"input_tokens": tokens, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    entry = {"type": "assistant", "message": {"model": model, "usage": usage}}
     entry.update(extra)
     return json.dumps(entry)
 
@@ -169,8 +171,7 @@ class ThresholdTest(HookTestCase):
 
     def test_usage_adds_input_and_both_cache_counts(self):
         self.seed_window()
-        entry = {"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 500, "cache_read_input_tokens": 35000, "cache_creation_input_tokens": 4500}}}
-        self.write_transcript([json.dumps(entry)])
+        self.write_transcript([assistant(usage={"input_tokens": 500, "cache_read_input_tokens": 35000, "cache_creation_input_tokens": 4500})])
         self.assert_block(self.run_hook())
 
     def test_measure_uses_the_last_qualifying_line(self):
@@ -178,15 +179,15 @@ class ThresholdTest(HookTestCase):
             "sidechain": assistant(10, isSidechain=True),
             "synthetic": assistant(0, model="<synthetic>"),
             "api error": assistant(0, isApiErrorMessage=True),
-            "no token field": json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {}}}),
-            "boolean count": json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": True}}}),
+            "no token field": assistant(usage={}),
+            "boolean count": assistant(usage={"input_tokens": True}),
             "negative count": assistant(-5),
             "no model": json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 1}}}),
-            "empty model": json.dumps({"type": "assistant", "message": {"model": "", "usage": {"input_tokens": 1}}}),
+            "empty model": assistant(1, model=""),
             "unparsable last line": '{"type": "assistant", "message": {"usage": ',
-            "user line with usage": json.dumps({"type": "user", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": 10}}}),
-            "string count": json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": {"input_tokens": "10"}}}),
-            "usage not an object": json.dumps({"type": "assistant", "message": {"model": "claude-sonnet-5-5", "usage": [10]}}),
+            "user line with usage": assistant(10, type="user"),
+            "string count": assistant(usage={"input_tokens": "10"}),
+            "usage not an object": assistant(usage=[10]),
             "message not an object": json.dumps({"type": "assistant", "message": "usage"}),
             "line not an object": '["usage"]',
         }
@@ -383,6 +384,14 @@ class ReblockTest(HookTestCase):
 
 
 class CommandTest(HookTestCase):
+    def copy_hook(self, name):
+        """Copy the hook and the runtime-folder module to a new folder `name` and return its path."""
+        copy = os.path.join(self.root, name)
+        os.mkdir(copy)
+        for script in ("hook.py", "runtime_dir.py"):
+            shutil.copy(os.path.join(HERE, script), copy)
+        return copy
+
     def test_command_has_the_seven_filled_values_in_order(self):
         self.seed_window(model_id="claude-fable-5-1[1m]")
         self.write_transcript([assistant(90000)])
@@ -404,15 +413,19 @@ class CommandTest(HookTestCase):
         self.tmp, self.folder = tmp, os.path.join(tmp, "claude-context-handoff")
         self.seed_window(model_id="mod'el \"x\"; rm -rf /")
         self.write_transcript([assistant(90000)])
-        copy = os.path.join(self.root, "hook dir 'x'")
-        os.mkdir(copy)
-        for name in ("hook.py", "runtime_dir.py"):
-            shutil.copy(os.path.join(HERE, name), copy)
+        copy = self.copy_hook("hook dir 'x'")
         output = self.run_hook(script=os.path.join(copy, "hook.py"), cwd="/work/my repo/it's $(x)")
         args = self.command_args(output)
         self.assertEqual(args[2:], [os.path.join(os.path.realpath(copy), "launch.py"), SESSION, self.folder,
                                     os.path.join(self.folder, SESSION + ".handoff.md"), "mod'el \"x\"; rm -rf /", "auto", "medium",
                                     "/work/my repo/it's $(x)", "ROLE_SLOT"])
+
+    def test_a_symlinked_launcher_gives_its_resolved_path(self):
+        self.seed_over_threshold()
+        copy = self.copy_hook("hook copy")
+        os.symlink(LAUNCHER, os.path.join(copy, "launch.py"))
+        args = self.command_args(self.run_hook(script=os.path.join(copy, "hook.py")))
+        self.assertEqual(args[2], LAUNCHER)
 
 
 class FolderTest(HookTestCase):
@@ -946,6 +959,7 @@ class InstructionTest(HookTestCase):
         self.assertIn('under the heading "Successor steps"', reason)
         self.assertIn("check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`)", reason)
         self.assertIn("if any takeover step fails, keep the old terminal open, tell the user what failed, and stop", reason)
+        self.assertIn("The takeover is done when you have read the handoff (and, for a coordinator, bound the Run).", reason)
         self.assertIn("Plain session only:\n   1. Read the handoff.", reason)
         self.assertIn("then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.", reason)
         self.assertIn("3. Continue the work.", reason)

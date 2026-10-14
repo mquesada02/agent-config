@@ -28,7 +28,7 @@ MAX_LINE_BYTES = 4 * 1024 * 1024
 ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
 MARKER_VARIABLE = "CONTEXT_HANDOFF_SUCCESSOR"  # set by the launcher in the successor's start command: the predecessor's handoff path
 HOOK_DIR = os.path.dirname(os.path.realpath(__file__))
-LAUNCHER = os.path.join(HOOK_DIR, "launch.py")
+LAUNCHER = os.path.realpath(os.path.join(HOOK_DIR, "launch.py"))
 # escalation-failed is emitted only by the worker launcher path; the plain and coordinator paths never emit it
 STATUS_WORDS = ("ok", "failed", "escalation-failed", "manual")
 HANDOFF_SUFFIX = ".handoff.md"
@@ -161,11 +161,9 @@ def scan_transcript(path):
     if not isinstance(path, str) or not path:
         return None
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            os.close(fd)
-            return None
-        with os.fdopen(fd, "rb") as handle:
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC), "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None
             return _scan_backward(handle)
     except (OSError, ValueError):  # ValueError: a NUL byte in the path
         return None
