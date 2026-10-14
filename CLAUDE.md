@@ -113,8 +113,7 @@ This loop uses no `/simplify`. It differs from section 6 on purpose in two ways.
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
-If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
-A worker has no direct channel to the user. Where a rule says to list something for the user, the worker lists it in its `worker_done` report, and the coordinator passes it to the user.
+A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
 ## 8. Git contribution
 
