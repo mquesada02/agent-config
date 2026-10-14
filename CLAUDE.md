@@ -131,11 +131,10 @@ When spawning subagents or Orca workers, make sure to use Sonnet models for toke
 
 ## 10. Worktrees
 
-Always work inside a git worktree, for every task, including one-line fixes and non-code changes. Never work directly in the main checkout.
+Always work inside a git worktree, for every task, including one-line fixes, non-code changes and config repositories (`~/.claude`, dotfiles). Never work directly in the main checkout.
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
 - Every Orca ticket worker gets its own child worktree: its parent (lineage) is the coordinator's worktree, and its git base is the repository's default branch, not the coordinator's branch.
 - Outside a git repository, skip worktrees and work in place.
-- Exception: config repositories (`~/.claude`, dotfiles): edit in place, no worktree.
 - After the branch is merged, delete the worktree before deleting the local branch (see section 8).
 
 ## 11. Task delegation
