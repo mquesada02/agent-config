@@ -101,7 +101,7 @@ Plan-review loop:
 (b) Apply the recorded Minor findings.
 (c) Run the final phase until 2 consecutive rounds have no Blocking finding. List new Minor findings for the user instead of fixing them.
 (d) If the final phase finds a Blocking finding, fix it, then go back to (a) with the count at zero.
-This loop uses no `/simplify`. It differs from section 6 on purpose: it has no quality phase, so a final-phase Blocking finding goes back to the correctness phase.
+This loop uses no `/simplify`. It differs from section 6 on purpose in two ways. It has no quality phase, so a final-phase Blocking finding goes back to the correctness phase. A Blocking fix that changes only wording also restarts the count, because in a spec the wording is the content.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
@@ -113,7 +113,7 @@ This loop uses no `/simplify`. It differs from section 6 on purpose: it has no q
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done.
 These steps are mandatory.
-If any of the Orca workers needs grilling, it must escalate the grilling session to the coordinator, and the coordinator must send the answers back to that worker.
+A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
 ## 8. Git contribution
 
@@ -131,16 +131,15 @@ When spawning subagents or Orca workers, make sure to use Sonnet models for toke
 
 ## 10. Worktrees
 
-Always work inside a git worktree, for every task, including one-line fixes and non-code changes. Never work directly in the main checkout.
+Always work inside a git worktree, for every task, including one-line fixes, non-code changes and config repositories (`~/.claude`, dotfiles). Never work directly in the main checkout.
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
 - Every Orca ticket worker gets its own child worktree: its parent (lineage) is the coordinator's worktree, and its git base is the repository's default branch, not the coordinator's branch.
 - Outside a git repository, skip worktrees and work in place.
-- Exception: config repositories (`~/.claude`, dotfiles): edit in place, no worktree.
 - After the branch is merged, delete the worktree before deleting the local branch (see section 8).
 
 ## 11. Task delegation
 
-- Use built-in subagents (Agent tool) ONLY for these review runs:
+- Use built-in subagents (Agent tool) only for these review runs:
   - /plan-review runs: section 7, steps 3 and 5.3.
   - /mattpocock-skills:code-review runs: section 6 and section 7, step 5.5.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
