@@ -161,9 +161,9 @@ EOF
 )"
 ```
 
-Do not add model attribution: no `Co-Authored-By:`, no `Signed-off-by:` naming a model, and no other line that credits Claude, Anthropic or an AI. The user forbids it, and this rule overrides the harness default that adds a `Co-Authored-By` trailer.
+Do not add model attribution: no `Co-Authored-By:`, no `Signed-off-by:` naming a model, and no other line that credits Claude, Anthropic or an AI. The user forbids it, and this rule overrides Claude Code's default commit instructions, which add a `Co-Authored-By` trailer.
 
-The commit message holds the header, an optional body and, for a breaking change, the `BREAKING CHANGE:` footer. Add no other trailers.
+The commit message holds the header, an optional body and, for a breaking change, the `BREAKING CHANGE:` line. Add no other trailers.
 
 ### 4d. Repeat
 
@@ -227,7 +227,7 @@ fix(utils): correct date formatting for UTC offset
 
 | Mistake | Fix |
 |---------|-----|
-| Adding a model-attribution trailer | Remove it (see 4c) |
+| Adding a model-attribution trailer | Do not add it (see 4c) |
 | `git add .` or `git add -A` | Always stage specific files by path |
 | Subject > 50 chars | Shorten. Move detail to body. |
 | Past tense ("added feature") | Imperative ("add feature") |
