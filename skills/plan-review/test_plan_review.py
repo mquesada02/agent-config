@@ -144,6 +144,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = read(CLAUDE_MD)
+        cls.section6 = section(cls.text, 6)
         cls.section7 = section(cls.text, 7)
         cls.step3 = step(cls.section7, "3")
         cls.step41 = step(cls.section7, "4.1")
@@ -263,23 +264,23 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("5.5", code[0])
 
     def test_section_6_and_step_55_keep_code_review(self):
-        self.assertIn(CODE_REVIEW, "\n".join(section(self.text, 6)))
+        self.assertIn(CODE_REVIEW, "\n".join(self.section6))
         self.assertIn(CODE_REVIEW, step(self.section7, "5.5"))
 
     def test_section_6_blocks_section_0_breaches(self):
-        lines = section(self.text, 6)
+        lines = self.section6
         blocking = sentence_with(lines, "blocking**:")
         self.assertIn("weaker security, hidden coupling, or an unapproved temporary fix", blocking)
         self.assertIn("the quoted code and the section 0 rule", sentence_with(lines, "section 0 rule"))
 
     def test_section_6_phases_have_caps(self):
-        lines = section(self.text, 6)
+        lines = self.section6
         self.assertIn("cap: 5 rounds", step(lines, "1").lower())
         self.assertIn("cap: 3 rounds", step(lines, "3").lower())
         self.assertIn("at any cap, stop", step(lines, "5").lower())
 
     def test_section_6_reverts_only_the_breaking_simplify_change(self):
-        text = sentence_with(section(self.text, 6), "revert", "/simplify change")
+        text = sentence_with(self.section6, "revert", "/simplify change")
         self.assertIn("revert each /simplify change that breaks a test", text)
 
 

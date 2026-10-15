@@ -54,7 +54,7 @@ Optional in every mode: the findings ledger, as a file path. The session that ru
 
 ## Severity
 
-- Blocking: a missing case, a contradiction, a mismatch with the source, an untestable decision. Every Blocking finding, including one that your axis text labels, is Minor without its quoted line and what breaks. For a missing item, quote the source line that requires it.
+- Blocking: a missing case, a contradiction, a mismatch with the source, an untestable decision. For a missing item, quote the source line that requires it.
 - Minor: wording, style, judgement calls.
-- Where your axis text labels a case, that label wins over this list. The source is what your source links and your axis text name, including the code or `CLAUDE.md` where your axis text says to read them.
+- Where your axis text labels a case, that label wins over this list. Any Blocking finding without its quoted line and what breaks is Minor, including one that your axis text labels. The source is what your source links and your axis text name, including the code or `CLAUDE.md` where your axis text says to read them.
 - Report findings for your own axis only.
