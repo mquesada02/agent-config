@@ -77,14 +77,14 @@ The loop session is the session that runs this loop: the main session, or the wo
 Finding types:
 - **Blocking**: a bug, a logic error, a missing case, a spec mismatch, weaker security, hidden coupling, or an unapproved temporary fix. Each Blocking finding needs its evidence:
   - A spec mismatch: the quoted spec line. A spec mismatch is always Blocking, whatever the reviewer called it.
-  - Weaker security, hidden coupling or an unapproved temporary fix: these break section 0, and their evidence is the quoted code and the section 0 rule.
+  - Weaker security, hidden coupling or an unapproved temporary fix: these break section 0. Their evidence is the quoted code and the section 0 rule.
   - Any other Blocking finding: a concrete failure, that is, an input or state and the wrong result.
   A finding without its evidence is Minor. Ask the reviewers for this evidence in their brief.
 - **Minor**: everything else (cosmetic, naming, style, smells, judgement calls).
 
 The loop session decides the final type.
 
-Roles. The agent that reports a finding never fixes it, so a second agent checks each finding before anyone fixes it:
+Roles. The agent that reports a finding never fixes it, so a second agent checks each finding first:
 - **Reviewers** (the /mattpocock-skills:code-review subagents) report findings. They do not fix.
 - **Verifier**: one Sonnet subagent per Blocking finding. It confirms the failure from the code (a failing test, a traced path, or a quoted line), or it rejects the finding. The loop session marks a rejected finding as rejected in the ledger.
 - **Fixer**: the loop session. For each confirmed Blocking finding:

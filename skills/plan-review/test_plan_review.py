@@ -246,7 +246,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
 
     def test_evidence_sentence_covers_the_loop_phases(self):
         sentence = sentence_with(self.section7, "section 6 steps 1 and 3")
-        for phrase in ("round count of", "plan-review loop", "findings ledger", "verifier subagent"):
+        for phrase in ("round count of", "each phase of the plan-review loop", "findings ledger", "verifier subagent"):
             self.assertIn(phrase, sentence)
 
     def test_evidence_covers_the_step_41_review(self):
