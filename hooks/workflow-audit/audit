@@ -9,10 +9,7 @@ import json
 import os
 import re
 import shlex
-import stat
-import subprocess
 import sys
-from datetime import datetime, timezone
 
 FOLDER_NAME = "claude-workflow-audit"
 CONTEXT_HANDOFF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "context-handoff")
@@ -22,6 +19,7 @@ L_EVIDENCE_LIMIT = 4000
 L_ITEMS = ("L1", "L2", "L3", "L4", "L5", "L6")
 SESSIONS_FILE = "sessions.jsonl"
 MAX_REGISTRY_LINE_BYTES = 4096
+UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
 USAGE = "usage: audit record --worktree <path> --llm <file> | audit hook pre-tool-use | audit hook session-start"
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -52,6 +50,8 @@ def _runtime():
 
 
 def _git(cwd, *args):
+    import subprocess  # imported here: the hook's common path never runs git
+
     return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, errors="replace", timeout=GIT_TIMEOUT_SECONDS)
 
 
@@ -66,8 +66,12 @@ def _git_output(cwd, *args, no_result=(1, 128)):
     raise RuntimeError(f"git {args[0]} exited with status {result.returncode}: {result.stderr.strip()}")
 
 
-def _cut(text, limit=EVIDENCE_LIMIT):
-    return text if len(text) <= limit else text[: limit - 3] + "..."
+def _cut(text):
+    return text if len(text) <= EVIDENCE_LIMIT else text[: EVIDENCE_LIMIT - 3] + "..."
+
+
+def _count_pr_create(text):
+    return " ".join(text.split()).count("gh pr create")
 
 
 # ---- S8: conventional commits without attribution ----
@@ -162,6 +166,12 @@ def _record_arguments(argv):
     return values["--worktree"], values["--llm"]
 
 
+def _now():
+    from datetime import datetime, timezone  # imported here: the hook's common path never needs the time
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 def _record(argv):
     worktree, llm_path = _record_arguments(argv)
     l_items = _load_llm(llm_path)
@@ -181,7 +191,7 @@ def _record(argv):
     result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
     text = json.dumps({
         "sha": tip, "remote_url": remote_url, "branch": branch,
-        "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": items, "result": result,
+        "time": _now(), "items": items, "result": result,
     })
     runtime_dir = _runtime()
     if len(text) > runtime_dir.MAX_READ_BYTES:
@@ -260,8 +270,8 @@ def _head_option(arguments):
             index += 1
         elif word.startswith("--head="):
             head = word[len("--head="):]
-        elif word.startswith("-H=") or (word.startswith("-H") and not word.startswith("--")):
-            head = word[3:] if word.startswith("-H=") else word[2:]
+        elif word.startswith("-H") and not word.startswith("--"):
+            head = word[2:].removeprefix("=")
         index += 1
     return head
 
@@ -334,15 +344,15 @@ def gate_reason(command, cwd):
         items = split_command(command)
     except Exception:
         # The command cannot be split into words, so no cd or --head can be read: a match is denied.
-        if "gh pr create" in " ".join(command.split()):
+        if _count_pr_create(command):
             return "no branch to check: the command cannot be parsed"
         return None
     matches = sum(1 for item in items if isinstance(item, list) and _is_pr_create(item))
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
-    unfollowed = (" ".join(command.split()).count("gh pr create") > matches) and ("$(" in command or "`" in command)
+    unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > matches
     if not matches:
-        return "no branch to check: gh pr create inside a command substitution cannot be followed" if unfollowed else None
+        return UNFOLLOWED_REASON if unfollowed else None
     if not isinstance(cwd, str) or not cwd:
         return "hook input unreadable: no working directory for a matching command"
     dir_fd = None
@@ -372,7 +382,7 @@ def gate_reason(command, cwd):
                 if reason:
                     return reason
         if unfollowed:
-            return "no branch to check: gh pr create inside a command substitution cannot be followed"
+            return UNFOLLOWED_REASON
         return None
     except Exception as error:
         return f"hook error: {error}"
@@ -392,7 +402,7 @@ def cmd_pre_tool_use():
         data = None
     if not isinstance(data, dict):
         # Unreadable input: the raw text is matched like an unparsable command.
-        reason = "hook input unreadable: the hook input is not JSON" if "gh pr create" in " ".join(raw.split()) else None
+        reason = "hook input unreadable: the hook input is not JSON" if _count_pr_create(raw) else None
     else:
         tool_input = data.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
@@ -408,6 +418,8 @@ def cmd_pre_tool_use():
 # ---- session registry: SessionStart ----
 
 def cmd_session_start():
+    import stat
+
     try:
         data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         session_id, transcript_path = data["session_id"], data["transcript_path"]
@@ -415,7 +427,7 @@ def cmd_session_start():
         if not runtime_dir.valid_session_id(session_id) or not isinstance(transcript_path, str) or not transcript_path:
             return 0
         line = json.dumps({"session_id": session_id, "transcript_path": transcript_path,
-                           "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n"
+                           "started_at": _now()}) + "\n"
         encoded = line.encode("utf-8")
         if len(encoded) >= MAX_REGISTRY_LINE_BYTES:
             return 0
