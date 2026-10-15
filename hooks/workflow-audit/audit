@@ -41,6 +41,7 @@ RECORD_NAME = re.compile(r"[0-9a-f]{40}\.json")
 
 # Claude Code versions the transcript reader is tested against; each needs a fixtures/session-<version>.jsonl.
 TESTED_VERSIONS = ("2.1.301",)
+TESTED_MAJOR_MINOR = frozenset(tuple(version.split(".")[:2]) for version in TESTED_VERSIONS)
 READ_KINDS = frozenset(("user", "assistant", "system", "attachment"))
 EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
@@ -162,8 +163,8 @@ def _instant(value, where):
 class Transcript:
     """The rows of one transcript file that S1 and S2 read."""
 
-    def __init__(self, path, session):
-        self.path, self.name, self.session = path, os.path.basename(path), session
+    def __init__(self, name):
+        self.name = name
         self.calls = []      # dicts: index, tool, id, time, path or command, background, cwd
         self.results = {}    # tool_use_id -> list of is_error booleans
         self.notices = []    # texts that hold a task notification
@@ -176,8 +177,7 @@ def _check_version(row, where):
     match = VERSION.fullmatch(version) if isinstance(version, str) else None
     if not match:  # the value itself is row content and stays out of the evidence
         raise Unavailable(f"missing or malformed Claude Code version in {where}")
-    listed = {VERSION.fullmatch(tested).groups()[:2] for tested in TESTED_VERSIONS}
-    if match.groups()[:2] not in listed:
+    if match.groups()[:2] not in TESTED_MAJOR_MINOR:
         raise Unavailable(f"untested Claude Code version {version} in {where}")
     return version
 
@@ -249,14 +249,9 @@ def _read_row(transcript, index, row):
             transcript.calls.append(call)
 
 
-def _read_transcript(path, session):
-    transcript = Transcript(path, session)
-    try:
-        with open(path, "rb") as handle:
-            lines = handle.read().decode("utf-8", "replace").split("\n")  # not splitlines(): U+2028 and others stay inside a row
-    except OSError as error:
-        raise Unavailable(f"cannot read transcript {os.path.basename(path)}: {error.strerror}")
-    for index, line in enumerate(lines):
+def _read_transcript(path, text):
+    transcript = Transcript(os.path.basename(path))
+    for index, line in enumerate(text.split("\n")):  # not splitlines(): U+2028 and others stay inside a row
         if not line.strip():
             continue
         try:
@@ -323,21 +318,21 @@ def _audited_transcripts(worktree, dir_fd):
     if not sessions:
         raise Unavailable("no registered session (empty or wiped registry)")
     audited = []
-    for session_id, path in sessions:
+    for _, path in sessions:
         folder = os.path.splitext(path)[0] + "/subagents"
         paths = [path]
         if os.path.isdir(folder):
             paths += sorted(os.path.join(folder, name) for name in os.listdir(folder) if re.fullmatch(r"agent-.+\.jsonl", name))
-        raw = []
+        texts = []
         for file_path in paths:
             try:
                 with open(file_path, "rb") as handle:
-                    raw.append(handle.read().decode("utf-8", "replace"))
+                    texts.append(handle.read().decode("utf-8", "replace"))
             except OSError as error:
                 raise Unavailable(f"cannot read transcript {os.path.basename(file_path)}: {error.strerror}")
-        if not any(needle in text for text in raw for needle in needles):
+        if not any(needle in text for text in texts for needle in needles):
             continue  # speed rule: a transcript that never holds the path cannot touch the worktree
-        transcripts = [_read_transcript(file_path, session_id) for file_path in paths]
+        transcripts = [_read_transcript(file_path, text) for file_path, text in zip(paths, texts)]
         if any(_touches(transcript, spellings, root) for transcript in transcripts):
             audited.append(transcripts)
     if not audited:

@@ -101,8 +101,9 @@ class DiscoveryTest(TranscriptCase):
         self.assert_item(self.items(), "S1", "pass", "2 sessions audited")
 
     def test_a_session_registered_twice_is_read_once(self):
-        path = self.register_session("s1", [self.own_edit()])
-        self.register_path("s1", path)
+        self.register_session("s1", [self.own_edit()])
+        later = self.register_session("s1-later", [edit_row(os.path.join(self.main, "x.txt"), "e2", 2)])
+        self.register_path("s1", later)  # the first line for an id counts, so this one is ignored
         self.assert_item(self.items(), "S1", "pass", "1 sessions audited")
 
 
@@ -497,11 +498,11 @@ class RecordTest(TranscriptCase):
         self.assertEqual(self.read_record(tip)["result"], "fail")
 
     def test_the_untested_patch_note_survives_a_long_evidence(self):
-        main_files = [edit_row(os.path.join(self.main, "x" * 120 + f"{n}.txt"), f"m{n}", 20 + n, version="2.1.300") for n in range(10)]
+        main_files = [edit_row(os.path.join(self.main, "x" * 260 + f"{n}.txt"), f"m{n}", 20 + n, version="2.1.300") for n in range(10)]
         self.register_session("s1", [self.own_edit(version="2.1.300"), *main_files])
         evidence = self.items()["S1"]["evidence"]
-        self.assertGreater(len(evidence), 1500)
-        self.assertTrue(evidence.endswith("; untested patch version 2.1.300"), evidence[-80:])
+        self.assertGreater(len(evidence), 2000)
+        self.assertTrue(evidence.endswith("...; untested patch version 2.1.300"), evidence[-80:])
 
     def test_evidence_never_holds_a_raw_row(self):
         secret = "SECRET-PROMPT-TEXT"
