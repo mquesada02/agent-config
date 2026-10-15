@@ -115,6 +115,7 @@ class SkillFilesTest(unittest.TestCase):
         for word in ("Coverage", "Slicing", "Edges"):
             self.assertIn(word, source)
         self.assertIn("label wins", skill_section(self.skill, "Severity").lower())
+        self.assertIn("including one that your axis text labels", skill_section(self.skill, "Severity").lower())
         axes = read(TICKETS_AXES).lower()
         for phrase in (
             "(missing, blocking)", "(extra, minor)", "horizontal slice is blocking",
@@ -195,8 +196,8 @@ class ClaudeMdWiringTest(unittest.TestCase):
     def test_final_phase_counts_only_blocking(self):
         text = self.loop_step("c")
         for word in (
-            "only blocking findings fail a round",
-            "done after 1 round with no blocking finding",
+            "only confirmed blocking findings fail a round",
+            "done after 1 round with no confirmed blocking finding",
             "cap: 3 rounds",
             "a new minor finding in (c) is recorded and listed for the user, not applied",
         ):
@@ -207,6 +208,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         for word in (
             "raises a minor finding to blocking when it contradicts a decision on the map",
             "or when it shows a requirement that no test can check",
+            "quotes the map decision or the untestable requirement as its evidence",
         ):
             self.assertIn(word, text)
         for word in (
