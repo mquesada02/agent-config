@@ -16,7 +16,7 @@ Command form: `/plan-review <mode> [case] <links>`. `spec` takes a case word. `t
 
 ## Inputs
 
-All inputs are tracker links, never a paraphrase from the caller. The one exception is the request quote, which is given word for word beside its link.
+All inputs are tracker links, never a paraphrase from the caller. The exceptions are the request quote, which is given word for word beside its link, and the findings ledger.
 
 `spec general` (section 7 step 3), required:
 - the spec
@@ -33,12 +33,14 @@ All inputs are tracker links, never a paraphrase from the caller. The one except
 - the general spec
 - the ticket issues, each given as a link
 
+Optional in every mode: the findings ledger, as a file path. The session that runs the plan-review loop keeps it (`CLAUDE.md` section 7).
+
 ## Process
 
 1. Check the mode, the case and the inputs. Stop and ask the caller if an input is missing, if the mode is unknown, if the mode is `spec` and the case is missing or unknown, or if the mode is `tickets` and a case word is given. Never review without the full source.
 2. Read the axis texts for the mode from its reference file.
 3. Spawn exactly one subagent per axis in one message, so they run in parallel. Set a Sonnet model in each Agent call.
-4. Give each subagent the link to the reviewed document (in tickets mode, every ticket issue link), the source links for its axis, its axis text and the Severity section below. Each subagent returns findings labelled Blocking or Minor. Each Blocking finding quotes the line it rests on and states what breaks. Each Fidelity or Coverage finding quotes the line it rests on.
+4. Give each subagent the link to the reviewed document (in tickets mode, every ticket issue link), the source links for its axis, its axis text and the Severity section below. Give it the ledger, when given, and tell it to report only findings that are new to the ledger. Each subagent returns findings labelled Blocking or Minor. Each Blocking finding quotes the line it rests on and states what breaks. Each Fidelity or Coverage finding quotes the line it rests on.
 5. Report one heading per axis, in the order the reference file lists the axes (spec mode: Fidelity, Clarity, Codebase fit; tickets mode: Coverage, Slicing, Edges), without merging or reranking. Each axis ends with its Blocking and Minor counts and its most severe finding: the first Blocking finding in report order, else the first Minor finding in report order, else none. An axis with no findings says "No findings" and shows counts of zero.
 
 ## Source for each axis

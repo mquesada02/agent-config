@@ -97,6 +97,13 @@ class SkillFilesTest(unittest.TestCase):
         for phrase in ("input is missing", "mode is unknown", "case is missing or unknown", "a case word is given"):
             self.assertIn(phrase, text)
 
+    def test_ledger_is_an_optional_input_given_to_every_subagent(self):
+        inputs = skill_section(self.skill, "Inputs").lower()
+        self.assertIn("optional in every mode: the findings ledger, as a file path", inputs)
+        process = skill_section(self.skill, "Process").lower()
+        self.assertIn("the ledger, when given", process)
+        self.assertIn("report only findings that are new to the ledger", process)
+
     def test_process_requires_sonnet_and_report_shape(self):
         text = skill_section(self.skill, "Process").lower()
         self.assertIn("set a sonnet model in each agent call", text)
