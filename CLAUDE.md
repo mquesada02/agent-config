@@ -73,7 +73,7 @@ If you're unsure if something works, or you want to do a cheap test before provi
 After implementing code, always run this review loop. It always ends: every loop in it has a round cap.
 
 Finding types:
-- **Blocking**: a bug, a logic error, a missing case, a spec mismatch, or weaker security. A spec mismatch is always Blocking, whatever the reviewer called it, and its evidence is the quoted spec line. Any other Blocking finding states a concrete failure: an input or state, and the wrong result. A finding without that evidence is Minor. Ask the reviewers for this evidence in their brief.
+- **Blocking**: a bug, a logic error, a missing case, a spec mismatch, weaker security, hidden coupling, or an unapproved temporary fix. A spec mismatch is always Blocking, whatever the reviewer called it, and its evidence is the quoted spec line. Hidden coupling and an unapproved temporary fix break section 0, and their evidence is the quoted code and the section 0 rule. Any other Blocking finding states a concrete failure: an input or state, and the wrong result. A finding without that evidence is Minor. Ask the reviewers for this evidence in their brief.
 - **Minor**: everything else (cosmetic, naming, style, smells, judgement calls).
 
 The main session decides the final type.
@@ -89,7 +89,7 @@ Ledger: the main session keeps one findings ledger per task in the scratchpad. E
 2. **Minor pass (once).** Commit first, so step 3 has a fixed point. Sort the open Minor findings into two groups:
    - Apply: a change in one file, with no behavior change and no public interface change.
    - Defer: everything else. Mark it deferred in the ledger.
-   Apply the first group in one pass, then run the tests. If a test fails, revert the Minor change that broke it and mark that finding deferred. Then run /simplify once and run the tests again. If a test fails, revert all the /simplify changes.
+   Apply the first group in one pass, then run the tests. If a test fails, revert the Minor change that broke it and mark that finding deferred. Then run /simplify once and run the tests again. Revert each /simplify change that breaks a test.
 3. **Final check.** Run one /mattpocock-skills:code-review round on the diff since the commit made at the start of step 2. Only Blocking findings count; record any new Minor finding as deferred. Verify and fix each confirmed Blocking finding as in step 1, then repeat this step. Each repeat reviews the diff from that same commit, which now includes the fixes. Done after one round with no confirmed Blocking finding. Cap: 3 rounds.
 4. **Report.** List the deferred Minor findings for the user. Leave them unfixed in this task, because fixing them would reopen the review.
 5. At any cap, stop. Send the user the open findings and the round counts, and ask how to continue. If you're unsure of anything, ask the user.
