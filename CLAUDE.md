@@ -70,20 +70,29 @@ If you're unsure if something works, or you want to do a cheap test before provi
 
 ## 6. Code review
 
-After implementing code, always run this review loop:
+After implementing code, always run this review loop. It always ends: every loop in it has a round cap.
 
-Issue types:
-- **Blocking**: bugs, logic errors, missing cases, spec mismatches.
-- **Minor**: cosmetic, naming, style, judgement calls.
+Finding types:
+- **Blocking**: a bug, a logic error, a missing case, a spec mismatch, or weaker security. A spec mismatch is always Blocking, whatever the reviewer called it, and its evidence is the quoted spec line. Any other Blocking finding states a concrete failure: an input or state, and the wrong result. A finding without that evidence is Minor. Ask the reviewers for this evidence in their brief.
+- **Minor**: everything else (cosmetic, naming, style, smells, judgement calls).
 
-The main session decides the final type, and whether a fix changes only comments or wording. A spec mismatch is always blocking, whatever the reviewer called it.
+The main session decides the final type.
 
-1. **Correctness phase.** Run /mattpocock-skills:code-review. Verify each blocking fix doesn't introduce new bugs (see section 3), apply it, and re-run. Record minor issues but don't fix them yet. Done after two consecutive rounds with no blocking issues.
-2. **Quality phase.** Apply the recorded minor issues, then run /simplify. Repeat /simplify until it makes no more changes.
-3. **Final phase.** Run /mattpocock-skills:code-review until two consecutive rounds are clean (no issues). After each round with issues:
-   - If every issue is blocking and every fix changes only comments or wording: apply the fixes and stay in this phase. This round neither counts toward the two nor breaks the run: clean, comment-only, clean is two consecutive clean rounds.
-   - Otherwise: fix the blocking issues, record the minor issues, then go back to step 1 with its two-round count at zero.
-4. If you're unsure of anything, ask the user.
+Roles. The agent that reports a finding does not fix it, so each fix is checked by an agent that did not write it:
+- **Reviewers** (the /mattpocock-skills:code-review subagents) report findings. They do not fix.
+- **Verifier**: one Sonnet subagent per Blocking finding. It confirms the failure from the code (a failing test, a traced path, or a quoted line), or it rejects the finding.
+- **Fixer**: the main session. For each confirmed Blocking finding: (1) write a test that reproduces it, where the change can be tested, (2) list the callers and the tests that the fix can affect, (3) apply the smallest fix, (4) run the affected tests.
+
+Ledger: the main session keeps one findings ledger per task in the scratchpad. Each entry has an id, `file:line`, the type, the status (open, fixed, rejected or deferred) and a one-line reason. Give the ledger to every reviewer. A finding that matches a ledger entry is not new. Reviewers do not report rejected or deferred entries again, unless they add new evidence.
+
+1. **Blocking loop.** Run /mattpocock-skills:code-review, verify each Blocking finding, then fix each confirmed one. Record the Minor findings in the ledger. Every round reviews the full diff, and reviewers report only findings that are new to the ledger. Done after one round with no new confirmed Blocking finding. Cap: 5 rounds.
+2. **Minor pass (once).** Commit first, so step 3 has a fixed point. Sort the open Minor findings into two groups:
+   - Apply: a change in one file, with no behavior change and no public interface change.
+   - Defer: everything else. Mark it deferred in the ledger.
+   Apply the first group in one pass, then run the tests. If a test fails, revert the Minor change that broke it and mark that finding deferred. Then run /simplify once and run the tests again. Revert any /simplify change that breaks a test.
+3. **Final check.** Run one /mattpocock-skills:code-review round on the diff since the commit made at the start of step 2. Only Blocking findings count; record any new Minor finding as deferred. Verify and fix each confirmed Blocking finding as in step 1, then repeat this step on that same diff. Done after one round with no confirmed Blocking finding. Cap: 3 rounds.
+4. **Report.** List the deferred Minor findings for the user. Leave them unfixed in this task, because fixing them would reopen the review.
+5. At any cap, stop. Send the user the open findings and the round counts, and ask how to continue. If you're unsure of anything, ask the user.
 
 ## 7. General workflow for any task
 
@@ -99,22 +108,23 @@ When implementing any task, you must do these steps in the corresponding order:
 2. /mattpocock-skills:to-spec after grilling the user, for the general spec.
 3. Review the spec with `/plan-review spec general` (its inputs: the spec, the map, the map's resolved decision tickets, and the user's request as a link plus a word-for-word quote). Run the plan-review loop below. The main section 7 session applies every fix to the spec issue body, before any dispatch.
 Plan-review loop:
-(a) Run the correctness phase until 2 consecutive rounds have no Blocking finding. Record the Minor findings.
-(b) Apply the recorded Minor findings.
-(c) Run the final phase until 2 consecutive rounds have no Blocking finding and no new Minor finding. Every Blocking finding fails the round. A Minor finding is not new when it repeats one that step (a) or (d) recorded. It is also not new when a decision on the map already settles it. The session that runs the loop decides whether a Minor finding is new. That session is the main section 7 session, or the worker in step 5.3. That session raises a Minor finding to Blocking when it contradicts a decision on the map. That session also raises a Minor finding to Blocking when it shows a requirement that no test can check. These two raises apply even when the finding is not new.
-(d) If a final-phase round has a Blocking finding or a new Minor finding, fix each Blocking finding and record each new Minor finding, then go back to (a) with the count at zero.
-This loop differs from section 6 on purpose in three ways. It has no quality phase and uses no `/simplify`: step (b) only applies the recorded Minor findings. It has no comment-only exception: a wording-only fix restarts the count too, because in a spec the wording is the content. Its final phase counts only new Minor findings, as step (c) defines them.
+Each Blocking finding quotes the line it rests on and states what breaks. The session that runs the loop keeps a findings ledger, as in section 6, and gives it to every reviewer. That session is the main section 7 session, or the worker in step 5.3.
+(a) Run the correctness phase until 1 round has no new Blocking finding. Record the Minor findings. Cap: 5 rounds.
+(b) Apply the recorded Minor findings once.
+(c) Run the final phase on the document as changed by (a) and (b). Only Blocking findings fail a round. That session raises a Minor finding to Blocking when it contradicts a decision on the map, or when it shows a requirement that no test can check. Fix each Blocking finding and repeat (c). Done after 1 round with no Blocking finding. Cap: 3 rounds. A new Minor finding in (c) is recorded and listed for the user, not applied.
+(d) At any cap, stop and ask the user, with the open findings and the round counts.
+This loop differs from section 6 on purpose in two ways. It has no `/simplify`: step (b) only applies the recorded Minor findings. It has no verifier subagent: the Blocking finding's quoted line is the evidence, and that session checks it.
 4. /mattpocock-skills:to-tickets after creating the general spec.
-4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3: a final-phase Blocking finding or a new Minor finding goes back to (a) with the count at zero. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
+4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
-5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3: a final-phase Blocking finding or a new Minor finding goes back to (a) with the count at zero. The worker applies every fix to the spec issue body.
+5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3. The worker applies every fix to the spec issue body.
 5.4. After the plan-review loop ends, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
-Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 loop (steps 1 and 3) and of each phase of the plan-review loop, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
 These steps are mandatory.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
@@ -144,7 +154,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
 
 - Use built-in subagents (Agent tool) only for these review runs:
   - /plan-review runs: section 7, steps 3, 4.1 and 5.3.
-  - /mattpocock-skills:code-review runs: section 6 and section 7, step 5.5.
+  - /mattpocock-skills:code-review runs and their verifier subagents: section 6 and section 7, step 5.5.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.

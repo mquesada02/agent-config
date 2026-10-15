@@ -149,7 +149,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         text = self.step41.lower()
         self.assertIn("/plan-review tickets", text)
         for word in (
-            "count at zero", "step 3", "main section 7 session",
+            "same plan-review loop as in step 3", "main section 7 session",
             "before any dispatch", "ticket issues", "blocking edges", "general spec",
         ):
             self.assertIn(word, text)
@@ -181,8 +181,8 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertEqual(len(markers), 1)
         block = self.loop_block
         for word in (
-            "correctness phase", "final phase", "2 consecutive rounds", "no blocking",
-            "apply the recorded minor", "count at zero", "uses no `/simplify`", "differs from section 6",
+            "correctness phase", "final phase", "1 round has no new blocking finding", "findings ledger",
+            "apply the recorded minor", "cap: 5 rounds", "has no `/simplify`", "differs from section 6",
         ):
             self.assertIn(word, block)
         self.assertEqual(re.findall(r"^\(([a-d])\) ", block, re.M), ["a", "b", "c", "d"])
@@ -192,44 +192,43 @@ class ClaudeMdWiringTest(unittest.TestCase):
         assert match, f"plan-review loop has no step ({letter})"
         return match.group(1)
 
-    def test_final_phase_counts_only_new_minors(self):
+    def test_final_phase_counts_only_blocking(self):
         text = self.loop_step("c")
         for word in (
-            "no blocking finding and no new minor finding",
-            "every blocking finding fails the round",
-            "repeats one that step (a) or (d) recorded",
-            "it is also not new when a decision on the map already settles it",
+            "only blocking findings fail a round",
+            "done after 1 round with no blocking finding",
+            "cap: 3 rounds",
+            "a new minor finding in (c) is recorded and listed for the user, not applied",
         ):
             self.assertIn(word, text)
 
     def test_final_phase_raises_minors_to_blocking(self):
         text = self.loop_step("c")
         for word in (
-            "the session that runs the loop",
-            "that session is the main section 7 session, or the worker in step 5.3",
             "raises a minor finding to blocking when it contradicts a decision on the map",
-            "decides whether a minor finding is new",
-            "also raises a minor finding to blocking when it shows a requirement that no test can check",
-            "these two raises apply even when the finding is not new",
+            "or when it shows a requirement that no test can check",
         ):
             self.assertIn(word, text)
+        for word in (
+            "the session that runs the loop",
+            "that session is the main section 7 session, or the worker in step 5.3",
+        ):
+            self.assertIn(word, self.loop_block)
 
-    def test_restart_needs_blocking_or_new_minor(self):
-        text = self.loop_step("d")
-        for word in ("fix each blocking finding", "record each new minor finding"):
-            self.assertIn(word, text)
-        for step_text in (text, self.step41.lower(), self.step53.lower()):
-            self.assertIn("blocking finding or a new minor finding", step_text)
+    def test_cap_stops_and_asks(self):
+        self.assertIn("at any cap, stop and ask the user", self.loop_step("d"))
+        for step_text in (self.step41.lower(), self.step53.lower()):
+            self.assertIn("same plan-review loop as in step 3", step_text)
 
-    def test_loop_names_the_new_minor_difference_from_section_6(self):
-        self.assertIn("differs from section 6 on purpose in three ways", self.loop_block)
-        self.assertIn("its final phase counts only new minor findings", self.loop_block)
+    def test_loop_names_its_differences_from_section_6(self):
+        self.assertIn("differs from section 6 on purpose in two ways", self.loop_block)
+        self.assertIn("it has no verifier subagent", self.loop_block)
 
-    def test_step_53_states_the_restart_rule(self):
-        self.assertIn("count at zero", self.step53.lower())
+    def test_step_53_uses_the_step_3_loop(self):
+        self.assertIn("same plan-review loop as in step 3", self.step53.lower())
 
     def test_evidence_sentence_covers_the_loop_phases(self):
-        sentence = sentence_with(self.section7, "section 6 phase")
+        sentence = sentence_with(self.section7, "section 6 loop")
         self.assertIn("round count of each", sentence)
         self.assertIn("plan-review loop", sentence)
 
