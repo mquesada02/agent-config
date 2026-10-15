@@ -73,6 +73,12 @@ COORDINATOR_STATE_BLOCK = """
    - unanswered questions and escalations that wait for an answer, or none
    - the next CLAUDE.md section-7 step per ticket
    Write unknown for a field of this list that you do not know; run no command to find it."""  # appended to the State fields, after the worker block
+PROGRESS_BLOCK = """
+   After the State section, add a section with the heading "Progress". It has these lists, in this order:
+   - Built: each file, function or artifact that this session created or changed, with its path or link, or none
+   - Done: each step or ticket that is finished, with its evidence (a test result, a commit or a link), or none
+   - Remaining: each step that is not done, in order, with the next action first, or none
+   No assumptions: in every section of the handoff, write only what you saw in this session: the conversation, a tool output or a file. Do not guess and do not fill a gap. Write unknown for what you did not see. Mark each claim that you did not verify as unverified."""  # appended after the coordinator block, before the successor steps
 SUCCESSOR_STEPS_INTRO = """
    Then copy these successor steps word for word into the handoff, under the heading "Successor steps":"""
 SUCCESSOR_COMMON_STEPS = """
@@ -225,7 +231,7 @@ def _field(value):
 def state_layout(data):
     core = STATE_CORE.format(session_id=_field(data.get("session_id")), transcript_path=_field(data.get("transcript_path")))
     steps = SUCCESSOR_COMMON_STEPS + PLAIN_SUCCESSOR_STEPS + COORDINATOR_SUCCESSOR_STEPS + WORKER_SUCCESSOR_STEPS
-    return core + WORKER_STATE_BLOCK + COORDINATOR_STATE_BLOCK + SUCCESSOR_STEPS_INTRO + steps
+    return core + WORKER_STATE_BLOCK + COORDINATOR_STATE_BLOCK + PROGRESS_BLOCK + SUCCESSOR_STEPS_INTRO + steps
 
 
 def block(state, data):
