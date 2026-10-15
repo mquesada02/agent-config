@@ -954,6 +954,21 @@ class InstructionTest(HookTestCase):
         self.assertIn(f"   - predecessor transcript_path: {self.transcript}", reason)
         self.assertIn("Write unknown for a field that you do not know. Run no command to find it", reason)
 
+    def test_step_3_has_the_progress_section_and_the_no_assumptions_rule_after_the_state_fields(self):
+        reason = self.reason()
+        lead_in = 'After the State section, add a section with the heading "Progress". It has these lists, in this order:'
+        parts = (lead_in,
+                 "   - Built: each file, function or artifact that this session created or changed, with its path or link, or none",
+                 "   - Done: each step or ticket that is finished, with its evidence (a test result, a commit or a link), or none",
+                 "   - Remaining: each step that is not done, in order, with the next action first, or none",
+                 "No assumptions: in every section of the handoff, write only what you saw in this session: the conversation, a tool output or a file."
+                 " Do not guess and do not fill a gap. Write unknown for what you did not see. Mark each claim that you did not verify as unverified.")
+        position = reason.index("the next CLAUDE.md section-7 step per ticket")
+        for part in parts:
+            self.assertIn(part, reason[position:])
+            position = reason.index(part, position)
+        self.assertLess(position, reason.index("Successor steps"))
+
     def test_step_3_has_the_successor_steps_for_the_plain_and_coordinator_roles(self):
         reason = self.reason()
         self.assertIn('under the heading "Successor steps"', reason)
