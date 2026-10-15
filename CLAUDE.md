@@ -136,7 +136,6 @@ This loop differs from section 6 on purpose in two ways. It has no `/simplify`: 
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of section 6 steps 1 and 3 and of each phase of the plan-review loop, the findings ledger, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent and verifier subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
-These steps are mandatory.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 
 ## 8. Git contribution
