@@ -4,14 +4,10 @@ import os
 import re
 import unittest
 
-from audit_support import (HERE, VERSION, AuditCase, bash_row, call_row, edit_row, notification_attachment_row, notification_text,
-                           notification_user_row, result_row)
+from audit_support import (HERE, VERSION, AuditCase, bash_row, call_row, declaration, edit_row, notification_attachment_row,
+                           notification_text, notification_user_row, result_row)
 
 UNAVAILABLE = "evidence unavailable"
-
-
-def declaration(command):
-    return f"# Project\n\n### Test command\n\n```\n{command}\n```\n"
 
 
 class TranscriptCase(AuditCase):

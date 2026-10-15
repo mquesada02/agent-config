@@ -15,7 +15,13 @@ PASSING_LLM = {name: {"result": "pass", "evidence": f"{name} ok"} for name in ("
 
 
 VERSION = "2.1.301"
-DECLARES_NONE = "# Project\n\n### Test command\n\n```\nnone\n```\n"
+
+
+def declaration(command):
+    return f"# Project\n\n### Test command\n\n```\n{command}\n```\n"
+
+
+DECLARES_NONE = declaration("none")
 
 
 def stamp(seconds):

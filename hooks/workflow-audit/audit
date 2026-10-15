@@ -353,16 +353,15 @@ def _main_checkout(worktree):
     paths = [os.path.realpath(line[len("worktree "):]) for line in (listing or "").splitlines() if line.startswith("worktree ")]
     if not paths:
         raise Unavailable("git worktree list gave no worktree")
-    return paths[0], paths
+    return paths[0], paths[1:]
 
 
 def check_s1(worktree, audited):
     """Returns (passed, evidence)."""
     root = os.path.realpath(worktree)
-    main, listed = _main_checkout(worktree)
+    main, others = _main_checkout(worktree)
     if root == main:
         return False, "the audited worktree is the main checkout"
-    others = [path for path in listed if path != main]
     found = [f"{t.name}: {c['path']}" for transcripts in audited for t in transcripts for c in t.calls
              if c["tool"] in EDIT_TOOLS and _inside(c["path"], main) and not any(_inside(c["path"], other) for other in others)]
     if not found:
@@ -473,7 +472,7 @@ def check_s2(worktree, audited):
             for call in transcript.calls:
                 if call["tool"] in EDIT_TOOLS and _inside(call["path"], root):
                     edits.append((call, transcript))
-                elif call["tool"] == "Bash" and normalised(call) == declared:
+                elif call["tool"] == "Bash" and declared in call["command"] and normalised(call) == declared:
                     runs.append((call, transcript, transcripts[0]))
     later = 0
     for run, transcript, main in runs:
