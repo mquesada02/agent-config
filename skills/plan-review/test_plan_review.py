@@ -121,8 +121,9 @@ class SkillFilesTest(unittest.TestCase):
         source = skill_section(self.skill, "Source for each axis")
         for word in ("Coverage", "Slicing", "Edges"):
             self.assertIn(word, source)
-        self.assertIn("label wins", skill_section(self.skill, "Severity").lower())
-        self.assertIn("including one that your axis text labels", skill_section(self.skill, "Severity").lower())
+        severity = skill_section(self.skill, "Severity").lower()
+        self.assertIn("label wins", severity)
+        self.assertIn("including one that your axis text labels", severity)
         axes = read(TICKETS_AXES).lower()
         for phrase in (
             "(missing, blocking)", "(extra, minor)", "horizontal slice is blocking",
@@ -189,8 +190,8 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertEqual(len(markers), 1)
         block = self.loop_block
         for word in (
-            "correctness phase", "final phase", "1 round has no new blocking finding", "findings ledger",
-            "apply the recorded minor", "cap: 5 rounds", "has no `/simplify`", "differs from section 6",
+            "correctness phase", "final phase", "findings ledger",
+            "apply the recorded minor", "has no `/simplify`", "differs from section 6",
         ):
             self.assertIn(word, block)
         self.assertEqual(re.findall(r"^\(([a-d])\) ", block, re.M), ["a", "b", "c", "d"])
@@ -200,13 +201,18 @@ class ClaudeMdWiringTest(unittest.TestCase):
         assert match, f"plan-review loop has no step ({letter})"
         return match.group(1)
 
+    def test_correctness_phase_has_cap_5(self):
+        text = self.loop_step("a")
+        self.assertIn("1 round has no new confirmed blocking finding", text)
+        self.assertIn("cap: 5 rounds", text)
+
     def test_final_phase_counts_only_blocking(self):
         text = self.loop_step("c")
         for word in (
             "only confirmed blocking findings fail a round",
             "done after 1 round with no confirmed blocking finding",
             "cap: 3 rounds",
-            "a new minor finding in (c) is recorded and listed for the user, not applied",
+            "mark each new minor finding in (c) deferred. do not apply it",
         ):
             self.assertIn(word, text)
 
@@ -219,15 +225,15 @@ class ClaudeMdWiringTest(unittest.TestCase):
         ):
             self.assertIn(word, text)
         for word in (
-            "the session that runs the loop",
-            "that session is the main section 7 session, or the worker in step 5.3",
+            "the loop session is the session that runs this loop",
+            "the main section 7 session, or the worker in step 5.3",
         ):
             self.assertIn(word, self.loop_block)
 
     def test_cap_stops_and_asks(self):
-        self.assertIn("at any cap, stop and ask the user", self.loop_step("d"))
-        for step_text in (self.step41.lower(), self.step53.lower()):
-            self.assertIn("same plan-review loop as in step 3", step_text)
+        text = self.loop_step("d")
+        self.assertIn("when the loop ends, list the deferred minor findings for the user", text)
+        self.assertIn("at any cap, stop and ask the user", text)
 
     def test_loop_names_its_differences_from_section_6(self):
         self.assertIn("differs from section 6 on purpose in two ways", self.loop_block)
@@ -237,9 +243,9 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("same plan-review loop as in step 3", self.step53.lower())
 
     def test_evidence_sentence_covers_the_loop_phases(self):
-        sentence = sentence_with(self.section7, "section 6 loop")
-        self.assertIn("round count of each", sentence)
-        self.assertIn("plan-review loop", sentence)
+        sentence = sentence_with(self.section7, "section 6 phase")
+        for phrase in ("round count of each", "plan-review loop", "findings ledger", "verifier subagent"):
+            self.assertIn(phrase, sentence)
 
     def test_evidence_covers_the_step_41_review(self):
         sentence = sentence_with(self.section7, "step 4.1", "checks")
@@ -262,8 +268,15 @@ class ClaudeMdWiringTest(unittest.TestCase):
 
     def test_section_6_blocks_section_0_breaches(self):
         lines = section(self.text, 6)
-        self.assertIn("weaker security, hidden coupling, or an unapproved temporary fix", sentence_with(lines, "blocking**:"))
+        blocking = sentence_with(lines, "blocking**:")
+        self.assertIn("weaker security, hidden coupling, or an unapproved temporary fix", blocking)
         self.assertIn("the quoted code and the section 0 rule", sentence_with(lines, "section 0 rule"))
+
+    def test_section_6_phases_have_caps(self):
+        lines = section(self.text, 6)
+        self.assertIn("cap: 5 rounds", step(lines, "1").lower())
+        self.assertIn("cap: 3 rounds", step(lines, "3").lower())
+        self.assertIn("at any cap, stop", step(lines, "5").lower())
 
     def test_section_6_reverts_only_the_breaking_simplify_change(self):
         text = sentence_with(section(self.text, 6), "revert", "/simplify change")
