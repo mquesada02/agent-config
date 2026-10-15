@@ -52,7 +52,7 @@ All inputs are tracker links, never a paraphrase from the caller. The one except
 
 ## Severity
 
-- Blocking: a missing case, a contradiction, a mismatch with the source, an untestable decision.
+- Blocking: a missing case, a contradiction, a mismatch with the source, an untestable decision. A Blocking finding without its quoted line and what breaks counts as Minor.
 - Minor: wording, style, judgement calls.
 - Where your axis text labels a case, that label wins over this list. The source is what your source links and your axis text name, including the code or `CLAUDE.md` where your axis text says to read them.
 - Report findings for your own axis only.
