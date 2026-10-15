@@ -186,20 +186,8 @@ Never use `rm -rf` or other recursive deletes. To remove something:
 
 ## 14. Docker containers
 
-Docker containers and volumes are durable. They stay on disk after the session ends. Section 13 covers files; for Docker objects, follow this section.
-- Start one-off and test containers with `docker run --rm`.
-- Start containers that run browsers or spawn many processes with `--init`.
-- When a long-running container is no longer needed, stop and remove it with `docker rm -fv <name>`.
-- Stop a test or throwaway `docker compose` stack that you started with `docker compose down -v`. For a long-lived development stack (for example, a local dev database), use `docker compose stop`, or leave it running. Do not use `down` on it: `-v` deletes its data, and without `-v` its volumes lose their containers, so `docker compose ls -a` can no longer find them.
-- Before you remove any worktree, run `docker compose ls -a` and remove each stack whose config files are in that worktree with `docker compose -p <NAME> down -v`, where `<NAME>` is the stack name from that list. Compose names the stack after the folder by default, so no later run uses its volumes. If the stack can hold data that the user wants, ask first.
-- Before you finish, check with `docker ps -a` and `docker volume ls -f dangling=true` that you left no container or volume behind. Exception: a long-lived development stack that you left running or stopped with `docker compose stop`.
-- Remove only the containers and volumes that you created, or that belong to a worktree you remove. Never run any `docker ... prune` command.
+Docker containers and volumes stay on disk after the session ends. Before you start a container or a `docker compose` stack, and before you remove a worktree, read `~/.claude/docs/agents/docker.md` and follow it. Before you finish, leave behind no container or volume that you created, except a long-lived development stack. Never run any `docker ... prune` command.
 
 ## 15. CPU load
 
-Other sessions and the user share this PC. Parallel test runners and artificial CPU load (busy loops, `stress-ng`, "burners") slow it down, and burners keep running after the session ends.
-- Run test runners with at most 2 workers, for example `vitest --maxWorkers=2`, `stryker run --concurrency 2`, `playwright test --workers=2`, `jest --maxWorkers=2`. Pass the limit on the command line; do not change committed config for it. If the committed config already sets a lower limit (such as `workers: 1`, `maxWorkers: 1`, or `fileParallelism: false`), pass no worker flag and no `VITEST_*` variable: they override the config and can make a serial suite run in parallel.
-- Use at most half of the cores for burners: start at most `nproc / 2` burners, one per core, pinned with `taskset -c` to cores `0` to `nproc / 2 - 1`. Pin the code under test to the same cores: a host process with `taskset -c`, a container with `--cpuset-cpus`. The other cores stay free.
-- Wrap each burner in `timeout` of at most 30 minutes. Start new burners if you need more time. A short timeout stops orphaned burners if your session dies.
-- Write the PIDs that you start to a file in your scratchpad: each Bash call starts a new shell, so `$!` is lost. Before you finish, kill only the PIDs whose command (`ps -o args= -p <PID>`) is still your burner. Then check again the same way that none of them is still your burner. Do not use `pgrep -f` for this check: it also matches the shell that runs it.
-- If the problem does not reproduce at this load, ask the user. Never raise the load by yourself.
+Other sessions and the user share this PC. Run test runners with at most 2 workers. Before your first test run in a session, and before you start any artificial CPU load, read `~/.claude/docs/agents/cpu-load.md` and follow it.
