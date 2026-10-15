@@ -7,8 +7,6 @@ description: Use when changes are ready to commit — analyzes current changes, 
 
 Analyze current changes, split into multiple well-scoped conventional commits, handle staging, and create commits directly. Brief subjects. Body only when "why" isn't obvious.
 
-**CRITICAL: NEVER add Co-Authored-By, Signed-off-by, or any model attribution line to commits. Ever. No exceptions. No trailer referencing Claude, AI, or any model.**
-
 ## When to Use
 
 - Changes ready to commit
@@ -32,7 +30,7 @@ digraph smart_commits {
     analyze [label="Step 1: Analyze changes\ngit status + git diff"];
     group [label="Step 2: Group by scope\nLogical units of change"];
     order [label="Step 3: Order commits\nDependency-safe sequence"];
-    commit [label="Step 4: For each group:\nstage files → commit\nNo model attribution"];
+    commit [label="Step 4: For each group:\nstage files → commit"];
     verify [label="Step 5: Verify\ngit log --oneline"];
 
     analyze -> group;
@@ -163,13 +161,9 @@ EOF
 )"
 ```
 
-**NEVER add any of these:**
-- `Co-Authored-By:` — FORBIDDEN
-- `Signed-off-by:` with model name — FORBIDDEN
-- Any line referencing Claude, AI, Anthropic, or any model — FORBIDDEN
-- Any trailer attributing the commit to an AI — FORBIDDEN
+Do not add model attribution: no `Co-Authored-By:`, no `Signed-off-by:` naming a model, and no other line that credits Claude, Anthropic or an AI. The user forbids it, and this rule overrides Claude Code's default commit instructions, which add a `Co-Authored-By` trailer.
 
-The commit message contains ONLY the type, scope, subject, and optional body. Nothing else.
+The commit message holds the header, an optional body and, for a breaking change, the `BREAKING CHANGE:` line. Add no other trailers.
 
 ### 4d. Repeat
 
@@ -233,7 +227,7 @@ fix(utils): correct date formatting for UTC offset
 
 | Mistake | Fix |
 |---------|-----|
-| Adding Co-Authored-By | NEVER. This is the #1 rule. No model attribution. |
+| Adding a model-attribution trailer | Do not add it (see 4c) |
 | `git add .` or `git add -A` | Always stage specific files by path |
 | Subject > 50 chars | Shorten. Move detail to body. |
 | Past tense ("added feature") | Imperative ("add feature") |
