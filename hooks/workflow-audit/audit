@@ -1,0 +1,463 @@
+#!/usr/bin/env python3
+# Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
+#   audit record --worktree <path> --llm <file>   re-run S8, read L1-L6, write <sha>.json for the pushed tip
+#   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
+#   audit hook session-start                      register the session (id, transcript path, start time)
+# Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
+# Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
+import json
+import os
+import re
+import shlex
+import sys
+
+FOLDER_NAME = "claude-workflow-audit"
+CONTEXT_HANDOFF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "context-handoff")
+GIT_TIMEOUT_SECONDS = 20
+EVIDENCE_LIMIT = 2000
+L_EVIDENCE_LIMIT = 4000
+L_ITEMS = ("L1", "L2", "L3", "L4", "L5", "L6")
+SESSIONS_FILE = "sessions.jsonl"
+MAX_REGISTRY_LINE_BYTES = 4096
+UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
+USAGE = "usage: audit record --worktree <path> --llm <file> | audit hook pre-tool-use | audit hook session-start"
+
+# The ten types of skills/smart-commits/SKILL.md.
+COMMIT_TYPES = ("feat", "fix", "refactor", "chore", "docs", "style", "test", "perf", "ci", "build")
+HEADER = re.compile(r"(?:%s)(?:\([A-Za-z0-9._/-]+\))?!?: +\S" % "|".join(COMMIT_TYPES))
+TRAILER = re.compile(r"\s*([A-Za-z][A-Za-z-]*)\s*:(.*)", re.DOTALL)
+ATTRIBUTION_NAMED_KEYS = ("signed-off-by", "generated-by", "assisted-by", "reviewed-by", "authored-by", "created-by", "made-by")
+ATTRIBUTION_NAME = re.compile(r"claude|anthropic|noreply@anthropic\.com", re.IGNORECASE)
+GENERATED_WITH = re.compile(r"generated with.*claude", re.IGNORECASE)
+ROBOT = "\U0001F916"
+
+SEPARATOR_CHARS = frozenset("&|;()\n")
+PIPE_OPERATORS = frozenset(("|", "|&"))
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# Words that can stand before a command: shell keywords of compound commands, and wrappers that run the next word.
+COMMAND_PREFIX_WORDS = frozenset(("!", "{", "if", "elif", "while", "until", "then", "do", "else", "time", "env", "command", "exec"))
+UNRESOLVABLE_PATH = re.compile(r"[$`*?\[]")
+RECORD_NAME = re.compile(r"[0-9a-f]{40}\.json")
+
+
+def _runtime():
+    # Imported on first use, inside the callers' guards, so an import error follows the error rules of the hooks.
+    # The real folder goes first on the search path, so that a module of the same name earlier on it cannot win.
+    sys.path.insert(0, CONTEXT_HANDOFF_DIR)
+    import runtime_dir
+
+    return runtime_dir
+
+
+def _git(cwd, *args):
+    import subprocess  # imported here: the hook's common path never runs git
+
+    return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, errors="replace", timeout=GIT_TIMEOUT_SECONDS)
+
+
+def _git_output(cwd, *args, no_result=(1, 128)):
+    """The stripped stdout of a git call that succeeded, None for a status that git uses for "no result"
+    (1 for a missing ref or a detached HEAD, 128 outside a repository). Any other status raises."""
+    result = _git(cwd, *args)
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode in no_result:
+        return None
+    raise RuntimeError(f"git {args[0]} exited with status {result.returncode}: {result.stderr.strip()}")
+
+
+def _cut(text):
+    return text if len(text) <= EVIDENCE_LIMIT else text[: EVIDENCE_LIMIT - 3] + "..."
+
+
+def _count_pr_create(text):
+    return " ".join(text.split()).count("gh pr create")
+
+
+# ---- S8: conventional commits without attribution ----
+
+def _attribution_line(message):
+    for line in message.splitlines():
+        trailer = TRAILER.fullmatch(line)
+        if trailer:
+            key, value = trailer.group(1).lower(), trailer.group(2)
+            if key == "co-authored-by" or (key in ATTRIBUTION_NAMED_KEYS and ATTRIBUTION_NAME.search(value)):
+                return line
+        if GENERATED_WITH.search(line) or line.lstrip().startswith(ROBOT):
+            return line
+    return None
+
+
+def _commit_problem(message):
+    header = message.split("\n", 1)[0]
+    if not HEADER.match(header):
+        return f"header is not conventional: {header[:60]!r}"
+    line = _attribution_line(message)
+    if line is not None:
+        return f"attribution line: {line.strip()[:60]!r}"
+    return None
+
+
+def check_s8(worktree):
+    """Returns (passed, evidence)."""
+    default = None
+    for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
+        if _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
+            default = ref
+            break
+    if default is None:
+        return False, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
+    base = _git_output(worktree, "merge-base", default, "HEAD")
+    if not base:
+        return False, f"evidence unavailable: no merge base of {default} and HEAD"
+    log = _git(worktree, "log", "-z", "--format=%H%n%B", f"{base}..HEAD")
+    if log.returncode != 0:
+        return False, f"evidence unavailable: git log failed: {log.stderr.strip()}"
+    commits = [entry for entry in log.stdout.split("\0") if entry.strip()]
+    problems = []
+    for entry in commits:
+        sha, _, message = entry.strip("\n").partition("\n")
+        problem = _commit_problem(message)
+        if problem:
+            problems.append(f"{sha[:7]}: {problem}")
+    if not problems:
+        return True, f"{len(commits)} commits since {base[:7]}, all conventional, no attribution"
+    shown = problems[:10]
+    if len(problems) > 10:
+        shown.append(f"and {len(problems) - 10} more")
+    return False, _cut("\n".join(shown))
+
+
+# ---- record ----
+
+class Refusal(Exception):
+    """`record` writes nothing and exits 2."""
+
+
+def _load_llm(path):
+    try:
+        with open(path, "rb") as handle:
+            data = json.loads(handle.read().decode("utf-8"))
+    except (OSError, ValueError) as error:
+        raise Refusal(f"malformed L input: cannot read {path}: {error}")
+    if not isinstance(data, dict) or set(data) != set(L_ITEMS):
+        raise Refusal("malformed L input: need an object with exactly the keys L1 to L6")
+    items = []
+    for name in L_ITEMS:
+        verdict = data[name]
+        if not isinstance(verdict, dict) or set(verdict) != {"result", "evidence"}:
+            raise Refusal(f"malformed L input: {name} needs exactly result and evidence")
+        evidence = verdict["evidence"]
+        if verdict["result"] not in ("pass", "fail") or not isinstance(evidence, str) or not 1 <= len(evidence) <= L_EVIDENCE_LIMIT:
+            raise Refusal(f"malformed L input: {name} needs result pass or fail and evidence of 1 to {L_EVIDENCE_LIMIT} characters")
+        items.append({"id": name, "kind": "L", "result": verdict["result"], "evidence": evidence})
+    return items
+
+
+def _record_arguments(argv):
+    values = {}
+    for index in range(0, len(argv), 2):
+        flag = argv[index]
+        if flag not in ("--worktree", "--llm") or flag in values or index + 1 >= len(argv):
+            raise Refusal(USAGE)
+        values[flag] = argv[index + 1]
+    if set(values) != {"--worktree", "--llm"}:
+        raise Refusal(USAGE)
+    return values["--worktree"], values["--llm"]
+
+
+def _now():
+    from datetime import datetime, timezone  # imported here: the hook's common path never needs the time
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _record(argv):
+    worktree, llm_path = _record_arguments(argv)
+    l_items = _load_llm(llm_path)
+    branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch:
+        raise Refusal(f"no branch to record: {worktree} is not a git worktree or HEAD is detached")
+    tip = _git_output(worktree, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}^{{commit}}")
+    if not tip:
+        raise Refusal(f"push first: origin/{branch} does not exist")
+    if _git_output(worktree, "rev-parse", "HEAD") != tip:
+        raise Refusal(f"push first: HEAD differs from origin/{branch}")
+    remote_url = _git_output(worktree, "remote", "get-url", "origin", no_result=(2, 128))
+    if not remote_url:
+        raise Refusal("no remote URL for origin")
+    passed, evidence = check_s8(worktree)
+    items = [{"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence}] + l_items
+    result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
+    text = json.dumps({
+        "sha": tip, "remote_url": remote_url, "branch": branch,
+        "time": _now(), "items": items, "result": result,
+    })
+    runtime_dir = _runtime()
+    if len(text) > runtime_dir.MAX_READ_BYTES:
+        raise Refusal("record too large")
+    dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
+    if dir_fd is None:
+        raise Refusal("unsafe runtime folder")
+    try:
+        runtime_dir.write_atomic(dir_fd, f"{tip}.json", text)
+    finally:
+        os.close(dir_fd)
+    for item in items:
+        print(item["id"], item["result"])
+    print("result", result)
+    return 0 if result == "pass" else 1
+
+
+def cmd_record(argv):
+    try:
+        return _record(argv)
+    except Refusal as refusal:
+        print(refusal, file=sys.stderr)
+    except Exception as error:
+        print(f"cannot record: {error}", file=sys.stderr)
+    return 2
+
+
+# ---- gate: PreToolUse ----
+
+def split_command(command):
+    """The command as a list of items: a list of words for each segment, and the separator token between segments as a string.
+    Raises ValueError for an unbalanced quote."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="".join(sorted(SEPARATOR_CHARS)))
+    lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"  # a newline is a separator, not whitespace
+    lexer.commenters = ""  # shlex would drop the text after a `#`, even inside a word
+    items, words = [], []
+    for token in lexer:
+        if token and set(token) <= SEPARATOR_CHARS:  # shlex joins adjacent separators into one token
+            if words:
+                items.append(words)
+                words = []
+            items.append(token)
+        else:
+            words.append(token)
+    if words:
+        items.append(words)
+    return items
+
+
+def _operator(separator):
+    """A separator token without its parentheses and newlines: shlex joins adjacent separators, so `&\n` and `|(` are one token."""
+    return "".join(char for char in separator if char not in "()\n")
+
+
+def _command_words(segment):
+    index = 0
+    while index < len(segment) and (ENV_ASSIGNMENT.match(segment[index]) or segment[index] in COMMAND_PREFIX_WORDS):
+        index += 1
+    return segment[index:]
+
+
+def _is_pr_create(segment):
+    words = _command_words(segment)
+    return len(words) >= 3 and os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]
+
+
+def _head_option(arguments):
+    """The last --head/-H value, or None when absent."""
+    head = None
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word in ("--head", "-H"):
+            head = arguments[index + 1] if index + 1 < len(arguments) else ""
+            index += 1
+        elif word.startswith("--head="):
+            head = word[len("--head="):]
+        elif word.startswith("-H") and not word.startswith("--"):
+            head = word[2:].removeprefix("=")
+        index += 1
+    return head
+
+
+def _after_cd(cwd, segment):
+    """The working directory after a `cd` segment; None when it cannot be resolved."""
+    arguments = segment[1:]
+    if cwd is None or len(arguments) != 1 or arguments[0].startswith("-") or UNRESOLVABLE_PATH.search(arguments[0]):
+        return None
+    return os.path.normpath(os.path.join(cwd, os.path.expanduser(arguments[0])))
+
+
+def _read_record(runtime_dir, dir_fd, name):
+    """The parsed record in `name`, None when it does not exist. Raises when it cannot be read or is not valid."""
+    text = runtime_dir.read_file(dir_fd, name)
+    if text is None:
+        return None
+    record = json.loads(text)
+    if (not isinstance(record, dict) or record.get("sha") != name[:-len(".json")] or record.get("result") not in ("pass", "fail")
+            or not isinstance(record.get("remote_url"), str) or not isinstance(record.get("branch"), str)):
+        raise ValueError(f"invalid record {name}")
+    return record
+
+
+def _is_stale(runtime_dir, dir_fd, tip, url, branch):
+    for name in os.listdir(dir_fd):
+        if name == f"{tip}.json" or not RECORD_NAME.fullmatch(name):
+            continue
+        try:
+            record = _read_record(runtime_dir, dir_fd, name)
+        except Exception:
+            continue  # an unrelated record that cannot be read does not decide this gate
+        if record and record["remote_url"] == url and record["branch"] == branch:
+            return True
+    return False
+
+
+def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
+    """Why `gh pr create` is denied, or None when it is allowed. `cwd` is None when a cd could not be resolved."""
+    head = _head_option(arguments)
+    if cwd is None or head == "":
+        return "no branch to check: the working directory or the --head value cannot be resolved"
+    if head is None:
+        branch = _git_output(cwd, "symbolic-ref", "--short", "-q", "HEAD")
+    else:
+        branch = head.split(":", 1)[1] if ":" in head else head
+    if not branch:
+        return "no branch to check: not in a git repository, or HEAD is detached and there is no --head"
+    tip = _git_output(cwd, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}^{{commit}}")
+    if not tip:
+        return f"push first: origin/{branch} does not exist in {cwd}. Push the branch, then run the audit."
+    url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
+    if url is None:
+        raise RuntimeError("git remote get-url origin failed")
+    record = _read_record(runtime_dir, dir_fd, f"{tip}.json")
+    if record is None:
+        if _is_stale(runtime_dir, dir_fd, tip, url, branch):
+            return f"stale record: the audit of {branch} is for an older commit than {tip[:7]}. Run the audit again."
+        return f"no record: no audit record for {branch} at {tip[:7]}. Run the audit."
+    if record["remote_url"] != url:
+        return f"remote mismatch: the record of {tip[:7]} is for {record['remote_url']}, not {url}."
+    if record["result"] != "pass":
+        return f"failed record: the audit of {branch} at {tip[:7]} failed. Report the failed items to the user."
+    return None
+
+
+def gate_reason(command, cwd):
+    """The deny reason for a Bash command, or None to allow it."""
+    try:
+        items = split_command(command)
+    except Exception:
+        # The command cannot be split into words, so no cd or --head can be read: a match is denied.
+        if _count_pr_create(command):
+            return "no branch to check: the command cannot be parsed"
+        return None
+    matches = sum(1 for item in items if isinstance(item, list) and _is_pr_create(item))
+    # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
+    # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
+    unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > matches
+    if not matches:
+        return UNFOLLOWED_REASON if unfollowed else None
+    if not isinstance(cwd, str) or not cwd:
+        return "hook input unreadable: no working directory for a matching command"
+    dir_fd = None
+    try:
+        runtime_dir = _runtime()
+        dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
+        if dir_fd is None:
+            return "unsafe runtime folder: the audit folder is not owned by you with mode 0700, or is a symlink"
+        current, outer = cwd, []  # `outer` holds the directory to restore at each closing parenthesis
+        for index, item in enumerate(items):
+            if isinstance(item, str):
+                for char in item:
+                    if char == "(":
+                        outer.append(current)
+                    elif char == ")" and outer:
+                        current = outer.pop()
+                continue
+            words = _command_words(item)
+            if words[:1] == ["cd"]:
+                before = _operator(items[index - 1]) if index else ""
+                after = _operator(items[index + 1]) if index + 1 < len(items) else ""
+                # In bash a cd in a pipeline or in the background runs in a subshell and does not move the commands after it.
+                if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
+                    current = _after_cd(current, words)
+            elif _is_pr_create(item):
+                reason = _gate_reason(runtime_dir, dir_fd, current, words[3:])
+                if reason:
+                    return reason
+        if unfollowed:
+            return UNFOLLOWED_REASON
+        return None
+    except Exception as error:
+        return f"hook error: {error}"
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+
+
+def cmd_pre_tool_use():
+    try:
+        raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+    except Exception:
+        return 0
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        # Unreadable input: the raw text is matched like an unparsable command.
+        reason = "hook input unreadable: the hook input is not JSON" if _count_pr_create(raw) else None
+    else:
+        tool_input = data.get("tool_input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        if data.get("tool_name", "Bash") != "Bash" or not isinstance(command, str):
+            return 0
+        reason = gate_reason(command, data.get("cwd"))
+    if reason:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+    return 0
+
+
+# ---- session registry: SessionStart ----
+
+def cmd_session_start():
+    import stat
+
+    try:
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+        session_id, transcript_path = data["session_id"], data["transcript_path"]
+        runtime_dir = _runtime()
+        if not runtime_dir.valid_session_id(session_id) or not isinstance(transcript_path, str) or not transcript_path:
+            return 0
+        line = json.dumps({"session_id": session_id, "transcript_path": transcript_path,
+                           "started_at": _now()}) + "\n"
+        encoded = line.encode("utf-8")
+        if len(encoded) >= MAX_REGISTRY_LINE_BYTES:
+            return 0
+        dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
+        if dir_fd is None:
+            return 0
+        try:
+            file_fd = os.open(SESSIONS_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
+            try:
+                if stat.S_ISREG(os.fstat(file_fd).st_mode):
+                    os.write(file_fd, encoded)
+            finally:
+                os.close(file_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        pass  # register nothing, print nothing
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["record"]:
+        return cmd_record(argv[1:])
+    if argv == ["hook", "pre-tool-use"]:
+        return cmd_pre_tool_use()
+    if argv == ["hook", "session-start"]:
+        return cmd_session_start()
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

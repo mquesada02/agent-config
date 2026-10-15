@@ -6,6 +6,8 @@
 !hooks/block-aws-credentials.py
 !hooks/context-handoff/
 !hooks/context-handoff/*.py
+!hooks/workflow-audit/
+!hooks/workflow-audit/**
 !scripts/
 !scripts/update-orca-skills.sh
 !skills/
