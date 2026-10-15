@@ -84,7 +84,7 @@ Finding types:
 
 The loop session decides the final type.
 
-Roles. An agent that did not report a finding confirms it:
+Roles. The agent that reports a finding never fixes it, so a second agent checks each finding before anyone fixes it:
 - **Reviewers** (the /mattpocock-skills:code-review subagents) report findings. They do not fix.
 - **Verifier**: one Sonnet subagent per Blocking finding. It confirms the failure from the code (a failing test, a traced path, or a quoted line), or it rejects the finding. The loop session marks a rejected finding as rejected in the ledger.
 - **Fixer**: the loop session. For each confirmed Blocking finding:
@@ -135,7 +135,7 @@ This loop differs from section 6 on purpose in two ways. It has no `/simplify`: 
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
-Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of each section 6 phase and of each phase of the plan-review loop, the findings ledger, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent and verifier subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
+Before reporting a ticket as done, the coordinator checks evidence for each step: the spec link in the issue tracker, the spec-review result, the round count of section 6 steps 1 and 3 and of each phase of the plan-review loop, the findings ledger, `git log` showing /smart-commits-style messages without attribution, and the model of each review subagent and verifier subagent. A worker's claim without evidence counts as not done. Before any dispatch, the main section 7 session checks the following evidence for the step 4.1 review: its result, the round count of each phase of its plan-review loop, and the model of each plan-review subagent.
 These steps are mandatory.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
 

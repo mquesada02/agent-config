@@ -5,6 +5,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 CLAUDE_MD = os.path.join(REPO, "CLAUDE.md")
+README = os.path.join(REPO, "README.md")
 SKILL = os.path.join(HERE, "SKILL.md")
 SPEC_AXES = os.path.join(HERE, "spec-axes.md")
 TICKETS_AXES = os.path.join(HERE, "tickets-axes.md")
@@ -244,8 +245,8 @@ class ClaudeMdWiringTest(unittest.TestCase):
         self.assertIn("same plan-review loop as in step 3", self.step53.lower())
 
     def test_evidence_sentence_covers_the_loop_phases(self):
-        sentence = sentence_with(self.section7, "section 6 phase")
-        for phrase in ("round count of each", "plan-review loop", "findings ledger", "verifier subagent"):
+        sentence = sentence_with(self.section7, "section 6 steps 1 and 3")
+        for phrase in ("round count of", "plan-review loop", "findings ledger", "verifier subagent"):
             self.assertIn(phrase, sentence)
 
     def test_evidence_covers_the_step_41_review(self):
@@ -272,6 +273,14 @@ class ClaudeMdWiringTest(unittest.TestCase):
         blocking = sentence_with(lines, "blocking**:")
         self.assertIn("weaker security, hidden coupling, or an unapproved temporary fix", blocking)
         self.assertIn("the quoted code and the section 0 rule", sentence_with(lines, "section 0 rule"))
+
+    def test_section_6_states_why_reporters_do_not_fix(self):
+        self.assertIn("the agent that reports a finding never fixes it, so", sentence_with(self.section6, "never fixes it"))
+
+    def test_readme_describes_the_capped_loop(self):
+        readme = read(README).lower()
+        self.assertNotIn("in a row", readme)
+        self.assertIn("section 6: the round caps", readme)
 
     def test_section_6_phases_have_caps(self):
         lines = self.section6

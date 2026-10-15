@@ -9,10 +9,10 @@ itself.
 > expensive processes:
 >
 > - **Review loops** (section 6): after Claude implements code, subagents
->   review it in rounds, until a set number of rounds in a row find no blocking
->   issue. Then Claude applies the minor findings and runs `/simplify`. Then the
->   same review runs again. A blocking issue in this final review sends the loop
->   back to the `/simplify` step.
+>   review it in rounds, until one round finds no new blocking issue (at most 5
+>   rounds). Then Claude applies the small minor findings and runs `/simplify`
+>   once. Then a final review checks the new changes (at most 3 rounds). At a
+>   round cap, Claude stops and asks you.
 > - **Spec and ticket workflow** (section 7): a task that is not small gets a
 >   map, a reviewed spec and tickets. Each ticket then gets its own
 >   [Orca](https://github.com/stablyai/orca) worker. The worker writes a spec
@@ -22,7 +22,7 @@ itself.
 > You might need to adjust these rules to your plan and budget. The main
 > settings are in `CLAUDE.md`:
 >
-> - Section 6: the number of rounds in a row with no blocking issue.
+> - Section 6: the round caps of the review loop.
 > - Section 7: the size limit for small tasks. Small tasks skip this workflow,
 >   but they still run the review loop.
 > - Section 9: the model for subagents and Orca workers.
