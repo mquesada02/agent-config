@@ -89,8 +89,8 @@ Ledger: the main session keeps one findings ledger per task in the scratchpad. E
 2. **Minor pass (once).** Commit first, so step 3 has a fixed point. Sort the open Minor findings into two groups:
    - Apply: a change in one file, with no behavior change and no public interface change.
    - Defer: everything else. Mark it deferred in the ledger.
-   Apply the first group in one pass, then run the tests. If a test fails, revert the Minor change that broke it and mark that finding deferred. Then run /simplify once and run the tests again. Revert any /simplify change that breaks a test.
-3. **Final check.** Run one /mattpocock-skills:code-review round on the diff since the commit made at the start of step 2. Only Blocking findings count; record any new Minor finding as deferred. Verify and fix each confirmed Blocking finding as in step 1, then repeat this step on that same diff. Done after one round with no confirmed Blocking finding. Cap: 3 rounds.
+   Apply the first group in one pass, then run the tests. If a test fails, revert the Minor change that broke it and mark that finding deferred. Then run /simplify once and run the tests again. If a test fails, revert all the /simplify changes.
+3. **Final check.** Run one /mattpocock-skills:code-review round on the diff since the commit made at the start of step 2. Only Blocking findings count; record any new Minor finding as deferred. Verify and fix each confirmed Blocking finding as in step 1, then repeat this step. Each repeat reviews the diff from that same commit, which now includes the fixes. Done after one round with no confirmed Blocking finding. Cap: 3 rounds.
 4. **Report.** List the deferred Minor findings for the user. Leave them unfixed in this task, because fixing them would reopen the review.
 5. At any cap, stop. Send the user the open findings and the round counts, and ask how to continue. If you're unsure of anything, ask the user.
 
@@ -109,11 +109,11 @@ When implementing any task, you must do these steps in the corresponding order:
 3. Review the spec with `/plan-review spec general` (its inputs: the spec, the map, the map's resolved decision tickets, and the user's request as a link plus a word-for-word quote). Run the plan-review loop below. The main section 7 session applies every fix to the spec issue body, before any dispatch.
 Plan-review loop:
 Each Blocking finding quotes the line it rests on and states what breaks. The session that runs the loop keeps a findings ledger, as in section 6, and gives it to every reviewer. That session is the main section 7 session, or the worker in step 5.3.
-(a) Run the correctness phase until 1 round has no new Blocking finding. Record the Minor findings. Cap: 5 rounds.
+(a) Run the correctness phase and fix each Blocking finding, until 1 round has no new Blocking finding. Record the Minor findings. Cap: 5 rounds.
 (b) Apply the recorded Minor findings once.
 (c) Run the final phase on the document as changed by (a) and (b). Only Blocking findings fail a round. That session raises a Minor finding to Blocking when it contradicts a decision on the map, or when it shows a requirement that no test can check. Fix each Blocking finding and repeat (c). Done after 1 round with no Blocking finding. Cap: 3 rounds. A new Minor finding in (c) is recorded and listed for the user, not applied.
 (d) At any cap, stop and ask the user, with the open findings and the round counts.
-This loop differs from section 6 on purpose in two ways. It has no `/simplify`: step (b) only applies the recorded Minor findings. It has no verifier subagent: the Blocking finding's quoted line is the evidence, and that session checks it.
+This loop differs from section 6 on purpose in two ways. It has no `/simplify`: step (b) only applies the recorded Minor findings. It has no verifier subagent: the Blocking finding's quoted line is the evidence, and that session checks it. When the quoted line does not support the finding, that session records it as rejected in the ledger and does not fix it.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
