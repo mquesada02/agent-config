@@ -19,7 +19,7 @@ class RecordTest(AuditCase):
         self.assertEqual(record["result"], "pass")
         datetime.datetime.fromisoformat(record["time"])
         self.assertEqual([(item["id"], item["kind"], item["result"]) for item in record["items"]],
-                         [("S8", "S", "pass")] + [(f"L{n}", "L", "pass") for n in range(1, 7)])
+                         [("S1", "S", "pass"), ("S2", "S", "pass"), ("S8", "S", "pass")] + [(f"L{n}", "L", "pass") for n in range(1, 7)])
         self.assertTrue(all(isinstance(item["evidence"], str) and item["evidence"] for item in record["items"]))
         self.assertEqual(result.stdout.decode().splitlines()[-1], "result pass")
 
@@ -35,10 +35,10 @@ class RecordTest(AuditCase):
         self.assertEqual(result.returncode, 1)
         record = self.read_record(tip)
         self.assertEqual(record["result"], "fail")
-        s8 = record["items"][0]
+        s8 = self.item(tip, "S8")
         self.assertEqual((s8["id"], s8["result"]), ("S8", "fail"))
         self.assertIn("bad message", s8["evidence"])
-        self.assertEqual(result.stdout.decode().splitlines()[0], "S8 fail")
+        self.assertEqual(result.stdout.decode().splitlines()[:3], ["S1 pass", "S2 pass", "S8 fail"])
 
     def test_a_failed_l_verdict_gives_a_failed_record(self):
         tip = self.start_branch("feature", "feat: a")
@@ -55,7 +55,7 @@ class RecordTest(AuditCase):
         self.assertEqual(self.record().returncode, 1)
         self.assertEqual(self.record_files(), [f"{tip}.json"])
         self.assertEqual(self.read_record(tip)["result"], "fail")
-        self.assertEqual(os.listdir(self.runtime), [f"{tip}.json"])  # no temp file is left behind
+        self.assertEqual(sorted(os.listdir(self.runtime)), sorted(["sessions.jsonl", f"{tip}.json"]))  # no temp file is left behind
 
     def test_malformed_l_input_writes_nothing(self):
         self.start_branch("feature", "feat: a")
@@ -89,7 +89,7 @@ class RecordTest(AuditCase):
         tip = self.start_branch("feature", "feat: a")
         self.write_llm(dict(PASSING_LLM, L1={"result": "pass", "evidence": "x" * 4000}))
         self.assertEqual(self.record().returncode, 0)
-        self.assertEqual(len(self.read_record(tip)["items"][1]["evidence"]), 4000)
+        self.assertEqual(len(self.item(tip, "L1")["evidence"]), 4000)
 
     def test_a_record_that_the_gate_could_not_read_is_refused(self):
         self.start_branch("feature", "feat: a")
@@ -122,12 +122,11 @@ class RecordTest(AuditCase):
 
     def test_an_unsafe_runtime_folder_writes_nothing(self):
         self.start_branch("feature", "feat: a")
-        os.mkdir(self.runtime, 0o755)
         os.chmod(self.runtime, 0o755)
         result = self.record()
         self.assertEqual(result.returncode, 2)
         self.assertIn("unsafe runtime folder", result.stderr.decode())
-        self.assertEqual(os.listdir(self.runtime), [])
+        self.assertEqual(os.listdir(self.runtime), ["sessions.jsonl"])
 
     def test_the_command_line_is_strict(self):
         self.start_branch("feature", "feat: a")
