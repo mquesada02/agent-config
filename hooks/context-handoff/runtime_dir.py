@@ -14,12 +14,15 @@ LOCK_WAIT_SECONDS = 5
 LOCK_RETRY_SECONDS = 0.01
 
 
-def runtime_dir_path():
+def runtime_dir_path(folder_name=FOLDER_NAME):
     # TMPDIR only when it is absolute; the fallback ignores TEMP, TMP and the working directory so that every script resolves the same folder.
     # The path is normalized because the launcher refuses a runtime folder that is not.
+    # The name must be one path component, so that the folder cannot leave the base.
+    if folder_name in ("", ".", "..") or "/" in folder_name or "\0" in folder_name:
+        raise ValueError(f"not a single folder name: {folder_name!r}")
     tmpdir = os.environ.get("TMPDIR")
     base = tmpdir if tmpdir and os.path.isabs(tmpdir) else "/tmp"
-    return os.path.normpath(os.path.join(base, FOLDER_NAME))
+    return os.path.normpath(os.path.join(base, folder_name))
 
 
 def valid_session_id(session_id):
