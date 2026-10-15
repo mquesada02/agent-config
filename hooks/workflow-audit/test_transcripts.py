@@ -116,23 +116,19 @@ class MissingEvidenceTest(TranscriptCase):
         self.unavailable(self.items())
 
     def test_a_bad_registry_line(self):
-        self.register_session("s1", [self.own_edit()])
-        for line in ("not json", "[]", json.dumps({"session_id": "a/b", "transcript_path": "/x", "started_at": "t"}),
-                     json.dumps({"session_id": "ok", "transcript_path": "", "started_at": "t"}),
-                     json.dumps({"session_id": "ok", "transcript_path": "/x"})):
+        lines = ("not json", "[]", json.dumps({"session_id": "a/b", "transcript_path": "/x", "started_at": "t"}),
+                 json.dumps({"session_id": "ok", "transcript_path": "", "started_at": "t"}),
+                 json.dumps({"session_id": "ok", "transcript_path": 5, "started_at": "t"}),
+                 json.dumps({"session_id": "ok", "transcript_path": "/x"}))
+        for line in lines:
             with self.subTest(line=line):
+                self.setUp()  # a fresh registry for each case, so no earlier line decides
+                self.register_session("s1", [self.own_edit()])
                 with open(os.path.join(self.runtime, "sessions.jsonl"), "a") as handle:
                     handle.write(line + "\n")
-                self.setUp_branch_once()
-                self.unavailable(self.rerecord())
-
-    def setUp_branch_once(self):
-        if self.git("branch", "--list", "feature", check=False) == "":
-            self.tip = self.branch()
-
-    def rerecord(self):
-        self.assertIn(self.record().returncode, (0, 1))
-        return {item["id"]: item for item in self.read_record(self.tip)["items"]}
+                items = self.items()
+                self.unavailable(items)
+                self.assertIn("unreadable registry line 2", items["S1"]["evidence"])
 
     def test_a_registry_that_is_a_symlink(self):
         os.makedirs(self.runtime, exist_ok=True)
@@ -228,6 +224,15 @@ class FieldsTest(TranscriptCase):
         def string_command(row):
             row["message"]["content"][0] = {"type": "tool_use", "id": "b9", "name": "Bash", "input": {"command": 5}}
 
+        def without_block_key(key):
+            row = bash_row("ls", "b1", 3)
+            del row["message"]["content"][0][key]
+            return row
+
+        def drop_timestamp(row):
+            del row["timestamp"]
+            return row
+
         cases = {
             "not json": "{broken",
             "not an object": "[1, 2]",
@@ -241,6 +246,13 @@ class FieldsTest(TranscriptCase):
             "user row without message": {"type": "user", "version": VERSION},
             "assistant row with string content": call_row("Bash", {"command": "x"}, "b1", 3, message={"content": "text"}),
             "relative path without cwd": edit_row("rel.txt", "e3", 4),
+            "tool_use without id": without_block_key("id"),
+            "tool_use without name": without_block_key("name"),
+            "tool_use without input": without_block_key("input"),
+            "content block without type": call_row("Bash", {"command": "x"}, "b1", 3, message={"content": [{"text": "no type"}]}),
+            "NotebookEdit without a path": call_row("NotebookEdit", {"new_source": "x"}, "n1", 3),
+            "Bash row without timestamp": drop_timestamp(bash_row("ls", "b2", 3)),
+            "timestamp that is not ISO 8601": bash_row("ls", "b3", 3, timestamp="yesterday"),
         }
         cases["no tool_use_id"]["message"]["content"][0].pop("tool_use_id")
         for name, case in cases.items():
@@ -275,7 +287,7 @@ class DeclarationTest(TranscriptCase):
     def test_a_missing_declaration_fails_s2(self):
         self.assert_item(self.declared({"CLAUDE.md": None}), "S2", "fail", "found 0")
 
-    def test_two_sections_fail_s2_in_one_file_and_in_two_files(self):
+    def test_two_sections_in_one_file_fail_s2(self):
         section = "### Test command\n\n```\nmake test\n```\n"
         self.assert_item(self.declared({"CLAUDE.md": section + "\n" + section}), "S2", "fail", "found 2")
 
@@ -476,6 +488,20 @@ class RecordTest(TranscriptCase):
         result = self.record()
         self.assertEqual(result.returncode, 1)
         self.assertEqual([item["id"] for item in self.read_record(tip)["items"]], ["S1", "S2", "S8", "L1", "L2", "L3", "L4", "L5", "L6"])
+
+    def test_a_failed_s2_gives_a_failed_record_and_exit_1(self):
+        self.register_session("s1", [self.own_edit()])
+        tip = self.branch()
+        self.assertEqual(self.record().returncode, 1)
+        self.assertEqual(self.item(tip, "S2")["result"], "fail")
+        self.assertEqual(self.read_record(tip)["result"], "fail")
+
+    def test_the_untested_patch_note_survives_a_long_evidence(self):
+        main_files = [edit_row(os.path.join(self.main, "x" * 120 + f"{n}.txt"), f"m{n}", 20 + n, version="2.1.300") for n in range(10)]
+        self.register_session("s1", [self.own_edit(version="2.1.300"), *main_files])
+        evidence = self.items()["S1"]["evidence"]
+        self.assertGreater(len(evidence), 1500)
+        self.assertTrue(evidence.endswith("; untested patch version 2.1.300"), evidence[-80:])
 
     def test_evidence_never_holds_a_raw_row(self):
         secret = "SECRET-PROMPT-TEXT"

@@ -20,6 +20,7 @@ runpy.run_path(script, run_name="__main__")
 
 class SessionStartTest(AuditCase):
     default_session = False
+
     def start(self, data=None, raw=None, **kwargs):
         text = raw if raw is not None else json.dumps(data)
         return self.audit("hook", "session-start", stdin=text, **kwargs)
