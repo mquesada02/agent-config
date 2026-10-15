@@ -186,8 +186,8 @@ Never use `rm -rf` or other recursive deletes. To remove something:
 
 ## 14. Docker containers
 
-Docker containers and volumes stay on disk after the session ends. Before you start, or run anything that starts, a container or a `docker compose` stack, and before you remove a worktree, read `~/.claude/docs/agents/docker.md` and follow it. Before you finish, leave behind no container or volume that you created, except a long-lived development stack that you left running or stopped with `docker compose stop`. Never run any `docker ... prune` command.
+Docker containers and volumes stay on disk after the session ends. Before you start, or run anything that starts, a container or a `docker compose` stack, and before you remove a worktree, read `~/.claude/docs/agents/docker.md` and follow it. Before you finish, leave behind no container or volume that you created, except a long-lived development stack that you left running or stopped with `docker compose stop`. Remove only the containers and volumes that you created, or that belong to a worktree you remove. Never run any `docker ... prune` command.
 
 ## 15. CPU load
 
-Other sessions and the user share this PC. Run test runners with at most 2 workers, passed on the command line. If the committed config already sets a lower limit, pass no worker flag and no `VITEST_*` variable. Before you start any artificial CPU load, read `~/.claude/docs/agents/cpu-load.md` and follow it.
+Other sessions and the user share this PC. Run test runners with at most 2 workers, passed on the command line; do not change committed config for it. If the committed config already sets a lower limit, pass no worker flag and no `VITEST_*` variable. Before you start any artificial CPU load, read `~/.claude/docs/agents/cpu-load.md` and follow it.
