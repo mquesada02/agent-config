@@ -88,6 +88,19 @@ class S8Test(AuditCase):
         self.assertEqual(len(evidence.splitlines()), 11)
         self.assertIn("and 2 more", evidence)
 
+    def test_a_merge_commit_in_the_range_is_checked_like_any_other(self):
+        self.git("checkout", "-b", "work")
+        self.commit("feat: on work", name="work.txt")
+        self.git("checkout", "main")
+        self.commit("feat: on main", name="main.txt")
+        self.git("push", "origin", "main")
+        self.git("checkout", "work")
+        self.git("merge", "--no-ff", "-m", "Merge branch 'main' into work", "main")
+        self.git("push", "-u", "origin", "work")
+        passed, evidence = self.s8()
+        self.assertFalse(passed)
+        self.assertIn("Merge branch", evidence)
+
     def test_head_on_the_default_branch_has_zero_commits_and_passes(self):
         self.commit("old bad commit")
         self.git("push", "origin", "main")

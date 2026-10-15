@@ -1,9 +1,8 @@
 import json
 import os
-import stat
 import unittest
 
-from audit_support import PASSING_LLM, AuditCase
+from audit_support import AuditCase
 
 PR = "gh pr create --title t --body b"
 
@@ -131,6 +130,10 @@ class MatchingTest(GateTestCase):
             "command gh pr create",
             "exec gh pr create",
             "true && ! FOO=1 time gh pr create",
+            "if false; then true; elif gh pr create; then true; fi",
+            "until gh pr create; do true; done",
+            "if false; then true; else gh pr create; fi",
+            "while true; do gh pr create; done",
         ):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command, cwd=self.repo), "no record")
@@ -187,7 +190,7 @@ class MatchingTest(GateTestCase):
         self.assert_denied(self.gate(f"cd {self.repo}\n{PR}", cwd=other), "no record")
 
     def test_a_cd_that_cannot_be_resolved_denies_a_match(self):
-        for cd in ("cd", "cd -", "cd -P .", "cd $HOME", "cd `pwd`", "cd *", "cd a b", "cd '$x'"):
+        for cd in ("cd", "cd -", "cd -P .", "cd $HOME", "cd `pwd`", "cd *", "cd ?", "cd [a]", "cd a b", "cd '$x'"):
             with self.subTest(cd=cd):
                 self.assert_denied(self.gate(f"{cd} && {PR}"), "no branch to check")
         self.assert_allowed(self.gate("cd - && ls"))
