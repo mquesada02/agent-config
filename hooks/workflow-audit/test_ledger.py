@@ -146,6 +146,7 @@ class MalformedEventTest(LedgerCase):
             "reason too long": ("finding", *FINDING[:12], "--reason", "x" * 501),
             "reason with a newline": ("finding", *FINDING[:12], "--reason", "a\nb"),
             "reason with a control character": ("finding", *FINDING[:12], "--reason", "a\x07b"),
+            "loc with a control character": ("finding", *FINDING[:8], "--loc", "a\x07b", *FINDING[10:]),
             "bad verdict result": ("verdict", "--finding", "I1", "--verifier", "ver1", "--result", "maybe"),
             "bad status": ("status", "--finding", "I1", "--status", "open"),
             "short sha": ("phase-commit", "--sha", "abc"),
