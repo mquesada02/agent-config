@@ -802,7 +802,7 @@ def _load_ledger(dir_fd, branch, remote_url):
     return ledger, None, None
 
 
-def _lines(lines):
+def _truncate_lines(lines):
     shown = lines[:10]
     if len(lines) > 10:
         shown.append(f"and {len(lines) - 10} more")
@@ -815,7 +815,7 @@ def check_s3(ledger):
     open_findings = [entry["event"] for entry in ledger.findings.values() if entry["status"] is None]
     blocked = [event for event in open_findings if event["loop"] not in capped]
     exempt = [event for event in open_findings if event["loop"] in capped]
-    describe = lambda events: _lines([f"{event['id']} {event['loc']}" for event in events])
+    describe = lambda events: _truncate_lines([f"{event['id']} {event['loc']}" for event in events])
     if blocked:
         return False, f"{len(blocked)} findings have no status\n" + describe(blocked)
     summary = f"{len(ledger.events)} events, {len(ledger.findings)} findings"
@@ -857,7 +857,7 @@ def check_s4(ledger, agents, problem):
         elif not any(verdict["verifier"] in agents and _is_sonnet(agents[verdict["verifier"]]) for verdict in mine):
             failures.append(f"{finding['id']}: no verdict by a Sonnet subagent of an audited transcript")
     if failures:
-        return False, _lines(failures)
+        return False, _truncate_lines(failures)
     return True, f"{len(blocking)} Blocking findings, each with a verdict by a Sonnet subagent"
 
 
@@ -866,7 +866,7 @@ def check_s5(ledger):
     failures = [f"{loop} {phase}: round {number} is past the cap of {PHASE_CAPS[phase]}"
                 for (loop, phase), number in ledger.rounds.items() if number > PHASE_CAPS[phase]]
     if failures:
-        return False, _lines(failures)
+        return False, _truncate_lines(failures)
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
 
 
@@ -929,28 +929,31 @@ def check_xc(ledger, agents, problem):
             elif not transcript.start > low:
                 failures.append(f"{label}: started before the previous round of its loop")
     if failures:
-        return False, _lines(failures)
+        return False, _truncate_lines(failures)
     return True, f"{len(checks)} reviewers and verifiers checked"
 
 
-def _item(name, check, *args):
+def _s_item(name, passed, evidence):
+    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
+
+
+def _check_item(name, check, *args):
     try:
         passed, evidence = check(*args)
     except Unavailable as problem:
         passed, evidence = False, str(problem)
-    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
+    return _s_item(name, passed, evidence)
 
 
 def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
     """S3 to S6 and XC. `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
     if ledger is None:
-        return ([{"id": "S3", "kind": "S", "result": "fail", "evidence": _cut(s3_evidence)}]
-                + [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(other_evidence)} for name in ("S4", "S5", "S6", "XC")])
+        return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")]
     agents = None if audited is None else _agents(audited)
     text = str(problem)
-    return [_item("S3", check_s3, ledger), _item("S4", check_s4, ledger, agents, text), _item("S5", check_s5, ledger),
-            _item("S6", check_s6, worktree, ledger), _item("XC", check_xc, ledger, agents, text)]
+    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger),
+            _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)]
 
 
 # ---- record ----
@@ -1003,7 +1006,7 @@ def _transcript_items(worktree, dir_fd):
     try:
         audited = _audited_transcripts(worktree, dir_fd)
     except Unavailable as problem:
-        return [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(str(problem))} for name in ("S1", "S2")], None, problem
+        return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, problem
     note = _versions_note(audited)
     items = []
     for name, check in (("S1", check_s1), ("S2", check_s2)):
