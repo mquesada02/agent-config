@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
+#   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 50 KB; writes no file
 #   audit record --worktree <path> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
+# Exit codes of `check`: 0 it ran (a failed item is output, not an error), 2 it refused.
 # Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
 import json
 import os
@@ -45,7 +47,7 @@ SYNTHETIC_MODEL = "<synthetic>"
 AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
 MAX_REGISTRY_LINE_BYTES = 4096
 UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
-USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit record --worktree <path> --llm <file>"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
          " | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -70,6 +72,7 @@ TESTED_VERSIONS = ("2.1.301",)
 TESTED_MAJOR_MINOR = frozenset(tuple(version.split(".")[:2]) for version in TESTED_VERSIONS)
 READ_KINDS = frozenset(("user", "assistant", "system", "attachment"))
 EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
+LAUNCH_FIELDS = {"Agent": ("description", "subagent_type", "model"), "Skill": ("skill",)}  # the input keys that the digest shows
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
 TEST_COMMAND_HEADING = "### Test command"
@@ -159,18 +162,26 @@ def _commit_problem(message):
     return None
 
 
-def check_s8(worktree):
-    """Returns (passed, evidence)."""
+def _commit_base(worktree):
+    """(the merge base of HEAD with the remote default branch, None), or (None, why there is none)."""
     default = None
     for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
         if _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
             default = ref
             break
     if default is None:
-        return False, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
+        return None, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
     base = _git_output(worktree, "merge-base", default, "HEAD")
     if not base:
-        return False, f"evidence unavailable: no merge base of {default} and HEAD"
+        return None, f"evidence unavailable: no merge base of {default} and HEAD"
+    return base, None
+
+
+def check_s8(worktree):
+    """Returns (passed, evidence)."""
+    base, why = _commit_base(worktree)
+    if base is None:
+        return False, why
     log = _git(worktree, "log", "-z", "--format=%H%n%B", f"{base}..HEAD")
     if log.returncode != 0:
         return False, f"evidence unavailable: git log failed: {log.stderr.strip()}"
@@ -221,6 +232,7 @@ class Transcript:
         self.results = {}    # tool_use_id -> list of is_error booleans
         self.notices = []    # texts that hold a task notification
         self.prompts = []    # texts of the user rows, never of a tool_result block
+        self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
         self.cwds = set()
         self.versions = set()
         self.models = set()  # the message.model of the assistant rows, None when it is not a string
@@ -295,6 +307,9 @@ def _read_row(transcript, index, row):
             if not isinstance(block.get("id"), str) or not isinstance(block.get("name"), str) or not isinstance(block.get("input"), dict):
                 raise Unavailable(f"bad tool_use in {where}")
             name, tool_input = block["name"], block["input"]
+            if name in LAUNCH_FIELDS:
+                transcript.launches.append((name, [tool_input.get(key) if isinstance(tool_input.get(key), str) else None for key in LAUNCH_FIELDS[name]]))
+                continue
             if name not in EDIT_TOOLS and name != "Bash":
                 continue
             call = {"index": index, "tool": name, "id": block["id"], "time": _instant(row.get("timestamp"), where),
@@ -1177,6 +1192,18 @@ def _transcript_items(worktree, dir_fd):
     return items, audited, None
 
 
+def _run_items(worktree, dir_fd, branch, remote_url):
+    """(the items S1 to S9 and XC in record order, the audited transcripts, the reason they cannot be read).
+    The transcripts are None when they cannot be read."""
+    items, audited, problem = _transcript_items(worktree, dir_fd)
+    items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
+    items.append(_check_item("S7", check_s7, audited, str(problem)))
+    passed, evidence = check_s8(worktree)
+    items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
+    items.append(_check_item("S9", check_s9, audited, str(problem)))
+    return items, audited, problem
+
+
 def _record(argv):
     worktree, llm_path = _record_arguments(argv)
     l_items = _load_llm(llm_path)
@@ -1196,13 +1223,7 @@ def _record(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        items, audited, problem = _transcript_items(worktree, dir_fd)
-        items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
-        items.append(_check_item("S7", check_s7, audited, str(problem)))
-        passed, evidence = check_s8(worktree)
-        items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
-        items.append(_check_item("S9", check_s9, audited, str(problem)))
-        items += l_items
+        items = _run_items(worktree, dir_fd, branch, remote_url)[0] + l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
             "sha": tip, "remote_url": remote_url, "branch": branch,
@@ -1226,6 +1247,131 @@ def cmd_record(argv):
         print(refusal, file=sys.stderr)
     except Exception as error:
         print(f"cannot record: {error}", file=sys.stderr)
+    return 2
+
+
+# ---- check: the S results and the digest for the auditor ----
+
+LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 30720
+DIGEST_LIMIT = LEDGER_BUDGET + COMMITS_BUDGET + SESSIONS_BUDGET  # 50 KB
+PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT = 500, 200, 100, 200
+OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1
+
+
+def _fit(lines, budget):
+    """The lines, cut at a whole line to at most `budget` bytes once joined with newlines; the cut ends with a marker line."""
+    costs = [len(line.encode("utf-8")) + 1 for line in lines]
+    if sum(costs) - 1 <= budget:
+        return lines
+    kept, total = 0, 0
+    for cost in costs:
+        if total + cost > budget - OMITTED_RESERVE:
+            break
+        total += cost
+        kept += 1
+    return lines[:kept] + [f"[{len(lines) - kept} more lines omitted]"]
+
+
+def _flat(text, limit):
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _utc(moment):
+    from datetime import timezone
+
+    return "?" if moment is None else moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ledger_lines(dir_fd, branch, remote_url):
+    ledger, why, _ = _load_ledger(dir_fd, branch, remote_url)
+    if ledger is None:
+        return [f"ledger unavailable: {why}"]
+    return ["ledger"] + [json.dumps(event, ensure_ascii=False, separators=(",", ":")) for event in ledger.events]
+
+
+def _commit_lines(worktree):
+    base, why = _commit_base(worktree)
+    if base is None:
+        return [f"commits unavailable: {why}"]
+    log = _git(worktree, "log", "--format=%h %s", f"{base}..HEAD")
+    stat = _git(worktree, "diff", "--shortstat", base, "HEAD")
+    if log.returncode != 0 or stat.returncode != 0:
+        return [f"commits unavailable: git failed: {(log.stderr or stat.stderr).strip()}"]
+    return [f"commits since {base[:7]}"] + [_flat(line, COMMAND_LIMIT) for line in log.stdout.splitlines()] + [stat.stdout.strip() or "no diff"]
+
+
+def _session_lines(audited, problem):
+    if audited is None:
+        return [f"digest unavailable: {problem}"]
+    lines = []
+    for transcripts in audited:
+        main, subagents = transcripts[0], transcripts[1:]
+        lines.append(f"session {main.name}")
+        prompt = next((text for text in main.prompts if not text.lstrip().startswith("<task-notification>")), None)
+        lines.append("  prompt: " + ("(none)" if prompt is None else _flat(prompt, PROMPT_LIMIT)))
+        edits = [call for call in main.calls if call["tool"] in EDIT_TOOLS]
+        lines.append(f"  edits: {len(edits)}")
+        lines += ["  edited: " + _flat(path, PATH_LIMIT) for path in dict.fromkeys(call["path"] for call in edits)]
+        lines += [f"  bash {_utc(call['time'])} {_flat(call['command'], COMMAND_LIMIT)}" for call in main.calls if call["tool"] == "Bash"]
+        for tool, fields in main.launches:
+            lines.append(f"  {tool.lower()}: " + " | ".join("?" if field is None else _flat(field, FIELD_LIMIT) for field in fields))
+        for sub in subagents:
+            models = sorted("?" if model is None else _flat(model, MODEL_LIMIT) for model in sub.models)
+            lines.append(f"  subagent {sub.name} first row {_utc(sub.start)} models: {', '.join(models)}")
+    return lines
+
+
+def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
+    """The text for the auditor: the ledger, the commits and one block per audited session, at most DIGEST_LIMIT bytes."""
+    sections = (_fit(_ledger_lines(dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
+                _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
+                _fit(_session_lines(audited, problem), SESSIONS_BUDGET))
+    text = "\n".join("\n".join(section) for section in sections)
+    data = text.encode("utf-8")
+    if len(data) > DIGEST_LIMIT:  # a last guard; the section budgets keep the digest under the limit
+        marker = "\n[digest cut]"
+        text = data[: DIGEST_LIMIT - len(marker)].decode("utf-8", "ignore") + marker
+    return text
+
+
+def _check(argv):
+    if len(argv) != 2 or argv[0] != "--worktree":
+        raise Refusal(USAGE)
+    worktree = argv[1]
+    branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch:
+        raise Refusal(f"no branch to check: {worktree} is not a git worktree or HEAD is detached")
+    remote_url = _git_output(worktree, "remote", "get-url", "origin", no_result=(2, 128))
+    if not remote_url:
+        raise Refusal("no remote URL for origin")
+    runtime_dir = _runtime()
+    dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
+    if dir_fd is None:
+        raise Refusal("unsafe runtime folder")
+    try:
+        items, audited, problem = _run_items(worktree, dir_fd, branch, remote_url)
+        digest = _digest(worktree, dir_fd, branch, remote_url, audited, problem)
+    finally:
+        os.close(dir_fd)
+    lines = []
+    for item in items:
+        lines.append(f"{item['id']} {item['result']}")
+        lines += ["  " + line for line in item["evidence"].splitlines()]
+    lines.append("result " + ("pass" if all(item["result"] == "pass" for item in items) else "fail"))
+    lines.append(f"digest {len(digest.encode('utf-8'))} bytes")
+    lines.append("--- digest ---")
+    sys.stdout.write("\n".join(lines) + "\n" + digest + "\n")
+    return 0
+
+
+def cmd_check(argv):
+    try:
+        return _check(argv)
+    except Refusal as refusal:
+        print(refusal, file=sys.stderr)
+    except Exception as error:
+        print(f"cannot check: {error}", file=sys.stderr)
     return 2
 
 
@@ -1461,6 +1607,8 @@ def cmd_session_start():
 def main(argv):
     if argv[:1] == ["ledger"]:
         return cmd_ledger(argv[1:])
+    if argv[:1] == ["check"]:
+        return cmd_check(argv[1:])
     if argv[:1] == ["record"]:
         return cmd_record(argv[1:])
     if argv == ["hook", "pre-tool-use"]:
