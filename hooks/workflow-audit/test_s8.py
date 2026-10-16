@@ -20,7 +20,7 @@ class S8Test(AuditCase):
         result = self.record()
         self.assertIn(result.returncode, (0, 1), result.stderr)
         tip = self.git("rev-parse", "HEAD")
-        item = self.read_record(tip)["items"][0]
+        item = self.item(tip, "S8")
         self.assertEqual(item["id"], "S8")
         return item["result"] == "pass", item["evidence"]
 

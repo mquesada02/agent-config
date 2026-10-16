@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
-#   audit record --worktree <path> --llm <file>   re-run S8, read L1-L6, write <sha>.json for the pushed tip
+#   audit record --worktree <path> --llm <file>   re-run S1, S2 and S8, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
@@ -38,6 +38,15 @@ ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 COMMAND_PREFIX_WORDS = frozenset(("!", "{", "if", "elif", "while", "until", "then", "do", "else", "time", "env", "command", "exec"))
 UNRESOLVABLE_PATH = re.compile(r"[$`*?\[]")
 RECORD_NAME = re.compile(r"[0-9a-f]{40}\.json")
+
+# Claude Code versions the transcript reader is tested against; each needs a fixtures/session-<version>.jsonl.
+TESTED_VERSIONS = ("2.1.301",)
+TESTED_MAJOR_MINOR = frozenset(tuple(version.split(".")[:2]) for version in TESTED_VERSIONS)
+READ_KINDS = frozenset(("user", "assistant", "system", "attachment"))
+EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
+VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
+TEST_COMMAND_HEADING = "### Test command"
 
 
 def _runtime():
@@ -128,6 +137,363 @@ def check_s8(worktree):
     return False, _cut("\n".join(shown))
 
 
+# ---- transcript reader: S1 and S2 ----
+
+class Unavailable(Exception):
+    """The evidence cannot be read: the affected items fail with "evidence unavailable: <reason>"."""
+
+    def __str__(self):
+        return f"evidence unavailable: {self.args[0]}"
+
+
+def _inside(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _instant(value, where):
+    from datetime import datetime, timezone
+
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        raise Unavailable(f"missing or bad timestamp in {where}")
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+class Transcript:
+    """The rows of one transcript file that S1 and S2 read."""
+
+    def __init__(self, name):
+        self.name = name
+        self.calls = []      # dicts: index, tool, id, time, path or command, background, cwd
+        self.results = {}    # tool_use_id -> list of is_error booleans
+        self.notices = []    # texts that hold a task notification
+        self.cwds = set()
+        self.versions = set()
+
+
+def _check_version(row, where):
+    version = row.get("version")
+    match = VERSION.fullmatch(version) if isinstance(version, str) else None
+    if not match:  # the value itself is row content and stays out of the evidence
+        raise Unavailable(f"missing or malformed Claude Code version in {where}")
+    if match.groups()[:2] not in TESTED_MAJOR_MINOR:
+        raise Unavailable(f"untested Claude Code version {version} in {where}")
+    return version
+
+
+def _text_blocks(content):
+    if isinstance(content, str):
+        return [content]
+    return [block["text"] for block in content if block.get("type") == "text" and isinstance(block.get("text"), str)]
+
+
+def _read_row(transcript, index, row):
+    where = f"{transcript.name} row {index + 1}"
+    if not isinstance(row, dict) or not isinstance(row.get("type"), str):
+        raise Unavailable(f"unknown row shape in {where}")
+    kind = row["type"]
+    if kind not in READ_KINDS:
+        return
+    transcript.versions.add(_check_version(row, where))
+    if isinstance(row.get("cwd"), str):
+        transcript.cwds.add(row["cwd"])
+    if kind == "attachment":
+        attachment = row.get("attachment")
+        if isinstance(attachment, dict) and attachment.get("type") == "queued_command" and isinstance(attachment.get("prompt"), str):
+            transcript.notices.append(attachment["prompt"])
+        return
+    if kind == "system":
+        return
+    message = row.get("message")
+    if not isinstance(message, dict):
+        raise Unavailable(f"missing message in {where}")
+    content = message.get("content")
+    if isinstance(content, str) and kind == "user":
+        blocks = []
+        transcript.notices.append(content)
+    elif isinstance(content, list) and all(isinstance(block, dict) and isinstance(block.get("type"), str) for block in content):
+        blocks = content
+        if kind == "user":  # a notification is read from user and attachment rows only
+            transcript.notices.extend(_text_blocks(content))
+    else:
+        raise Unavailable(f"unknown content shape in {where}")
+    for block in blocks:
+        if kind == "user" and block["type"] == "tool_result":
+            if not isinstance(block.get("tool_use_id"), str) or not isinstance(block.get("is_error", False), bool):
+                raise Unavailable(f"bad tool_result in {where}")
+            transcript.results.setdefault(block["tool_use_id"], []).append(block.get("is_error", False))
+        elif kind == "assistant" and block["type"] == "tool_use":
+            if not isinstance(block.get("id"), str) or not isinstance(block.get("name"), str) or not isinstance(block.get("input"), dict):
+                raise Unavailable(f"bad tool_use in {where}")
+            name, tool_input = block["name"], block["input"]
+            if name not in EDIT_TOOLS and name != "Bash":
+                continue
+            call = {"index": index, "tool": name, "id": block["id"], "time": _instant(row.get("timestamp"), where),
+                    "cwd": row.get("cwd") if isinstance(row.get("cwd"), str) else None}
+            if name == "Bash":
+                if not isinstance(tool_input.get("command"), str):
+                    raise Unavailable(f"missing command in {where}")
+                call["command"] = tool_input["command"]
+                call["background"] = tool_input.get("run_in_background") is True
+            else:
+                keys = ("file_path", "notebook_path") if name == "NotebookEdit" else ("file_path",)
+                path = next((tool_input[key] for key in keys if isinstance(tool_input.get(key), str) and tool_input[key]), None)
+                if path is None:
+                    raise Unavailable(f"missing {keys[0]} in {where}")
+                if not os.path.isabs(path):
+                    if call["cwd"] is None:
+                        raise Unavailable(f"relative path without cwd in {where}")
+                    path = os.path.join(call["cwd"], path)
+                call["path"] = os.path.realpath(path)
+            transcript.calls.append(call)
+
+
+def _read_transcript(path, text):
+    transcript = Transcript(os.path.basename(path))
+    for index, line in enumerate(text.split("\n")):  # not splitlines(): U+2028 and others stay inside a row
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        _read_row(transcript, index, row)
+    return transcript
+
+
+def _registered_sessions(dir_fd):
+    """(session_id, transcript_path) of each registered session, the first line in file order per id."""
+    import stat
+
+    runtime_dir = _runtime()
+    try:
+        file_fd = os.open(SESSIONS_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        raise Unavailable("unreadable registry")
+    try:
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise Unavailable("unreadable registry")
+        with os.fdopen(os.dup(file_fd), "rb") as handle:
+            data = handle.read()
+    except OSError:
+        raise Unavailable("unreadable registry")
+    finally:
+        os.close(file_fd)
+    sessions = {}
+    for number, line in enumerate(data.decode("utf-8", "replace").split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            entry = None
+        if (not isinstance(entry, dict) or not runtime_dir.valid_session_id(entry.get("session_id"))
+                or not isinstance(entry.get("transcript_path"), str) or not entry["transcript_path"]
+                or not isinstance(entry.get("started_at"), str)):
+            raise Unavailable(f"unreadable registry line {number}")
+        sessions.setdefault(entry["session_id"], entry["transcript_path"])
+    return list(sessions.items())
+
+
+def _touches(transcript, spellings, root):
+    for call in transcript.calls:
+        if call["tool"] == "Bash":
+            if any(re.search(re.escape(spelling) + r"(?![A-Za-z0-9._-])", call["command"]) for spelling in spellings):
+                return True
+        elif _inside(call["path"], root):
+            return True
+    return any(_inside(os.path.realpath(cwd), root) for cwd in transcript.cwds)
+
+
+def _audited_transcripts(worktree, dir_fd):
+    """The transcripts of every registered session that touches the worktree, and the versions read.
+    Raises Unavailable when no session touches it or a transcript cannot be read."""
+    root = os.path.realpath(worktree)
+    spellings = {os.path.abspath(worktree), root}
+    needles = {text for spelling in spellings for text in (spelling, json.dumps(spelling)[1:-1])}
+    sessions = _registered_sessions(dir_fd)
+    if not sessions:
+        raise Unavailable("no registered session (empty or wiped registry)")
+    audited = []
+    for _, path in sessions:
+        folder = os.path.splitext(path)[0] + "/subagents"
+        paths = [path]
+        if os.path.isdir(folder):
+            paths += sorted(os.path.join(folder, name) for name in os.listdir(folder) if re.fullmatch(r"agent-.+\.jsonl", name))
+        texts = []
+        for file_path in paths:
+            try:
+                with open(file_path, "rb") as handle:
+                    texts.append(handle.read().decode("utf-8", "replace"))
+            except OSError as error:
+                raise Unavailable(f"cannot read transcript {os.path.basename(file_path)}: {error.strerror}")
+        if not any(needle in text for text in texts for needle in needles):
+            continue  # speed rule: a transcript that never holds the path cannot touch the worktree
+        transcripts = [_read_transcript(file_path, text) for file_path, text in zip(paths, texts)]
+        if any(_touches(transcript, spellings, root) for transcript in transcripts):
+            audited.append(transcripts)
+    if not audited:
+        raise Unavailable("no registered session touches the worktree")
+    return audited
+
+
+def _versions_note(audited):
+    versions = sorted({v for transcripts in audited for t in transcripts for v in t.versions} - set(TESTED_VERSIONS))
+    return "".join(f"; untested patch version {version}" for version in versions)
+
+
+def _main_checkout(worktree):
+    try:
+        listing = _git_output(worktree, "worktree", "list", "--porcelain")
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+    paths = [os.path.realpath(line[len("worktree "):]) for line in (listing or "").splitlines() if line.startswith("worktree ")]
+    if not paths:
+        raise Unavailable("git worktree list gave no worktree")
+    return paths[0], paths[1:]
+
+
+def check_s1(worktree, audited):
+    """Returns (passed, evidence)."""
+    root = os.path.realpath(worktree)
+    main, others = _main_checkout(worktree)
+    if root == main:
+        return False, "the audited worktree is the main checkout"
+    found = [f"{t.name}: {c['path']}" for transcripts in audited for t in transcripts for c in t.calls
+             if c["tool"] in EDIT_TOOLS and _inside(c["path"], main) and not any(_inside(c["path"], other) for other in others)]
+    if not found:
+        return True, f"{len(audited)} sessions audited, no edit in the main checkout"
+    shown = found[:10]
+    if len(found) > 10:
+        shown.append(f"and {len(found) - 10} more")
+    return False, "\n".join(shown)
+
+
+def _declaration_text(worktree, path):
+    listed = _git(worktree, "ls-tree", "HEAD", "--", path)
+    if listed.returncode != 0:
+        raise Unavailable(f"git ls-tree failed for {path}: {listed.stderr.strip()}")
+    if not listed.stdout.strip():
+        return None
+    shown = _git(worktree, "show", f"HEAD:{path}")
+    if shown.returncode != 0:
+        raise Unavailable(f"git show failed for {path}: {shown.stderr.strip()}")
+    return shown.stdout
+
+
+def _sections(text):
+    """The fenced blocks (trimmed content) of each `### Test command` section in a markdown text."""
+    sections, current, fence, block = [], None, None, None
+    for line in text.splitlines():
+        ticks = re.match(r"`{3,}", line)
+        if fence is not None:
+            if ticks and len(ticks.group()) >= fence:
+                fence = None
+                if current is not None:
+                    current.append("\n".join(block).strip())
+            elif current is not None:
+                block.append(line)
+            continue
+        if ticks:
+            fence, block = len(ticks.group()), []
+        elif line.rstrip() == TEST_COMMAND_HEADING:
+            current = []
+            sections.append(current)
+        elif re.match(r"#{1,6} ", line):
+            current = None
+    if fence is not None and current is not None:
+        current.append("\n".join(block).strip())  # a fence that is never closed runs to the end of the file
+    return sections
+
+
+def _declared_command(worktree):
+    """The declared test command, or "none". Raises ValueError for a declaration problem."""
+    sections = []
+    for path in (".claude/CLAUDE.md", "CLAUDE.md"):
+        text = _declaration_text(worktree, path)
+        if text is not None:
+            sections += _sections(text)
+    if len(sections) != 1:
+        raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in .claude/CLAUDE.md and CLAUDE.md, found {len(sections)}")
+    if len(sections[0]) != 1 or not sections[0][0]:
+        raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs exactly one non-empty fenced block, found {len(sections[0])}")
+    return sections[0][0]
+
+
+def _is_after(run, run_transcript, edit, edit_transcript):
+    if run_transcript is edit_transcript:
+        return run["index"] > edit["index"]
+    return run["time"] > edit["time"]
+
+
+def _notification_exit(texts, call_id):
+    """None when no notification belongs to the call; else True when every one of them is `completed (exit code 0)`."""
+    outcomes = []
+    for text in texts:
+        for chunk in text.split("<task-notification>")[1:]:
+            ids = re.findall(r"<tool-use-id>(.*?)</tool-use-id>", chunk, re.DOTALL)
+            if call_id not in [value.strip() for value in ids]:
+                continue
+            status = re.search(r"<status>(.*?)</status>", chunk, re.DOTALL)
+            summary = re.search(r"<summary>(.*?)</summary>", chunk, re.DOTALL)
+            if not status or not summary:
+                raise Unavailable("a task notification for a declared test run lacks its status or summary")
+            outcomes.append(status.group(1).strip() == "completed" and re.search(r"\(exit code 0\)\s*$", summary.group(1).strip()) is not None)
+    return all(outcomes) if outcomes else None
+
+
+def check_s2(worktree, audited):
+    """Returns (passed, evidence)."""
+    try:
+        declared = _declared_command(worktree)
+    except ValueError as problem:
+        return False, str(problem)
+    if declared == "none":
+        return True, "no tests declared (`none`)"
+    root = os.path.realpath(worktree)
+
+    def normalised(call):
+        command = call["command"].strip()
+        prefix = CD_PREFIX.match(command)
+        if prefix:
+            target = prefix.group(1).strip("'\"")
+            if not os.path.isabs(target) and call["cwd"]:
+                target = os.path.join(call["cwd"], target)  # a relative path means the row's cwd, not the audit's
+            if os.path.isabs(target) and os.path.realpath(target) == root:
+                command = command[prefix.end():].strip()
+        return command
+
+    edits, runs = [], []
+    for transcripts in audited:
+        for transcript in transcripts:
+            for call in transcript.calls:
+                if call["tool"] in EDIT_TOOLS and _inside(call["path"], root):
+                    edits.append((call, transcript))
+                elif call["tool"] == "Bash" and declared in call["command"] and normalised(call) == declared:
+                    runs.append((call, transcript, transcripts[0]))
+    later = 0
+    for run, transcript, main in runs:
+        if not all(_is_after(run, transcript, edit, edit_transcript) for edit, edit_transcript in edits):
+            continue
+        later += 1
+        if run["background"]:
+            texts = list(transcript.notices) + ([] if transcript is main else list(main.notices))
+            outcome = _notification_exit(texts, run["id"])
+        else:
+            results = transcript.results.get(run["id"])
+            outcome = None if not results else not any(results)
+        if outcome:
+            return True, f"declared command ran after the last of {len(edits)} edits"
+    if not runs:
+        return False, "the declared command did not run"
+    if not later:
+        return False, "the declared command ran only before the last edit"
+    return False, "the declared command ran after the last edit but failed or did not finish"
+
+
 # ---- record ----
 
 class Refusal(Exception):
@@ -172,6 +538,23 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _transcript_items(worktree, dir_fd):
+    """The S1 and S2 items. Evidence that cannot be read fails both with "evidence unavailable"."""
+    try:
+        audited = _audited_transcripts(worktree, dir_fd)
+    except Unavailable as problem:
+        return [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(str(problem))} for name in ("S1", "S2")]
+    note = _versions_note(audited)
+    items = []
+    for name, check in (("S1", check_s1), ("S2", check_s2)):
+        try:
+            passed, evidence = check(worktree, audited)
+        except Unavailable as problem:
+            passed, evidence = False, str(problem)
+        items.append({"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note})
+    return items
+
+
 def _record(argv):
     worktree, llm_path = _record_arguments(argv)
     l_items = _load_llm(llm_path)
@@ -186,20 +569,22 @@ def _record(argv):
     remote_url = _git_output(worktree, "remote", "get-url", "origin", no_result=(2, 128))
     if not remote_url:
         raise Refusal("no remote URL for origin")
-    passed, evidence = check_s8(worktree)
-    items = [{"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence}] + l_items
-    result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
-    text = json.dumps({
-        "sha": tip, "remote_url": remote_url, "branch": branch,
-        "time": _now(), "items": items, "result": result,
-    })
     runtime_dir = _runtime()
-    if len(text) > runtime_dir.MAX_READ_BYTES:
-        raise Refusal("record too large")
     dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
+        items = _transcript_items(worktree, dir_fd)
+        passed, evidence = check_s8(worktree)
+        items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
+        items += l_items
+        result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
+        text = json.dumps({
+            "sha": tip, "remote_url": remote_url, "branch": branch,
+            "time": _now(), "items": items, "result": result,
+        })
+        if len(text) > runtime_dir.MAX_READ_BYTES:
+            raise Refusal("record too large")
         runtime_dir.write_atomic(dir_fd, f"{tip}.json", text)
     finally:
         os.close(dir_fd)

@@ -70,12 +70,12 @@ class DenialReasonTest(GateTestCase):
 
     def test_unrelated_and_broken_records_in_the_folder_do_not_decide(self):
         self.start_branch("feature", "feat: a")
-        os.mkdir(self.runtime, 0o700)
+        os.makedirs(self.runtime, 0o700, exist_ok=True)
         with open(os.path.join(self.runtime, "a" * 40 + ".json"), "w") as handle:
             handle.write("{broken")
         with open(os.path.join(self.runtime, "b" * 40 + ".json"), "w") as handle:  # sha field differs from the file name
             json.dump({"sha": "c" * 40, "remote_url": self.origin, "branch": "feature", "result": "pass"}, handle)
-        with open(os.path.join(self.runtime, "sessions.jsonl"), "w") as handle:
+        with open(os.path.join(self.runtime, "sessions.jsonl"), "a") as handle:
             handle.write("{}\n")
         self.assert_denied(self.gate(PR), "no record")
 
