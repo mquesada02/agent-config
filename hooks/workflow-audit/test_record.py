@@ -19,7 +19,8 @@ class RecordTest(AuditCase):
         self.assertEqual(record["result"], "pass")
         datetime.datetime.fromisoformat(record["time"])
         self.assertEqual([(item["id"], item["kind"], item["result"]) for item in record["items"]],
-                         [("S1", "S", "pass"), ("S2", "S", "pass"), ("S8", "S", "pass")] + [(f"L{n}", "L", "pass") for n in range(1, 7)])
+                         [(name, "S", "pass") for name in ("S1", "S2", "S3", "S4", "S5", "S6", "XC", "S8")]
+                         + [(f"L{n}", "L", "pass") for n in range(1, 7)])
         self.assertTrue(all(isinstance(item["evidence"], str) and item["evidence"] for item in record["items"]))
         self.assertEqual(result.stdout.decode().splitlines()[-1], "result pass")
 
@@ -38,7 +39,7 @@ class RecordTest(AuditCase):
         s8 = self.item(tip, "S8")
         self.assertEqual((s8["id"], s8["result"]), ("S8", "fail"))
         self.assertIn("bad message", s8["evidence"])
-        self.assertEqual(result.stdout.decode().splitlines()[:3], ["S1 pass", "S2 pass", "S8 fail"])
+        self.assertEqual(result.stdout.decode().splitlines()[:8], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S8 fail"])
 
     def test_a_failed_l_verdict_gives_a_failed_record(self):
         tip = self.start_branch("feature", "feat: a")
@@ -55,7 +56,7 @@ class RecordTest(AuditCase):
         self.assertEqual(self.record().returncode, 1)
         self.assertEqual(self.record_files(), [f"{tip}.json"])
         self.assertEqual(self.read_record(tip)["result"], "fail")
-        self.assertEqual(sorted(os.listdir(self.runtime)), sorted(["sessions.jsonl", f"{tip}.json"]))  # no temp file is left behind
+        self.assertEqual(sorted(os.listdir(self.runtime)), sorted(["sessions.jsonl", os.path.basename(self.ledger_file()), f"{tip}.json"]))  # no temp file is left behind
 
     def test_malformed_l_input_writes_nothing(self):
         self.start_branch("feature", "feat: a")
@@ -126,7 +127,7 @@ class RecordTest(AuditCase):
         result = self.record()
         self.assertEqual(result.returncode, 2)
         self.assertIn("unsafe runtime folder", result.stderr.decode())
-        self.assertEqual(os.listdir(self.runtime), ["sessions.jsonl"])
+        self.assertEqual(sorted(os.listdir(self.runtime)), sorted(["sessions.jsonl", os.path.basename(self.ledger_file())]))
 
     def test_the_command_line_is_strict(self):
         self.start_branch("feature", "feat: a")

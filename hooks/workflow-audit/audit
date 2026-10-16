@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
-#   audit record --worktree <path> --llm <file>   re-run S1, S2 and S8, read L1-L6, write <sha>.json for the pushed tip
+#   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
+#   audit record --worktree <path> --llm <file>   re-run S1-S6, XC and S8, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
@@ -18,9 +19,33 @@ EVIDENCE_LIMIT = 2000
 L_EVIDENCE_LIMIT = 4000
 L_ITEMS = ("L1", "L2", "L3", "L4", "L5", "L6")
 SESSIONS_FILE = "sessions.jsonl"
+LEDGER_LOOPS = ("code-review", "plan-review-3", "plan-review-4.1", "plan-review-5.3")
+CODE_REVIEW = "code-review"
+PHASE_CAPS = {"correctness": 5, "final": 3}  # rounds of a review loop phase; the section 6 and plan-review caps are the same
+LEDGER_TYPES = ("Blocking", "Minor")
+LEDGER_RESULTS = ("confirmed", "rejected")
+LEDGER_STATUSES = ("fixed", "deferred", "rejected")
+# The keys of each event after `kind` and `time`, in the order they are written.
+EVENT_KEYS = {
+    "round": ("loop", "phase", "round", "reviewers"),
+    "finding": ("id", "loop", "phase", "round", "loc", "type", "reason"),
+    "verdict": ("finding", "verifier", "result"),
+    "status": ("finding", "status"),
+    "phase-commit": ("sha",),
+}
+AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+FINDING_ID = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+SHA = re.compile(r"[0-9a-f]{40}")
+MAX_REVIEWERS = 20
+LOC_LIMIT = 200
+REASON_LIMIT = 500
+MAX_LEDGER_LINE_BYTES = 4096
+SYNTHETIC_MODEL = "<synthetic>"
+AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
 MAX_REGISTRY_LINE_BYTES = 4096
 UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
-USAGE = "usage: audit record --worktree <path> --llm <file> | audit hook pre-tool-use | audit hook session-start"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit record --worktree <path> --llm <file>"
+         " | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
 COMMIT_TYPES = ("feat", "fix", "refactor", "chore", "docs", "style", "test", "perf", "ci", "build")
@@ -170,6 +195,9 @@ class Transcript:
         self.notices = []    # texts that hold a task notification
         self.cwds = set()
         self.versions = set()
+        self.models = []     # the message.model of each assistant row, None when it is not a string
+        self.start = None    # the time of the first user or assistant row, None when it has no readable time
+        self.start_seen = False
 
 
 def _check_version(row, where):
@@ -205,6 +233,12 @@ def _read_row(transcript, index, row):
         return
     if kind == "system":
         return
+    if not transcript.start_seen:
+        transcript.start_seen = True
+        try:
+            transcript.start = _instant(row.get("timestamp"), where)
+        except Unavailable:
+            pass  # a ledger check that needs the start time reports it as unavailable
     message = row.get("message")
     if not isinstance(message, dict):
         raise Unavailable(f"missing message in {where}")
@@ -218,6 +252,9 @@ def _read_row(transcript, index, row):
             transcript.notices.extend(_text_blocks(content))
     else:
         raise Unavailable(f"unknown content shape in {where}")
+    if kind == "assistant":
+        model = message.get("model")
+        transcript.models.append(model if isinstance(model, str) else None)
     for block in blocks:
         if kind == "user" and block["type"] == "tool_result":
             if not isinstance(block.get("tool_use_id"), str) or not isinstance(block.get("is_error", False), bool):
@@ -262,26 +299,34 @@ def _read_transcript(path, text):
     return transcript
 
 
-def _registered_sessions(dir_fd):
-    """(session_id, transcript_path) of each registered session, the first line in file order per id."""
+def _read_runtime_file(dir_fd, name, what):
+    """All bytes of a regular file of the runtime folder, opened without following a symlink; None when it does not exist.
+    Raises Unavailable("unreadable <what>") for anything else. Unlike runtime_dir.read_file it has no size limit."""
     import stat
 
-    runtime_dir = _runtime()
     try:
-        file_fd = os.open(SESSIONS_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
     except FileNotFoundError:
-        return []
+        return None
     except OSError:
-        raise Unavailable("unreadable registry")
+        raise Unavailable(f"unreadable {what}")
     try:
         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-            raise Unavailable("unreadable registry")
+            raise Unavailable(f"unreadable {what}")
         with os.fdopen(os.dup(file_fd), "rb") as handle:
-            data = handle.read()
+            return handle.read()
     except OSError:
-        raise Unavailable("unreadable registry")
+        raise Unavailable(f"unreadable {what}")
     finally:
         os.close(file_fd)
+
+
+def _registered_sessions(dir_fd):
+    """(session_id, transcript_path) of each registered session, the first line in file order per id."""
+    runtime_dir = _runtime()
+    data = _read_runtime_file(dir_fd, SESSIONS_FILE, "registry")
+    if data is None:
+        return []
     sessions = {}
     for number, line in enumerate(data.decode("utf-8", "replace").split("\n"), 1):
         if not line.strip():
@@ -494,6 +539,420 @@ def check_s2(worktree, audited):
     return False, "the declared command ran after the last edit but failed or did not finish"
 
 
+# ---- ledger: the findings ledger of a repo remote and branch ----
+
+class LedgerError(Exception):
+    """An event or a ledger line breaks a rule; the message says which."""
+
+
+def _matches(pattern):
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _plain_text(limit):
+    return lambda value: (isinstance(value, str) and 1 <= len(value) <= limit
+                          and not any(ord(char) < 32 or ord(char) == 127 for char in value))
+
+
+def _valid_reviewers(value):
+    return (isinstance(value, list) and 1 <= len(value) <= MAX_REVIEWERS and all(_matches(AGENT_ID)(item) for item in value)
+            and len(set(value)) == len(value))
+
+
+VALID_VALUE = {
+    "loop": lambda value: value in LEDGER_LOOPS,
+    "phase": lambda value: value in tuple(PHASE_CAPS),
+    "round": lambda value: type(value) is int and value >= 1,
+    "reviewers": _valid_reviewers,
+    "id": _matches(FINDING_ID),
+    "finding": _matches(FINDING_ID),
+    "verifier": _matches(AGENT_ID),
+    "loc": _plain_text(LOC_LIMIT),
+    "type": lambda value: value in LEDGER_TYPES,
+    "reason": _plain_text(REASON_LIMIT),
+    "result": lambda value: value in LEDGER_RESULTS,
+    "status": lambda value: value in LEDGER_STATUSES,
+    "sha": _matches(SHA),
+}
+
+
+def _check_event_shape(event):
+    if not isinstance(event, dict):
+        raise LedgerError("an event must be a JSON object")
+    kind = event.get("kind")
+    if kind not in EVENT_KEYS:
+        raise LedgerError("unknown event kind")
+    if set(event) != {"kind", "time", *EVENT_KEYS[kind]}:
+        raise LedgerError(f"a {kind} event needs exactly the keys kind, time, {', '.join(EVENT_KEYS[kind])}")
+    try:
+        _instant(event["time"], "the ledger")
+    except Unavailable:
+        raise LedgerError("bad time")
+    for key in EVENT_KEYS[kind]:
+        if not VALID_VALUE[key](event[key]):
+            raise LedgerError(f"bad {key} in a {kind} event")
+
+
+class Ledger:
+    """The events of a ledger, replayed in file order. `apply` checks an event against the ones before it."""
+
+    def __init__(self):
+        self.events = []
+        self.rounds = {}        # (loop, phase) -> highest round number
+        self.round_events = []  # (position, event) in file order
+        self.findings = {}      # id -> {"event": the finding event, "status": latest status or None}
+        self.verdicts = []
+        self.commits = []       # (position, event)
+
+    def apply(self, event):
+        _check_event_shape(event)
+        kind, position = event["kind"], len(self.events)
+        if kind == "round":
+            key = (event["loop"], event["phase"])
+            if event["round"] != self.rounds.get(key, 0) + 1:
+                raise LedgerError(f"round {event['round']} of {key[0]} {key[1]} does not follow round {self.rounds.get(key, 0)}")
+            self.rounds[key] = event["round"]
+            self.round_events.append((position, event))
+        elif kind == "finding":
+            if event["id"] in self.findings:
+                raise LedgerError(f"finding {event['id']} exists already")
+            if self.rounds.get((event["loop"], event["phase"]), 0) < event["round"]:
+                raise LedgerError(f"no round event for round {event['round']} of {event['loop']} {event['phase']}")
+            self.findings[event["id"]] = {"event": event, "status": None}
+        elif kind == "verdict":
+            finding = self.findings.get(event["finding"])
+            if finding is None:
+                raise LedgerError(f"no finding {event['finding']}")
+            if finding["event"]["type"] != "Blocking" or finding["event"]["loop"] != CODE_REVIEW:
+                raise LedgerError(f"finding {event['finding']} is not a Blocking finding of the {CODE_REVIEW} loop")
+            self.verdicts.append(event)
+        elif kind == "status":
+            if event["finding"] not in self.findings:
+                raise LedgerError(f"no finding {event['finding']}")
+            self.findings[event["finding"]]["status"] = event["status"]
+        else:
+            self.commits.append((position, event))
+        self.events.append(event)
+
+
+def _replay(text):
+    ledger = Ledger()
+    if not text:
+        return ledger
+    if not text.endswith("\n"):
+        raise LedgerError(f"line {text.count(chr(10)) + 1}: the file does not end with a newline")
+    for number, line in enumerate(text[:-1].split("\n"), 1):  # not splitlines(): U+2028 and others stay inside a line
+        try:
+            if len(line.encode("utf-8")) + 1 > MAX_LEDGER_LINE_BYTES:
+                raise LedgerError(f"the line is over {MAX_LEDGER_LINE_BYTES} bytes")
+            try:
+                event = json.loads(line)
+            except (ValueError, RecursionError):
+                raise LedgerError("not JSON")
+            ledger.apply(event)
+        except LedgerError as problem:
+            raise LedgerError(f"line {number}: {problem}")
+    return ledger
+
+
+def _ledger_name(remote_url, branch):
+    import hashlib
+
+    return "ledger-" + hashlib.sha256(f"{remote_url}\n{branch}".encode("utf-8")).hexdigest()
+
+
+def _now_ms():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+LEDGER_HELP = """\
+events and their flags (every flag is required for its event and refused for the others):
+  round         --loop --phase --round <n> --reviewer <agent id> (repeat for each reviewer, 1 to 20, all different)
+  finding       --id --loop --phase --round --loc --type --reason
+  verdict       --finding <id> --verifier <agent id> --result
+  status        --finding <id> --status
+  phase-commit  --sha <40 hex>
+loop values:  %s
+phase values: %s (caps: %s)
+A review round is recorded with its `round` event before the findings of that round.
+""" % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
+
+
+def _ledger_event(argv):
+    import argparse
+
+    class Once(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            if getattr(namespace, self.dest) is not None:
+                parser.error(f"{option_string} given twice")
+            setattr(namespace, self.dest, values)
+
+    parser = argparse.ArgumentParser(prog="audit ledger", allow_abbrev=False, epilog=LEDGER_HELP,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     description="Append one validated event to the findings ledger of the worktree's branch.")
+    parser.add_argument("event", choices=list(EVENT_KEYS))
+    parser.add_argument("--worktree", required=True, action=Once, help="the worktree whose repo remote and branch key the ledger")
+    parser.add_argument("--loop", choices=LEDGER_LOOPS, action=Once)
+    parser.add_argument("--phase", choices=tuple(PHASE_CAPS), action=Once)
+    parser.add_argument("--round", type=int, action=Once)
+    parser.add_argument("--reviewer", dest="reviewers", action="append")
+    parser.add_argument("--id", action=Once)
+    parser.add_argument("--loc", action=Once, help="free text for the reader, for example file:line")
+    parser.add_argument("--type", choices=LEDGER_TYPES, action=Once)
+    parser.add_argument("--reason", action=Once)
+    parser.add_argument("--finding", action=Once)
+    parser.add_argument("--verifier", action=Once)
+    parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
+    parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
+    parser.add_argument("--sha", action=Once)
+    args = parser.parse_args(argv)
+    expected = set(EVENT_KEYS[args.event])
+    given = {key for key in VALID_VALUE if getattr(args, key, None) is not None}
+    if given != expected:
+        flags = lambda keys: ", ".join("--reviewer" if key == "reviewers" else f"--{key}" for key in EVENT_KEYS[args.event] if key in keys)
+        parser.error(f"a {args.event} event needs exactly {flags(expected)}"
+                     + (f" (missing {flags(expected - given)})" if expected - given else "")
+                     + (f" (not allowed: {', '.join(sorted(given - expected))})" if given - expected else ""))
+    event = {"kind": args.event, "time": _now_ms()}
+    event.update({key: getattr(args, key) for key in EVENT_KEYS[args.event]})
+    return args.worktree, event
+
+
+def _ledger(argv):
+    import stat
+
+    worktree, event = _ledger_event(argv)
+    branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch:
+        raise Refusal(f"no branch: {worktree} is not a git worktree or HEAD is detached")
+    remote_url = _git_output(worktree, "remote", "get-url", "origin", no_result=(2, 128))
+    if not remote_url:
+        raise Refusal("no remote URL for origin")
+    name = _ledger_name(remote_url, branch)
+    runtime_dir = _runtime()
+    dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
+    if dir_fd is None:
+        raise Refusal("unsafe runtime folder: the audit folder is not owned by you with mode 0700, or is a symlink")
+    try:
+        try:
+            lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
+        except BlockingIOError:
+            raise Refusal("the ledger is locked by another call")
+        try:
+            data = _read_runtime_file(dir_fd, name + ".jsonl", "ledger")
+            try:
+                ledger = _replay(data.decode("utf-8") if data else "")
+            except (LedgerError, UnicodeDecodeError) as problem:
+                raise Refusal(f"the ledger holds an invalid line, nothing is written: {problem}")
+            try:
+                ledger.apply(event)
+            except LedgerError as problem:
+                raise Refusal(f"malformed event: {problem}")
+            encoded = (json.dumps(event) + "\n").encode("utf-8")
+            if len(encoded) > MAX_LEDGER_LINE_BYTES:
+                raise Refusal(f"event too long: {len(encoded)} bytes, the limit is {MAX_LEDGER_LINE_BYTES}")
+            file_fd = os.open(name + ".jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                              0o600, dir_fd=dir_fd)
+            try:
+                if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                    raise Refusal("unreadable ledger")
+                if os.write(file_fd, encoded) != len(encoded):
+                    raise OSError("short write")
+            finally:
+                os.close(file_fd)
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(dir_fd)
+    print(f"ok {event['kind']}")
+    return 0
+
+
+def cmd_ledger(argv):
+    try:
+        return _ledger(argv)
+    except Refusal as refusal:
+        print(refusal, file=sys.stderr)
+    except Unavailable as problem:
+        print(problem, file=sys.stderr)
+    except Exception as error:
+        print(f"cannot write the ledger: {error}", file=sys.stderr)
+    return 2
+
+
+# ---- S3 to S6 and the agent-id cross-check, from the ledger ----
+
+def _load_ledger(dir_fd, branch, remote_url):
+    """(ledger, None, None), or (None, S3 evidence, evidence of the other ledger items) when the ledger cannot be used."""
+    try:
+        data = _read_runtime_file(dir_fd, _ledger_name(remote_url, branch) + ".jsonl", "ledger")
+    except Unavailable as problem:
+        return None, str(problem), str(problem)
+    if data is None:
+        text = f"evidence unavailable: no ledger for {branch}"
+        return None, text, text
+    try:
+        ledger = _replay(data.decode("utf-8"))
+    except (LedgerError, UnicodeDecodeError) as problem:
+        return None, f"invalid ledger: {problem}", f"evidence unavailable: ledger is invalid ({problem})"
+    if not ledger.events:
+        return None, "ledger has no events", "evidence unavailable: ledger has no events"
+    return ledger, None, None
+
+
+def _lines(lines):
+    shown = lines[:10]
+    if len(lines) > 10:
+        shown.append(f"and {len(lines) - 10} more")
+    return "\n".join(shown)
+
+
+def check_s3(ledger):
+    """Returns (passed, evidence)."""
+    capped = {event["loop"] for _, event in ledger.round_events if event["round"] >= PHASE_CAPS[event["phase"]]}
+    open_findings = [entry["event"] for entry in ledger.findings.values() if entry["status"] is None]
+    blocked = [event for event in open_findings if event["loop"] not in capped]
+    exempt = [event for event in open_findings if event["loop"] in capped]
+    describe = lambda events: _lines([f"{event['id']} {event['loc']}" for event in events])
+    if blocked:
+        return False, f"{len(blocked)} findings have no status\n" + describe(blocked)
+    summary = f"{len(ledger.events)} events, {len(ledger.findings)} findings"
+    if exempt:
+        return True, f"{summary}; stopped at cap: {len(exempt)} open findings\n" + describe(exempt)
+    return True, f"{summary}, none open"
+
+
+def _agents(audited):
+    """agent id -> the subagent transcript, over every audited session."""
+    agents = {}
+    for transcripts in audited:
+        for transcript in transcripts:
+            match = AGENT_TRANSCRIPT.fullmatch(transcript.name)
+            if match:
+                agents[match.group(1)] = transcript
+    return agents
+
+
+def _is_sonnet(transcript):
+    """Rows that Claude Code writes itself (model <synthetic>) are not model calls and do not count."""
+    models = [model for model in transcript.models if model != SYNTHETIC_MODEL]
+    return bool(models) and all(model is not None and "sonnet" in model.lower() for model in models)
+
+
+def check_s4(ledger, agents, problem):
+    """Returns (passed, evidence). `agents` is None when the transcripts cannot be read, with the reason in `problem`."""
+    blocking = [entry["event"] for entry in ledger.findings.values()
+                if entry["event"]["loop"] == CODE_REVIEW and entry["event"]["type"] == "Blocking"]
+    if not blocking:
+        return True, f"no Blocking finding in the {CODE_REVIEW} loop"
+    if agents is None:
+        return False, problem
+    failures = []
+    for finding in blocking:
+        mine = [verdict for verdict in ledger.verdicts if verdict["finding"] == finding["id"]]
+        if not mine:
+            failures.append(f"{finding['id']}: no verdict")
+        elif not any(verdict["verifier"] in agents and _is_sonnet(agents[verdict["verifier"]]) for verdict in mine):
+            failures.append(f"{finding['id']}: no verdict by a Sonnet subagent of an audited transcript")
+    if failures:
+        return False, _lines(failures)
+    return True, f"{len(blocking)} Blocking findings, each with a verdict by a Sonnet subagent"
+
+
+def check_s5(ledger):
+    """Returns (passed, evidence)."""
+    failures = [f"{loop} {phase}: round {number} is past the cap of {PHASE_CAPS[phase]}"
+                for (loop, phase), number in ledger.rounds.items() if number > PHASE_CAPS[phase]]
+    if failures:
+        return False, _lines(failures)
+    return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
+
+
+def check_s6(worktree, ledger):
+    """Returns (passed, evidence)."""
+    final = next((position for position, event in ledger.round_events if event["loop"] == CODE_REVIEW and event["phase"] == "final"), None)
+    if final is None:
+        return True, "no section 6 final round"
+    before = [event for position, event in ledger.commits if position < final]
+    if not before:
+        return False, "no phase-commit before the first final round of the section 6 loop"
+    sha = before[-1]["sha"]
+    try:
+        known = _git_output(worktree, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}")
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+    if not known:
+        return False, f"unknown commit {sha[:7]}"
+    result = _git(worktree, "merge-base", "--is-ancestor", sha, "HEAD")
+    if result.returncode == 0:
+        return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
+    if result.returncode == 1:
+        return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD"
+    raise Unavailable(f"git merge-base exited with status {result.returncode}: {result.stderr.strip()}")
+
+
+def check_xc(ledger, agents, problem):
+    """Returns (passed, evidence): every reviewer and verifier is a Sonnet subagent that started after the previous round of its loop."""
+    if agents is None:
+        return False, problem
+    by_loop = {}
+    for _, event in ledger.round_events:
+        by_loop.setdefault(event["loop"], []).append(event)
+
+    def lower_bound(round_event):
+        events = by_loop[round_event["loop"]]
+        index = events.index(round_event)
+        return _instant(events[index - 1]["time"], "the ledger") if index else None
+
+    checks = []
+    for events in by_loop.values():
+        for event in events:
+            for agent in event["reviewers"]:
+                checks.append((f"reviewer {agent} of {event['loop']} {event['phase']} round {event['round']}", agent, lower_bound(event)))
+    for verdict in ledger.verdicts:
+        finding = ledger.findings[verdict["finding"]]["event"]
+        round_event = next(event for event in by_loop[finding["loop"]]
+                           if event["phase"] == finding["phase"] and event["round"] == finding["round"])
+        checks.append((f"verifier {verdict['verifier']} of {finding['id']}", verdict["verifier"], lower_bound(round_event)))
+    failures = []
+    for label, agent, low in checks:
+        transcript = agents.get(agent)
+        if transcript is None:
+            failures.append(f"{label}: not a subagent of an audited transcript")
+        elif not _is_sonnet(transcript):
+            failures.append(f"{label}: not a Sonnet subagent")
+        elif low is not None:
+            if transcript.start is None:
+                failures.append(f"{label}: evidence unavailable: no readable start time")
+            elif not transcript.start > low:
+                failures.append(f"{label}: started before the previous round of its loop")
+    if failures:
+        return False, _lines(failures)
+    return True, f"{len(checks)} reviewers and verifiers checked"
+
+
+def _item(name, check, *args):
+    try:
+        passed, evidence = check(*args)
+    except Unavailable as problem:
+        passed, evidence = False, str(problem)
+    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
+
+
+def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
+    """S3 to S6 and XC. `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
+    ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
+    if ledger is None:
+        return ([{"id": "S3", "kind": "S", "result": "fail", "evidence": _cut(s3_evidence)}]
+                + [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(other_evidence)} for name in ("S4", "S5", "S6", "XC")])
+    agents = None if audited is None else _agents(audited)
+    text = str(problem)
+    return [_item("S3", check_s3, ledger), _item("S4", check_s4, ledger, agents, text), _item("S5", check_s5, ledger),
+            _item("S6", check_s6, worktree, ledger), _item("XC", check_xc, ledger, agents, text)]
+
+
 # ---- record ----
 
 class Refusal(Exception):
@@ -539,11 +998,12 @@ def _now():
 
 
 def _transcript_items(worktree, dir_fd):
-    """The S1 and S2 items. Evidence that cannot be read fails both with "evidence unavailable"."""
+    """(the S1 and S2 items, the audited transcripts, the reason they cannot be read). Evidence that cannot be read fails both items
+    with "evidence unavailable"; the transcripts are then None."""
     try:
         audited = _audited_transcripts(worktree, dir_fd)
     except Unavailable as problem:
-        return [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(str(problem))} for name in ("S1", "S2")]
+        return [{"id": name, "kind": "S", "result": "fail", "evidence": _cut(str(problem))} for name in ("S1", "S2")], None, problem
     note = _versions_note(audited)
     items = []
     for name, check in (("S1", check_s1), ("S2", check_s2)):
@@ -552,7 +1012,7 @@ def _transcript_items(worktree, dir_fd):
         except Unavailable as problem:
             passed, evidence = False, str(problem)
         items.append({"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note})
-    return items
+    return items, audited, None
 
 
 def _record(argv):
@@ -574,7 +1034,8 @@ def _record(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        items = _transcript_items(worktree, dir_fd)
+        items, audited, problem = _transcript_items(worktree, dir_fd)
+        items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
         passed, evidence = check_s8(worktree)
         items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
         items += l_items
@@ -834,6 +1295,8 @@ def cmd_session_start():
 
 
 def main(argv):
+    if argv[:1] == ["ledger"]:
+        return cmd_ledger(argv[1:])
     if argv[:1] == ["record"]:
         return cmd_record(argv[1:])
     if argv == ["hook", "pre-tool-use"]:

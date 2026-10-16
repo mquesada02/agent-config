@@ -484,7 +484,7 @@ class RecordTest(TranscriptCase):
         tip = self.branch()
         result = self.record()
         self.assertEqual(result.returncode, 1)
-        self.assertEqual([item["id"] for item in self.read_record(tip)["items"]], ["S1", "S2", "S8", "L1", "L2", "L3", "L4", "L5", "L6"])
+        self.assertEqual([item["id"] for item in self.read_record(tip)["items"]], ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S8", "L1", "L2", "L3", "L4", "L5", "L6"])
 
     def test_a_failed_s2_gives_a_failed_record_and_exit_1(self):
         self.register_session("s1", [self.own_edit()])
