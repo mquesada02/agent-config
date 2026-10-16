@@ -130,8 +130,8 @@ def _git_output(cwd, *args, no_result=(1, 128)):
     raise RuntimeError(f"git {args[0]} exited with status {result.returncode}: {result.stderr.strip()}")
 
 
-def _cut(text):
-    return text if len(text) <= EVIDENCE_LIMIT else text[: EVIDENCE_LIMIT - 3] + "..."
+def _cut(text, limit=EVIDENCE_LIMIT):
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def _count_pr_create(text):
@@ -1254,8 +1254,8 @@ def cmd_record(argv):
 
 LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 30720
 DIGEST_LIMIT = LEDGER_BUDGET + COMMITS_BUDGET + SESSIONS_BUDGET  # 50 KB
-PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT = 500, 200, 100, 200
-OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1
+PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT, COMMIT_LIMIT = 500, 200, 100, 200, 200  # in characters; the budgets are in bytes
+OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1  # room for the widest marker line that _fit appends, and its newline
 
 
 def _utf8(text):
@@ -1278,12 +1278,11 @@ def _fit(lines, budget):
 
 
 def _flat(text, limit):
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 3] + "..."
+    return _cut(" ".join(text.split()), limit)
 
 
 def _utc(moment):
-    from datetime import timezone
+    from datetime import timezone  # imported here: the hook's common path never reads times
 
     return "?" if moment is None else moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1303,7 +1302,7 @@ def _commit_lines(worktree):
     stat = _git(worktree, "diff", "--shortstat", base, "HEAD")
     if log.returncode != 0 or stat.returncode != 0:
         return [f"commits unavailable: git failed: {(log.stderr or stat.stderr).strip()}"]
-    return [f"commits since {base[:7]}"] + [_flat(line, COMMAND_LIMIT) for line in log.stdout.splitlines()] + [stat.stdout.strip() or "no diff"]
+    return [f"commits since {base[:7]}"] + [_flat(line, COMMIT_LIMIT) for line in log.stdout.splitlines()] + [stat.stdout.strip() or "no diff"]
 
 
 def _session_lines(audited, problem):
@@ -1329,6 +1328,7 @@ def _session_lines(audited, problem):
 
 def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
     """The text for the auditor: the ledger, the commits and one block per audited session, at most DIGEST_LIMIT bytes."""
+    # The sections are joined with two newlines, so the first two budgets give up one byte each to keep the total at DIGEST_LIMIT.
     sections = (_fit(_ledger_lines(dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
                 _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
                 _fit(_session_lines(audited, problem), SESSIONS_BUDGET))

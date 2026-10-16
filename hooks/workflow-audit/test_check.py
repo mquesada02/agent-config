@@ -6,7 +6,7 @@ from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, find
 
 DIGEST_MARKER = "--- digest ---"
 S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
-LIMIT = 51200
+LIMIT = 51200  # 50 KB, written out here on purpose: the test checks the number in the spec, not the code's own constant
 
 
 def prompt_row(text, seconds=0):
@@ -33,7 +33,7 @@ class CheckCase(AuditCase):
 class OutputTest(CheckCase):
     def test_prints_every_item_in_the_record_order_and_the_result(self):
         self.start_branch("feature", "feat: a")
-        lines, size, _ = self.parts(self.check())
+        lines, _, _ = self.parts(self.check())
         ids = [S_LINE.fullmatch(line).group(1) for line in lines if S_LINE.fullmatch(line)]
         self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9"])
         self.assertTrue(all(S_LINE.fullmatch(line).group(2) == "pass" for line in lines if S_LINE.fullmatch(line)))
