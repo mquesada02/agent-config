@@ -150,6 +150,14 @@ class DigestTest(CheckCase):
         self.assertEqual(lines[-1], "result fail")
         self.assertIn("digest unavailable:", digest)
 
+    def test_a_lone_surrogate_in_the_text_does_not_stop_check(self):
+        self.session([prompt_row("x\udc80 prompt", 1), bash_row("echo \ud800", "b1", 3)])
+        self.start_branch("feature", "feat: a")
+        lines, size, digest = self.parts(self.check())
+        self.assertEqual(lines[-1], "result pass")
+        self.assertIn("prompt", digest)
+        self.assertEqual(size, f"digest {len(digest.encode('utf-8'))} bytes")
+
     def test_a_long_session_is_cut_to_the_limit_and_says_so(self):
         rows = [bash_row("echo " + "ä€" * 100 + str(n), f"b{n}", 3) for n in range(3000)]
         rows += [call_row("Agent", {"description": "x" * 500, "subagent_type": "y" * 500, "model": "z" * 500}, f"a{n}", 4) for n in range(500)]

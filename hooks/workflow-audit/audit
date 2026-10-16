@@ -1258,9 +1258,14 @@ PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT = 500, 200, 100, 200
 OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1
 
 
+def _utf8(text):
+    """The bytes of `text`; a lone surrogate in transcript text becomes `?`, so that no text stops the digest."""
+    return text.encode("utf-8", "replace")
+
+
 def _fit(lines, budget):
     """The lines, cut at a whole line to at most `budget` bytes once joined with newlines; the cut ends with a marker line."""
-    costs = [len(line.encode("utf-8")) + 1 for line in lines]
+    costs = [len(_utf8(line)) + 1 for line in lines]
     if sum(costs) - 1 <= budget:
         return lines
     kept, total = 0, 0
@@ -1328,7 +1333,7 @@ def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
                 _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
                 _fit(_session_lines(audited, problem), SESSIONS_BUDGET))
     text = "\n".join("\n".join(section) for section in sections)
-    data = text.encode("utf-8")
+    data = _utf8(text)
     if len(data) > DIGEST_LIMIT:  # a last guard; the section budgets keep the digest under the limit
         marker = "\n[digest cut]"
         text = data[: DIGEST_LIMIT - len(marker)].decode("utf-8", "ignore") + marker
@@ -1359,9 +1364,10 @@ def _check(argv):
         lines.append(f"{item['id']} {item['result']}")
         lines += ["  " + line for line in item["evidence"].splitlines()]
     lines.append("result " + ("pass" if all(item["result"] == "pass" for item in items) else "fail"))
-    lines.append(f"digest {len(digest.encode('utf-8'))} bytes")
+    lines.append(f"digest {len(_utf8(digest))} bytes")
     lines.append("--- digest ---")
-    sys.stdout.write("\n".join(lines) + "\n" + digest + "\n")
+    sys.stdout.buffer.write(_utf8("\n".join(lines) + "\n" + digest + "\n"))
+    sys.stdout.flush()
     return 0
 
 
