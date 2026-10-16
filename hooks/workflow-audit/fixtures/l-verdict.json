@@ -1,0 +1,8 @@
+{
+  "L1": {"result": "pass", "evidence": "Invented: every finding in the digest has the evidence its type needs."},
+  "L2": {"result": "pass", "evidence": "Invented: each phase ran on the full diff."},
+  "L3": {"result": "pass", "evidence": "Invented: the draft done report lists the deferred Minor findings."},
+  "L4": {"result": "pass", "evidence": "Invented: no claim in the draft done report contradicts the digest."},
+  "L5": {"result": "pass", "evidence": "Invented: the diff is under about 50 lines, as estimated."},
+  "L6": {"result": "pass", "evidence": "not a ticket"}
+}
