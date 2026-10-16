@@ -22,6 +22,7 @@ SESSIONS_FILE = "sessions.jsonl"
 LEDGER_LOOPS = ("code-review", "plan-review-3", "plan-review-4.1", "plan-review-5.3")
 CODE_REVIEW = "code-review"
 PHASE_CAPS = {"correctness": 5, "final": 3}  # rounds of a review loop phase; the section 6 and plan-review caps are the same
+LEDGER_PHASES = tuple(PHASE_CAPS)
 LEDGER_TYPES = ("Blocking", "Minor")
 LEDGER_RESULTS = ("confirmed", "rejected")
 LEDGER_STATUSES = ("fixed", "deferred", "rejected")
@@ -195,7 +196,7 @@ class Transcript:
         self.notices = []    # texts that hold a task notification
         self.cwds = set()
         self.versions = set()
-        self.models = []     # the message.model of each assistant row, None when it is not a string
+        self.models = set()  # the message.model of the assistant rows, None when it is not a string
         self.start = None    # the time of the first user or assistant row, None when it has no readable time
         self.start_seen = False
 
@@ -254,7 +255,7 @@ def _read_row(transcript, index, row):
         raise Unavailable(f"unknown content shape in {where}")
     if kind == "assistant":
         model = message.get("model")
-        transcript.models.append(model if isinstance(model, str) else None)
+        transcript.models.add(model if isinstance(model, str) else None)
     for block in blocks:
         if kind == "user" and block["type"] == "tool_result":
             if not isinstance(block.get("tool_use_id"), str) or not isinstance(block.get("is_error", False), bool):
@@ -561,7 +562,7 @@ def _valid_reviewers(value):
 
 VALID_VALUE = {
     "loop": lambda value: value in LEDGER_LOOPS,
-    "phase": lambda value: value in tuple(PHASE_CAPS),
+    "phase": lambda value: value in LEDGER_PHASES,
     "round": lambda value: type(value) is int and value >= 1,
     "reviewers": _valid_reviewers,
     "id": _matches(FINDING_ID),
@@ -661,12 +662,6 @@ def _ledger_name(remote_url, branch):
     return "ledger-" + hashlib.sha256(f"{remote_url}\n{branch}".encode("utf-8")).hexdigest()
 
 
-def _now_ms():
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-
-
 LEDGER_HELP = """\
 events and their flags (every flag is required for its event and refused for the others):
   round         --loop --phase --round <n> --reviewer <agent id> (repeat for each reviewer, 1 to 20, all different)
@@ -695,7 +690,7 @@ def _ledger_event(argv):
     parser.add_argument("event", choices=list(EVENT_KEYS))
     parser.add_argument("--worktree", required=True, action=Once, help="the worktree whose repo remote and branch key the ledger")
     parser.add_argument("--loop", choices=LEDGER_LOOPS, action=Once)
-    parser.add_argument("--phase", choices=tuple(PHASE_CAPS), action=Once)
+    parser.add_argument("--phase", choices=LEDGER_PHASES, action=Once)
     parser.add_argument("--round", type=int, action=Once)
     parser.add_argument("--reviewer", dest="reviewers", action="append")
     parser.add_argument("--id", action=Once)
@@ -715,7 +710,7 @@ def _ledger_event(argv):
         parser.error(f"a {args.event} event needs exactly {flags(expected)}"
                      + (f" (missing {flags(expected - given)})" if expected - given else "")
                      + (f" (not allowed: {', '.join(sorted(given - expected))})" if given - expected else ""))
-    event = {"kind": args.event, "time": _now_ms()}
+    event = {"kind": args.event, "time": _now("milliseconds")}
     event.update({key: getattr(args, key) for key in EVENT_KEYS[args.event]})
     return args.worktree, event
 
@@ -933,16 +928,16 @@ def check_xc(ledger, agents, problem):
     return True, f"{len(checks)} reviewers and verifiers checked"
 
 
-def _s_item(name, passed, evidence):
-    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
+def _s_item(name, passed, evidence, note=""):
+    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note}
 
 
-def _check_item(name, check, *args):
+def _check_item(name, check, *args, note=""):
     try:
         passed, evidence = check(*args)
     except Unavailable as problem:
         passed, evidence = False, str(problem)
-    return _s_item(name, passed, evidence)
+    return _s_item(name, passed, evidence, note)
 
 
 def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
@@ -994,10 +989,10 @@ def _record_arguments(argv):
     return values["--worktree"], values["--llm"]
 
 
-def _now():
+def _now(timespec="seconds"):
     from datetime import datetime, timezone  # imported here: the hook's common path never needs the time
 
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec=timespec)
 
 
 def _transcript_items(worktree, dir_fd):
@@ -1008,13 +1003,7 @@ def _transcript_items(worktree, dir_fd):
     except Unavailable as problem:
         return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, problem
     note = _versions_note(audited)
-    items = []
-    for name, check in (("S1", check_s1), ("S2", check_s2)):
-        try:
-            passed, evidence = check(worktree, audited)
-        except Unavailable as problem:
-            passed, evidence = False, str(problem)
-        items.append({"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note})
+    items = [_check_item(name, check, worktree, audited, note=note) for name, check in (("S1", check_s1), ("S2", check_s2))]
     return items, audited, None
 
 
