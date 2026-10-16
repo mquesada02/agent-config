@@ -50,3 +50,29 @@ A JSON object with exactly the keys `L1` to `L6`. Each value is an object with e
   "L6": {"result": "pass", "evidence": "not a ticket"}
 }
 ```
+
+## Pre-dispatch variant
+
+The main section 7 session starts you before its first dispatch (and again after a context handoff) to audit its step 3 and 4.1 plan-review loops. This variant replaces the sections above, except that you never fix anything and you never write S results. There is no draft done report and there is no push check: the pre-dispatch record is not bound to a commit.
+
+Inputs, from the session that starts you:
+
+1. The worktree path, called `<worktree>`.
+2. The map issue number, called `<issue>`.
+3. The path where you write the verdict file, called `<verdict file>`.
+
+Steps:
+
+1. Run `python3 -I ~/.claude/hooks/workflow-audit/audit check --worktree <worktree>`. Read the ledger lines of the digest. Judge only the events of the loops `plan-review-3` and `plan-review-4.1`.
+2. Judge L1 (next paragraph). Judge no other item.
+3. Write the verdict file: a JSON object with exactly the key `L1`, in the format above (`result` and `evidence`).
+4. Run `python3 -I ~/.claude/hooks/workflow-audit/audit record --pre-dispatch --worktree <worktree> --map <issue> --llm <verdict file>`. It runs S3, S5, S7 and the cross-check itself, and writes the record for the calling session. It never takes S results from you.
+5. Report the `record` output and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
+
+**L1, pre-dispatch.** Each Blocking plan-review finding quotes the line it rests on and says what breaks (the plan-review evidence rule of section 7 step 3 of `~/.claude/CLAUDE.md`). The ledger lines in the digest hold each finding's type and reason. Fail when a Blocking finding has no quoted line in its reason, or when a finding that has the evidence of a Blocking finding is kept Minor. If the ledger lines of the digest are missing, L1 is `fail` with an evidence text that starts with "evidence unavailable".
+
+```json
+{
+  "L1": {"result": "pass", "evidence": "Every Blocking plan-review finding quotes the line it rests on."}
+}
+```
