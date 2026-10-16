@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-from audit_support import HERE, AuditCase
+from audit_support import HERE, AuditCase, round_event
 
 BRIEF = os.path.join(HERE, "auditor-brief.md")
 GITIGNORE = os.path.join(HERE, "..", "..", ".gitignore")
@@ -58,6 +58,20 @@ class BriefTextTest(unittest.TestCase):
             with self.subTest(phrase):
                 self.assertIn(phrase, self.text)
 
+    def test_describes_the_pre_dispatch_variant(self):
+        variant = self.text.split("## Pre-dispatch variant", 1)[1]
+        for phrase in ("The map issue number", "The worktree path", "The path where you write the verdict file", "exactly the key `L1`",
+                       f"python3 -I {AUDIT_PATH} check --worktree <worktree>",
+                       f"python3 -I {AUDIT_PATH} record --pre-dispatch --worktree <worktree> --map <issue> --llm <verdict file>",
+                       "plan-review-3", "plan-review-4.1", "quotes the line it rests on", "there is no push check",
+                       "you never fix anything", "never write S results", "never takes S results from you", "evidence unavailable"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, variant)
+
+    def test_the_variant_comes_after_the_existing_sections(self):
+        order = [self.text.index(heading) for heading in ("## Inputs", "## Steps", "## The six items", "## The verdict file", "## Pre-dispatch variant")]
+        self.assertEqual(order, sorted(order))
+
     def test_is_not_ignored_by_the_allow_list(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root)
@@ -76,6 +90,20 @@ class BriefExampleTest(AuditCase):
         self.write_llm(blocks[0])
         self.start_branch("feature", "feat: a")
         result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class PreDispatchExampleTest(AuditCase):
+    def test_the_variant_example_is_accepted_by_record_pre_dispatch(self):
+        blocks = re.findall(r"```json\n(.*?)\n```", read_brief(), re.DOTALL)
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(list(json.loads(blocks[1])), ["L1"])
+        self.write_llm(blocks[1])
+        self.git("checkout", "-b", "feature")
+        self.commit("feat: a")
+        self.write_ledger("feature", [round_event(loop="plan-review-3"), round_event(loop="plan-review-4.1")])
+        result = self.audit("record", "--pre-dispatch", "--worktree", self.repo, "--map", "82", "--llm", self.llm_path,
+                            env={"CLAUDE_CODE_SESSION_ID": "main-1"})
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
