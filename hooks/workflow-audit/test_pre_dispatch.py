@@ -202,6 +202,18 @@ class NoSessionTest(PreDispatchCase):
         self.assertIn("evidence unavailable", self.pd_item("S7")["evidence"])
 
 
+class UnreadableTranscriptTest(PreDispatchCase):
+    def test_a_registered_transcript_that_cannot_be_read_fails_s7_and_xc(self):
+        self.register_path("gone", os.path.join(self.root, "projects", "missing.jsonl"))
+        result = self.pre_dispatch()
+        self.assertEqual(result.returncode, 1)
+        for name in ("S7", "XC"):
+            self.assertEqual(self.pd_item(name)["result"], "fail")
+            self.assertIn("evidence unavailable: cannot read transcript missing.jsonl", self.pd_item(name)["evidence"])
+        self.assertEqual(self.pd_item("S3")["result"], "pass")
+        self.assertEqual(self.pd_item("S5")["result"], "pass")
+
+
 class RefusalTest(PreDispatchCase):
     def test_a_missing_or_invalid_session_id(self):
         for sid in (None, "", "a/b", "a b", "x" * 129):
