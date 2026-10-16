@@ -55,7 +55,7 @@ class AllowTest(DispatchGateCase):
 
     def test_the_pr_gate_tests_are_not_affected_by_a_record_of_the_session(self):
         self.pd_record()
-        self.assert_denied(self.gate(PR), "no ")
+        self.assert_denied(self.gate(PR), "no record")
 
 
 class DenialTest(DispatchGateCase):
@@ -157,6 +157,13 @@ class ParseFailureTest(DispatchGateCase):
         for command in ('orca-ide orchestration worker-start --retry-of t1 --task "unbalanced', "orca orchestration worker-start --retry-of=t1 'x"):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), "no pre-dispatch record: the command cannot be parsed")
+
+    def test_a_parse_failure_is_decided_before_the_session_id_and_the_runtime_folder(self):
+        command = 'orca-ide orchestration worker-start --task "unbalanced'
+        self.assert_denied(self.hook(tool_input={"command": command}, cwd=self.repo), "no pre-dispatch record: the command cannot be parsed")
+        self.pd_record()
+        os.chmod(self.runtime, 0o755)
+        self.assert_denied(self.gate(command), "no pre-dispatch record: the command cannot be parsed")
 
     def test_an_unparsable_command_without_worker_start_is_allowed(self):
         self.assert_allowed(self.gate('echo "unbalanced'))
