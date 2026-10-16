@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
-#   audit record --worktree <path> --llm <file>   re-run S1-S6, XC and S8, read L1-L6, write <sha>.json for the pushed tip
+#   audit record --worktree <path> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
@@ -73,6 +73,32 @@ EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
 TEST_COMMAND_HEADING = "### Test command"
+# S7: a worker session is a session whose main transcript has a user text row that holds both phrases of the Orca dispatch preamble.
+WORKER_MARKERS = ("You are a dispatched worker", "--dispatch-id")
+MODEL_LIMIT = 40
+# S9. A segment whose command word is one of these only names a word.
+NAMING_ONLY_COMMANDS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "man", "which", "type", "whereis", "echo", "printf"))
+SHELLS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+ARGUMENT_COMMANDS = frozenset(("rm", "docker", "eval")) | SHELLS  # the words whose arguments S9 reads
+SHELL_COMMAND_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+MAX_SHELL_DEPTH = 3
+RM_RECURSIVE_OPTION = re.compile(r"-[fiIdv]*[rR][fiIrRdv]*")  # only letters that are options of rm, so that find's -regex is not one
+MAX_WORKERS = 2
+VALUE_LIMIT = 20
+# The base name of a runner -> its worker flags. A runner in SUBCOMMAND_RUNNERS counts when its subcommand is `test`.
+RUNNER_FLAGS = {
+    "pytest": ("-n", "--numprocesses"), "py.test": ("-n", "--numprocesses"),
+    "vitest": ("--maxWorkers", "--max-workers"), "jest": ("--maxWorkers", "-w"),
+    "playwright": ("--workers", "-j"), "cargo": ("-j", "--jobs"), "go": ("-p", "-parallel"),
+}
+SUBCOMMAND_RUNNERS = frozenset(("playwright", "cargo", "go"))
+VITEST_VARIABLE = re.compile(r"(VITEST_MAX_(?:THREADS|FORKS))=(.*)", re.DOTALL)
+# Whole words in a command that cannot be split: delimited by whitespace, quotes, ; & | ( ) or the ends of the text.
+_WORD_START, _WORD_END = r"""(?<![^\s'";&|()])""", r"""(?![^\s'";&|()])"""
+UNSPLITTABLE_TRIGGER = re.compile(
+    _WORD_START + "(?:" + "|".join(map(re.escape, ("rm", "prune", *(name for name in RUNNER_FLAGS if name not in SUBCOMMAND_RUNNERS)))) + ")"
+    + _WORD_END + "|" + _WORD_START + "(?:" + "|".join(map(re.escape, sorted(SUBCOMMAND_RUNNERS))) + r")(?:[ \t]+[^\s;&|()]+)*?[ \t]+test"
+    + _WORD_END)
 
 
 def _runtime():
@@ -194,6 +220,7 @@ class Transcript:
         self.calls = []      # dicts: index, tool, id, time, path or command, background, cwd
         self.results = {}    # tool_use_id -> list of is_error booleans
         self.notices = []    # texts that hold a task notification
+        self.prompts = []    # texts of the user rows, never of a tool_result block
         self.cwds = set()
         self.versions = set()
         self.models = set()  # the message.model of the assistant rows, None when it is not a string
@@ -247,10 +274,13 @@ def _read_row(transcript, index, row):
     if isinstance(content, str) and kind == "user":
         blocks = []
         transcript.notices.append(content)
+        transcript.prompts.append(content)
     elif isinstance(content, list) and all(isinstance(block, dict) and isinstance(block.get("type"), str) for block in content):
         blocks = content
         if kind == "user":  # a notification is read from user and attachment rows only
-            transcript.notices.extend(_text_blocks(content))
+            texts = _text_blocks(content)
+            transcript.notices.extend(texts)
+            transcript.prompts.extend(texts)
     else:
         raise Unavailable(f"unknown content shape in {where}")
     if kind == "assistant":
@@ -832,8 +862,7 @@ def _agents(audited):
 
 def _is_sonnet(transcript):
     """Rows that Claude Code writes itself (model <synthetic>) are not model calls and do not count."""
-    models = [model for model in transcript.models if model != SYNTHETIC_MODEL]
-    return bool(models) and all(model is not None and "sonnet" in model.lower() for model in models)
+    return _model_problem(transcript) is None
 
 
 def check_s4(ledger, agents, problem):
@@ -951,6 +980,147 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
             _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)]
 
 
+# ---- S7 and S9: models and safety, from the transcripts ----
+
+def _model_problem(transcript):
+    """None when every assistant row of the transcript (rows with the model <synthetic> aside) names a Sonnet model, else why not.
+    A model that is not Sonnet wins over a missing one."""
+    models = transcript.models - {SYNTHETIC_MODEL}
+    other = sorted(model for model in models if model is not None and "sonnet" not in model.lower())
+    if other:
+        return "ran on " + ", ".join(repr(model[:MODEL_LIMIT]) for model in other)
+    if not models:
+        return "evidence unavailable: no assistant row with a model"
+    if None in models:
+        return "evidence unavailable: an assistant row without a string message.model"
+    return None
+
+
+def check_s7(audited, problem):
+    """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
+    if audited is None:
+        return False, problem
+    failures, subagents, workers = [], 0, 0
+    for transcripts in audited:
+        is_worker = any(all(marker in text for marker in WORKER_MARKERS) for text in transcripts[0].prompts)
+        workers += is_worker
+        subagents += len(transcripts) - 1
+        for transcript in (transcripts if is_worker else transcripts[1:]):
+            reason = _model_problem(transcript)
+            if reason:
+                failures.append(f"{transcript.name}: {reason}")
+    if failures:
+        return False, _truncate_lines(failures)
+    return True, f"{subagents} subagents and {workers} worker sessions on Sonnet models, {len(audited) - workers} main sessions exempt"
+
+
+def _recursive_rm(arguments):
+    for word in arguments:
+        if word == "--":
+            return False
+        if RM_RECURSIVE_OPTION.fullmatch(word) or (word.startswith("--r") and "--recursive".startswith(word)):
+            return True
+    return False
+
+
+def _few_workers(value):
+    return re.fullmatch(r"[0-9]+", value) is not None and value.lstrip("0") in ("", "1", "2")
+
+
+def _subcommand(words):
+    return next((word for word in words if not word.startswith(("-", "+"))), None)
+
+
+def _worker_problems(name, words, index):
+    problems = []
+    if name == "vitest":
+        for word in words:
+            variable = VITEST_VARIABLE.fullmatch(word)
+            if variable and not _few_workers(variable.group(2)):
+                problems.append(f"{name} {variable.group(1)} {variable.group(2)[:VALUE_LIMIT]!r}")
+    after = words[index + 1:]
+    for position, word in enumerate(after):
+        candidate = word[1:] if name == "go" and word.startswith("--") else word  # Go's flag package takes one or two dashes
+        for flag in RUNNER_FLAGS[name]:
+            if candidate == flag:
+                value = after[position + 1] if position + 1 < len(after) else None
+            elif candidate.startswith(flag + "="):
+                value = candidate[len(flag) + 1:]
+            elif name != "go" and len(flag) == 2 and flag[1] != "-" and candidate.startswith(flag):
+                value = candidate[len(flag):]  # -n4
+            else:
+                continue
+            if value is None:
+                problems.append(f"{name} {flag} with no value")
+            elif not _few_workers(value):
+                problems.append(f"{name} {flag} {value[:VALUE_LIMIT]!r}")
+            break
+    return problems
+
+
+def _runner_problems(words):
+    for index, word in enumerate(words):
+        name = os.path.basename(word)
+        if name in RUNNER_FLAGS and (name not in SUBCOMMAND_RUNNERS or _subcommand(words[index + 1:]) == "test"):
+            return _worker_problems(name, words, index)
+    return []
+
+
+def _nested_problems(text, depth):
+    if depth + 1 > MAX_SHELL_DEPTH:
+        return [f"evidence unavailable: shell commands nested deeper than {MAX_SHELL_DEPTH}"]
+    return _command_problems(text, depth + 1)
+
+
+def _segment_problems(words, depth):
+    commands = _command_words(words)
+    if commands and os.path.basename(commands[0]) in NAMING_ONLY_COMMANDS:
+        return []
+    found = []
+    for index, word in enumerate(words):
+        name = os.path.basename(word)
+        if name not in ARGUMENT_COMMANDS:
+            continue
+        arguments = words[index + 1:]
+        if name == "rm" and _recursive_rm(arguments):
+            found.append("recursive rm")
+        elif name == "docker" and "prune" in arguments:
+            found.append("docker prune")
+        elif name == "eval" and arguments:
+            found += _nested_problems(" ".join(arguments), depth)
+        elif name in SHELLS:
+            option = next((position for position, argument in enumerate(arguments) if SHELL_COMMAND_OPTION.fullmatch(argument)), None)
+            if option is not None and option + 1 < len(arguments):
+                found += _nested_problems(arguments[option + 1], depth)
+    return found + _runner_problems(words)
+
+
+def _command_problems(command, depth=0):
+    """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
+    command = command.replace("\\\n", "")  # bash joins a line that ends in a backslash with the next one; the splitter would end the segment
+    try:
+        items = split_command(command)
+    except ValueError:
+        return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
+    return [kind for item in items if isinstance(item, list) for kind in _segment_problems(item, depth)]
+
+
+def check_s9(audited, problem):
+    """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
+    if audited is None:
+        return False, problem
+    lines, checked = [], 0
+    for transcripts in audited:
+        for transcript in transcripts:
+            for call in transcript.calls:
+                if call["tool"] == "Bash":
+                    checked += 1
+                    lines += [f"{transcript.name}: row {call['index'] + 1}: {kind}" for kind in dict.fromkeys(_command_problems(call["command"]))]
+    if lines:
+        return False, _truncate_lines(lines)
+    return True, f"{checked} Bash commands checked"
+
+
 # ---- record ----
 
 class Refusal(Exception):
@@ -1028,8 +1198,10 @@ def _record(argv):
     try:
         items, audited, problem = _transcript_items(worktree, dir_fd)
         items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
+        items.append(_check_item("S7", check_s7, audited, str(problem)))
         passed, evidence = check_s8(worktree)
         items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
+        items.append(_check_item("S9", check_s9, audited, str(problem)))
         items += l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({

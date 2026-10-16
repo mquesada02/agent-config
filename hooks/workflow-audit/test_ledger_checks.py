@@ -295,8 +295,8 @@ class RecordItemsTest(LedgerChecksCase):
         result = self.record_with([round_event()])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([item["id"] for item in self.read_record(self.tip)["items"]],
-                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S8", "L1", "L2", "L3", "L4", "L5", "L6"])
-        self.assertEqual(result.stdout.decode().splitlines()[:8], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S8 pass"])
+                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "L1", "L2", "L3", "L4", "L5", "L6"])
+        self.assertEqual(result.stdout.decode().splitlines()[:10], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S7 pass", "S8 pass", "S9 pass"])
 
     def test_a_failed_ledger_item_fails_the_record(self):
         result = self.record_with([round_event(n) for n in range(1, 7)])

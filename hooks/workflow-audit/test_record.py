@@ -19,7 +19,7 @@ class RecordTest(AuditCase):
         self.assertEqual(record["result"], "pass")
         datetime.datetime.fromisoformat(record["time"])
         self.assertEqual([(item["id"], item["kind"], item["result"]) for item in record["items"]],
-                         [(name, "S", "pass") for name in ("S1", "S2", "S3", "S4", "S5", "S6", "XC", "S8")]
+                         [(name, "S", "pass") for name in ("S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9")]
                          + [(f"L{n}", "L", "pass") for n in range(1, 7)])
         self.assertTrue(all(isinstance(item["evidence"], str) and item["evidence"] for item in record["items"]))
         self.assertEqual(result.stdout.decode().splitlines()[-1], "result pass")
@@ -39,7 +39,7 @@ class RecordTest(AuditCase):
         s8 = self.item(tip, "S8")
         self.assertEqual((s8["id"], s8["result"]), ("S8", "fail"))
         self.assertIn("bad message", s8["evidence"])
-        self.assertEqual(result.stdout.decode().splitlines()[:8], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S8 fail"])
+        self.assertEqual(result.stdout.decode().splitlines()[:10], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S7 pass", "S8 fail", "S9 pass"])
 
     def test_a_failed_l_verdict_gives_a_failed_record(self):
         tip = self.start_branch("feature", "feat: a")
