@@ -79,6 +79,7 @@ MODEL_LIMIT = 40
 # S9. A segment whose command word is one of these only names a word.
 NAMING_ONLY_COMMANDS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "man", "which", "type", "whereis", "echo", "printf"))
 SHELLS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+ARGUMENT_COMMANDS = frozenset(("rm", "docker", "eval")) | SHELLS  # the words whose arguments S9 reads
 SHELL_COMMAND_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 MAX_SHELL_DEPTH = 3
 RM_RECURSIVE_OPTION = re.compile(r"-[fiIdv]*[rR][fiIrRdv]*")  # only letters that are options of rm, so that find's -regex is not one
@@ -95,8 +96,9 @@ VITEST_VARIABLE = re.compile(r"(VITEST_MAX_(?:THREADS|FORKS))=(.*)", re.DOTALL)
 # Whole words in a command that cannot be split: delimited by whitespace, quotes, ; & | ( ) or the ends of the text.
 _WORD_START, _WORD_END = r"""(?<![^\s'";&|()])""", r"""(?![^\s'";&|()])"""
 UNSPLITTABLE_TRIGGER = re.compile(
-    _WORD_START + r"(?:rm|prune|pytest|py\.test|vitest|jest)" + _WORD_END + "|"
-    + _WORD_START + r"(?:playwright|cargo|go)(?:[ \t]+[^\s;&|()]+)*?[ \t]+test" + _WORD_END)
+    _WORD_START + "(?:" + "|".join(map(re.escape, ("rm", "prune", *(name for name in RUNNER_FLAGS if name not in SUBCOMMAND_RUNNERS)))) + ")"
+    + _WORD_END + "|" + _WORD_START + "(?:" + "|".join(map(re.escape, sorted(SUBCOMMAND_RUNNERS))) + r")(?:[ \t]+[^\s;&|()]+)*?[ \t]+test"
+    + _WORD_END)
 
 
 def _runtime():
@@ -276,8 +278,9 @@ def _read_row(transcript, index, row):
     elif isinstance(content, list) and all(isinstance(block, dict) and isinstance(block.get("type"), str) for block in content):
         blocks = content
         if kind == "user":  # a notification is read from user and attachment rows only
-            transcript.notices.extend(_text_blocks(content))
-            transcript.prompts.extend(_text_blocks(content))
+            texts = _text_blocks(content)
+            transcript.notices.extend(texts)
+            transcript.prompts.extend(texts)
     else:
         raise Unavailable(f"unknown content shape in {where}")
     if kind == "assistant":
@@ -859,8 +862,7 @@ def _agents(audited):
 
 def _is_sonnet(transcript):
     """Rows that Claude Code writes itself (model <synthetic>) are not model calls and do not count."""
-    models = [model for model in transcript.models if model != SYNTHETIC_MODEL]
-    return bool(models) and all(model is not None and "sonnet" in model.lower() for model in models)
+    return _model_problem(transcript) is None
 
 
 def check_s4(ledger, agents, problem):
@@ -1000,13 +1002,13 @@ def check_s7(audited, problem):
         return False, problem
     failures, subagents, workers = [], 0, 0
     for transcripts in audited:
-        main, subagent_transcripts = transcripts[0], transcripts[1:]
-        checked = list(subagent_transcripts)
-        subagents += len(checked)
-        if any(all(marker in text for marker in WORKER_MARKERS) for text in main.prompts):
-            workers += 1
-            checked.append(main)
-        failures += [f"{transcript.name}: {reason}" for transcript in checked for reason in [_model_problem(transcript)] if reason]
+        is_worker = any(all(marker in text for marker in WORKER_MARKERS) for text in transcripts[0].prompts)
+        workers += is_worker
+        subagents += len(transcripts) - 1
+        for transcript in (transcripts if is_worker else transcripts[1:]):
+            reason = _model_problem(transcript)
+            if reason:
+                failures.append(f"{transcript.name}: {reason}")
     if failures:
         return False, _truncate_lines(failures)
     return True, f"{subagents} subagents and {workers} worker sessions on Sonnet models, {len(audited) - workers} main sessions exempt"
@@ -1064,28 +1066,32 @@ def _runner_problems(words):
     return []
 
 
+def _nested_problems(text, depth):
+    if depth + 1 > MAX_SHELL_DEPTH:
+        return [f"evidence unavailable: shell commands nested deeper than {MAX_SHELL_DEPTH}"]
+    return _command_problems(text, depth + 1)
+
+
 def _segment_problems(words, depth):
     commands = _command_words(words)
     if commands and os.path.basename(commands[0]) in NAMING_ONLY_COMMANDS:
         return []
-    found, texts = [], []
+    found = []
     for index, word in enumerate(words):
-        name, arguments = os.path.basename(word), words[index + 1:]
+        name = os.path.basename(word)
+        if name not in ARGUMENT_COMMANDS:
+            continue
+        arguments = words[index + 1:]
         if name == "rm" and _recursive_rm(arguments):
             found.append("recursive rm")
         elif name == "docker" and "prune" in arguments:
             found.append("docker prune")
         elif name == "eval" and arguments:
-            texts.append(" ".join(arguments))
+            found += _nested_problems(" ".join(arguments), depth)
         elif name in SHELLS:
             option = next((position for position, argument in enumerate(arguments) if SHELL_COMMAND_OPTION.fullmatch(argument)), None)
             if option is not None and option + 1 < len(arguments):
-                texts.append(arguments[option + 1])
-    for text in texts:
-        if depth + 1 > MAX_SHELL_DEPTH:
-            found.append(f"evidence unavailable: shell commands nested deeper than {MAX_SHELL_DEPTH}")
-        else:
-            found += _command_problems(text, depth + 1)
+                found += _nested_problems(arguments[option + 1], depth)
     return found + _runner_problems(words)
 
 
