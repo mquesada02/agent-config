@@ -1,5 +1,6 @@
 # Shared fixtures for the audit tests: a temporary git repo with a local bare origin, a temporary TMPDIR and a private HOME.
 # Tests run the `audit` executable as a subprocess with `python3 -I`; no test imports it.
+import hashlib
 import json
 import os
 import shutil
@@ -72,8 +73,50 @@ def notification_attachment_row(call_id, **kwargs):
     return {"type": "attachment", "version": VERSION, "attachment": {"type": "queued_command", "prompt": notification_text(call_id, **kwargs)}}
 
 
+EARLY = "2000-01-01T00:00:00.000Z"  # before every ledger event, which is stamped with the real time
+LATE = "9999-01-01T00:00:00.000Z"  # after every ledger event
+SONNET = "claude-sonnet-5-5"
+
+
+def subagent_rows(model=SONNET, start=EARLY, version=VERSION, extra_models=()):
+    """The rows of a synthetic subagent transcript: a prompt row at `start`, then one assistant row per model."""
+    rows = [{"type": "user", "timestamp": start, "version": version, "message": {"role": "user", "content": "prompt"}}]
+    for name in (model, *extra_models):
+        message = {"content": [{"type": "text", "text": "report"}]}
+        if name is not None:
+            message["model"] = name
+        rows.append({"type": "assistant", "timestamp": start, "version": version, "message": message})
+    return rows
+
+
+def event(kind, **fields):
+    """A ledger event as `audit ledger` writes it. The time is EARLY unless given."""
+    return {"kind": kind, "time": EARLY, **fields}
+
+
+def round_event(n=1, loop="code-review", phase="correctness", reviewers=("rev1",), **extra):
+    return event("round", loop=loop, phase=phase, round=n, reviewers=list(reviewers), **extra)
+
+
+def finding_event(finding_id="I1", loop="code-review", phase="correctness", n=1, kind="Blocking", **extra):
+    return event("finding", id=finding_id, loop=loop, phase=phase, round=n, loc="a.py:1", type=kind, reason="why", **extra)
+
+
+def verdict_event(finding="I1", verifier="ver1", result="confirmed", **extra):
+    return event("verdict", finding=finding, verifier=verifier, result=result, **extra)
+
+
+def status_event(finding="I1", status="fixed", **extra):
+    return event("status", finding=finding, status=status, **extra)
+
+
+def phase_commit_event(sha, **extra):
+    return event("phase-commit", sha=sha, **extra)
+
+
 class AuditCase(unittest.TestCase):
     default_session = True  # register one synthetic session that edited a file in the worktree
+    default_ledger = True  # start_branch writes a ledger of one round, reviewed by the default session's subagent "rev1"
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -107,7 +150,8 @@ class AuditCase(unittest.TestCase):
         self.llm_path = os.path.join(self.root, "llm.json")
         self.write_llm(PASSING_LLM)
         if self.default_session:
-            self.register_session("default-session", [edit_row(os.path.join(self.repo, "edited.txt"), "t1", 1)])
+            self.register_session("default-session", [edit_row(os.path.join(self.repo, "edited.txt"), "t1", 1)],
+                                  subagents={"rev1": subagent_rows()})
 
     def register_session(self, session_id, rows, subagents=None, started_at="2026-10-15T12:00:00+00:00"):
         """Write a transcript (and subagent transcripts, a dict of name -> rows) and register it. Returns its path."""
@@ -155,7 +199,24 @@ class AuditCase(unittest.TestCase):
         for message in messages:
             self.commit(message)
         self.git("push", "-u", "origin", name)
+        if self.default_ledger:
+            self.write_ledger(name, [round_event()])
         return self.git("rev-parse", "HEAD")
+
+    def ledger_file(self, branch="feature", url=None):
+        key = hashlib.sha256(f"{url or self.origin}\n{branch}".encode()).hexdigest()
+        return os.path.join(self.runtime, f"ledger-{key}.jsonl")
+
+    def write_ledger(self, branch, events, url=None):
+        """Write the ledger of a branch directly; an event is a dict or a raw line."""
+        os.makedirs(self.runtime, exist_ok=True)
+        os.chmod(self.runtime, 0o700)
+        with open(self.ledger_file(branch, url), "w") as handle:
+            for item in events:
+                handle.write((item if isinstance(item, str) else json.dumps(item)) + "\n")
+
+    def ledger(self, kind, *flags, worktree=None, env=None, cwd=None):
+        return self.audit("ledger", kind, "--worktree", worktree or self.repo, *flags, env=env, cwd=cwd)
 
     def write_llm(self, content):
         with open(self.llm_path, "w") as handle:
