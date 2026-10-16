@@ -263,6 +263,13 @@ class S9RmTest(S9Case):
         self.assertEqual(len(item["evidence"].splitlines()), 11)
 
 
+class S9ContinuationTest(S9Case):
+    def test_a_backslash_newline_joins_the_lines_as_bash_does(self):
+        self.assert_flagged(["rm \\\n -rf dir", "pytest tests \\\n  -n 8", "docker system \\\n prune", "pytest \\\n -n \\\n 8",
+                             "bash -c 'rm \\\n -rf x'"])
+        self.assert_clean(["rm \\\n x", "pytest tests \\\n -n 2", "ls \\\n -a"])
+
+
 class S9DockerTest(S9Case):
     def test_docker_prune_fails(self):
         self.assert_flagged(["docker system prune", "docker system prune -af", "docker image prune", "docker container prune",
