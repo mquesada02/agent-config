@@ -139,11 +139,12 @@ def _cut(text, limit=EVIDENCE_LIMIT):
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-CONTINUED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # a newline after an odd run of backslashes; an even run is escaped backslashes
+CONTINUED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # a newline after an odd backslash run; an even run is escaped backslashes
 
 
 def _join_continued(text):
-    """The text as bash reads it: a backslash-newline pair joins two lines, unless the backslash is itself escaped."""
+    """The text with each continued line joined, unless the backslash is itself escaped. Inside single quotes and comments bash keeps the pair;
+    joining it there only adds to the gated-text count, so the gate stays closed."""
     return CONTINUED_LINE.sub(r"\1", text)
 
 

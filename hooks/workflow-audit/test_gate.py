@@ -450,6 +450,11 @@ class ContinuedLineTest(GateTestCase):
         self.assertEqual(self.record().returncode, 0)
         self.assert_allowed(self.gate("gh pr \\\ncreate"))
 
+    def test_continuations_at_the_start_and_in_a_row_are_joined(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("\\\ngh pr create \\\n\\\n --title t"))
+        self.assert_allowed(self.gate("gh pr create \\\\\\\n --title t"))  # three backslashes: one joins, two stay
+
     def test_an_escaped_backslash_before_the_newline_is_not_joined(self):
         self.two_branches()
         self.assert_allowed(self.gate("gh pr create \\\\\n --head two"))  # bash runs `gh pr create \` on `one`, then `--head two` as another command
@@ -461,6 +466,11 @@ class QuotedTextTest(GateTestCase):
         for command in ('gh pr "create"; bash -c "gh pr create"', "gh 'pr' create; bash -c 'gh pr create'", 'bash -c "gh pr create"; gh p"r" create'):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_separate_quoted_words_that_spell_the_text_are_denied(self):
+        # Fails closed: removing the quotes makes `gh pr create` out of words that the parser does not match.
+        self.audited_branch()
+        self.assert_denied(self.gate('echo "gh" "pr" create'), UNCHECKED)
 
     def test_a_lone_quoted_gated_command_is_checked_as_a_plain_command(self):
         self.audited_branch()
