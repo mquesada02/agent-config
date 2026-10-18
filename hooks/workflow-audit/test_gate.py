@@ -451,9 +451,24 @@ class ContinuedLineTest(GateTestCase):
         self.assert_allowed(self.gate("gh pr \\\ncreate"))
 
     def test_continuations_at_the_start_and_in_a_row_are_joined(self):
+        self.two_branches()
+        self.git("checkout", "two")
+        self.assert_allowed(self.gate("\\\ngh pr create \\\n\\\n --head one"))
+        self.assert_allowed(self.gate("gh pr create \\\\\\\n --head one"))  # three backslashes: one joins, two stay
+
+    def test_a_continuation_in_a_comment_is_not_joined(self):
+        # bash ends a comment at the newline, so `--head one` is another command and the PR goes to `two`.
+        self.two_branches()
+        self.assert_denied(self.gate("gh pr create --head two # \\\n --head one"), "no record")
+
+    def test_a_continuation_in_double_quotes_is_joined(self):
+        self.two_branches()
+        self.git("checkout", "two")
+        self.assert_allowed(self.gate('gh pr create --title "a \\\n b" --head one'))
+
+    def test_a_continuation_in_single_quotes_still_counts_for_a_nested_shell(self):
         self.audited_branch()
-        self.assert_allowed(self.gate("\\\ngh pr create \\\n\\\n --title t"))
-        self.assert_allowed(self.gate("gh pr create \\\\\\\n --title t"))  # three backslashes: one joins, two stay
+        self.assert_denied(self.gate("bash -c 'gh pr \\\ncreate'"), UNCHECKED)
 
     def test_an_escaped_backslash_before_the_newline_is_not_joined(self):
         self.two_branches()

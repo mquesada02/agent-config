@@ -143,9 +143,39 @@ CONTINUED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # a newline after an odd
 
 
 def _join_continued(text):
-    """The text with each continued line joined, unless the backslash is itself escaped. Inside single quotes and comments bash keeps the pair;
-    joining it there only adds to the gated-text count, so the gate stays closed."""
+    """The text with each continued line joined, wherever it is. The counts use this: a nested shell (`bash -c '...'`) reads a quoted
+    continued line as a join, so joining everywhere can only add to the gated-text count and the gate stays closed."""
     return CONTINUED_LINE.sub(r"\1", text)
+
+
+def _join_as_bash(text):
+    """The text with each continued line joined where bash joins it: not inside single quotes, and not in a comment (a comment ends at
+    the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs."""
+    out, index, quote, comment, word_start = [], 0, None, False, True
+    while index < len(text):
+        char = text[index]
+        if comment or quote == "'":
+            out.append(char)
+            comment = comment and char != "\n"
+            quote = None if quote == "'" and char == "'" else quote
+        elif char == "\\":
+            pair = text[index:index + 2]
+            if pair != "\\\n":
+                out.append(pair)
+            index += len(pair)
+            word_start = False
+            continue
+        else:
+            if quote == '"':
+                quote = None if char == '"' else quote
+            elif char in "'\"":
+                quote = char
+            elif char == "#" and word_start:
+                comment = True
+            out.append(char)
+        word_start = char in " \t\n;&|()"
+        index += 1
+    return "".join(out)
 
 
 def _normalise(text):
@@ -1652,7 +1682,7 @@ def _unchecked_reason(command, segments):
 
 def gate_reason(command, cwd, session_id=None):
     """The deny reason for a Bash command, or None to allow it."""
-    command = _join_continued(command)  # so a continued command is one segment with all its words
+    command = _join_as_bash(command)  # so a continued command is one segment with all its words
     try:
         items = split_command(command)
     except Exception:
