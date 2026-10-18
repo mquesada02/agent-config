@@ -160,10 +160,10 @@ def _join_as_bash(text):
             quote = None if quote == "'" and char == "'" else quote
         elif char == "\\":
             pair = text[index:index + 2]
-            if pair != "\\\n":
+            if pair != "\\\n":  # a joined pair is not there for bash, so it leaves word_start as it was
                 out.append(pair)
+                word_start = False
             index += len(pair)
-            word_start = False
             continue
         else:
             if quote == '"':

@@ -461,6 +461,10 @@ class ContinuedLineTest(GateTestCase):
         self.two_branches()
         self.assert_denied(self.gate("gh pr create --head two # \\\n --head one"), "no record")
 
+    def test_a_comment_after_a_joined_continuation_is_not_joined(self):
+        self.two_branches()
+        self.assert_denied(self.gate("gh pr create --head two \\\n# \\\n --head one"), "no record")
+
     def test_a_continuation_in_double_quotes_is_joined(self):
         self.two_branches()
         self.git("checkout", "two")
