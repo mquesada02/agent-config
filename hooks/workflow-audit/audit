@@ -139,9 +139,18 @@ def _cut(text, limit=EVIDENCE_LIMIT):
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+CONTINUED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # a newline after an odd run of backslashes; an even run is escaped backslashes
+
+
+def _join_continued(text):
+    """The text as bash reads it: a backslash-newline pair joins two lines, unless the backslash is itself escaped."""
+    return CONTINUED_LINE.sub(r"\1", text)
+
+
 def _normalise(text):
-    """The text as the gate counts it: bash joins a line that ends in a backslash with the next one, and a whitespace run is one space."""
-    return " ".join(text.replace("\\\n", "").split())
+    """The text as the gate counts it: continued lines joined, quote characters removed (so a quoted gated command still counts), and
+    a whitespace run is one space."""
+    return " ".join(_join_continued(text).replace("'", "").replace('"', "").split())
 
 
 def _count_pr_create(text):
@@ -1642,6 +1651,7 @@ def _unchecked_reason(command, segments):
 
 def gate_reason(command, cwd, session_id=None):
     """The deny reason for a Bash command, or None to allow it."""
+    command = _join_continued(command)  # so a continued command is one segment with all its words
     try:
         items = split_command(command)
     except Exception:
