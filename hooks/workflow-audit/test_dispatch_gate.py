@@ -4,7 +4,7 @@ import unittest
 
 from test_gate import PR, GateTestCase
 
-UNCHECKED = "unchecked command form: run orchestration worker-start as a plain command"
+UNCHECKED_DISPATCH = "unchecked command form: run orchestration worker-start as a plain command"
 
 WS = "orca-ide orchestration worker-start --task t1 --agent claude"
 
@@ -223,47 +223,56 @@ class UncheckedFormTest(DispatchGateCase):
         self.pd_record()
         for command in self.forms(WS):
             with self.subTest(command=command):
-                self.assert_denied(self.gate(command), UNCHECKED)
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
 
     def test_the_denial_holds_with_retry_of(self):
         self.pd_record()
         for command in self.forms(f"{WS} --retry-of t1"):
             with self.subTest(command=command):
-                self.assert_denied(self.gate(command), UNCHECKED)
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
 
     def test_a_parsed_match_does_not_hide_a_second_unresolved_occurrence(self):
         self.pd_record()
         for command in (f'{WS}; bash -c "{WS}"', f'{WS} --retry-of t1; bash -c "{WS}"', f'bash -c "{WS}"; {WS} --retry-of t1'):
             with self.subTest(command=command):
-                self.assert_denied(self.gate(command), UNCHECKED)
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
 
     def test_a_command_that_only_mentions_the_text_is_denied(self):
         # An accepted false positive: the gate cannot tell a mention from a run.
         for command in ("orca-other orchestration worker-start --task t1", "ocra orchestration worker-start", "orchestration worker-start",
                         "echo orca-ide orchestration worker-start", "# orca-ide orchestration worker-start"):
             with self.subTest(command=command):
-                self.assert_denied(self.gate(command), UNCHECKED)
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
 
     def test_the_text_inside_a_matched_command_is_an_unresolved_occurrence(self):
         self.pd_record()
-        self.assert_denied(self.gate(f"{WS} --note 'orchestration worker-start'"), UNCHECKED)
+        self.assert_denied(self.gate(f"{WS} --note 'orchestration worker-start'"), UNCHECKED_DISPATCH)
 
     def test_a_plain_retry_of_is_still_allowed_with_no_record(self):
         self.assert_allowed(self.gate(f"{WS} --retry-of t1"))
         self.assert_allowed(self.gate(f"{WS} --retry-of t1; {WS} --retry-of t2"))
 
     def test_the_forms_are_denied_without_a_record_or_a_session_id(self):
-        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED)
-        self.assert_denied(self.hook(tool_input={"command": f'bash -c "{WS}"'}, cwd=self.repo), UNCHECKED)
+        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED_DISPATCH)
+        self.assert_denied(self.hook(tool_input={"command": f'bash -c "{WS}"'}, cwd=self.repo), UNCHECKED_DISPATCH)
 
     def test_an_unsafe_runtime_folder_keeps_its_reason_only_for_a_command_with_a_record_check(self):
         self.pd_record()
         os.chmod(self.runtime, 0o755)
         self.assert_denied(self.gate(f'{WS}; bash -c "{WS}"'), "unsafe runtime folder")
-        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED)
+        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED_DISPATCH)
+
+    def test_a_newline_inside_the_text_is_denied(self):
+        self.pd_record()
+        self.assert_denied(self.gate("orca-ide orchestration\nworker-start --task t1"), UNCHECKED_DISPATCH)
+
+    def test_a_retry_of_segment_with_a_hidden_second_occurrence_is_denied_in_an_unsafe_runtime_folder(self):
+        os.makedirs(self.runtime, 0o700, exist_ok=True)
+        os.chmod(self.runtime, 0o755)
+        self.assert_denied(self.gate(f'{WS} --retry-of t1; bash -c "{WS}"'), UNCHECKED_DISPATCH)
 
     def test_a_substitution_is_denied_as_an_unchecked_form(self):
-        self.assert_denied(self.gate(f'echo "$({WS})"'), UNCHECKED)
+        self.assert_denied(self.gate(f'echo "$({WS})"'), UNCHECKED_DISPATCH)
 
     def test_the_pr_reason_wins_when_both_gates_have_an_unchecked_form(self):
         self.pd_record()
