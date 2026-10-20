@@ -76,7 +76,9 @@ class RegistrationTest(unittest.TestCase):
     def test_the_audit_script_exists(self):
         for command in (GATE_COMMAND, SESSION_COMMAND):
             with self.subTest(command=command):
-                self.assertTrue(os.path.isfile(repo_argv(command)[2]))
+                argv = repo_argv(command)
+                self.assertIsNotNone(argv)
+                self.assertTrue(os.path.isfile(argv[2]))
 
     def test_the_audit_commands_are_not_registered_under_any_other_event(self):
         for event, groups in self.settings["hooks"].items():
@@ -118,7 +120,8 @@ class HookOrderTest(AuditCase):
                 argv = repo_argv(entry["command"])
                 if argv is not None:
                     verdicts.append(self.verdict(self.run_hook(argv, stdin)))
-        return any(denied for denied, _ in verdicts), sorted(reason for denied, reason in verdicts if denied)
+        reasons = sorted(reason for denied, reason in verdicts if denied)
+        return bool(reasons), reasons
 
     def assert_same_in_every_order(self, command, denied, prefix):
         groups = self.bash_groups()
