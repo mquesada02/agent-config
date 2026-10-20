@@ -244,14 +244,14 @@ class ClaudeMdWiringTest(unittest.TestCase):
     def test_step_53_uses_the_step_3_loop(self):
         self.assertIn("same plan-review loop as in step 3", self.step53.lower())
 
-    def test_evidence_sentence_covers_the_loop_phases(self):
-        sentence = sentence_with(self.section7, "section 6 steps 1 and 3")
-        for phrase in ("round count of", "each phase of the plan-review loop", "findings ledger", "verifier subagent"):
+    def test_the_coordinator_audit_replaces_the_evidence_check_of_a_ticket(self):
+        sentence = sentence_with(self.section7, "section 6 step 5", "worker_done")
+        for phrase in ("coordinator audits the ticket", "worktree that the worker reported"):
             self.assertIn(phrase, sentence)
 
-    def test_evidence_covers_the_step_41_review(self):
-        sentence = sentence_with(self.section7, "step 4.1", "checks")
-        for phrase in ("plan-review loop", "result", "round count of each", "model of each"):
+    def test_the_pre_dispatch_audit_covers_the_step_3_and_4_1_loops(self):
+        sentence = sentence_with(self.section7, "pre-dispatch audit", "plan-review loops")
+        for phrase in ("before the first dispatch", "main section 7 session", "step 3 and 4.1"):
             self.assertIn(phrase, sentence)
 
     def test_section_11_lists_both_review_kinds(self):
@@ -286,7 +286,7 @@ class ClaudeMdWiringTest(unittest.TestCase):
         lines = self.section6
         self.assertIn("cap: 5 rounds", step(lines, "1").lower())
         self.assertIn("cap: 3 rounds", step(lines, "3").lower())
-        self.assertIn("at any cap, stop", step(lines, "5").lower())
+        self.assertIn("at any cap, stop", step(lines, "6").lower())
 
     def test_section_6_reverts_only_the_breaking_simplify_change(self):
         text = sentence_with(self.section6, "revert", "/simplify change")
