@@ -4,6 +4,8 @@ import unittest
 
 from test_gate import PR, GateTestCase
 
+UNCHECKED_DISPATCH = "unchecked command form: run orchestration worker-start as a plain command"
+
 WS = "orca-ide orchestration worker-start --task t1 --agent claude"
 
 
@@ -47,9 +49,9 @@ class AllowTest(DispatchGateCase):
 
     def test_a_command_with_neither_gated_text_is_allowed(self):
         for command in ("ls", "", "orca-ide orchestration send --to x", "orca-ide orchestration list", "orca-ide worktree create",
-                        "orca-other orchestration worker-start --task t1", "ocra orchestration worker-start", "orca orchestration worker-stop",
-                        "orca worker-start", "orchestration worker-start", "echo orca-ide orchestration worker-start", "git commit -m worker-start",
-                        "# orca-ide orchestration worker-start", "ls worker-start"):
+                        "orca orchestration worker-stop",
+                        "orca worker-start", "git commit -m worker-start",
+                        "ls worker-start"):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
@@ -209,6 +211,106 @@ class BothGatesTest(DispatchGateCase):
         self.start_branch("feature", "feat: a")  # no PR record
         self.assert_denied(self.gate(f"{PR}; {WS}"), "no record")
         self.assert_denied(self.gate(f"{WS}; {PR}"), "no pre-dispatch record")
+
+
+class UncheckedFormTest(DispatchGateCase):
+    FORMS = ('bash -c "%s"', "sh -c '%s'", "eval %s", "sudo %s", "nohup %s", "timeout 60 %s", "nice %s", "echo x | xargs %s")
+
+    def forms(self, command):
+        return [form % command for form in self.FORMS]
+
+    def test_a_form_that_the_parser_cannot_resolve_is_denied_even_with_a_passing_record(self):
+        self.pd_record()
+        for command in self.forms(WS):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_the_denial_holds_with_retry_of(self):
+        self.pd_record()
+        for command in self.forms(f"{WS} --retry-of t1"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_a_parsed_match_does_not_hide_a_second_unresolved_occurrence(self):
+        self.pd_record()
+        for command in (f'{WS}; bash -c "{WS}"', f'{WS} --retry-of t1; bash -c "{WS}"', f'bash -c "{WS}"; {WS} --retry-of t1'):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_a_command_that_only_mentions_the_text_is_denied(self):
+        # An accepted false positive: the gate cannot tell a mention from a run.
+        for command in ("orca-other orchestration worker-start --task t1", "ocra orchestration worker-start", "orchestration worker-start",
+                        "echo orca-ide orchestration worker-start", "# orca-ide orchestration worker-start"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_the_text_inside_a_matched_command_is_an_unresolved_occurrence(self):
+        self.pd_record()
+        self.assert_denied(self.gate(f"{WS} --note 'orchestration worker-start'"), UNCHECKED_DISPATCH)
+
+    def test_a_plain_retry_of_is_still_allowed_with_no_record(self):
+        self.assert_allowed(self.gate(f"{WS} --retry-of t1"))
+        self.assert_allowed(self.gate(f"{WS} --retry-of t1; {WS} --retry-of t2"))
+
+    def test_the_forms_are_denied_without_a_record_or_a_session_id(self):
+        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED_DISPATCH)
+        self.assert_denied(self.hook(tool_input={"command": f'bash -c "{WS}"'}, cwd=self.repo), UNCHECKED_DISPATCH)
+
+    def test_an_unsafe_runtime_folder_keeps_its_reason_only_for_a_command_with_a_record_check(self):
+        self.pd_record()
+        os.chmod(self.runtime, 0o755)
+        self.assert_denied(self.gate(f'{WS}; bash -c "{WS}"'), "unsafe runtime folder")
+        self.assert_denied(self.gate(f'bash -c "{WS}"'), UNCHECKED_DISPATCH)
+
+    def test_a_newline_inside_the_text_is_denied(self):
+        self.pd_record()
+        self.assert_denied(self.gate("orca-ide orchestration\nworker-start --task t1"), UNCHECKED_DISPATCH)
+
+    def test_a_retry_of_segment_with_a_hidden_second_occurrence_is_denied_in_an_unsafe_runtime_folder(self):
+        os.makedirs(self.runtime, 0o700, exist_ok=True)
+        os.chmod(self.runtime, 0o755)
+        self.assert_denied(self.gate(f'{WS} --retry-of t1; bash -c "{WS}"'), UNCHECKED_DISPATCH)
+
+    def test_a_substitution_is_denied_as_an_unchecked_form(self):
+        self.assert_denied(self.gate(f'echo "$({WS})"'), UNCHECKED_DISPATCH)
+
+    def test_the_pr_reason_wins_when_both_gates_have_an_unchecked_form(self):
+        self.pd_record()
+        self.assert_denied(self.gate(f'bash -c "{WS}"; bash -c "gh pr create"'), "unchecked command form: run gh pr create as a plain command")
+        self.assert_denied(self.gate(f'bash -c "gh pr create"; bash -c "{WS}"'), "unchecked command form: run gh pr create as a plain command")
+
+    def test_a_continued_line_is_seen_when_the_command_cannot_be_parsed(self):
+        self.assert_denied(self.gate('orca-ide orchestration \\\nworker-start --task "unbalanced'), "no pre-dispatch record: the command cannot be parsed")
+
+
+class ContinuedLineTest(DispatchGateCase):
+    def test_a_retry_of_on_a_continued_line_is_read(self):
+        self.assert_allowed(self.gate(f"{WS} \\\n --retry-of t1"))
+        self.assert_allowed(self.gate("orca-ide orchestration worker-start \\\n --task t1 \\\n --retry-of=t1"))
+
+    def test_a_continued_dispatch_without_retry_of_is_checked_as_a_plain_command(self):
+        self.assert_denied(self.gate(f"{WS} \\\n --task t2"), "no pre-dispatch record")
+        self.pd_record()
+        self.assert_allowed(self.gate(f"{WS} \\\n --task t2"))
+
+    def test_a_continued_gated_text_is_checked_as_the_plain_command(self):
+        command = "orca-ide orchestration \\\nworker-start --task t1"
+        self.assert_denied(self.gate(command), "no pre-dispatch record")
+        self.pd_record()
+        self.assert_allowed(self.gate(command))
+
+
+class QuotedTextTest(DispatchGateCase):
+    def test_a_quoted_gated_command_does_not_offset_an_unresolved_one(self):
+        self.pd_record()
+        for command in (f'orca-ide orchestration "worker-start" --task t1; bash -c "{WS}"', f"orca-ide 'orchestration' worker-start; bash -c '{WS}'"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_a_lone_quoted_gated_command_is_checked_as_a_plain_command(self):
+        self.assert_denied(self.gate('orca-ide orchestration "worker-start" --task t1'), "no pre-dispatch record")
+        self.pd_record()
+        self.assert_allowed(self.gate('orca-ide orchestration "worker-start" --task t1'))
 
 
 if __name__ == "__main__":

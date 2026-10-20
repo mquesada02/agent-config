@@ -5,6 +5,7 @@ import unittest
 from audit_support import AuditCase
 
 PR = "gh pr create --title t --body b"
+UNCHECKED = "unchecked command form: run gh pr create as a plain command"
 
 
 class GateTestCase(AuditCase):
@@ -147,7 +148,7 @@ class MatchingTest(GateTestCase):
         self.assert_denied(self.gate("echo $(gh pr create)"), "no record")  # an unquoted substitution is parsed and checked as a command
 
     def test_substitutions_without_the_text_are_allowed(self):
-        for command in ("echo $(date)", 'echo "$(date)"', "echo `date`", "git commit -m \"$(cat <<'EOF'\nfeat: x\nEOF\n)\"", 'echo "gh pr create"'):
+        for command in ("echo $(date)", 'echo "$(date)"', "echo `date`", "git commit -m \"$(cat <<'EOF'\nfeat: x\nEOF\n)\""):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
@@ -156,15 +157,9 @@ class MatchingTest(GateTestCase):
             "gh pr view 1",
             "gh issue create",
             "gh pr list",
-            "echo gh pr create",
-            "git commit -m 'gh pr create'",
-            "echo \"gh pr create\"",
             "ls",
             "",
-            "# gh pr create",
             "gh pr",
-            "echo then gh pr create",
-            "if true; then echo gh pr create; fi",
             "env FOO=1 ls",
             "time ls",
         ):
@@ -370,6 +365,136 @@ class InternalErrorTest(GateTestCase):
         self.start_branch("feature", "feat: a")
         self.gate(PR)
         self.assertEqual(self.record_files(), [])
+
+
+class UncheckedFormTest(GateTestCase):
+    def test_a_form_that_the_parser_cannot_resolve_is_denied_even_with_a_passing_record(self):
+        self.audited_branch()
+        for command in ('bash -c "gh pr create"', "sh -c 'gh pr create'", "eval gh pr create", "sudo gh pr create", "nohup gh pr create",
+                        "timeout 60 gh pr create", "nice gh pr create", "echo x | xargs gh pr create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_a_plain_command_is_still_allowed_with_a_passing_record(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate(PR))
+        self.assert_allowed(self.gate(f"cd {self.repo} && {PR}"))
+        self.assert_allowed(self.gate("ls"))
+
+    def test_a_parsed_match_does_not_hide_a_second_unresolved_occurrence(self):
+        self.audited_branch()
+        for command in ('gh pr create; bash -c "gh pr create"', 'bash -c "gh pr create"; gh pr create', "gh pr create --title 'gh pr create'"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_a_command_that_only_mentions_the_text_is_denied(self):
+        # An accepted false positive: the gate cannot tell a mention from a run.
+        self.audited_branch()
+        for command in ('echo "gh pr create"', "echo gh pr create", "git commit -m 'gh pr create'", "# gh pr create", "echo then gh pr create",
+                        "if true; then echo gh pr create; fi"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_a_newline_inside_the_text_is_denied(self):
+        self.audited_branch()
+        self.assert_denied(self.gate("gh pr\ncreate"), UNCHECKED)
+
+    def test_the_forms_are_denied_without_a_record_too(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate('bash -c "gh pr create"'), UNCHECKED)
+
+    def test_a_command_that_an_existing_check_denies_keeps_its_reason(self):
+        self.audited_branch()
+        for command in ('echo "$(gh pr create)"', "echo `gh pr create`", 'gh pr create --title "unbalanced', 'bash -c "gh pr create" "unbalanced'):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no branch to check")
+
+    def test_a_continued_line_is_seen_when_the_command_cannot_be_parsed(self):
+        self.audited_branch()
+        self.assert_denied(self.gate('gh pr \\\ncreate "unbalanced'), "no branch to check: the command cannot be parsed")
+
+    def test_a_record_check_denial_keeps_its_reason_before_the_new_check(self):
+        self.start_branch("feature", "feat: a")  # no record
+        self.assert_denied(self.gate('gh pr create; bash -c "gh pr create"'), "no record")
+
+    def test_an_unsafe_runtime_folder_keeps_its_reason_only_for_a_command_with_a_record_check(self):
+        self.audited_branch()
+        os.chmod(self.runtime, 0o755)
+        self.assert_denied(self.gate('gh pr create; bash -c "gh pr create"'), "unsafe runtime folder")
+        self.assert_denied(self.gate('bash -c "gh pr create"'), UNCHECKED)
+        self.assert_denied(self.gate('echo "gh pr create"'), UNCHECKED)
+
+
+class ContinuedLineTest(GateTestCase):
+    def two_branches(self):
+        """`one` has a passing record, `two` is pushed without one; `one` is checked out."""
+        self.audited_branch("one")
+        self.start_branch("two", "feat: b")
+        self.git("checkout", "one")
+
+    def test_a_head_flag_on_a_continued_line_is_read(self):
+        self.two_branches()
+        self.assert_denied(self.gate("gh pr create \\\n --head two"), "no record")
+        self.git("checkout", "two")
+        self.assert_allowed(self.gate("gh pr create \\\n --head one"))
+
+    def test_a_plain_continued_command_with_a_passing_record_is_allowed(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("gh pr create --title t \\\n --body b"))
+        self.assert_allowed(self.gate("gh pr create \\\n --title t \\\n --body b"))
+        self.assert_allowed(self.gate(f"cd {self.repo} \\\n && {PR}"))
+
+    def test_a_continued_gated_text_is_checked_as_the_plain_command(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate("gh pr \\\ncreate"), "no record")
+        self.assertEqual(self.record().returncode, 0)
+        self.assert_allowed(self.gate("gh pr \\\ncreate"))
+
+    def test_continuations_at_the_start_and_in_a_row_are_joined(self):
+        self.two_branches()
+        self.git("checkout", "two")
+        self.assert_allowed(self.gate("\\\ngh pr create \\\n\\\n --head one"))
+        self.assert_allowed(self.gate("gh pr create \\\\\\\n --head one"))  # three backslashes: one joins, two stay
+
+    def test_a_continuation_in_a_comment_is_not_joined(self):
+        # bash ends a comment at the newline, so `--head one` is another command and the PR goes to `two`.
+        self.two_branches()
+        self.assert_denied(self.gate("gh pr create --head two # \\\n --head one"), "no record")
+
+    def test_a_comment_after_a_joined_continuation_is_not_joined(self):
+        self.two_branches()
+        self.assert_denied(self.gate("gh pr create --head two \\\n# \\\n --head one"), "no record")
+
+    def test_a_continuation_in_double_quotes_is_joined(self):
+        self.two_branches()
+        self.git("checkout", "two")
+        self.assert_allowed(self.gate('gh pr create --title "a \\\n b" --head one'))
+
+    def test_a_continuation_in_single_quotes_still_counts_for_a_nested_shell(self):
+        self.audited_branch()
+        self.assert_denied(self.gate("bash -c 'gh pr \\\ncreate'"), UNCHECKED)
+
+    def test_an_escaped_backslash_before_the_newline_is_not_joined(self):
+        self.two_branches()
+        self.assert_allowed(self.gate("gh pr create \\\\\n --head two"))  # bash runs `gh pr create \` on `one`, then `--head two` as another command
+
+
+class QuotedTextTest(GateTestCase):
+    def test_a_quoted_gated_command_does_not_offset_an_unresolved_one(self):
+        self.audited_branch()
+        for command in ('gh pr "create"; bash -c "gh pr create"', "gh 'pr' create; bash -c 'gh pr create'", 'bash -c "gh pr create"; gh p"r" create'):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_separate_quoted_words_that_spell_the_text_are_denied(self):
+        # Fails closed: removing the quotes makes `gh pr create` out of words that the parser does not match.
+        self.audited_branch()
+        self.assert_denied(self.gate('echo "gh" "pr" create'), UNCHECKED)
+
+    def test_a_lone_quoted_gated_command_is_checked_as_a_plain_command(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate('gh pr "create" --title t'))
+        self.assert_allowed(self.gate('gh pr create; gh pr "create"'))
 
 
 if __name__ == "__main__":

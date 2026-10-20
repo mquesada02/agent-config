@@ -46,6 +46,7 @@ MAX_LEDGER_LINE_BYTES = 4096
 SYNTHETIC_MODEL = "<synthetic>"
 AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
 MAX_REGISTRY_LINE_BYTES = 4096
+UNCHECKED_REASON = "unchecked command form: run %s as a plain command"
 UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
 PRE_DISPATCH_LOOPS = ("plan-review-3", "plan-review-4.1")  # the loops that a pre-dispatch audit reads
 PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
@@ -138,12 +139,61 @@ def _cut(text, limit=EVIDENCE_LIMIT):
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+CONTINUED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")  # a newline after an odd backslash run; an even run is escaped backslashes
+
+
+def _join_continued(text):
+    """The text with each continued line joined, wherever it is. The counts use this: a nested shell (`bash -c '...'`) reads a quoted
+    continued line as a join, so joining everywhere can only add to the gated-text count and the gate stays closed."""
+    return CONTINUED_LINE.sub(r"\1", text)
+
+
+def _join_as_bash(text):
+    """The text with each continued line joined where bash joins it: not inside single quotes, and not in a comment (a comment ends at
+    the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs."""
+    out, index, quote, comment, word_start = [], 0, None, False, True
+    while index < len(text):
+        char = text[index]
+        if comment or quote == "'":
+            out.append(char)
+            comment = comment and char != "\n"
+            quote = None if quote == "'" and char == "'" else quote
+        elif char == "\\":
+            pair = text[index:index + 2]
+            if pair != "\\\n":  # a joined pair is not there for bash, so it leaves word_start as it was
+                out.append(pair)
+                word_start = False
+            index += len(pair)
+            continue
+        else:
+            if quote == '"':
+                quote = None if char == '"' else quote
+            elif char in "'\"":
+                quote = char
+            elif char == "#" and word_start:
+                comment = True
+            out.append(char)
+        word_start = char in " \t\n;&|()"
+        index += 1
+    return "".join(out)
+
+
+def _normalise(text):
+    """The text as the gate counts it: continued lines joined, quote characters removed (so a quoted gated command still counts), and
+    a whitespace run is one space."""
+    return " ".join(_join_continued(text).replace("'", "").replace('"', "").split())
+
+
 def _count_pr_create(text):
-    return " ".join(text.split()).count("gh pr create")
+    return _normalise(text).count("gh pr create")
 
 
 def _count_worker_start(text):
-    return " ".join(text.split()).count("worker-start")
+    return _normalise(text).count("worker-start")
+
+
+def _count_dispatch(text):
+    return _normalise(text).count("orchestration worker-start")
 
 
 # ---- S8: conventional commits without attribution ----
@@ -1516,12 +1566,16 @@ def _is_pr_create(segment):
     return len(words) >= 3 and os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]
 
 
+def _is_worker_start(segment):
+    words = _command_words(segment)
+    return len(words) >= 3 and os.path.basename(words[0]) in ORCA_COMMANDS and words[1:3] == ["orchestration", "worker-start"]
+
+
 def _is_dispatch(segment):
     """A `worker-start` that needs a pre-dispatch record: one without `--retry-of` (the flag at any word position), which
     can only restart a Task that was dispatched before."""
-    words = _command_words(segment)
-    return (len(words) >= 3 and os.path.basename(words[0]) in ORCA_COMMANDS and words[1:3] == ["orchestration", "worker-start"]
-            and not any(word == "--retry-of" or word.startswith("--retry-of=") for word in words[3:]))
+    return _is_worker_start(segment) and not any(
+        word == "--retry-of" or word.startswith("--retry-of=") for word in _command_words(segment)[3:])
 
 
 def _head_option(arguments):
@@ -1617,8 +1671,18 @@ def _dispatch_reason(runtime_dir, dir_fd, session_id):
     return None
 
 
+def _unchecked_reason(command, segments):
+    """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
+    if _count_pr_create(command) > sum(_is_pr_create(segment) for segment in segments):
+        return UNCHECKED_REASON % "gh pr create"
+    if _count_dispatch(command) > sum(_is_worker_start(segment) for segment in segments):
+        return UNCHECKED_REASON % "orchestration worker-start"
+    return None
+
+
 def gate_reason(command, cwd, session_id=None):
     """The deny reason for a Bash command, or None to allow it."""
+    command = _join_as_bash(command)  # so a continued command is one segment with all its words
     try:
         items = split_command(command)
     except Exception:
@@ -1635,7 +1699,7 @@ def gate_reason(command, cwd, session_id=None):
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
     unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > pr_creates
     if not pr_creates and not dispatches:
-        return UNFOLLOWED_REASON if unfollowed else None
+        return UNFOLLOWED_REASON if unfollowed else _unchecked_reason(command, segments)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
         return "hook input unreadable: no working directory for a matching command"
     dir_fd = None
@@ -1672,7 +1736,7 @@ def gate_reason(command, cwd, session_id=None):
                     return reason
         if unfollowed:
             return UNFOLLOWED_REASON
-        return None
+        return _unchecked_reason(command, segments)
     except Exception as error:
         return f"hook error: {error}"
     finally:
