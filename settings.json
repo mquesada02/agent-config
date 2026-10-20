@@ -30,6 +30,15 @@
   "hooks": {
     "SessionStart": [
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/workflow-audit/audit hook session-start",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "startup",
         "hooks": [
           {
@@ -86,6 +95,16 @@
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/workflow-audit/audit hook pre-tool-use",
+            "timeout": 60
+          }
+        ]
+      },
       {
         "matcher": "Grep|Glob",
         "hooks": [
