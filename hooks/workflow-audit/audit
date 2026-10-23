@@ -463,7 +463,8 @@ def _touches(transcript, spellings, root):
 
 def _audited_transcripts(worktree, dir_fd):
     """The transcripts of every registered session that touches the worktree, and the versions read.
-    Raises Unavailable when no session touches it or a transcript cannot be read."""
+    A session whose main transcript is missing (ENOENT), and a subagent file that is missing, are skipped.
+    Raises Unavailable when no session touches it or another read error occurs."""
     root = os.path.realpath(worktree)
     spellings = {os.path.abspath(worktree), root}
     needles = {text for spelling in spellings for text in (spelling, json.dumps(spelling)[1:-1])}
@@ -476,16 +477,20 @@ def _audited_transcripts(worktree, dir_fd):
         paths = [path]
         if os.path.isdir(folder):
             paths += sorted(os.path.join(folder, name) for name in os.listdir(folder) if re.fullmatch(r"agent-.+\.jsonl", name))
-        texts = []
+        texts = {}
         for file_path in paths:
             try:
                 with open(file_path, "rb") as handle:
-                    texts.append(handle.read().decode("utf-8", "replace"))
+                    texts[file_path] = handle.read().decode("utf-8", "replace")
+            except FileNotFoundError:
+                if file_path == path:  # the main transcript is paths[0], so no subagent text is held yet
+                    break  # a session that never wrote its transcript cannot have touched the worktree
+                continue  # a subagent file listed and then removed
             except OSError as error:
                 raise Unavailable(f"cannot read transcript {os.path.basename(file_path)}: {error.strerror}")
-        if not any(needle in text for text in texts for needle in needles):
+        if not any(needle in text for text in texts.values() for needle in needles):
             continue  # speed rule: a transcript that never holds the path cannot touch the worktree
-        transcripts = [_read_transcript(file_path, text) for file_path, text in zip(paths, texts)]
+        transcripts = [_read_transcript(file_path, text) for file_path, text in texts.items()]
         if any(_touches(transcript, spellings, root) for transcript in transcripts):
             audited.append(transcripts)
     if not audited:
