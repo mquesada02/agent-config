@@ -425,6 +425,30 @@ class UncheckedFormTest(GateTestCase):
         self.assert_denied(self.gate('echo "gh pr create"'), UNCHECKED)
 
 
+class HelpTest(GateTestCase):
+    def test_a_help_only_pr_create_is_allowed_without_a_record(self):
+        self.start_branch("feature", "feat: a")  # no record
+        for command in ("gh pr create --help", "gh pr create -h", f"cd {self.repo} && gh pr create --help",
+                        "gh pr create --help; echo $(date)"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_help_with_another_option_is_denied(self):
+        self.start_branch("feature", "feat: a")
+        for command in ("gh pr create --help --title t", "gh pr create --title t --help", "gh pr create --help=x"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no record")
+
+    def test_a_help_next_to_a_pr_create_is_denied(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate("gh pr create --help && gh pr create"), "no record")
+
+    def test_a_wrapped_help_is_denied(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate('bash -c "gh pr create --help"'), UNCHECKED)
+        self.assert_denied(self.gate('echo "$(gh pr create --help)"'), "no branch to check")
+
+
 class ContinuedLineTest(GateTestCase):
     def two_branches(self):
         """`one` has a passing record, `two` is pushed without one; `one` is checked out."""

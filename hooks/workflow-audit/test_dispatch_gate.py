@@ -147,6 +147,35 @@ class RetryOfTest(DispatchGateCase):
         self.assert_denied(self.gate(f"{WS} ; {WS} --retry-of t1"), "no pre-dispatch record")
 
 
+class HelpTest(DispatchGateCase):
+    HELP = "orca-ide orchestration worker-start --help"
+
+    def test_a_help_only_worker_start_is_allowed_without_a_record(self):
+        for command in (self.HELP, "orca orchestration worker-start -h", f"cd {self.repo} && {self.HELP}"):
+            with self.subTest(command=command):
+                result = self.gate(command)
+                self.assert_allowed(result)
+                self.assertEqual(result.stderr, b"")
+
+    def test_a_help_only_worker_start_needs_no_session_id_or_safe_runtime_folder(self):
+        os.makedirs(self.runtime, 0o700, exist_ok=True)
+        os.chmod(self.runtime, 0o755)
+        self.assert_allowed(self.gate(self.HELP))
+        self.assert_allowed(self.hook(tool_input={"command": self.HELP}, cwd=self.repo))
+
+    def test_help_with_another_option_is_denied(self):
+        for command in (f"{WS} --help", f"{self.HELP} --task t1", "orca-ide orchestration worker-start --help=x"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no pre-dispatch record")
+
+    def test_a_help_next_to_a_dispatch_is_denied(self):
+        self.assert_denied(self.gate(f"{self.HELP} && {WS}"), "no pre-dispatch record")
+
+    def test_a_wrapped_help_is_denied(self):
+        self.assert_denied(self.gate(f'bash -c "{self.HELP}"'), UNCHECKED_DISPATCH)
+        self.assert_denied(self.gate(f'echo "$({self.HELP})"'), UNCHECKED_DISPATCH)
+
+
 class ParseFailureTest(DispatchGateCase):
     def test_an_unparsable_command_with_worker_start_is_denied_on_the_raw_text(self):
         self.pd_record()  # even a passing record does not open the gate: nothing can be resolved
