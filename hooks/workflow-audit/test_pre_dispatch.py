@@ -204,6 +204,7 @@ class NoSessionTest(PreDispatchCase):
 
 class UnreadableTranscriptTest(PreDispatchCase):
     def test_a_registered_transcript_that_cannot_be_read_fails_s7_and_xc(self):
+        os.makedirs(os.path.join(self.root, "projects", "missing.jsonl"))  # EISDIR, not ENOENT
         self.register_path("gone", os.path.join(self.root, "projects", "missing.jsonl"))
         result = self.pre_dispatch()
         self.assertEqual(result.returncode, 1)

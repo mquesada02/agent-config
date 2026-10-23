@@ -137,9 +137,32 @@ class MissingEvidenceTest(TranscriptCase):
         self.unavailable(items)
         self.assertIn("unreadable registry", items["S1"]["evidence"])
 
-    def test_a_missing_transcript_file(self):
+    def test_a_registered_session_with_no_transcript_file_is_skipped(self):
         path = self.register_session("s1", [self.own_edit()])
         self.register_path("s2", os.path.join(os.path.dirname(path), "gone.jsonl"))
+        items = self.items()
+        self.assert_item(items, "S1", "pass", "1 sessions audited")
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(path), "gone.jsonl")))
+        with open(os.path.join(self.runtime, "sessions.jsonl")) as handle:
+            self.assertEqual(len(handle.read().splitlines()), 2)  # the audit does not prune the registry
+
+    def test_a_transcript_that_cannot_be_read_for_another_reason_is_unavailable(self):
+        path = self.register_session("s1", [self.own_edit()])
+        os.mkdir(os.path.join(os.path.dirname(path), "dir.jsonl"))
+        self.register_path("s2", os.path.join(os.path.dirname(path), "dir.jsonl"))
+        items = self.items()
+        self.unavailable(items)
+        self.assertIn("cannot read transcript dir.jsonl", items["S1"]["evidence"])
+
+    def test_a_subagent_file_that_is_listed_and_then_missing_is_skipped(self):
+        path = self.register_session("s1", [self.own_edit()], subagents={"rev1": []})
+        sub_folder = os.path.join(os.path.dirname(path), "s1", "subagents")
+        os.symlink(os.path.join(sub_folder, "nowhere"), os.path.join(sub_folder, "agent-gone.jsonl"))  # listed, ENOENT on open
+        self.assert_item(self.items(), "S1", "pass", "1 sessions audited")
+
+    def test_a_subagent_file_that_cannot_be_read_for_another_reason_is_unavailable(self):
+        path = self.register_session("s1", [self.own_edit()], subagents={"rev1": []})
+        os.mkdir(os.path.join(os.path.dirname(path), "s1", "subagents", "agent-dir.jsonl"))
         self.unavailable(self.items())
 
     def test_no_session_touches_the_worktree_even_when_none_is_declared(self):
