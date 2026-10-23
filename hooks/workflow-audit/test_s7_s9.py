@@ -472,9 +472,11 @@ class S9UnsplittableTest(S9Case):
 
 class S9HeredocTest(S9Case):
     def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
-        self.assert_clean(["cat > f <<'EOF'\ndon't\nrm -rf x\nEOF", 'tee f <<"EOF"\ndon\'t\nrm -rf x\nEOF', "cat <<\\EOF\ndon't\nrm -rf x\nEOF",
-                           "cat <<-'EOF'\n\tdon't\n\trm -rf x\n\tEOF", "echo x | tee -a f <<'EOF'\ndon't rm x\nEOF",
-                           "python3 -I - <<'PY'\nx = '''don't'''\nPY\ncat > r.sh <<'EOF'\nrm -f \"$o\"\nEOF\nchmod +x r.sh"])
+        for command in ("cat > f <<'EOF'\ndon't\nrm -rf x\nEOF", 'tee f <<"EOF"\ndon\'t\nrm -rf x\nEOF', "cat <<\\EOF\ndon't\nrm -rf x\nEOF",
+                        "cat <<-'EOF'\n\tdon't\n\trm -rf x\n\tEOF", "echo x | tee -a f <<'EOF'\ndon't rm x\nEOF", 'cat <<-"EOF"\n\trm -rf x\n\tEOF',
+                        "FOO=1 cat<<'EOF'\nrm -rf x\nEOF", "python3 -I - <<'PY'\nx = '''don't'''\nPY\ncat > r.sh <<'EOF'\nrm -f \"$o\"\nEOF\nchmod +x r.sh"):
+            with self.subTest(command=command):
+                self.assert_clean([command])
 
     def test_the_commands_outside_the_body_are_still_checked(self):
         self.assert_flagged(["cat <<'EOF'\ndon't\nEOF\nrm -rf y", "cat <<'EOF' && rm -rf y\ndon't\nEOF", "rm -rf y; cat <<'EOF'\nx\nEOF"])
@@ -486,7 +488,7 @@ class S9HeredocTest(S9Case):
 
     def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
         self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
-                             "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])
+                             "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "tee >(sh) <<'EOF'\nrm -rf x\nEOF", "sudo cat <<'EOF'\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])
 
     def test_an_unquoted_heredoc_body_is_still_command_text(self):
         self.assert_flagged(["cat <<EOF\nrm -rf x\nEOF", "cat <<EOF\ndon't\nrm x\nEOF"])

@@ -80,8 +80,10 @@ SEPARATOR_CHARS = frozenset("&|;()\n")
 WORD_BREAKS = " \t\n;&|"
 WORD_STARTS = WORD_BREAKS + "()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
-DATA_COMMANDS = frozenset(("cat", "tee"))  # commands that only copy their input: the body of a quoted heredoc they read is data
-HEREDOC_OPERATOR = re.compile(r"(?<!<)<<(-?)[ \t]*('[^']*'|\"[^\"]*\"|\\?[^\s;&|<>()'\"\\]+)(?=[\s;&|<>()]|$)")  # group 2: the end word
+# Commands that copy their input to a file or to the output and never run it: the body of a quoted heredoc they read is data.
+DATA_COMMANDS = frozenset(("cat", "tee"))
+# A heredoc operator `<<` (not `<<<`) with its end word. The group `dash` is `-` for `<<-`; the group `word` is the end word as written.
+HEREDOC_OPERATOR = re.compile(r"(?<!<)<<(?P<dash>-?)[ \t]*(?P<word>'[^']*'|\"[^\"]*\"|\\?[^\s;&|<>()'\"\\]+)(?=[\s;&|<>()]|$)")
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # Words that can stand before a command: shell keywords of compound commands, and wrappers that run the next word.
 COMMAND_PREFIX_WORDS = frozenset(("!", "{", "if", "elif", "while", "until", "then", "do", "else", "time", "env", "command", "exec"))
@@ -2014,19 +2016,20 @@ def _next_separator(items, index):
     return index
 
 
-def _reads_as_data(context, after, words):
-    """True when a quoted heredoc is read by a data command and nothing can run its body: `context` is the parsed text up to the
-    operator, `after` the rest of the operator line, `words` the segment that holds the operator."""
+def _reads_as_data(context, after, segment):
+    """True when the reader of a quoted heredoc is a data command and the checks here find nothing that can run its body: `context`
+    is the parsed text up to the operator, `after` the rest of the operator line, `segment` the words of the command that holds it."""
     if re.search(r"[(`]", context) or re.search(r"[|(`]|<<", after):
         return False  # a substitution, a subshell, a pipe or a second heredoc may run the body
-    words = _command_words(words)
-    return bool(words) and os.path.basename(words[0]) in DATA_COMMANDS
+    command = _command_words(segment)
+    return bool(command) and os.path.basename(command[0]) in DATA_COMMANDS
 
 
 def strip_data_heredocs(command):
     """The command without the body lines of each quoted heredoc that a data command reads: bash does not run that body.
-    The operator and end lines stay. Every other body, a body with no end line and all that follows a continued line, a line with
-    two heredocs or an operator that is not read as a heredoc stay as they are, so the stripping can only remove text bash does not run."""
+    The operator and end lines stay. Every other body stays. From the first line that this scan cannot follow with the rules of bash,
+    nothing more is removed: a continued line, a line with two heredocs (or a here-string next to one), an end word it cannot read,
+    a quote left open, an ANSI-C quote, or a body with no end line. A script that a data command writes and bash then runs is not seen."""
     lines = command.split("\n")
     kept, parsed, index = [], [], 0  # `parsed` holds the lines that the shell parses: the body of a heredoc is not one
     while index < len(lines):
@@ -2056,16 +2059,15 @@ def strip_data_heredocs(command):
         except ValueError:
             break  # the rest of the line leaves a quote open, so the body starts on a later line than this scan assumes
         if "$'" in text:
-            break  # shlex and bash disagree on where an ANSI-C quote ends (`$'a\\''`), so the quote state is unknown
-        end_line = operator.group(2).strip("'\"\\")
-        end = next((n for n in range(index, len(lines)) if (lines[n].lstrip("\t") if operator.group(1) else lines[n]) == end_line), None)
+            break  # shlex and bash disagree on where an ANSI-C quote ends (`$'a\\''`), so the quote state is unknown; this stops every later strip
+        word = operator.group("word")
+        end_line = word.strip("'\"\\")
+        end = next((n for n in range(index, len(lines)) if (lines[n].lstrip("\t") if operator.group("dash") else lines[n]) == end_line), None)
         if end is None:
             break
-        if operator.group(2)[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], segment):
-            index = end
-        else:
-            kept.extend(lines[index:end])
-            index = end
+        if not (word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], segment)):
+            kept.extend(lines[index:end])  # a body that stays
+        index = end
     return "\n".join(kept + lines[index:])
 
 
