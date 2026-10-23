@@ -146,6 +146,21 @@ class MissingEvidenceTest(TranscriptCase):
         with open(os.path.join(self.runtime, "sessions.jsonl")) as handle:
             self.assertEqual(len(handle.read().splitlines()), 2)  # the audit does not prune the registry
 
+    def test_a_session_with_no_transcript_file_is_skipped_even_when_it_has_subagent_files(self):
+        path = self.register_session("s1", [self.own_edit()])
+        gone = os.path.join(os.path.dirname(path), "gone.jsonl")
+        sub_folder = os.path.join(os.path.dirname(path), "gone", "subagents")
+        os.makedirs(sub_folder)
+        self.write_rows(os.path.join(sub_folder, "agent-x.jsonl"), [self.own_edit("e9")])
+        self.register_path("gone", gone)
+        self.assert_item(self.items(), "S1", "pass", "1 sessions audited")
+
+    def test_every_registered_session_with_no_transcript_file_is_unavailable(self):
+        self.register_path("s1", os.path.join(self.root, "projects", "gone.jsonl"))
+        items = self.items()
+        self.unavailable(items)
+        self.assertIn("no registered session touches", items["S1"]["evidence"])
+
     def test_a_transcript_that_cannot_be_read_for_another_reason_is_unavailable(self):
         path = self.register_session("s1", [self.own_edit()])
         os.mkdir(os.path.join(os.path.dirname(path), "dir.jsonl"))
