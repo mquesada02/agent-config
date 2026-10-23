@@ -289,7 +289,7 @@ class Transcript:
         self.calls = []      # dicts: index, tool, id, time, path or command, background, cwd
         self.results = {}    # tool_use_id -> list of is_error booleans
         self.notices = []    # texts that hold a task notification
-        self.prompts = []    # texts of the user rows, never of a tool_result block
+        self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
         self.cwds = set()
         self.versions = set()
@@ -341,16 +341,17 @@ def _read_row(transcript, index, row):
     if not isinstance(message, dict):
         raise Unavailable(f"missing message in {where}")
     content = message.get("content")
+    prompts = [] if row.get("isCompactSummary") is True else transcript.prompts  # Claude Code writes the summary; no one sent it
     if isinstance(content, str) and kind == "user":
         blocks = []
         transcript.notices.append(content)
-        transcript.prompts.append(content)
+        prompts.append(content)
     elif isinstance(content, list) and all(isinstance(block, dict) and isinstance(block.get("type"), str) for block in content):
         blocks = content
         if kind == "user":  # a notification is read from user and attachment rows only
             texts = _text_blocks(content)
             transcript.notices.extend(texts)
-            transcript.prompts.extend(texts)
+            prompts.extend(texts)
     else:
         raise Unavailable(f"unknown content shape in {where}")
     if kind == "assistant":

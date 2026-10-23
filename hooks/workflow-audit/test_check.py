@@ -124,6 +124,13 @@ class DigestTest(CheckCase):
             with self.subTest(needle):
                 self.assertIn(needle, digest)
 
+    def test_the_first_prompt_skips_a_compaction_summary(self):
+        self.session([{**prompt_row("Invented summary", 1), "isCompactSummary": True}, prompt_row("Invented real prompt", 2)])
+        self.start_branch("feature", "feat: a")
+        _, _, digest = self.parts(self.check())
+        self.assertIn("Invented real prompt", digest)
+        self.assertNotIn("Invented summary", digest)
+
     def test_the_first_prompt_skips_a_task_notification(self):
         self.session([prompt_row("<task-notification>x</task-notification>", 1), prompt_row("Invented real prompt", 2)])
         self.start_branch("feature", "feat: a")

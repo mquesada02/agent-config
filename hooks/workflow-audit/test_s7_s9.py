@@ -156,6 +156,14 @@ class S7SessionTest(SafetyCase):
     def test_the_marker_is_not_read_in_a_queued_command_attachment(self):
         self.not_a_worker([{"type": "attachment", "version": VERSION, "attachment": {"type": "queued_command", "prompt": PREAMBLE}}])
 
+    def test_the_marker_is_not_read_in_a_compaction_summary(self):
+        self.not_a_worker([user_row(PREAMBLE, 2, isCompactSummary=True)])
+        self.not_a_worker([user_row([{"type": "text", "text": PREAMBLE}], 2, isCompactSummary=True)])
+
+    def test_a_worker_session_that_compacts_is_still_a_worker(self):
+        item = self.s7(self.worker(OPUS, [user_row("Summary of the session.", 2, isCompactSummary=True)]))
+        self.assert_item(item, "fail", OPUS)
+
     def test_a_subagent_prompt_does_not_mark_a_worker(self):
         rows = subagent_rows()
         rows[0]["message"]["content"] = PREAMBLE
