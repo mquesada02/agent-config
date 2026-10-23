@@ -524,14 +524,15 @@ class QuotedTextTest(GateTestCase):
 class HeredocBodyTest(GateTestCase):
     def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
         self.audited_branch()
-        for command in ("cat > f <<'EOF'\ndon't\ngh pr create\nEOF", 'tee f <<"EOF"\ngh pr create\nEOF', "cat <<\\EOF\ngh pr create\nEOF",
+        for command in ("cat > f <<'EOF'\ndon't\ngh pr create --head nobranch\nEOF", 'tee f <<"EOF"\ngh pr create --head nobranch\nEOF',
+                        "cat <<\\EOF\ngh pr create --head nobranch\nEOF", "FOO=1 cat<<-'EOF'\n\tgh pr create --head nobranch\n\tEOF",
                         "cat > f <<'EOF'\ndon't\norca orchestration worker-start --task t\nEOF"):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
     def test_the_commands_outside_the_body_are_still_gated(self):
         self.audited_branch()
-        self.assert_allowed(self.gate("cat <<'EOF'\ngh pr create\nEOF\n" + PR))
+        self.assert_allowed(self.gate("cat <<'EOF'\ngh pr create --head nobranch\nEOF\n" + PR))
         self.assertIsNotNone(self.denial(self.gate("cat <<'EOF'\ngh pr create\nEOF\ngh pr create --head nobranch")))
 
     def test_a_fake_heredoc_or_a_continued_line_hides_nothing(self):
@@ -543,7 +544,7 @@ class HeredocBodyTest(GateTestCase):
 
     def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_gated(self):
         self.audited_branch()
-        for command in ("bash <<'EOF'\ngh pr create --head nobranch\nEOF", "sh <<'EOF'\ndon't\ngh pr create\nEOF",
+        for command in ("bash <<'EOF'\ngh pr create --head nobranch\nEOF", "sh <<'EOF'\ngh pr create --head nobranch\nEOF", "tee >(sh) <<'EOF'\ngh pr create --head nobranch\nEOF",
                         "cat <<'EOF' | bash\ngh pr create --head nobranch\nEOF", "cat <<EOF\ngh pr create --head nobranch\nEOF"):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
