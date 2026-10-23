@@ -119,7 +119,7 @@ class DigestTest(CheckCase):
         self.start_branch("feature", "feat: first change")
         self.write_ledger("feature", [round_event()])
         _, _, digest = self.parts(self.check())
-        for needle in ("code-review", "feat: first change", "Invented prompt: change the sample.", "2026-10-15T12:00:05Z make test",
+        for needle in ("feat: first change", "Invented prompt: change the sample.", "2026-10-15T12:00:05Z make test",
                        "edited.txt", "Invented review", "general-purpose", "sonnet", "invented-skill", "agent-rev1.jsonl", "claude-sonnet-5-5"):
             with self.subTest(needle):
                 self.assertIn(needle, digest)
@@ -188,7 +188,38 @@ class DigestTest(CheckCase):
         self.write_ledger("feature", events)
         _, _, digest = self.parts(self.check())
         self.assertLessEqual(len(digest.encode("utf-8")), LIMIT)
-        self.assertGreaterEqual(len(re.findall(r"\[\d+ more lines omitted\]", digest)), 2)
+        self.assertEqual(len(re.findall(r"\[\d+ more lines omitted\]", digest)), 1)  # the commits section; the ledger section is one line
+        self.assertNotIn("ledger unavailable", digest)
+
+    def test_the_ledger_section_is_one_pointer_line_with_the_count_and_no_events(self):
+        self.default_ledger = False
+        self.session([])
+        self.start_branch("feature", "feat: a")
+        self.write_ledger("feature", [round_event(), {**finding_event(), "reason": "Invented reason text"}, finding_event("I2", kind="Minor")])
+        _, _, digest = self.parts(self.check())
+        pointer = ("ledger: 3 events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show "
+                   f"--worktree {self.repo}")
+        self.assertEqual(digest.splitlines()[0], pointer)
+        self.assertEqual(len([line for line in digest.splitlines() if line.startswith("ledger")]), 1)
+        for text in ("Invented reason text", '"kind"', "code-review"):
+            self.assertNotIn(text, digest)
+
+    def test_a_long_ledger_adds_no_omitted_lines_marker_to_the_digest(self):
+        self.default_ledger = False
+        self.session([])
+        self.start_branch("feature", "feat: a")
+        self.write_ledger("feature", [round_event()] + [{**finding_event(f"F{n}", kind="Minor"), "reason": "r" * 500} for n in range(100)])
+        _, _, digest = self.parts(self.check())
+        self.assertIn("ledger: 101 events;", digest)
+        self.assertNotIn("more lines omitted", digest)
+
+    def test_the_s_results_do_not_depend_on_the_pointer_line(self):
+        self.default_ledger = False
+        self.session([])
+        self.start_branch("feature", "feat: a")
+        self.write_ledger("feature", [round_event(), finding_event("I1", kind="Minor")] + [finding_event(f"F{n}", kind="Minor") for n in range(400)])
+        lines, _, _ = self.parts(self.check())
+        self.assertIn("  401 findings have no status", lines)  # S3 reads the whole ledger
 
     def test_unreadable_transcripts_give_one_line_and_failed_items(self):
         self.start_branch("feature", "feat: a")

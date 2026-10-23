@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
+#   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
 #   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 50 KB; writes no file
 #   audit record --worktree <path> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
@@ -52,7 +53,7 @@ PRE_DISPATCH_LOOPS = ("plan-review-3", "plan-review-4.1")  # the loops that a pr
 PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
 MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
-USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
          " | audit record --pre-dispatch --worktree <path> --map <issue> --llm <file> | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -784,6 +785,7 @@ events and their flags (every flag is required for its event and refused for the
 loop values:  %s
 phase values: %s (caps: %s)
 A review round is recorded with its `round` event before the findings of that round.
+`audit ledger show --worktree <path>` prints every event of the ledger, one compact JSON line each, and writes nothing.
 """ % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
 
 
@@ -827,21 +829,28 @@ def _ledger_event(argv):
     return args.worktree, event
 
 
-def _ledger(argv):
-    import stat
-
-    worktree, event = _ledger_event(argv)
+def _open_ledger_dir(worktree):
+    """(the open audit runtime folder, the branch, the origin URL) that key the ledger of `worktree`; the caller closes the folder."""
     branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
     if not branch:
         raise Refusal(f"no branch: {worktree} is not a git worktree or HEAD is detached")
     remote_url = _git_output(worktree, "remote", "get-url", "origin", no_result=(2, 128))
     if not remote_url:
         raise Refusal("no remote URL for origin")
-    name = _ledger_name(remote_url, branch)
     runtime_dir = _runtime()
     dir_fd = runtime_dir.open_runtime_dir(runtime_dir.runtime_dir_path(FOLDER_NAME))
     if dir_fd is None:
         raise Refusal("unsafe runtime folder: the audit folder is not owned by you with mode 0700, or is a symlink")
+    return dir_fd, branch, remote_url
+
+
+def _ledger(argv):
+    import stat
+
+    worktree, event = _ledger_event(argv)
+    dir_fd, branch, remote_url = _open_ledger_dir(worktree)
+    name = _ledger_name(remote_url, branch)
+    runtime_dir = _runtime()
     try:
         try:
             lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
@@ -878,14 +887,15 @@ def _ledger(argv):
 
 
 def cmd_ledger(argv):
+    show = argv[:1] == ["show"]
     try:
-        return _ledger(argv)
+        return _ledger_show(argv[1:]) if show else _ledger(argv)
     except Refusal as refusal:
         print(refusal, file=sys.stderr)
     except Unavailable as problem:
         print(problem, file=sys.stderr)
     except Exception as error:
-        print(f"cannot write the ledger: {error}", file=sys.stderr)
+        print(f"cannot {'read' if show else 'write'} the ledger: {error}", file=sys.stderr)
     return 2
 
 
@@ -1442,10 +1452,32 @@ def _utc(moment):
 
 
 def _ledger_lines(dir_fd, branch, remote_url):
+    """(the lines `ledger` and one compact JSON line per event, the event count), or ([the `ledger unavailable` line], None)."""
     ledger, why, _ = _load_ledger(dir_fd, branch, remote_url)
     if ledger is None:
-        return [f"ledger unavailable: {why}"]
-    return ["ledger"] + [json.dumps(event, ensure_ascii=False, separators=(",", ":")) for event in ledger.events]
+        return [f"ledger unavailable: {why}"], None
+    return ["ledger"] + [json.dumps(event, ensure_ascii=False, separators=(",", ":")) for event in ledger.events], len(ledger.events)
+
+
+def _ledger_show(argv):
+    """`audit ledger show --worktree <path>`: print every event of the ledger and write nothing; exit 2 when the ledger cannot be used."""
+    if len(argv) != 2 or argv[0] != "--worktree":
+        raise Refusal(USAGE)
+    dir_fd, branch, remote_url = _open_ledger_dir(argv[1])
+    try:
+        lines, count = _ledger_lines(dir_fd, branch, remote_url)
+    finally:
+        os.close(dir_fd)
+    print("\n".join(lines))
+    return 0 if count is not None else 2
+
+
+def _ledger_section(worktree, dir_fd, branch, remote_url):
+    """One pointer line with the event count and the command that reads the events, or the `ledger unavailable` line."""
+    lines, count = _ledger_lines(dir_fd, branch, remote_url)
+    if count is None:
+        return lines
+    return [f"ledger: {count} events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree {worktree}"]
 
 
 def _commit_lines(worktree):
@@ -1481,9 +1513,9 @@ def _session_lines(audited, problem):
 
 
 def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
-    """The text for the auditor: the ledger, the commits and one block per audited session, at most DIGEST_LIMIT bytes."""
+    """The text for the auditor: the ledger pointer, the commits and one block per audited session, at most DIGEST_LIMIT bytes."""
     # The sections are joined with two newlines, so the first two budgets give up one byte each to keep the total at DIGEST_LIMIT.
-    sections = (_fit(_ledger_lines(dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
+    sections = (_fit(_ledger_section(worktree, dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
                 _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
                 _fit(_session_lines(audited, problem), SESSIONS_BUDGET))
     text = "\n".join("\n".join(section) for section in sections)
