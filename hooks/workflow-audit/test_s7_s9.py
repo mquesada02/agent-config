@@ -413,6 +413,53 @@ class S9UnsplittableTest(S9Case):
             self.assertIn(expected, item["evidence"])
 
 
+class S9HeredocTest(S9Case):
+    def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
+        self.assert_clean(["cat > f <<'EOF'\ndon't\nrm -rf x\nEOF", 'tee f <<"EOF"\ndon\'t\nrm -rf x\nEOF', "cat <<\\EOF\ndon't\nrm -rf x\nEOF",
+                           "cat <<-'EOF'\n\tdon't\n\trm -rf x\n\tEOF", "echo x | tee -a f <<'EOF'\ndon't rm x\nEOF",
+                           "python3 -I - <<'PY'\nx = '''don't'''\nPY\ncat > r.sh <<'EOF'\nrm -f \"$o\"\nEOF\nchmod +x r.sh"])
+
+    def test_the_commands_outside_the_body_are_still_checked(self):
+        self.assert_flagged(["cat <<'EOF'\ndon't\nEOF\nrm -rf y", "cat <<'EOF' && rm -rf y\ndon't\nEOF", "rm -rf y; cat <<'EOF'\nx\nEOF"])
+
+    def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_command_text(self):
+        self.assert_flagged(["bash <<'EOF'\nrm -rf x\nEOF", "sh <<'EOF'\nrm -rf x\nEOF", "python3 - <<'EOF'\nrm -rf x\nEOF",
+                             "ssh host <<'EOF'\nrm -rf x\nEOF", "eval <<'EOF'\nrm -rf x\nEOF", "xargs <<'EOF'\nrm -rf x\nEOF",
+                             "bash <<'EOF'\ndon't\nrm x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF"])
+
+    def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
+        self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
+                             "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])
+
+    def test_an_unquoted_heredoc_body_is_still_command_text(self):
+        self.assert_flagged(["cat <<EOF\nrm -rf x\nEOF", "cat <<EOF\ndon't\nrm x\nEOF"])
+
+    def test_a_heredoc_operator_inside_quotes_or_with_no_end_line_hides_nothing(self):
+        self.assert_flagged(["echo \"<<'EOF'\"\nrm -rf x", "echo '<<'EOF'\nrm -rf x", "cat <<'EOF'\nrm -rf x", "cat <<'EOF'\nrm -rf x\nEOF2"])
+
+    def test_a_fake_heredoc_in_a_multi_line_quote_hides_nothing(self):
+        self.assert_flagged(["echo \"a\ncat <<'EOF'\n\" ; rm -rf x\nEOF", "echo 'a\ncat <<\"EOF\"\n' ; rm -rf x\nEOF",
+                             "# cat <<'EOF'\nrm -rf x\nEOF", "echo hi # cat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_quote_opened_on_the_operator_line_hides_nothing(self):
+        self.assert_flagged(["cat <<'E' \"x\ny\"\nbody\nE\nrm -rf /tmp/a", "cat <<'E' 'x\ny'\nbody\nE\nrm -rf /tmp/a",
+                             "cat <<'E' > \"a\nb\"\nbody\nE\nrm -rf /tmp/a", "cat <<'E' \"x\ny\" ; rm -rf z\nbody\nE",
+                             "cat <<'E' 'x\ny' && rm -rf z\nbody\nE"])
+
+    def test_a_heredoc_with_an_end_word_that_is_not_read_hides_nothing(self):
+        self.assert_flagged(['cat <<E"x"\ncat <<\'F\'\nEx\nrm -rf /y\nF', "cat <<E\\ x\ncat <<'F'\nE x\nrm -rf /y\nF",
+                             "cat <<'E'x\ncat <<'F'\nEx\nrm -rf /y\nF", 'cat <<-E"x"\ncat <<\'F\'\nEx\nrm -rf /y\nF'])
+
+    def test_an_ansi_c_quote_that_shlex_and_bash_read_differently_hides_nothing(self):
+        self.assert_flagged(["cat <<'E' $'a\\'\n';rm -rf y;echo $'\nE\n'", "echo $'a\\'\ncat <<'E'\n';rm -rf y;echo $'\nE\n'"])
+
+    def test_a_continued_line_before_or_after_the_operator_hides_nothing(self):
+        self.assert_flagged(["bash \\\ncat <<'EOF'\nrm -rf x\nEOF", "env \\\ncat <<'EOF'\nrm -rf x\nEOF", "cat <<'EOF' \\\n| bash\nrm -rf x\nEOF"])
+
+    def test_an_earlier_heredoc_with_an_odd_quote_does_not_stop_the_strip(self):
+        self.assert_clean(["cat <<EOF\ndon't\nEOF\ncat > f <<'EOF'\nrm -f x\nEOF", "bash <<'A'\ndon't\nA\ntee f <<'B'\nrm -f x\nB"])
+
+
 class MissingEvidenceTest(SafetyCase):
     def both_unavailable(self, expect_exit=1):
         tip = self.start_branch("feature", "feat: a")
