@@ -1708,10 +1708,11 @@ def gate_reason(command, cwd, session_id=None):
         return None
     segments = [item for item in items if isinstance(item, list)]
     dispatches = sum(_is_dispatch(segment) for segment in segments)
+    pr_matches = sum(_is_pr_create(segment) for segment in segments)  # help-only ones too
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
-    unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > sum(_is_pr_create(segment) for segment in segments)
+    unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > pr_matches
     if not pr_creates and not dispatches:
         return UNFOLLOWED_REASON if unfollowed else _unchecked_reason(command, segments)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
