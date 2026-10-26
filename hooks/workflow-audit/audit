@@ -54,6 +54,7 @@ PRE_DISPATCH_LOOPS = ("plan-review-3", "plan-review-4.1")  # the loops that a pr
 PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
 MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
+CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
 USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
          " | audit record --pre-dispatch --worktree <path> --map <issue> --llm <file> | audit hook pre-tool-use | audit hook session-start")
 
@@ -1622,12 +1623,219 @@ def _is_dispatch(segment):
         word == "--retry-of" or word.startswith("--retry-of=") for word in _command_words(segment)[3:])
 
 
+REDIRECTION = re.compile(r"(?:\{\w+\}|\d+|&)?[<>]+[|&]?(.*)", re.DOTALL)
+GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"))
+DASHED_GIT = {"git-branch": "branch", "git-push": "push", "git-worktree": "worktree"}  # the dashed programs of git-core
+CLEANUP_INTERPRETERS = frozenset(("python", "python3"))
+# The count patterns, over the normalised text. A redirection token is `2>`, `>f`, `{fd}>f`; a bare one is followed by its target word
+# (never an option word, and never another redirection, so that a run of them cannot backtrack in many ways).
+REDIRECTION_START = r"(?:\{\w+\}|\d+|&)?[<>]"
+REDIRECTION_TEXT = rf"(?>(?:\{{\w+\}}|\d+|&)?[<>]+[|&]?(?:\S+|(?: (?!-|{REDIRECTION_START})\S+)?))"
+# A value option takes a value that is no option and no redirection (bash reads `-C 2> f` as the flag and a redirection). Every token has one
+# parse, and the runs are atomic, so a failing match never tries the others: a long run of option words cannot take exponential time.
+GIT_OPTION_TEXT = rf"(?>(?:-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source) (?!-|{REDIRECTION_START})\S+|-\S+)"
+BETWEEN_GIT_WORDS = rf"(?>(?: (?:{GIT_OPTION_TEXT}|{REDIRECTION_TEXT}))*)"
+BETWEEN_WORDS = rf"(?>(?: {REDIRECTION_TEXT})*)"
+
+
+def _git_pattern(subcommand):
+    """Each `git` word that starts the form (a lookahead, so an option value never hides a `git` inside it): the program, a dashed
+    program or global options and redirections, then the subcommand."""
+    return re.compile(rf"(?<![\w.-])git(?=(?:-{subcommand}|{BETWEEN_GIT_WORDS} {subcommand})(?![\w.-]))")
+
+
+def _significant(words):
+    """The words as (index, word) without the redirections: a redirection word, and the next word of a bare one unless that is an option word."""
+    kept, index = [], 0
+    while index < len(words):
+        match = REDIRECTION.fullmatch(words[index])
+        if not match:
+            kept.append((index, words[index]))
+            index += 1
+            continue
+        index += 1
+        if not match.group(1) and index < len(words) and not words[index].startswith("-"):
+            index += 1
+    return kept
+
+
+def _git_command(segment):
+    """The significant words of a `git` segment from the subcommand on, or None when the segment is no git command. A dashed program
+    (`git-branch`) is its subcommand with no global options."""
+    significant = _significant(_command_words(segment))
+    if not significant:
+        return None
+    program = os.path.basename(significant[0][1])
+    if program in DASHED_GIT:
+        return [(significant[0][0], DASHED_GIT[program])] + significant[1:]
+    if program != "git":
+        return None
+    position = 1
+    while position < len(significant) and significant[position][1].startswith("-"):
+        position += 2 if significant[position][1] in GIT_VALUE_OPTIONS else 1
+    return significant[position:]
+
+
+def _git_subcommand(segment, *names):
+    rest = _git_command(segment)
+    if rest is None or [word for _, word in rest[:len(names)]] != list(names):
+        return None
+    return rest
+
+
+def _orca_worktree_rm(segment):
+    significant = _significant(_command_words(segment))
+    if len(significant) >= 3 and os.path.basename(significant[0][1]) in ORCA_COMMANDS and [word for _, word in significant[1:3]] == ["worktree", "rm"]:
+        return significant
+    return None
+
+
+def _cleanup_arguments(segment):
+    """The significant words after the cleanup word of a `cleanup` segment, or None when the segment is no cleanup command."""
+    significant = _significant(_command_words(segment))
+    if not significant:
+        return None
+    program = os.path.basename(significant[0][1])
+    if program == "cleanup":
+        return significant[1:]
+    if program in CLEANUP_INTERPRETERS:
+        for position, (_, word) in enumerate(significant[1:], 1):
+            if not word.startswith("-"):
+                return significant[position + 1:] if os.path.basename(word) == "cleanup" else None
+    return None
+
+
+def _only_help(rest):
+    return [word for _, word in rest] in (["--help"], ["-h"])
+
+
+def _long_option(word, name):
+    """A long option that git can read as `name`: an abbreviation of 3 characters or more, the dashes included. An ambiguous one matches too."""
+    option = word.split("=", 1)[0]
+    return len(option) >= 3 and name.startswith(option)
+
+
+def _is_force_delete(arguments):
+    delete = force = False
+    for word in arguments:
+        if word == "--":
+            break
+        if word.startswith("--"):
+            delete = delete or _long_option(word, "--delete")
+            force = force or _long_option(word, "--force")
+        elif word.startswith("-") and len(word) > 1:
+            if "D" in word:
+                return True
+            delete = delete or "d" in word
+            force = force or "f" in word
+    return delete and force
+
+
+def _is_push_delete(arguments):
+    options = True
+    for word in arguments:
+        if word == "--":
+            options = False
+        elif word.startswith((":", "+:")):
+            return True
+        elif options and word.startswith("--"):
+            if any(_long_option(word, name) for name in ("--delete", "--prune", "--mirror")):
+                return True
+        elif options and word.startswith("-") and "d" in word:
+            return True
+    return False
+
+
+def _head_of(segment, rest, position):
+    """The command words of the segment from its first word through the word at `position` of `rest`: the head of the form."""
+    return _command_words(segment)[:rest[position][0] + 1]
+
+
+def _git_head(*names):
+    def head(segment):
+        rest = _git_subcommand(segment, *names)
+        return None if rest is None else _head_of(segment, rest, len(names) - 1)
+    return head
+
+
+def _orca_rm_head(segment):
+    significant = _orca_worktree_rm(segment)
+    return None if significant is None else _head_of(segment, significant, 2)
+
+
+def _has_head(head):
+    return lambda segment: head(segment) is not None
+
+
+def _is_flagged_cleanup(segment):
+    arguments = _cleanup_arguments(segment)
+    return arguments is not None and "--skip-ownership" in [word for _, word in arguments]
+
+
+def _denies_orca_rm(segment):
+    significant = _orca_worktree_rm(segment)
+    return significant is not None and not _only_help(significant[3:])
+
+
+def _denies_worktree_remove(segment):
+    rest = _git_subcommand(segment, "worktree", "remove")
+    return rest is not None and not _only_help(rest[2:])
+
+
+def _denies_force_delete(segment):
+    rest = _git_subcommand(segment, "branch")
+    return rest is not None and _is_force_delete([word for _, word in rest[1:]])
+
+
+def _denies_push_delete(segment):
+    rest = _git_subcommand(segment, "push")
+    return rest is not None and _is_push_delete([word for _, word in rest[1:]])
+
+
 # The gated forms: the one place that holds their texts, read by the count rule, the unparsable-command path and the non-JSON hook-input path.
 # raw_text is counted where nothing can be parsed, so it is inside count_text and has no quote character or whitespace run.
-GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason"))
+# pattern and raw_pattern (None: the literal texts) are the regular expressions over the normalised text; head is the head words of a segment of the
+# form (None when the segment is no such form) that the per-segment count credits; denied and deny_reason are the deny check of the new forms,
+# and pointer is the text that their reasons append.
+GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason", "pattern", "raw_pattern", "head", "denied",
+                                     "deny_reason", "pointer"), defaults=(None, None, None, None, "", ""))
 PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed")
 DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed")
-GATED_FORMS = (PR_FORM, DISPATCH_FORM)  # the PR reason wins when a command has an unchecked form of both
+CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
+
+
+def _cleanup_form(segment, count_text, pattern, head, denied, deny_reason):
+    unparsable = f"unchecked command form: the command cannot be parsed; run {count_text} as a plain command{CLEANUP_POINTER}"
+    return GatedForm(segment, count_text, count_text, unparsable, pattern, pattern, head, denied, deny_reason, CLEANUP_POINTER)
+
+
+GIT_BRANCH_PATTERN, GIT_PUSH_PATTERN = _git_pattern("branch"), _git_pattern("push")
+BRANCH_FORM = _cleanup_form(
+    _has_head(_git_head("branch")), "git branch", GIT_BRANCH_PATTERN, _git_head("branch"), _denies_force_delete,
+    f"force delete of a branch is denied: run {CLEANUP_COMMAND} <worktree path> after the merge. For a branch with no worktree, "
+    "the user runs `! git branch -D <branch>`")
+PUSH_FORM = _cleanup_form(
+    _has_head(_git_head("push")), "git push", GIT_PUSH_PATTERN, _git_head("push"), _denies_push_delete,
+    f"deleting a remote ref is denied: run {CLEANUP_COMMAND} <worktree path> after the merge, it deletes the remote branch after its checks")
+WORKTREE_REMOVE_FORM = _cleanup_form(
+    _has_head(_git_head("worktree", "remove")), "worktree remove", re.compile(rf"(?<![\w.])worktree{BETWEEN_WORDS} remove(?![\w.-])"),
+    _git_head("worktree", "remove"), _denies_worktree_remove, f"git worktree remove is denied: run {CLEANUP_COMMAND} <worktree path> instead")
+WORKTREE_RM_FORM = _cleanup_form(
+    _has_head(_orca_rm_head), "worktree rm", re.compile(rf"(?<![\w.])worktree{BETWEEN_WORDS} rm(?![\w.-])"), _orca_rm_head, _denies_orca_rm,
+    f"orca worktree rm is denied: run {CLEANUP_COMMAND} <worktree path> instead")
+SKIP_OWNERSHIP_FORM = _cleanup_form(
+    _is_flagged_cleanup, "--skip-ownership", re.compile(re.escape("--skip-ownership")), None, _is_flagged_cleanup,
+    f"--skip-ownership is denied: only the user runs `! {CLEANUP_COMMAND} --skip-ownership <worktree path>`, for a worktree that the session "
+    "cannot prove it owns")
+# The PR reason wins when a command has an unchecked form of both; the new forms follow.
+GATED_FORMS = (PR_FORM, DISPATCH_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_FORM, WORKTREE_RM_FORM, SKIP_OWNERSHIP_FORM)
+
+
+def _raw_match(text, form):
+    """Whether the gated text of `form` is in a text that cannot be parsed."""
+    if form.raw_pattern is not None:
+        return form.raw_pattern.search(_normalise(text)) is not None
+    return bool(_occurrences(text, form.raw_text))
 
 
 def _head_option(arguments):
@@ -1723,11 +1931,68 @@ def _dispatch_reason(runtime_dir, dir_fd, session_id):
     return None
 
 
+def _substitution_bodies(word):
+    """The (start, end) of each `$(...)` (to its matching parenthesis) and each backtick pair in a word; an unbalanced one is left out."""
+    bodies, index = [], 0
+    while index < len(word):
+        if word.startswith("$(", index):
+            depth, end = 1, index + 2
+            while end < len(word) and depth:
+                depth += (word[end] == "(") - (word[end] == ")")
+                end += 1
+            if depth == 0:
+                bodies.append((index, end))
+                index = end
+                continue
+        elif word[index] == "`" and "`" in word[index + 1:]:
+            end = word.index("`", index + 1) + 1
+            bodies.append((index, end))
+            index = end
+            continue
+        index += 1
+    return bodies
+
+
+def _is_followed(body, segments):
+    """Whether a substitution body splits into segments that are all parsed segments of the command: the gate has checked them already."""
+    try:
+        parts = [item for item in split_command(body) if isinstance(item, list)]
+    except Exception:
+        return False
+    return bool(parts) and all(part in segments for part in parts)
+
+
+def _segment_text(segment, segments):
+    """The normalised text of a segment, without the substitution bodies that the gate has checked as segments."""
+    words = []
+    for word in segment:
+        for start, end in reversed(_substitution_bodies(word)):
+            if _is_followed(word[start + 2 if word[start] == "$" else start + 1:end - 1], segments):
+                word = word[:start] + word[end:]
+        words.append(word)
+    return _normalise(" ".join(words))
+
+
+def _segment_excess(form, segment, segments):
+    """Whether a segment holds more of the form's text than it accounts for: its head, when the pattern sees it, accounts for one."""
+    head = form.head(segment) if form.head else None
+    accounted = 1 if head is not None and form.pattern.search(_normalise(" ".join(head))) else 0
+    return len(form.pattern.findall(_segment_text(segment, segments))) > accounted
+
+
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
     for form in GATED_FORMS:
-        if _occurrences(command, form.count_text) > sum(form.segment(segment) for segment in segments):
-            return UNCHECKED_REASON % form.count_text
+        reason = UNCHECKED_REASON % form.count_text + form.pointer
+        matching = sum(form.segment(segment) for segment in segments)
+        if form.pattern is None:
+            if _occurrences(command, form.count_text) > matching:
+                return reason
+            continue
+        if len(form.pattern.findall(_normalise(command))) > matching:  # whole text
+            return reason
+        if any(_segment_excess(form, segment, segments) for segment in segments):  # per segment
+            return reason
     return None
 
 
@@ -1739,10 +2004,14 @@ def gate_reason(command, cwd, session_id=None):
     except Exception:
         # The command cannot be split into words, so no cd, --head or --retry-of can be read: a match is denied.
         for form in GATED_FORMS:
-            if _occurrences(command, form.raw_text):
+            if _raw_match(command, form):
                 return form.unparsable_reason
         return None
     segments = [item for item in items if isinstance(item, list)]
+    for segment in segments:  # the raw delete forms are denied here, before the early return and the record checks
+        for form in GATED_FORMS:
+            if form.denied and form.denied(segment):
+                return form.deny_reason
     dispatches = sum(_is_dispatch(segment) for segment in segments)
     pr_matches = sum(_is_pr_create(segment) for segment in segments)  # help-only ones too
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
@@ -1806,7 +2075,7 @@ def cmd_pre_tool_use():
         data = None
     if not isinstance(data, dict):
         # Unreadable input: the raw text is matched like an unparsable command.
-        reason = "hook input unreadable: the hook input is not JSON" if any(_occurrences(raw, form.raw_text) for form in GATED_FORMS) else None
+        reason = "hook input unreadable: the hook input is not JSON" if any(_raw_match(raw, form) for form in GATED_FORMS) else None
     else:
         tool_input = data.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
