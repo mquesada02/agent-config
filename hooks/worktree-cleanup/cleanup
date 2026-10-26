@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+# Safe worktree cleanup (spec #156, ticket spec #172). Standard library only.
+#   cleanup [--skip-ownership] <worktree path>
+# Runs checks 1 (Target), 2 (Ownership), 3 (Clean) and 5 (Merged), then the section 8 after-merge actions:
+# remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
+# Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
+import json
+import os
+import subprocess
+import sys
+import time
+
+USAGE = "Usage: cleanup [--skip-ownership] <worktree path>"
+SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
+REMOTE = "origin"
+PROTECTED = ("develop", "main")
+DEFAULT_WAIT_INTERVAL = 1.0
+DEFAULT_WAIT_LIMIT = 60.0
+
+
+class ActionFailed(Exception):
+    pass
+
+
+def run(*command, cwd=None):
+    try:
+        return subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    except OSError as error:
+        return subprocess.CompletedProcess(command, 127, "", str(error))
+
+
+def git(repo, *args):
+    return run("git", "-C", repo, *args)
+
+
+def say(line):
+    print(line, flush=True)
+
+
+def failure_text(result):
+    lines = (result.stderr or result.stdout or f"exit {result.returncode}").strip().splitlines()
+    return lines[-1] if lines else "failed"
+
+
+def read_json(result):
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return None
+    return data if isinstance(data, (dict, list)) else None
+
+
+def seconds(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def parse(argv):
+    skip = False
+    paths = []
+    for arg in argv:
+        if arg == "--skip-ownership":
+            skip = True
+        elif arg.startswith("-"):
+            return None
+        else:
+            paths.append(arg)
+    if len(paths) != 1:
+        return None
+    return skip, paths[0]
+
+
+def worktree_paths(repo):
+    """The paths of `git worktree list --porcelain`, the main checkout first."""
+    lines = git(repo, "worktree", "list", "--porcelain").stdout.splitlines()
+    return [line[len("worktree "):] for line in lines if line.startswith("worktree ")]
+
+
+def check_target(target):
+    """Return (reasons, facts). Facts hold the branch, main checkout and Orca worktree record when the check passes."""
+    top = git(target, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or os.path.realpath(top.stdout.strip()) != target:
+        return ["Target: not the root folder of a git worktree"], None
+    paths = worktree_paths(target)
+    checkout = paths[0] if paths else None
+    if checkout is None or os.path.realpath(checkout) == target:
+        return ["Target: the main checkout, not a linked worktree"], None
+    branch = git(target, "symbolic-ref", "--short", "-q", "HEAD")
+    if branch.returncode != 0 or not branch.stdout.strip():
+        return ["Target: no branch is checked out (detached HEAD)"], None
+    shown = read_json(run("orca", "worktree", "show", "--worktree", f"path:{target}", "--json"))
+    record = shown.get("result", {}).get("worktree") if isinstance(shown, dict) and shown.get("ok") else None
+    if not isinstance(record, dict) or not record.get("id"):
+        return ["Target: Orca does not know this worktree"], None
+    return [], {"branch": branch.stdout.strip(), "checkout": os.path.realpath(checkout), "record": record}
+
+
+def anchor_worktree(handle):
+    if not handle:
+        return None
+    shown = read_json(run("orca", "terminal", "show", "--terminal", handle, "--json"))
+    try:
+        return shown["result"]["terminal"]["worktreeId"] or None
+    except (KeyError, TypeError):
+        return None
+
+
+def check_ownership(record, anchor, handle):
+    provenance = record.get("cliProvenance")
+    caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
+    if anchor and anchor in (record.get("id"), record.get("parentWorktreeId")):
+        return []
+    if handle and caller == handle:
+        return []
+    return ["Ownership: no proof that this session owns the worktree"]
+
+
+def check_clean(target):
+    status = git(target, "status", "--porcelain")
+    if status.returncode != 0:
+        return [f"Clean: git status failed: {failure_text(status)}"]
+    if status.stdout.strip():
+        return ["Clean: the worktree has uncommitted or untracked changes"]
+    return []
+
+
+def check_merged(target, branch):
+    tip = git(target, "rev-parse", "HEAD").stdout.strip()
+    prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "merged",
+                        "--json", "number,headRefOid,baseRefName", cwd=target))
+    if not isinstance(prs, list):
+        return ["Merged: could not read the merged PRs from GitHub"], None, None
+    bases = {pr.get("baseRefName") for pr in prs if isinstance(pr, dict) and pr.get("headRefOid") == tip}
+    if not bases:
+        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head"], None, None
+    if len(bases) > 1:
+        return ["Merged: matching PRs have different base branches, the base cannot be chosen"], None, None
+    repo = read_json(run("gh", "repo", "view", "--json", "defaultBranchRef", cwd=target))
+    try:
+        default = repo["defaultBranchRef"]["name"]
+    except (KeyError, TypeError):
+        default = None
+    if not default:
+        return ["Merged: could not read the default branch from GitHub"], None, None
+    return [], bases.pop(), default
+
+
+def remote_ref_present(target, branch):
+    result = git(target, "ls-remote", REMOTE, f"refs/heads/{branch}")
+    if result.returncode != 0:
+        raise ActionFailed(f"Remote branch: could not read {REMOTE}: {failure_text(result)}")
+    return bool(result.stdout.strip())
+
+
+def delete_remote_branch(target, branch, protected):
+    if protected:
+        return "skipped, protected branch"
+    if not remote_ref_present(target, branch):
+        return "skipped, no remote ref"
+    pushed = git(target, "push", REMOTE, "--delete", branch)
+    if pushed.returncode == 0:
+        return "deleted"
+    if not remote_ref_present(target, branch):
+        return "already gone"
+    raise ActionFailed(f"Remote branch: delete failed: {failure_text(pushed)}")
+
+
+def switch_and_pull(checkout, base):
+    for args in (("switch", base), ("pull", "--ff-only")):
+        result = git(checkout, *args)
+        if result.returncode != 0:
+            raise ActionFailed(f"Switch and pull: git {args[0]} failed: {failure_text(result)}")
+
+
+def remove_worktree(target):
+    result = run("orca", "worktree", "rm", "--worktree", f"path:{target}", "--force", "--json")
+    shown = read_json(result)
+    if result.returncode != 0 or (isinstance(shown, dict) and shown.get("ok") is False):
+        raise ActionFailed(f"Worktree: orca worktree rm failed: {failure_text(result)}")
+
+
+def wait_for_removal(checkout, target, interval, limit):
+    deadline = time.monotonic() + limit
+    while os.path.exists(target) or target in worktree_paths(checkout):
+        if time.monotonic() >= deadline:
+            raise ActionFailed(f"Worktree: still present after {limit:g} s")
+        time.sleep(interval)
+
+
+def delete_local_branch(checkout, branch):
+    if git(checkout, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode != 0:
+        return "already gone"
+    result = git(checkout, "branch", "-D", branch)
+    if result.returncode != 0:
+        raise ActionFailed(f"Local branch: delete failed: {failure_text(result)}")
+    return "deleted"
+
+
+def act(target, facts, base, default, own, interval, limit):
+    branch, checkout = facts["branch"], facts["checkout"]
+    done = []
+
+    def step(name, outcome):
+        done.append(name)
+        say(f"{name}: {outcome}")
+
+    try:
+        step("Remote branch", delete_remote_branch(target, branch, branch in PROTECTED or branch == default))
+        switch_and_pull(checkout, base)
+        step("Switch and pull", f"{base} pulled with --ff-only")
+        if own:
+            say("Terminal closes: the worktree of this session is removed as the last step")
+        remove_worktree(target)
+        if own:
+            say("Worktree: removal requested")
+            return 0
+        wait_for_removal(checkout, target, interval, limit)
+        step("Worktree", "removed")
+        step("Local branch", delete_local_branch(checkout, branch))
+    except ActionFailed as error:
+        say(str(error))
+        say("Done steps: " + (", ".join(done) or "none"))
+        return 2
+    return 0
+
+
+def refuse(reasons):
+    for reason in reasons:
+        say(reason)
+    return 1
+
+
+def main(argv):
+    parsed = parse(argv)
+    interval = seconds("WORKTREE_CLEANUP_WAIT_INTERVAL", DEFAULT_WAIT_INTERVAL)
+    limit = seconds("WORKTREE_CLEANUP_WAIT_LIMIT", DEFAULT_WAIT_LIMIT)
+    if parsed is None or interval is None or limit is None:
+        say(USAGE)
+        return 1
+    skip, path = parsed
+    target = os.path.realpath(path)
+    reasons, facts = check_target(target)
+    if reasons:
+        return refuse(reasons)
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+    anchor = anchor_worktree(handle)
+    record = facts["record"]
+    reasons = [] if skip else check_ownership(record, anchor, handle)
+    if reasons:
+        reasons.append(SKIP_COMMAND.format(path=target))
+    reasons += check_clean(target)
+    merged, base, default = check_merged(target, facts["branch"])
+    reasons += merged
+    if reasons:
+        return refuse(reasons)
+    own = anchor is None or anchor == record["id"]
+    return act(target, facts, base, default, own, interval, limit)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
