@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import sys
+from collections import namedtuple
 
 FOLDER_NAME = "claude-workflow-audit"
 CONTEXT_HANDOFF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "context-handoff")
@@ -185,16 +186,8 @@ def _normalise(text):
     return " ".join(_join_continued(text).replace("'", "").replace('"', "").split())
 
 
-def _count_pr_create(text):
-    return _normalise(text).count("gh pr create")
-
-
-def _count_worker_start(text):
-    return _normalise(text).count("worker-start")
-
-
-def _count_dispatch(text):
-    return _normalise(text).count("orchestration worker-start")
+def _occurrences(text, needle):
+    return _normalise(text).count(needle)
 
 
 # ---- S8: conventional commits without attribution ----
@@ -1629,6 +1622,14 @@ def _is_dispatch(segment):
         word == "--retry-of" or word.startswith("--retry-of=") for word in _command_words(segment)[3:])
 
 
+# The gated forms: the one place that holds their texts, read by the count rule, the unparsable-command path and the non-JSON hook-input path.
+# raw_text is counted where nothing can be parsed, so it is inside count_text and has no quote character or whitespace run.
+GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason"))
+PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed")
+DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed")
+GATED_FORMS = (PR_FORM, DISPATCH_FORM)  # the PR reason wins when a command has an unchecked form of both
+
+
 def _head_option(arguments):
     """The last --head/-H value, or None when absent."""
     head = None
@@ -1724,10 +1725,9 @@ def _dispatch_reason(runtime_dir, dir_fd, session_id):
 
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
-    if _count_pr_create(command) > sum(_is_pr_create(segment) for segment in segments):
-        return UNCHECKED_REASON % "gh pr create"
-    if _count_dispatch(command) > sum(_is_worker_start(segment) for segment in segments):
-        return UNCHECKED_REASON % "orchestration worker-start"
+    for form in GATED_FORMS:
+        if _occurrences(command, form.count_text) > sum(form.segment(segment) for segment in segments):
+            return UNCHECKED_REASON % form.count_text
     return None
 
 
@@ -1738,10 +1738,9 @@ def gate_reason(command, cwd, session_id=None):
         items = split_command(command)
     except Exception:
         # The command cannot be split into words, so no cd, --head or --retry-of can be read: a match is denied.
-        if _count_pr_create(command):
-            return "no branch to check: the command cannot be parsed"
-        if _count_worker_start(command):
-            return "no pre-dispatch record: the command cannot be parsed"
+        for form in GATED_FORMS:
+            if _occurrences(command, form.raw_text):
+                return form.unparsable_reason
         return None
     segments = [item for item in items if isinstance(item, list)]
     dispatches = sum(_is_dispatch(segment) for segment in segments)
@@ -1749,7 +1748,7 @@ def gate_reason(command, cwd, session_id=None):
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
-    unfollowed = ("$(" in command or "`" in command) and _count_pr_create(command) > pr_matches
+    unfollowed = ("$(" in command or "`" in command) and _occurrences(command, PR_FORM.count_text) > pr_matches
     if not pr_creates and not dispatches:
         return UNFOLLOWED_REASON if unfollowed else _unchecked_reason(command, segments)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
@@ -1807,7 +1806,7 @@ def cmd_pre_tool_use():
         data = None
     if not isinstance(data, dict):
         # Unreadable input: the raw text is matched like an unparsable command.
-        reason = "hook input unreadable: the hook input is not JSON" if (_count_pr_create(raw) or _count_worker_start(raw)) else None
+        reason = "hook input unreadable: the hook input is not JSON" if any(_occurrences(raw, form.raw_text) for form in GATED_FORMS) else None
     else:
         tool_input = data.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
