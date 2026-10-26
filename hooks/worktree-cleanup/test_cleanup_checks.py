@@ -248,7 +248,7 @@ class PushedTest(CleanupCase):
         self.assert_pushed_refusal(result)
         self.assertIn("no merged PR", self.starts(result, "Pushed")[0])
 
-    def test_the_first_matching_pull_ref_at_the_tip_is_enough(self):
+    def test_a_later_matching_pull_ref_at_the_tip_rescues_an_earlier_absent_one(self):
         self.stub_gh_merged(prs=[{"number": 8, "headRefOid": self.tip, "baseRefName": "main"},
                                  {"number": 7, "headRefOid": self.tip, "baseRefName": "main"}])
         self.set_pull_ref(8, self.tip)

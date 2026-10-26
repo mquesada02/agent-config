@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Safe worktree cleanup (spec #156, ticket spec #172). Standard library only.
 #   cleanup [--skip-ownership] <worktree path>
-# Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 5 (Merged), 6 (Pushed) and 7 (Main checkout), then the section 8 after-merge actions:
-# remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
+# Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 5 (Merged), 6 (Pushed) and 7 (Main checkout),
+# then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import json
 import os
@@ -182,7 +182,10 @@ def check_pushed(target, branch, tip, numbers):
         pull, error = remote_ref_sha(target, f"refs/pull/{number}/head")
         if pull == tip:
             return [], True
-        problem = f"could not read the pull ref of PR {number}: {error}" if error else f"the pull ref of PR {number} is {(pull or 'absent')[:12]}, not the local tip {tip[:12]}"
+        if error:
+            problem = f"could not read the pull ref of PR {number}: {error}"
+        else:
+            problem = f"the pull ref of PR {number} is {(pull or 'absent')[:12]}, not the local tip {tip[:12]}"
     return [f"Pushed: {branch} is absent on {REMOTE} and {problem}"], True
 
 
