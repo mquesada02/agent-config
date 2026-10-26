@@ -301,9 +301,10 @@ class S9SubstitutionTest(S9Case):
     def test_a_double_quoted_substitution_body_is_not_read(self):
         self.assert_clean(["git commit -m \"$(cat <<'EOF'\nfeat: x\ndo not rm -rf anything\nEOF\n)\"", "echo \"$(rm -rf x)\"", "echo '$(rm -rf x)'"])
 
-    def test_an_unclosed_backtick_is_clean_but_an_unclosed_dollar_paren_is_unavailable(self):
+    def test_an_unclosed_backtick_is_clean(self):
         self.assert_clean(["echo `rm -rf x"])
-        self.setUp()
+
+    def test_an_unclosed_dollar_paren_is_unavailable(self):
         self.register_session("s1", [self.edit(), bash_row("echo $(rm -rf x", "b1", 2)])
         self.assert_item(self.items()["S9"], "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
 
