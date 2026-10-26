@@ -902,30 +902,33 @@ class VariableRuleTest(GateTestCase):
 
 
 class HeredocBodyTest(GateTestCase):
-    def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
+    # A pull request command that the audited branch denies, so a test passes only when the strip hides it.
+    DENIED = "gh pr create --head nobranch"
+
+    def setUp(self):
+        super().setUp()
         self.audited_branch()
-        for command in ("cat > f <<'EOF'\ndon't\ngh pr create --head nobranch\nEOF", 'tee f <<"EOF"\ngh pr create --head nobranch\nEOF',
-                        "cat <<\\EOF\ngh pr create --head nobranch\nEOF", "FOO=1 cat<<-'EOF'\n\tgh pr create --head nobranch\n\tEOF",
+
+    def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
+        for command in (f"cat > f <<'EOF'\ndon't\n{self.DENIED}\nEOF", f'tee f <<"EOF"\n{self.DENIED}\nEOF',
+                        f"cat <<\\EOF\n{self.DENIED}\nEOF", f"FOO=1 cat<<-'EOF'\n\t{self.DENIED}\n\tEOF",
                         "cat > f <<'EOF'\ndon't\norca orchestration worker-start --task t\nEOF"):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
     def test_the_commands_outside_the_body_are_still_gated(self):
-        self.audited_branch()
-        self.assert_allowed(self.gate("cat <<'EOF'\ngh pr create --head nobranch\nEOF\n" + PR))
-        self.assertIsNotNone(self.denial(self.gate("cat <<'EOF'\ngh pr create\nEOF\ngh pr create --head nobranch")))
+        self.assert_allowed(self.gate(f"cat <<'EOF'\n{self.DENIED}\nEOF\n" + PR))
+        self.assertIsNotNone(self.denial(self.gate(f"cat <<'EOF'\ngh pr create\nEOF\n{self.DENIED}")))
 
     def test_a_fake_heredoc_or_a_continued_line_hides_nothing(self):
-        self.audited_branch()
-        for command in ("echo \"a\ncat <<'EOF'\n\" ; orca orchestration worker-start --task t\nEOF", "echo \"a\ncat <<'EOF'\n\" ; gh pr create --head nobranch\nEOF",
-                        "bash \\\ncat <<'EOF'\ngh pr create --head nobranch\nEOF"):
+        for command in ("echo \"a\ncat <<'EOF'\n\" ; orca orchestration worker-start --task t\nEOF", f"echo \"a\ncat <<'EOF'\n\" ; {self.DENIED}\nEOF",
+                        f"bash \\\ncat <<'EOF'\n{self.DENIED}\nEOF"):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
 
     def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_gated(self):
-        self.audited_branch()
-        for command in ("bash <<'EOF'\ngh pr create --head nobranch\nEOF", "sh <<'EOF'\ngh pr create --head nobranch\nEOF", "tee >(sh) <<'EOF'\ngh pr create --head nobranch\nEOF",
-                        "cat <<'EOF' | bash\ngh pr create --head nobranch\nEOF", "cat <<EOF\ngh pr create --head nobranch\nEOF"):
+        for command in (f"bash <<'EOF'\n{self.DENIED}\nEOF", f"sh <<'EOF'\n{self.DENIED}\nEOF", f"tee >(sh) <<'EOF'\n{self.DENIED}\nEOF",
+                        f"cat <<'EOF' | bash\n{self.DENIED}\nEOF", f"cat <<EOF\n{self.DENIED}\nEOF"):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
 

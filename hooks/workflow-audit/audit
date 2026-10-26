@@ -2029,7 +2029,8 @@ def strip_data_heredocs(command):
     """The command without the body lines of each quoted heredoc that a data command reads: bash does not run that body.
     The operator and end lines stay. Every other body stays. From the first line that this scan cannot follow with the rules of bash,
     nothing more is removed: a continued line, a line with two heredocs (or a here-string next to one), an end word it cannot read,
-    a quote left open, an ANSI-C quote, or a body with no end line. A script that a data command writes and bash then runs is not seen."""
+    a quote left open, an ANSI-C quote, or a body with no end line. A script that a data command writes and bash then runs is not seen.
+    A caller strips before it joins continued lines: bash does not join the lines of a quoted body, and a continued line stops this scan."""
     lines = command.split("\n")
     kept, parsed, index = [], [], 0  # `parsed` holds the lines that the shell parses: the body of a heredoc is not one
     while index < len(lines):
@@ -2045,7 +2046,8 @@ def strip_data_heredocs(command):
         operator = HEREDOC_OPERATOR.search(line)
         if operator is None:
             break  # a heredoc whose end word this scan cannot read: its body may hold lines that look like a heredoc
-        context = "\n".join(parsed[:-1] + [line[:operator.start()]])
+        text = "\n".join(parsed)
+        context = text[:len(text) - len(line) + operator.start()]
         try:
             items = split_command(context)
         except ValueError:
@@ -2053,19 +2055,19 @@ def strip_data_heredocs(command):
         segment = items[-1] if items and isinstance(items[-1], list) else []
         if any(word.startswith("#") for word in segment):
             continue  # the operator is in a comment
-        text = "\n".join(parsed)
+        if "$'" in text:
+            break  # shlex and bash disagree on where an ANSI-C quote ends (`$'a\\''`), so the quote state is unknown; this stops the strip of every later heredoc
         try:
             split_command(text)
         except ValueError:
             break  # the rest of the line leaves a quote open, so the body starts on a later line than this scan assumes
-        if "$'" in text:
-            break  # shlex and bash disagree on where an ANSI-C quote ends (`$'a\\''`), so the quote state is unknown; this stops every later strip
         word = operator.group("word")
         end_line = word.strip("'\"\\")
         end = next((n for n in range(index, len(lines)) if (lines[n].lstrip("\t") if operator.group("dash") else lines[n]) == end_line), None)
         if end is None:
             break
-        if not (word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], segment)):
+        strip = word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], segment)
+        if not strip:
             kept.extend(lines[index:end])  # a body that stays
         index = end
     return "\n".join(kept + lines[index:])
