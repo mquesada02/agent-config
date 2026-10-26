@@ -1182,7 +1182,7 @@ def _segment_problems(words, depth):
 
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
-    command = command.replace("\\\n", "")  # bash joins a line that ends in a backslash with the next one; the splitter would end the segment
+    command = _join_as_bash(command)  # the gates' join: bash joins a line that ends in an odd backslash run, except in single quotes or a comment
     try:
         items = split_command(command)
     except ValueError:
