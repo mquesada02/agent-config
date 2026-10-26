@@ -23,12 +23,15 @@ def _gated_forms():
         sys.dont_write_bytecode = previous
 
 
-class GatedFormsTest(GateTestCase):
+GATED_FORMS = _gated_forms()
+
+
+class ListTest(unittest.TestCase):
     def test_the_list_holds_the_pr_gate_and_the_dispatch_gate(self):
-        self.assertEqual([form.count_text for form in _gated_forms()], ["gh pr create", "orchestration worker-start"])
+        self.assertEqual([form.count_text for form in GATED_FORMS], ["gh pr create", "orchestration worker-start"])
 
     def test_every_raw_text_is_inside_its_count_text_and_survives_the_normalisation(self):
-        for form in _gated_forms():
+        for form in GATED_FORMS:
             with self.subTest(form=form.count_text):
                 self.assertIn(form.raw_text, form.count_text)
                 for text in (form.count_text, form.raw_text):
@@ -36,18 +39,20 @@ class GatedFormsTest(GateTestCase):
                     self.assertNotIn('"', text)
                     self.assertNotIn("'", text)
 
+
+class GatedFormsTest(GateTestCase):
     def test_every_listed_form_is_denied_as_a_wrapped_form(self):
-        for form in _gated_forms():
+        for form in GATED_FORMS:
             with self.subTest(form=form.count_text):
                 self.assert_denied(self.gate(f'bash -c "{form.count_text}"'), f"unchecked command form: run {form.count_text} as a plain command")
 
     def test_every_listed_form_is_denied_as_an_unparsable_command(self):
-        for form in _gated_forms():
+        for form in GATED_FORMS:
             with self.subTest(form=form.count_text):
                 self.assert_denied(self.gate(f'echo "{form.count_text}'), form.unparsable_reason)
 
     def test_every_listed_form_is_denied_when_the_hook_input_is_not_json(self):
-        for form in _gated_forms():
+        for form in GATED_FORMS:
             with self.subTest(form=form.count_text):
                 self.assert_denied(self.audit("hook", "pre-tool-use", stdin=f"not json: {form.count_text}"),
                                    "hook input unreadable: the hook input is not JSON")

@@ -1622,10 +1622,8 @@ def _is_dispatch(segment):
         word == "--retry-of" or word.startswith("--retry-of=") for word in _command_words(segment)[3:])
 
 
-# The gated forms: the one place that holds their texts. The count rule, the unparsable-command path and the non-JSON hook-input path read it.
-#   segment: matches a parsed segment of the form (help-only ones too); count_text: counted by the count rule, and named in its reason;
-#   raw_text: counted in a command that cannot be parsed and in hook input that is not JSON, so it is inside count_text and has no
-#   quote character or whitespace run; unparsable_reason: the deny reason of an unparsable command.
+# The gated forms: the one place that holds their texts, read by the count rule, the unparsable-command path and the non-JSON hook-input path.
+# raw_text is counted where nothing can be parsed, so it is inside count_text and has no quote character or whitespace run.
 GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason"))
 PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed")
 DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed")
