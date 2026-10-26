@@ -121,14 +121,14 @@ class CleanupCase(unittest.TestCase):
                                     "delay": delay, "delete_branch": delete_branch}
         self.stub("orca worktree rm", json.dumps({"ok": True}))
 
-    def run_cleanup(self, *args, handle=HANDLE, wait_interval="0.05", wait_limit="1"):
+    def run_cleanup(self, *args, handle=HANDLE, wait_interval="0.05", wait_limit="1", cwd=None):
         env = dict(self.env, PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_DIR=self.stub_dir,
                    WORKTREE_CLEANUP_WAIT_INTERVAL=wait_interval, WORKTREE_CLEANUP_WAIT_LIMIT=wait_limit)
         if handle is None:
             env.pop("ORCA_TERMINAL_HANDLE", None)
         else:
             env["ORCA_TERMINAL_HANDLE"] = handle
-        return subprocess.run([CLEANUP, *args], capture_output=True, text=True, env=env)
+        return subprocess.run([CLEANUP, *args], capture_output=True, text=True, env=env, cwd=cwd)
 
     def calls(self):
         path = os.path.join(self.stub_dir, "calls.log")
@@ -136,6 +136,9 @@ class CleanupCase(unittest.TestCase):
             return []
         with open(path) as f:
             return f.read().splitlines()
+
+    def rm_calls(self):
+        return [c for c in self.calls() if c.startswith("orca worktree rm")]
 
     def lines(self, result):
         return result.stdout.splitlines()
@@ -148,4 +151,4 @@ class CleanupCase(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.wt))
         self.assertTrue(self.local_has(self.BRANCH))
         self.assertEqual(self.git_out(self.main, "branch", "--show-current"), "main")
-        self.assertFalse([c for c in self.calls() if c.startswith("orca worktree rm")])
+        self.assertEqual(self.rm_calls(), [])

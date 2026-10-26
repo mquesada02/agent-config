@@ -38,7 +38,8 @@ def say(line):
 
 
 def failure_text(result):
-    return (result.stderr or result.stdout or f"exit {result.returncode}").strip().splitlines()[-1:] or ["failed"]
+    lines = (result.stderr or result.stdout or f"exit {result.returncode}").strip().splitlines()
+    return lines[-1] if lines else "failed"
 
 
 def read_json(result):
@@ -77,17 +78,10 @@ def parse(argv):
     return skip, paths[0]
 
 
-def main_checkout(target):
-    result = git(target, "worktree", "list", "--porcelain")
-    for line in result.stdout.splitlines():
-        if line.startswith("worktree "):
-            return line[len("worktree "):]
-    return None
-
-
-def worktree_listed(main, target):
-    listing = git(main, "worktree", "list", "--porcelain").stdout.splitlines()
-    return f"worktree {target}" in listing
+def worktree_paths(repo):
+    """The paths of `git worktree list --porcelain`, the main checkout first."""
+    lines = git(repo, "worktree", "list", "--porcelain").stdout.splitlines()
+    return [line[len("worktree "):] for line in lines if line.startswith("worktree ")]
 
 
 def check_target(target):
@@ -95,8 +89,9 @@ def check_target(target):
     top = git(target, "rev-parse", "--show-toplevel")
     if top.returncode != 0 or os.path.realpath(top.stdout.strip()) != target:
         return ["Target: not the root folder of a git worktree"], None
-    main = main_checkout(target)
-    if main is None or os.path.realpath(main) == target:
+    paths = worktree_paths(target)
+    checkout = paths[0] if paths else None
+    if checkout is None or os.path.realpath(checkout) == target:
         return ["Target: the main checkout, not a linked worktree"], None
     branch = git(target, "symbolic-ref", "--short", "-q", "HEAD")
     if branch.returncode != 0 or not branch.stdout.strip():
@@ -105,11 +100,10 @@ def check_target(target):
     record = shown.get("result", {}).get("worktree") if isinstance(shown, dict) and shown.get("ok") else None
     if not isinstance(record, dict) or not record.get("id"):
         return ["Target: Orca does not know this worktree"], None
-    return [], {"branch": branch.stdout.strip(), "main": os.path.realpath(main), "record": record}
+    return [], {"branch": branch.stdout.strip(), "checkout": os.path.realpath(checkout), "record": record}
 
 
-def anchor_worktree():
-    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+def anchor_worktree(handle):
     if not handle:
         return None
     shown = read_json(run("orca", "terminal", "show", "--terminal", handle, "--json"))
@@ -119,8 +113,7 @@ def anchor_worktree():
         return None
 
 
-def check_ownership(record, anchor):
-    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+def check_ownership(record, anchor, handle):
     provenance = record.get("cliProvenance")
     caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
     if anchor and anchor in (record.get("id"), record.get("parentWorktreeId")):
@@ -133,7 +126,7 @@ def check_ownership(record, anchor):
 def check_clean(target):
     status = git(target, "status", "--porcelain")
     if status.returncode != 0:
-        return [f"Clean: git status failed: {failure_text(status)[0]}"]
+        return [f"Clean: git status failed: {failure_text(status)}"]
     if status.stdout.strip():
         return ["Clean: the worktree has uncommitted or untracked changes"]
     return []
@@ -163,7 +156,7 @@ def check_merged(target, branch):
 def remote_ref_present(target, branch):
     result = git(target, "ls-remote", REMOTE, f"refs/heads/{branch}")
     if result.returncode != 0:
-        raise ActionFailed(f"Remote branch: could not read {REMOTE}: {failure_text(result)[0]}")
+        raise ActionFailed(f"Remote branch: could not read {REMOTE}: {failure_text(result)}")
     return bool(result.stdout.strip())
 
 
@@ -177,42 +170,42 @@ def delete_remote_branch(target, branch, protected):
         return "deleted"
     if not remote_ref_present(target, branch):
         return "already gone"
-    raise ActionFailed(f"Remote branch: delete failed: {failure_text(pushed)[0]}")
+    raise ActionFailed(f"Remote branch: delete failed: {failure_text(pushed)}")
 
 
-def switch_and_pull(main, base):
+def switch_and_pull(checkout, base):
     for args in (("switch", base), ("pull", "--ff-only")):
-        result = git(main, *args)
+        result = git(checkout, *args)
         if result.returncode != 0:
-            raise ActionFailed(f"Switch and pull: git {args[0]} failed: {failure_text(result)[0]}")
+            raise ActionFailed(f"Switch and pull: git {args[0]} failed: {failure_text(result)}")
 
 
 def remove_worktree(target):
     result = run("orca", "worktree", "rm", "--worktree", f"path:{target}", "--force", "--json")
     shown = read_json(result)
     if result.returncode != 0 or (isinstance(shown, dict) and shown.get("ok") is False):
-        raise ActionFailed(f"Worktree: orca worktree rm failed: {failure_text(result)[0]}")
+        raise ActionFailed(f"Worktree: orca worktree rm failed: {failure_text(result)}")
 
 
-def wait_for_removal(main, target, interval, limit):
+def wait_for_removal(checkout, target, interval, limit):
     deadline = time.monotonic() + limit
-    while os.path.exists(target) or worktree_listed(main, target):
+    while os.path.exists(target) or target in worktree_paths(checkout):
         if time.monotonic() >= deadline:
             raise ActionFailed(f"Worktree: still present after {limit:g} s")
         time.sleep(interval)
 
 
-def delete_local_branch(main, branch):
-    if git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode != 0:
+def delete_local_branch(checkout, branch):
+    if git(checkout, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode != 0:
         return "already gone"
-    result = git(main, "branch", "-D", branch)
+    result = git(checkout, "branch", "-D", branch)
     if result.returncode != 0:
-        raise ActionFailed(f"Local branch: delete failed: {failure_text(result)[0]}")
+        raise ActionFailed(f"Local branch: delete failed: {failure_text(result)}")
     return "deleted"
 
 
 def act(target, facts, base, default, own, interval, limit):
-    branch, main = facts["branch"], facts["main"]
+    branch, checkout = facts["branch"], facts["checkout"]
     done = []
 
     def step(name, outcome):
@@ -221,22 +214,28 @@ def act(target, facts, base, default, own, interval, limit):
 
     try:
         step("Remote branch", delete_remote_branch(target, branch, branch in PROTECTED or branch == default))
-        switch_and_pull(main, base)
+        switch_and_pull(checkout, base)
         step("Switch and pull", f"{base} pulled with --ff-only")
         if own:
             say("Terminal closes: the worktree of this session is removed as the last step")
-            remove_worktree(target)
+        remove_worktree(target)
+        if own:
             say("Worktree: removal requested")
             return 0
-        remove_worktree(target)
-        wait_for_removal(main, target, interval, limit)
+        wait_for_removal(checkout, target, interval, limit)
         step("Worktree", "removed")
-        step("Local branch", delete_local_branch(main, branch))
+        step("Local branch", delete_local_branch(checkout, branch))
     except ActionFailed as error:
         say(str(error))
         say("Done steps: " + (", ".join(done) or "none"))
         return 2
     return 0
+
+
+def refuse(reasons):
+    for reason in reasons:
+        say(reason)
+    return 1
 
 
 def main(argv):
@@ -250,21 +249,18 @@ def main(argv):
     target = os.path.realpath(path)
     reasons, facts = check_target(target)
     if reasons:
-        for reason in reasons:
-            say(reason)
-        return 1
-    anchor = anchor_worktree()
+        return refuse(reasons)
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+    anchor = anchor_worktree(handle)
     record = facts["record"]
-    reasons = [] if skip else check_ownership(record, anchor)
+    reasons = [] if skip else check_ownership(record, anchor, handle)
     if reasons:
         reasons.append(SKIP_COMMAND.format(path=target))
     reasons += check_clean(target)
     merged, base, default = check_merged(target, facts["branch"])
     reasons += merged
     if reasons:
-        for reason in reasons:
-            say(reason)
-        return 1
+        return refuse(reasons)
     own = anchor is None or anchor == record["id"]
     return act(target, facts, base, default, own, interval, limit)
 

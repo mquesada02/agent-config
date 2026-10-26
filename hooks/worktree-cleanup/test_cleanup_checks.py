@@ -1,9 +1,8 @@
 import os
-import subprocess
 import tempfile
 import unittest
 
-from cleanup_support import CLEANUP, CleanupCase, HANDLE, git
+from cleanup_support import CleanupCase, HANDLE, git
 
 
 class UsageTest(CleanupCase):
@@ -114,9 +113,7 @@ class OwnershipTest(CleanupCase):
 
     def test_the_cwd_is_never_a_proof(self):
         self.stub_show(parent="other-id")
-        env = dict(self.env, PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_DIR=self.stub_dir,
-                   ORCA_TERMINAL_HANDLE=HANDLE)
-        result = subprocess.run([CLEANUP, self.wt], cwd=self.wt, capture_output=True, text=True, env=env)
+        result = self.run_cleanup(self.wt, cwd=self.wt)
         self.assertEqual(result.returncode, 1)
         self.assertTrue(self.starts(result, "Ownership"))
 

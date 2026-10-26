@@ -21,7 +21,7 @@ class OtherTargetTest(CleanupCase):
 
     def test_the_rm_call_forces_and_names_the_path(self):
         self.run_cleanup(self.wt)
-        rm = [c for c in self.calls() if c.startswith("orca worktree rm")]
+        rm = self.rm_calls()
         self.assertEqual(len(rm), 1)
         self.assertIn(f"--worktree path:{self.wt}", rm[0])
         self.assertIn("--force", rm[0])
@@ -104,7 +104,7 @@ class RemoteBranchTest(CleanupCase):
         self.assertIn("skipped", self.starts(result, "Remote branch")[0])
         self.assertTrue(self.remote_has(self.BRANCH))
         self.assertFalse(os.path.exists(self.wt))
-        self.assertEqual(len([c for c in self.calls() if c.startswith("orca worktree rm")]), 1)
+        self.assertEqual(len(self.rm_calls()), 1)
 
     def test_an_absent_remote_ref_skips_the_delete(self):
         git("push", "-q", "origin", "--delete", self.BRANCH, cwd=self.main, env=self.env)
@@ -126,7 +126,7 @@ class RemoteBranchTest(CleanupCase):
         self.assertTrue(self.starts(result, "Remote branch"))
         self.assertIn("none", self.starts(result, "Done steps")[0])
         self.assertTrue(os.path.isdir(self.wt))
-        self.assertFalse([c for c in self.calls() if c.startswith("orca worktree rm")])
+        self.assertEqual(self.rm_calls(), [])
 
     def test_a_failed_delete_with_the_ref_gone_afterwards_counts_as_done(self):
         self.write_hook(f"git update-ref -d refs/heads/{self.BRANCH}\nexit 1\n")
@@ -148,7 +148,7 @@ class SwitchAndPullTest(CleanupCase):
         self.assertTrue(self.starts(result, "Switch and pull"))
         self.assertIn("Remote branch", self.starts(result, "Done steps")[0])
         self.assertTrue(os.path.isdir(self.wt))
-        self.assertFalse([c for c in self.calls() if c.startswith("orca worktree rm")])
+        self.assertEqual(self.rm_calls(), [])
 
     def test_the_main_checkout_ends_on_the_base_branch_and_is_pulled(self):
         git("checkout", "-q", "-b", "elsewhere", cwd=self.main, env=self.env)
