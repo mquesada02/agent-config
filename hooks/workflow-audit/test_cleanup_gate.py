@@ -65,9 +65,10 @@ class DeniedFormsTest(GateTestCase):
                 self.assertIn("only the user", reason)
 
     def test_a_denied_form_in_a_later_segment_is_denied(self):
-        for command in ("echo a && git branch -D x", "cd /x; git push origin --delete y", "echo a | orca worktree rm x"):
+        for command, phrase in (("echo a && git branch -D x", "force delete of a branch"), ("cd /x; git push origin --delete y", "deleting a remote ref"),
+                                ("echo a | orca worktree rm x", "orca worktree rm")):
             with self.subTest(command=command):
-                self.assert_pointer(command, command_phrase(command))
+                self.assert_pointer(command, phrase)
 
     def test_the_first_denied_segment_decides_the_reason(self):
         self.assert_pointer("git push origin --delete x; git branch -D y", "deleting a remote ref")
@@ -75,13 +76,6 @@ class DeniedFormsTest(GateTestCase):
 
     def test_a_denied_form_beats_a_pr_create_in_the_same_command(self):
         self.assert_pointer("gh pr create --title t && git branch -D x", "force delete of a branch")
-
-
-def command_phrase(command):
-    for needle, phrase in (("git branch", "force delete of a branch"), ("git push", "deleting a remote ref"), ("worktree rm", "orca worktree rm")):
-        if needle in command:
-            return phrase
-    raise AssertionError(command)
 
 
 class AllowedFormsTest(GateTestCase):

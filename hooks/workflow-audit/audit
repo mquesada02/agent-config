@@ -1633,7 +1633,7 @@ REDIRECTION_START = r"(?:\{\w+\}|\d+|&)?[<>]"
 REDIRECTION_TEXT = rf"(?>(?:\{{\w+\}}|\d+|&)?[<>]+[|&]?(?:\S+|(?: (?!-|{REDIRECTION_START})\S+)?))"
 # A value option takes a value that is no option and no redirection (bash reads `-C 2> f` as the flag and a redirection). Every token has one
 # parse, and the runs are atomic, so a failing match never tries the others: a long run of option words cannot take exponential time.
-GIT_OPTION_TEXT = rf"(?>(?:-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source) (?!-|{REDIRECTION_START})\S+|-\S+)"
+GIT_OPTION_TEXT = rf"(?>(?:{'|'.join(map(re.escape, sorted(GIT_VALUE_OPTIONS)))}) (?!-|{REDIRECTION_START})\S+|-\S+)"
 BETWEEN_GIT_WORDS = rf"(?>(?: (?:{GIT_OPTION_TEXT}|{REDIRECTION_TEXT}))*)"
 BETWEEN_WORDS = rf"(?>(?: {REDIRECTION_TEXT})*)"
 
@@ -1676,16 +1676,20 @@ def _git_command(segment):
     return significant[position:]
 
 
+def _words(pairs):
+    return [word for _, word in pairs]
+
+
 def _git_subcommand(segment, *names):
     rest = _git_command(segment)
-    if rest is None or [word for _, word in rest[:len(names)]] != list(names):
+    if rest is None or _words(rest[:len(names)]) != list(names):
         return None
     return rest
 
 
 def _orca_worktree_rm(segment):
     significant = _significant(_command_words(segment))
-    if len(significant) >= 3 and os.path.basename(significant[0][1]) in ORCA_COMMANDS and [word for _, word in significant[1:3]] == ["worktree", "rm"]:
+    if len(significant) >= 3 and os.path.basename(significant[0][1]) in ORCA_COMMANDS and _words(significant[1:3]) == ["worktree", "rm"]:
         return significant
     return None
 
@@ -1706,7 +1710,7 @@ def _cleanup_arguments(segment):
 
 
 def _only_help(rest):
-    return [word for _, word in rest] in (["--help"], ["-h"])
+    return _words(rest) in (["--help"], ["-h"])
 
 
 def _long_option(word, name):
@@ -1746,7 +1750,7 @@ def _is_push_delete(arguments):
     return False
 
 
-def _head_of(segment, rest, position):
+def _head_words(segment, rest, position):
     """The command words of the segment from its first word through the word at `position` of `rest`: the head of the form."""
     return _command_words(segment)[:rest[position][0] + 1]
 
@@ -1754,13 +1758,13 @@ def _head_of(segment, rest, position):
 def _git_head(*names):
     def head(segment):
         rest = _git_subcommand(segment, *names)
-        return None if rest is None else _head_of(segment, rest, len(names) - 1)
+        return None if rest is None else _head_words(segment, rest, len(names) - 1)
     return head
 
 
 def _orca_rm_head(segment):
     significant = _orca_worktree_rm(segment)
-    return None if significant is None else _head_of(segment, significant, 2)
+    return None if significant is None else _head_words(segment, significant, 2)
 
 
 def _has_head(head):
@@ -1769,7 +1773,7 @@ def _has_head(head):
 
 def _is_flagged_cleanup(segment):
     arguments = _cleanup_arguments(segment)
-    return arguments is not None and "--skip-ownership" in [word for _, word in arguments]
+    return arguments is not None and "--skip-ownership" in _words(arguments)
 
 
 def _denies_orca_rm(segment):
@@ -1784,21 +1788,21 @@ def _denies_worktree_remove(segment):
 
 def _denies_force_delete(segment):
     rest = _git_subcommand(segment, "branch")
-    return rest is not None and _is_force_delete([word for _, word in rest[1:]])
+    return rest is not None and _is_force_delete(_words(rest[1:]))
 
 
 def _denies_push_delete(segment):
     rest = _git_subcommand(segment, "push")
-    return rest is not None and _is_push_delete([word for _, word in rest[1:]])
+    return rest is not None and _is_push_delete(_words(rest[1:]))
 
 
 # The gated forms: the one place that holds their texts, read by the count rule, the unparsable-command path and the non-JSON hook-input path.
 # raw_text is counted where nothing can be parsed, so it is inside count_text and has no quote character or whitespace run.
-# pattern and raw_pattern (None: the literal texts) are the regular expressions over the normalised text; head is the head words of a segment of the
+# pattern (None: the literal texts) is the regular expression over the normalised text; head is the head words of a segment of the
 # form (None when the segment is no such form) that the per-segment count credits; denied and deny_reason are the deny check of the new forms,
 # and pointer is the text that their reasons append.
-GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason", "pattern", "raw_pattern", "head", "denied",
-                                     "deny_reason", "pointer"), defaults=(None, None, None, None, "", ""))
+GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason", "pattern", "head", "denied",
+                                     "deny_reason", "pointer"), defaults=(None, None, None, "", ""))
 PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed")
 DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed")
 CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
@@ -1806,7 +1810,7 @@ CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
 
 def _cleanup_form(segment, count_text, pattern, head, denied, deny_reason):
     unparsable = f"unchecked command form: the command cannot be parsed; run {count_text} as a plain command{CLEANUP_POINTER}"
-    return GatedForm(segment, count_text, count_text, unparsable, pattern, pattern, head, denied, deny_reason, CLEANUP_POINTER)
+    return GatedForm(segment, count_text, count_text, unparsable, pattern, head, denied, deny_reason, CLEANUP_POINTER)
 
 
 GIT_BRANCH_PATTERN, GIT_PUSH_PATTERN = _git_pattern("branch"), _git_pattern("push")
@@ -1833,8 +1837,8 @@ GATED_FORMS = (PR_FORM, DISPATCH_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_F
 
 def _raw_match(text, form):
     """Whether the gated text of `form` is in a text that cannot be parsed."""
-    if form.raw_pattern is not None:
-        return form.raw_pattern.search(_normalise(text)) is not None
+    if form.pattern is not None:
+        return form.pattern.search(_normalise(text)) is not None
     return bool(_occurrences(text, form.raw_text))
 
 
@@ -1953,7 +1957,7 @@ def _substitution_bodies(word):
     return bodies
 
 
-def _is_followed(body, segments):
+def _body_is_checked(body, segments):
     """Whether a substitution body splits into segments that are all parsed segments of the command: the gate has checked them already."""
     try:
         parts = [item for item in split_command(body) if isinstance(item, list)]
@@ -1967,13 +1971,14 @@ def _segment_text(segment, segments):
     words = []
     for word in segment:
         for start, end in reversed(_substitution_bodies(word)):
-            if _is_followed(word[start + 2 if word[start] == "$" else start + 1:end - 1], segments):
+            opening = 2 if word[start] == "$" else 1  # `$(` or a backtick
+            if _body_is_checked(word[start + opening:end - 1], segments):
                 word = word[:start] + word[end:]
         words.append(word)
     return _normalise(" ".join(words))
 
 
-def _segment_excess(form, segment, segments):
+def _has_unaccounted_text(form, segment, segments):
     """Whether a segment holds more of the form's text than it accounts for: its head, when the pattern sees it, accounts for one."""
     head = form.head(segment) if form.head else None
     accounted = 1 if head is not None and form.pattern.search(_normalise(" ".join(head))) else 0
@@ -1982,6 +1987,7 @@ def _segment_excess(form, segment, segments):
 
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
+    normalised = _normalise(command)
     for form in GATED_FORMS:
         reason = UNCHECKED_REASON % form.count_text + form.pointer
         matching = sum(form.segment(segment) for segment in segments)
@@ -1989,9 +1995,9 @@ def _unchecked_reason(command, segments):
             if _occurrences(command, form.count_text) > matching:
                 return reason
             continue
-        if len(form.pattern.findall(_normalise(command))) > matching:  # whole text
+        if len(form.pattern.findall(normalised)) > matching:  # whole text
             return reason
-        if any(_segment_excess(form, segment, segments) for segment in segments):  # per segment
+        if any(_has_unaccounted_text(form, segment, segments) for segment in segments):  # per segment
             return reason
     return None
 
