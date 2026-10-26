@@ -293,6 +293,25 @@ class S9ContinuationTest(S9Case):
         self.assert_flagged(["echo # c\nrm \\\n -rf dir"])
 
 
+class S9SubstitutionTest(S9Case):
+    def test_a_recursive_delete_in_an_unquoted_substitution_is_flagged(self):
+        self.assert_flagged(["echo $(rm -rf x)", "grep $(rm -rf x)", "echo `rm -rf x`", "echo `echo \\`rm -rf x\\``", "echo $(echo $(rm -rf x))",
+                             "ls $(true) && rm -rf x", "FOO=$(rm -rf x) true"])
+
+    def test_a_double_quoted_substitution_body_is_not_read(self):
+        self.assert_clean(["git commit -m \"$(cat <<'EOF'\nfeat: x\ndo not rm -rf anything\nEOF\n)\"", "echo \"$(rm -rf x)\"", "echo '$(rm -rf x)'"])
+
+    def test_an_unclosed_backtick_is_clean_but_an_unclosed_dollar_paren_is_unavailable(self):
+        self.assert_clean(["echo `rm -rf x"])
+        self.setUp()
+        self.register_session("s1", [self.edit(), bash_row("echo $(rm -rf x", "b1", 2)])
+        self.assert_item(self.items()["S9"], "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
+
+    def test_words_after_a_substitution_stay_in_the_segment(self):
+        self.assert_flagged(["rm $(true) -rf x", "pytest $(true) -n 8"])
+        self.assert_clean(["rm $(true) x"])
+
+
 class S9DockerTest(S9Case):
     def test_docker_prune_fails(self):
         self.assert_flagged(["docker system prune", "docker system prune -af", "docker image prune", "docker container prune",

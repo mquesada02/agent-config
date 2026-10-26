@@ -140,12 +140,14 @@ class MatchingTest(GateTestCase):
                 self.assert_denied(self.gate(command, cwd=self.repo), "no record")
 
     def test_gh_pr_create_inside_a_command_substitution_is_denied(self):
-        # Bodies of substitutions are not parsed: more occurrences of the text than matching segments, plus a substitution marker, fails closed.
-        for command in ("echo `gh pr create`", "x=`gh pr create`", 'echo "`gh pr create`"', 'echo "$(gh pr create)"', 'echo "$(gh  pr   create)"',
+        # Bodies of quoted substitutions are not parsed: more occurrences of the text than matching segments, plus a substitution marker, fails closed.
+        for command in ('echo "`gh pr create`"', 'echo "$(gh pr create)"', 'echo "$(gh  pr   create)"',
                         'echo "a $(true) b" "$(gh pr create)"', "echo '`gh pr create`'"):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), "no branch to check")
-        self.assert_denied(self.gate("echo $(gh pr create)"), "no record")  # an unquoted substitution is parsed and checked as a command
+        for command in ("echo $(gh pr create)", "echo `gh pr create`", "x=`gh pr create`"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no record")  # an unquoted substitution is parsed and checked as a command
 
     def test_substitutions_without_the_text_are_allowed(self):
         for command in ("echo $(date)", 'echo "$(date)"', "echo `date`", "git commit -m \"$(cat <<'EOF'\nfeat: x\nEOF\n)\""):
@@ -217,6 +219,30 @@ class CdScopeTest(GateTestCase):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command, cwd=self.other), "no branch to check")
                 self.assert_allowed(self.gate(command.replace(self.repo, self.other), cwd=self.repo))
+
+    def test_a_cd_after_assignments_with_substitutions_stays_in_its_pipeline_subshell(self):
+        for separator in ("|", "&"):
+            for assignments in ("X=$(true)", "X=$(true) Y=$(true)", "X=`true`"):
+                command = f"{assignments} cd {self.repo} {separator} {PR}"
+                with self.subTest(command=command):
+                    self.assert_denied(self.gate(command, cwd=self.other), "no branch to check")
+                    self.assert_allowed(self.gate(command.replace(self.repo, self.other), cwd=self.repo))
+
+    def test_a_substitution_body_runs_before_the_cd_of_its_own_segment(self):
+        # bash expands the assignment before the cd runs, so the body is checked where the command started
+        self.assert_denied(self.gate(f"X=$(gh pr create) cd {self.repo}", cwd=self.other), "no branch to check: not in a git repository")
+        self.assert_allowed(self.gate(f"X=$(gh pr create) cd {self.other}", cwd=self.repo))
+        self.assert_allowed(self.gate(f"X=$(true) cd {self.repo} && {PR}", cwd=self.other))
+
+    def test_a_cd_inside_the_body_does_not_replace_the_cd_of_the_outer_segment(self):
+        self.assert_denied(self.gate(f"X=$(cd /tmp; true) cd {self.other} && {PR}", cwd=self.repo), "no branch to check")
+        self.assert_allowed(self.gate(f"X=$(cd /tmp; true) cd {self.repo} && {PR}", cwd=self.other))
+        self.assert_allowed(self.gate(f"X=`cd /tmp; true` cd {self.repo} && {PR}", cwd=self.other))
+
+    def test_a_cd_in_a_substitution_body_does_not_move_the_outer_directory(self):
+        self.assert_allowed(self.gate(f"echo $(cd {self.other}; true) && {PR}", cwd=self.repo))
+        self.assert_allowed(self.gate(f"echo `cd {self.other}; true` && {PR}", cwd=self.repo))
+        self.assert_denied(self.gate(f"echo $(cd {self.repo}; true) && {PR}", cwd=self.other), "no branch to check")
 
     def test_a_nested_subshell_restores_the_directory_of_each_level(self):
         self.assert_allowed(self.gate(f"(cd {self.other}; (cd {self.repo}); cd {self.repo}; {PR})", cwd=self.other))
@@ -405,7 +431,7 @@ class UncheckedFormTest(GateTestCase):
 
     def test_a_command_that_an_existing_check_denies_keeps_its_reason(self):
         self.audited_branch()
-        for command in ('echo "$(gh pr create)"', "echo `gh pr create`", 'gh pr create --title "unbalanced', 'bash -c "gh pr create" "unbalanced'):
+        for command in ('echo "$(gh pr create)"', 'gh pr create --title "unbalanced', 'bash -c "gh pr create" "unbalanced'):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), "no branch to check")
 
@@ -461,6 +487,18 @@ class ContinuedLineTest(GateTestCase):
         self.assert_denied(self.gate("gh pr create \\\n --head two"), "no record")
         self.git("checkout", "two")
         self.assert_allowed(self.gate("gh pr create \\\n --head one"))
+
+    def test_a_hash_right_after_a_substitution_is_a_word_part_so_the_line_joins(self):
+        self.two_branches()
+        self.git("checkout", "two")  # joined: --head one is read and allows; not joined: checked on two, no record
+        for command in ("gh pr create $(true)# \\\n --head one", "gh pr create `true`# \\\n --head one"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_hash_right_after_an_opening_backtick_starts_a_comment(self):
+        self.two_branches()
+        self.git("checkout", "two")  # the --head is inside the backtick body, so the outer command is checked on two
+        self.assert_denied(self.gate("gh pr create `# x \\\n --head one`"), "no record")
 
     def test_a_plain_continued_command_with_a_passing_record_is_allowed(self):
         self.audited_branch()
@@ -519,6 +557,72 @@ class QuotedTextTest(GateTestCase):
         self.audited_branch()
         self.assert_allowed(self.gate('gh pr "create" --title t'))
         self.assert_allowed(self.gate('gh pr create; gh pr "create"'))
+
+
+class SubstitutionHeadTest(GateTestCase):
+    """A substitution stays in its word, so the words after it are in the same segment and the last --head decides."""
+
+    def setUp(self):
+        super().setUp()
+        self.start_branch("one", "feat: a")  # pushed, no record
+        self.audited_branch("two")  # pushed, a passing record, checked out
+
+    def test_the_last_head_after_a_substitution_decides(self):
+        for substitution in ("$(true)", "`true`", "$((1+2))"):
+            with self.subTest(substitution=substitution):
+                self.assert_allowed(self.gate(f"gh pr create --head one {substitution} --head two"))
+                self.assert_denied(self.gate(f"gh pr create --head two {substitution} --head one"), "no record")
+
+    def test_a_head_value_that_holds_a_substitution_or_a_variable_has_no_branch_to_check(self):
+        for option in ("--head $(echo two)", "--head `echo two`", "--head $B", "--head=$B", "-H $B", "--head '$B'", "-H$B", "-H=$B", "--head=x$(true)"):
+            with self.subTest(option=option):
+                self.assert_denied(self.gate(f"gh pr create {option}"), "no branch to check")
+
+    def test_an_earlier_head_with_a_variable_is_ignored(self):
+        self.assert_allowed(self.gate("gh pr create --head $B --head two"))
+        self.assert_denied(self.gate("gh pr create --head two --head $B"), "no branch to check")
+
+
+class NestedCommandTest(GateTestCase):
+    """The body of an unquoted substitution is read as a command."""
+
+    def test_a_gated_command_in_an_unquoted_substitution_is_checked(self):
+        self.start_branch("feature", "feat: a")  # no record
+        for command in ("echo $(gh pr create)", "echo `gh pr create`", "x=`gh pr create`", "echo $(true) $(gh pr create)", "echo `true` `gh pr create`",
+                        "echo $(echo $(gh pr create))", "echo `echo \\`gh pr create\\``", "echo $((gh pr create))",
+                        "echo <(true) && gh pr create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no record")
+
+    def test_a_gated_command_in_a_quoted_substitution_cannot_be_followed(self):
+        self.start_branch("feature", "feat: a")
+        for command in ('echo "$(gh pr create)"', 'echo "`gh pr create`"'):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no branch to check: gh pr create inside a command substitution cannot be followed")
+
+    def test_a_checked_nested_command_is_allowed_with_a_record(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("echo `gh pr create`"))
+        self.assert_allowed(self.gate("echo $(gh pr create)"))
+
+    def test_arithmetic_is_read_like_a_substitution(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("echo $((1+2))"))
+        self.assert_allowed(self.gate("echo `echo \\`true\\``"))
+
+    def test_an_unbalanced_substitution_with_gated_text_is_denied(self):
+        self.audited_branch()
+        for command in ("gh pr create $(true", "gh pr create `unclosed", "echo $(gh pr create", "gh pr create $(echo \"x)"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no branch to check: the command cannot be parsed")
+
+    def test_an_unbalanced_substitution_without_gated_text_is_allowed(self):
+        self.assert_allowed(self.gate("echo $(true"))
+        self.assert_allowed(self.gate("echo `unclosed"))
+
+    def test_a_substitution_in_single_quotes_is_text(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("echo '$(true' && gh pr create --title t"))
 
 
 if __name__ == "__main__":
