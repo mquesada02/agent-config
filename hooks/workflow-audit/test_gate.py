@@ -616,6 +616,14 @@ class NestedCommandTest(GateTestCase):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), "no branch to check: the command cannot be parsed")
 
+    def test_a_command_that_the_splitter_cannot_read_fails_closed(self):
+        self.audited_branch()
+        every_marker = "".join(map(chr, range(0xE000, 0xF900)))  # leaves the splitter no free placeholder character
+        for command in ("$(" * 1500 + "gh pr create" + ")" * 1500, f"echo {every_marker} $(true) && gh pr create"):
+            with self.subTest(command=command[:20]):
+                self.assert_denied(self.gate(command), "no branch to check: the command cannot be parsed")
+        self.assert_allowed(self.gate("$(" * 1500 + "true" + ")" * 1500))
+
     def test_an_unbalanced_substitution_without_gated_text_is_allowed(self):
         self.assert_allowed(self.gate("echo $(true"))
         self.assert_allowed(self.gate("echo `unclosed"))

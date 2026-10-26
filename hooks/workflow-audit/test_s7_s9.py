@@ -308,6 +308,17 @@ class S9SubstitutionTest(S9Case):
         self.register_session("s1", [self.edit(), bash_row("echo $(rm -rf x", "b1", 2)])
         self.assert_item(self.items()["S9"], "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
 
+    def test_a_command_that_the_splitter_cannot_read_is_unavailable_and_not_a_crash(self):
+        every_marker = "".join(map(chr, range(0xE000, 0xF900)))  # leaves the splitter no free placeholder character
+        for command in ("$(" * 1500 + "rm -rf x" + ")" * 1500, f"echo {every_marker} $(true) && rm -rf x"):
+            with self.subTest(command=command[:20]):
+                self.setUp()
+                self.register_session("s1", [self.edit(), bash_row(command, "b1", 2)])
+                self.assert_item(self.items()["S9"], "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
+
+    def test_a_command_that_the_splitter_cannot_read_and_names_no_trigger_word_is_ignored(self):
+        self.assert_clean(["$(" * 1500 + "true" + ")" * 1500])
+
     def test_words_after_a_substitution_stay_in_the_segment(self):
         self.assert_flagged(["rm $(true) -rf x", "pytest $(true) -n 8"])
         self.assert_clean(["rm $(true) x"])

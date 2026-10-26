@@ -1201,7 +1201,7 @@ def _command_problems(command, depth=0):
     command = _join_as_bash(command)  # the gates' join, as bash joins
     try:
         items = split_command(command)
-    except ValueError:
+    except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
     return [kind for item in items if isinstance(item, list) for kind in _segment_problems(item, depth)]
 
@@ -1645,7 +1645,9 @@ def _paren_end(text, index):
 def _mask_substitutions(command):
     """The command with each unquoted substitution replaced by a placeholder: a marker, the number of the substitution and the marker again.
     Returns the masked text, the marker and the list of (text of the substitution, text of its body). A backtick body is unescaped as bash does."""
-    marker = next(chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command)  # a private-use character that the command lacks
+    marker = next((chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command), None)  # a private-use character that the command lacks
+    if marker is None:
+        raise ValueError("No free placeholder character")
     masked, substitutions, index = [], [], 0
     while index < len(command):
         char, body = command[index], None
