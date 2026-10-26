@@ -2187,8 +2187,9 @@ def gate_reason(command, cwd, session_id=None):
             words = _command_words(item)
             if words[:1] == ["cd"]:
                 after_index = _next_separator(items, index)  # the groups of the segment's substitutions are not its separators
+                following = items[after_index] if after_index < len(items) else ""
                 before = _operator(items[index - 1]) if index else ""
-                after = _operator(items[after_index]) if after_index < len(items) and isinstance(items[after_index], str) else ""
+                after = _operator(following) if isinstance(following, str) else ""
                 # In bash a cd in a pipeline or in the background runs in a subshell and does not move the commands after it.
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
                     moved[after_index] = _after_cd(current, words)
