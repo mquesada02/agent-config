@@ -5,7 +5,7 @@ import os
 import stat
 import unittest
 
-from audit_support import AuditCase, finding_event, round_event, verdict_event
+from audit_support import AuditCase, finding_event, round_event, status_event, verdict_event
 
 SHA = "a" * 40
 ROUND = ("--loop", "code-review", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
@@ -246,6 +246,126 @@ class ReplayRuleTest(LedgerCase):
         with open(self.ledger_file(), "w") as handle:
             handle.write(json.dumps(round_event()))
         self.refused("round", "--loop", "code-review", "--phase", "correctness", "--round", "2", "--reviewer", "rev1")
+
+
+class ShowTest(LedgerCase):
+    def show(self, *extra, worktree=None, **kwargs):
+        args = ("--worktree", worktree or self.repo) if worktree != "" else ()
+        return self.audit("ledger", "show", *args, *extra, **kwargs)
+
+    def compact(self, events):
+        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
+
+    def digest_ledger_line(self):
+        """The `ledger unavailable` line that the digest of `audit check` prints, for the same worktree."""
+        text = self.audit("check", "--worktree", self.repo).stdout.decode()
+        return next(line for line in text.splitlines() if line.startswith("ledger unavailable:"))
+
+    def unavailable(self, why_start):
+        result = self.show()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout.decode().splitlines(), [self.digest_ledger_line()])
+        self.assertTrue(result.stdout.decode().startswith(f"ledger unavailable: {why_start}"), result.stdout)
+
+    def test_prints_the_header_then_every_event_in_order_as_compact_json(self):
+        events = [round_event(), finding_event(), verdict_event(), status_event()]
+        self.write_ledger("feature", events)
+        result = self.show()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout.decode().splitlines(), ["ledger"] + self.compact(events))
+
+    def test_a_ledger_over_the_digest_budget_is_printed_whole_with_no_marker(self):
+        events = [round_event()] + [finding_event(f"F{n}", kind="Minor") for n in range(400)]
+        self.write_ledger("feature", events)
+        result = self.show()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreater(len(result.stdout), 16384)
+        self.assertNotIn(b"more lines omitted", result.stdout)
+        self.assertEqual(result.stdout.decode().splitlines(), ["ledger"] + self.compact(events))
+
+    def test_a_ledger_over_100_kb_is_printed_whole_with_its_last_event(self):
+        events = [round_event()] + [{**finding_event(f"F{n}", kind="Minor"), "reason": "r" * 500} for n in range(250)]
+        events[-1]["reason"] = "the last event " + "r" * 400
+        self.write_ledger("feature", events)
+        self.assertGreater(os.path.getsize(self.ledger_file()), 100 * 1024)
+        result = self.show()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.decode().splitlines()
+        self.assertEqual(lines, ["ledger"] + self.compact(events))
+        self.assertIn("the last event", lines[-1])
+
+    def test_non_ascii_text_is_printed_as_is(self):
+        self.write_ledger("feature", [round_event(), {**finding_event(), "reason": "ä€ é"}])
+        self.assertIn("ä€ é", self.show().stdout.decode())
+
+    def test_writes_nothing_and_creates_no_lock_file(self):
+        self.write_ledger("feature", [round_event(), finding_event()])
+        before_bytes, before_names = open(self.ledger_file(), "rb").read(), sorted(os.listdir(self.runtime))
+        self.assertEqual(self.show().returncode, 0)
+        self.assertEqual(open(self.ledger_file(), "rb").read(), before_bytes)
+        self.assertEqual(sorted(os.listdir(self.runtime)), before_names)
+        self.assertEqual([name for name in os.listdir(self.runtime) if name.endswith(".lock")], [])
+
+    def test_no_ledger_file_is_unavailable(self):
+        self.unavailable("evidence unavailable: no ledger for feature")
+
+    def test_an_invalid_ledger_line_is_unavailable(self):
+        self.write_ledger("feature", [round_event(), "{not json"])
+        self.unavailable("invalid ledger:")
+
+    def test_an_empty_ledger_is_unavailable(self):
+        self.write_ledger("feature", [])
+        self.unavailable("ledger has no events")
+
+    def test_an_unreadable_ledger_file_is_unavailable(self):
+        os.makedirs(self.runtime, exist_ok=True)
+        os.chmod(self.runtime, 0o700)
+        os.mkdir(self.ledger_file())  # a folder in place of the file
+        self.unavailable("evidence unavailable: unreadable ledger")
+
+    def assert_refused_like_append(self, show, append):
+        self.assertEqual(show.returncode, 2, show.stdout)
+        self.assertEqual(show.stdout, b"")
+        self.assertTrue(show.stderr)
+        self.assertEqual(show.stderr, append.stderr)
+
+    def test_no_origin_a_detached_head_and_a_non_git_path_are_refused_like_an_append(self):
+        self.assert_refused_like_append(self.show(worktree=self.root), self.ledger("round", *ROUND, worktree=self.root))
+        self.git("checkout", "--detach")
+        self.assert_refused_like_append(self.show(), self.ledger("round", *ROUND))
+        self.git("checkout", "feature")
+        self.git("remote", "remove", "origin")
+        self.assert_refused_like_append(self.show(), self.ledger("round", *ROUND))
+
+    def test_an_unsafe_runtime_folder_is_refused_like_an_append(self):
+        os.makedirs(self.runtime, exist_ok=True)
+        os.chmod(self.runtime, 0o755)
+        self.assert_refused_like_append(self.show(), self.ledger("round", *ROUND))
+
+    def test_a_bad_command_line_prints_the_usage_text(self):
+        forms = {
+            "missing --worktree": ("ledger", "show"),
+            "no path": ("ledger", "show", "--worktree"),
+            "repeated --worktree": ("ledger", "show", "--worktree", self.repo, "--worktree", self.repo),
+            "extra argument": ("ledger", "show", "--worktree", self.repo, "extra"),
+            "wrong flag": ("ledger", "show", "--llm", self.repo),
+        }
+        for name, args in forms.items():
+            with self.subTest(name):
+                result = self.audit(*args)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertIn("audit ledger show --worktree <path>", result.stderr.decode())
+                self.assertTrue(result.stderr.decode().startswith("usage:"))
+
+    def test_the_usage_text_and_the_help_name_show(self):
+        self.assertIn("audit ledger show --worktree <path>", self.audit("nope").stderr.decode())
+        text = self.audit("ledger", "--help").stdout.decode()
+        self.assertIn("audit ledger show --worktree <path>", text)
+        self.assertIn("prints every event", text)
+        self.assertIn("writes nothing", text)
 
 
 if __name__ == "__main__":
