@@ -151,9 +151,12 @@ class WrappedFormsTest(GateTestCase):
                 self.assert_denied(self.gate(command), UNCHECKED % form)
 
     def test_quoted_and_backtick_substitutions_are_counted(self):
-        for command in ('x="$(git branch -D y)"', "echo `git branch -d x`", 'git push origin "$(git branch --show-current)"'):
+        for command in ('x="$(git branch -D y)"', 'git push origin "$(git branch --show-current)"'):
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), UNCHECKED % "git branch")
+        # An unquoted body is a checked segment of its own: the safe -d is allowed, the -D is denied by its segment.
+        self.assert_allowed(self.gate("echo `git branch -d x`"))
+        self.assert_denied(self.gate("echo `git branch -D x`"), "force delete of a branch")
 
     def test_the_python_flag_before_the_script_is_denied_by_the_count_rule(self):
         self.assert_denied(self.gate("python3 --skip-ownership /x/cleanup /y"), UNCHECKED % "--skip-ownership")

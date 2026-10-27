@@ -342,5 +342,19 @@ class QuotedTextTest(DispatchGateCase):
         self.assert_allowed(self.gate('orca-ide orchestration "worker-start" --task t1'))
 
 
+class SubstitutionTest(DispatchGateCase):
+    def test_a_retry_of_after_a_substitution_is_read(self):
+        for command in ("orca-ide orchestration worker-start $(true) --retry-of x", "orca-ide orchestration worker-start `true` --retry-of=x",
+                        "orca-ide orchestration worker-start --task $((1+2)) --retry-of x"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_dispatch_after_a_substitution_is_still_checked(self):
+        for command in ("orca-ide orchestration worker-start $(true) --task t1", "orca-ide orchestration worker-start `true` --task t1",
+                        "echo $(orca-ide orchestration worker-start --task t1)", "echo `orca-ide orchestration worker-start --task t1`"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no pre-dispatch record")
+
+
 if __name__ == "__main__":
     unittest.main()

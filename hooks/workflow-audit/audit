@@ -157,28 +157,43 @@ def _join_as_bash(text):
     """The text with each continued line joined where bash joins it: not inside single quotes, and not in a comment (a comment ends at
     the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs."""
     out, index, quote, comment, word_start = [], 0, None, False, True
+    opens_substitution, backtick, dollar = [], False, False  # one entry for each open `(`: is it the `(` of a `$(`?
     while index < len(text):
         char = text[index]
         if comment or quote == "'":
             out.append(char)
             comment = comment and char != "\n"
             quote = None if quote == "'" and char == "'" else quote
+            word_start, dollar = char in " \t\n;&|", False
         elif char == "\\":
             pair = text[index:index + 2]
             if pair != "\\\n":  # a joined pair is not there for bash, so it leaves word_start as it was
                 out.append(pair)
                 word_start = False
+            dollar = False
             index += len(pair)
             continue
-        else:
-            if quote == '"':
-                quote = None if char == '"' else quote
-            elif char in "'\"":
-                quote = char
-            elif char == "#" and word_start:
-                comment = True
+        elif quote == '"':
+            quote = None if char == '"' else quote
             out.append(char)
-        word_start = char in " \t\n;&|()"
+            word_start, dollar = False, False  # a substitution in double quotes is quoted text, as for the splitter
+        else:
+            if char in "'\"":
+                quote, word_start = char, False
+            elif char == "#" and word_start:
+                comment, word_start = True, False
+            elif char == "(":
+                opens_substitution.append(dollar)
+                word_start = True
+            elif char == ")":  # the word goes on after the `)` of a substitution
+                word_start = not (opens_substitution.pop() if opens_substitution else False)
+            elif char == "`":
+                backtick = not backtick
+                word_start = backtick  # an opening backtick starts a word, a closing one does not
+            else:
+                word_start = char in " \t\n;&|"
+            out.append(char)
+            dollar = char == "$"
         index += 1
     return "".join(out)
 
@@ -1188,7 +1203,7 @@ def _command_problems(command, depth=0):
     command = _join_as_bash(command)  # the gates' join, as bash joins
     try:
         items = split_command(command)
-    except ValueError:
+    except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
     return [kind for item in items if isinstance(item, list) for kind in _segment_problems(item, depth)]
 
@@ -1603,25 +1618,146 @@ def cmd_check(argv):
 
 # ---- gate: PreToolUse ----
 
+def _single_end(text, index):
+    """The index after the single-quoted text that starts at `index`."""
+    end = text.find("'", index + 1)
+    if end < 0:
+        raise ValueError("No closing quotation")
+    return end + 1
+
+
+def _double_end(text, index, in_body):
+    """The index after the double-quoted text that starts at `index`. In a substitution body (`in_body`), bash reads substitutions in it, so
+    their quotes do not end it; at the top level shlex does not, and the scan follows shlex."""
+    escaped = '"\\$`' if in_body else '"\\'
+    index += 1
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            return index + 1
+        if char == "\\":
+            following = text[index + 1:index + 2]
+            index += 2 if following and following in escaped else 1
+        elif in_body and text.startswith("$(", index):
+            index = _paren_end(text, index + 2)
+        elif in_body and char == "`":
+            index = _backtick_end(text, index + 1) + 1
+        else:
+            index += 1
+    raise ValueError("No closing quotation")
+
+
+def _backtick_end(text, index):
+    """The index of the backtick that closes the substitution whose body starts at `index`: the next unescaped one."""
+    while index < len(text):
+        if text[index] == "`":
+            return index
+        index += 2 if text[index] == "\\" else 1
+    raise ValueError("No closing backtick")
+
+
+def _paren_end(text, index):
+    """The index after the `)` that closes the `$(` whose body starts at `index`, following parentheses, substitutions and quotes."""
+    depth = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+        elif char == "'":
+            index = _single_end(text, index)
+        elif char == '"':
+            index = _double_end(text, index, True)
+        elif char == "`":
+            index = _backtick_end(text, index + 1) + 1
+        elif text.startswith("$(", index):
+            index = _paren_end(text, index + 2)
+        else:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    return index + 1
+                depth -= 1
+            index += 1
+    raise ValueError("No closing parenthesis")
+
+
+def _mask_substitutions(command):
+    """The command with each unquoted substitution replaced by a placeholder: a marker, the number of the substitution and the marker again.
+    Returns the masked text, the marker and the list of (text of the substitution, text of its body). A backtick body is unescaped as bash does."""
+    marker = next((chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command), None)  # a private-use character that the command lacks
+    if marker is None:
+        raise ValueError("No free placeholder character")
+    masked, substitutions, index = [], [], 0
+    while index < len(command):
+        char, body = command[index], None
+        if char == "\\":
+            end = index + 2
+        elif char == "'":
+            end = _single_end(command, index)
+        elif char == '"':
+            end = _double_end(command, index, False)
+        elif command.startswith("$(", index):
+            end = _paren_end(command, index + 2)
+            body = command[index + 2:end - 1]
+        elif char == "`":
+            end = _backtick_end(command, index + 1) + 1
+            body = re.sub(r"\\([`\\$])", r"\1", command[index + 1:end - 1])
+        else:
+            end = index + 1
+        if body is None:
+            masked.append(command[index:end])
+        else:
+            masked.append(f"{marker}{len(substitutions)}{marker}")
+            substitutions.append((command[index:end], body))
+        index = end
+    return "".join(masked), marker, substitutions
+
+
 def split_command(command):
     """The command as a list of items: a list of words for each segment, and the separator token between segments as a string.
-    Raises ValueError for an unbalanced quote."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars="".join(sorted(SEPARATOR_CHARS)))
+    A command substitution (`$(...)`, backticks) stays in the word that holds it. The body of each unquoted substitution follows the segment
+    that holds it, before the segment's own separator, as a group: the string `(`, the items of the body, the string `)`.
+    Raises ValueError for an unbalanced quote or substitution."""
+    masked, marker, substitutions = _mask_substitutions(command)
+    placeholder = re.compile(re.escape(marker) + r"([0-9]+)" + re.escape(marker))
+    lexer = shlex.shlex(masked, posix=True, punctuation_chars="".join(sorted(SEPARATOR_CHARS)))
     lexer.whitespace_split = True
     lexer.whitespace = " \t\r"  # a newline is a separator, not whitespace
     lexer.commenters = ""  # shlex would drop the text after a `#`, even inside a word
     items, words = [], []
+
+    def close_segment():
+        items.append([placeholder.sub(lambda found: substitutions[int(found.group(1))][0], word) for word in words])
+        for word in words:
+            for found in placeholder.finditer(word):
+                items.extend(["(", *split_command(substitutions[int(found.group(1))][1]), ")"])
+        words.clear()
+
     for token in lexer:
         if token and set(token) <= SEPARATOR_CHARS:  # shlex joins adjacent separators into one token
             if words:
-                items.append(words)
-                words = []
+                close_segment()
             items.append(token)
         else:
             words.append(token)
     if words:
-        items.append(words)
+        close_segment()
     return items
+
+
+def _next_separator(items, index):
+    """The index of the first item after the nested groups that follow the segment at `index`."""
+    index += 1
+    while index < len(items) and items[index] == "(":
+        depth = 0
+        while index < len(items):
+            if isinstance(items[index], str):
+                depth += items[index].count("(") - items[index].count(")")
+            index += 1
+            if depth == 0:
+                break
+    return index
 
 
 def _operator(separator):
@@ -1896,6 +2032,8 @@ def _head_option(arguments):
         elif word.startswith("-H") and not word.startswith("--"):
             head = word[2:].removeprefix("=")
         index += 1
+    if head is not None and ("$" in head or "`" in head):
+        return ""  # a variable or a substitution cannot be resolved: like a missing value
     return head
 
 
@@ -2077,7 +2215,10 @@ def gate_reason(command, cwd, session_id=None):
         if dir_fd is None:
             return "unsafe runtime folder: the audit folder is not owned by you with mode 0700, or is a symlink"
         current, outer = cwd, []  # `outer` holds the directory to restore at each closing parenthesis
+        moved = {}  # index of the item where a cd takes effect -> its directory: bash expands `X=$(...)` before the cd runs
         for index, item in enumerate(items):
+            if index in moved:
+                current = moved.pop(index)
             if isinstance(item, str):
                 for char in item:
                     if char == "(":
@@ -2087,11 +2228,13 @@ def gate_reason(command, cwd, session_id=None):
                 continue
             words = _command_words(item)
             if words[:1] == ["cd"]:
+                after_index = _next_separator(items, index)  # the groups of the segment's substitutions are not its separators
+                following = items[after_index] if after_index < len(items) else ""
                 before = _operator(items[index - 1]) if index else ""
-                after = _operator(items[index + 1]) if index + 1 < len(items) else ""
+                after = _operator(following) if isinstance(following, str) else ""
                 # In bash a cd in a pipeline or in the background runs in a subshell and does not move the commands after it.
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
-                    current = _after_cd(current, words)
+                    moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
                 reason = _gate_reason(runtime_dir, dir_fd, current, words[3:])
                 if reason:
