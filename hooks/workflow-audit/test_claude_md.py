@@ -1,4 +1,4 @@
-# Text tests of ticket #100: the new rules in CLAUDE.md (sections 6, 7, 8 and 11) and the test-command declaration of this repo.
+# Text tests of tickets #100, #164 and #166: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
 import os
 import re
 import shutil
