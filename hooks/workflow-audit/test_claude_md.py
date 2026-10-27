@@ -9,6 +9,7 @@ from audit_support import HERE, AuditCase
 REPO = os.path.dirname(os.path.dirname(HERE))
 ROOT_CLAUDE_MD = os.path.join(REPO, "CLAUDE.md")
 PROJECT_CLAUDE_MD = os.path.join(REPO, ".claude", "CLAUDE.md")
+DOCKER_MD = os.path.join(REPO, "docs", "agents", "docker.md")
 DECLARATION_ERRORS = ("expected exactly one '### Test command' section",
                       "the '### Test command' section needs exactly one non-empty fenced block")
 
@@ -110,6 +111,18 @@ class SectionsEightAndElevenTest(RuleTextCase):
 
     def test_the_auditor_subagent_is_an_allowed_agent_use(self):
         self.assert_in(section(read(ROOT_CLAUDE_MD), 11), "- The auditor subagent: section 6 step 5 and section 7.")
+
+
+class DockerCleanupRuleTest(RuleTextCase):
+    """Ticket #164: section 14 and docs/agents/docker.md say that the cleanup command refuses on a stack in the target worktree."""
+
+    COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
+
+    def test_section_fourteen_states_the_refusal_and_the_removal_by_hand(self):
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 14), self.COMMAND, "refuses", "by hand")
+
+    def test_docker_md_states_the_refusal_the_removal_by_hand_and_ask_first(self):
+        self.assert_in(read(DOCKER_MD), self.COMMAND, "refuses", "by hand", "ask first")
 
 
 class TestCommandDeclarationTest(unittest.TestCase):
