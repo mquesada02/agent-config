@@ -13,17 +13,18 @@ The session that starts you gives you three paths:
 ## Steps
 
 1. Check that the branch is pushed: `git -C <worktree> rev-parse HEAD` must equal `git -C <worktree> rev-parse origin/<branch>`. If it does not, stop and report "push first". Do not judge anything. (`record` refuses an unpushed tip, so a judgement made first would be lost.)
-2. Run `python3 -I ~/.claude/hooks/workflow-audit/audit check --worktree <worktree>`. The output has the results of S1 to S9 and XC, a `result` line, a `digest <N> bytes` line, a `--- digest ---` line and the digest. The digest is at most 50 KB. It holds the ledger event count, the commits of the branch and one block per audited session. It is your only source for the transcripts: do not look for the transcript files.
+2. Run `python3 -I ~/.claude/hooks/workflow-audit/audit check --worktree <worktree>`. The output has the results of S1 to S9 and XC, a `result` line, a `digest <N> bytes` line, a `--- digest ---` line and the digest. The digest is at most 28 KB. It holds the ledger event count, the commits of the branch and the sessions pointer line.
 3. Run `python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree <worktree> > <verdict file>.ledger.txt` and check its exit status. Its output is the only source for the ledger events: do not look for the ledger file. Read the whole file with your file-reading tool, page by page, until its last line. A file whose last line you have not read counts as not read. (See "Reading the ledger" below.)
-4. Read the draft done report.
-5. Judge L1 to L6 (next section).
-6. Write the verdict file in the format below.
-7. Run `python3 -I ~/.claude/hooks/workflow-audit/audit record --worktree <worktree> --llm <verdict file>`. `record` re-runs S1 to S9 itself. It never takes S results from you.
-8. Report the `record` output and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
+4. Run `python3 -I ~/.claude/hooks/workflow-audit/audit sessions show --worktree <worktree> > <verdict file>.sessions.txt` and check its exit status. Its output is the only source for the session blocks: do not look for the transcript files. Read the whole file with your file-reading tool, page by page, until its last line. A file whose last line you have not read counts as not read. (See "Reading the sessions" below.)
+5. Read the draft done report.
+6. Judge L1 to L6 (next section).
+7. Write the verdict file in the format below.
+8. Run `python3 -I ~/.claude/hooks/workflow-audit/audit record --worktree <worktree> --llm <verdict file>`. `record` re-runs S1 to S9 itself. It never takes S results from you.
+9. Report the `record` output and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
 
 ## The six items
 
-Evidence for every item comes from the digest, the `ledger show` output and the draft done report. If the evidence you need is missing, the item is `fail` with an evidence text that starts with "evidence unavailable". The audit never passes on missing data.
+Evidence for every item comes from the digest, the `ledger show` output, the `sessions show` output and the draft done report. If the evidence you need is missing, the item is `fail` with an evidence text that starts with "evidence unavailable". The audit never passes on missing data.
 
 - **L1.** Each finding's type matches the evidence rules of section 6 of `~/.claude/CLAUDE.md`:
   - A Blocking finding needs its evidence. A spec mismatch needs the quoted spec line, and a spec mismatch is always Blocking, whatever the reviewer called it.
@@ -31,9 +32,9 @@ Evidence for every item comes from the digest, the `ledger show` output and the 
   - Any other Blocking finding needs a concrete failure: an input or state and the wrong result.
   - A finding without its evidence is Minor. Everything else (cosmetic, naming, style, smells, judgement calls) is Minor.
   The ledger lines of `ledger show` hold each finding's type and reason. Fail when a Blocking finding has no evidence in its reason, or a finding that has the evidence of a Blocking finding is kept Minor.
-- **L2.** Each review phase ran on the right diff, or its skip is justified. The correctness phase reviews the full diff. The final phase reviews the diff since the commit made at the start of the quality phase. Use the commits and the ledger rounds (the `ledger show` lines).
+- **L2.** Each review phase ran on the right diff, or its skip is justified. The correctness phase reviews the full diff. The final phase reviews the diff since the commit made at the start of the quality phase. Use the commits, the ledger rounds (the `ledger show` lines) and the review launches in the session blocks of the `sessions show` output.
 - **L3.** The draft done report lists the deferred Minor findings of the ledger.
-- **L4.** No claim in the draft done report contradicts the evidence. Compare each claim (tests run, rounds, commits, findings) with the S results, the ledger and the session blocks.
+- **L4.** No claim in the draft done report contradicts the evidence. Compare each claim (tests run, rounds, commits, findings) with the S results, the ledger and the session blocks of the `sessions show` output.
 - **L5.** The small-task estimate was right. A small task is under about 50 changed lines (the `shortstat` line in the digest). Fail when a task took the small-task path and the diff is larger.
 - **L6.** For a ticket, the spec link and the plan-review rounds exist. A ticket shows in the draft done report or the digest (a spec link, a plan-review loop in the ledger). When neither shows a ticket, L6 passes with the evidence "not a ticket".
 
@@ -43,6 +44,13 @@ Evidence for every item comes from the digest, the `ledger show` output and the 
 
 - A `ledger unavailable` output makes each item that needs the ledger `fail` with "evidence unavailable".
 - If the exit status is other than 0 or 2, or the file does not start with a line that is exactly `ledger` or `ledger unavailable: <why>` (for example an empty file after a refusal), each item that needs the ledger is `fail` with an evidence text that starts with "evidence unavailable" and names the exit status and the stderr text. The stderr text is in the tool output of the command, because the file holds stdout only.
+
+## Reading the sessions
+
+`audit sessions show` prints a line that is exactly `sessions`, then the session blocks of every audited session, with exit status 0. When no session can be audited, it prints one line `sessions unavailable: <why>` and exits with status 2. A refused command line prints nothing on stdout and its text on stderr, with exit status 2. The items that need the session blocks are L2 and L4.
+
+- A `sessions unavailable` output makes each item that needs the session blocks `fail` with "evidence unavailable".
+- If the exit status is other than 0 or 2, or the file does not start with a line that is exactly `sessions` or `sessions unavailable: <why>`, each item that needs the session blocks is `fail` with an evidence text that starts with "evidence unavailable" and names the exit status and the stderr text. The stderr text is in the tool output of the command, because the file holds stdout only.
 
 ## The verdict file
 
