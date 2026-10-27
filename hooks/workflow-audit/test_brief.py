@@ -67,14 +67,56 @@ class BriefTextTest(unittest.TestCase):
         self.assertNotIn("It holds the ledger events", self.full)
         self.assertNotIn("The ledger lines in the digest", self.full)
         self.assertNotIn("ledger lines of the digest", self.text)
-        self.assertIn("It holds the ledger event count, the commits of the branch and one block per audited session", self.full)
+        self.assertIn("It holds the ledger event count, the commits of the branch and the sessions pointer line", self.full)
+        self.assertIn("The digest is at most 28 KB", self.full)
+        for old in ("50 KB", "one block per audited session", "It is your only source for the transcripts"):
+            with self.subTest(old=old):
+                self.assertNotIn(old, self.full)
 
     def test_the_ledger_show_step_comes_right_after_the_check_step_and_before_the_done_report(self):
         steps = self.text.split("## Steps", 1)[1].split("## The six items", 1)[0]
         numbered = [line for line in steps.splitlines() if re.match(r"\d+\. ", line)]
         index = next(i for i, line in enumerate(numbered) if "ledger show" in line)
         self.assertIn(" check --worktree", numbered[index - 1])
-        self.assertIn("draft done report", numbered[index + 1])
+        self.assertIn("sessions show", numbered[index + 1])
+        self.assertIn("draft done report", numbered[index + 2])
+        self.assertNotIn("ledger show", numbered[index + 1])
+        self.assertNotIn("sessions show", numbered[index - 1])
+
+    def test_no_step_text_names_a_step_number(self):
+        steps = self.full.split("## Steps", 1)[1].split("## The six items", 1)[0]
+        numbered = [line for line in steps.splitlines() if re.match(r"\d+\. ", line)]
+        self.assertFalse([line for line in numbered if re.search(r"\bsteps? \d", line)])
+
+    def test_the_full_variant_reads_the_session_blocks_with_sessions_show_into_a_file_page_by_page(self):
+        command = f"python3 -I {AUDIT_PATH} sessions show --worktree <worktree> > <verdict file>.sessions.txt"
+        steps = self.full.split("## Steps", 1)[1].split("## The six items", 1)[0]
+        step = next(line for line in steps.splitlines() if "sessions show" in line)
+        for phrase in (command, "exit status", "page by page", "last line", "you have not read", "only source for the session blocks",
+                       "do not look for the transcript files"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, step)
+
+    def test_the_full_variant_fails_closed_on_missing_session_blocks(self):
+        section = self.full.split("## Reading the sessions", 1)[1].split("##", 1)[0]
+        for phrase in ("other than 0 or 2", "does not start with a line that is exactly `sessions` or `sessions unavailable: <why>`",
+                       "`sessions unavailable` output makes each item that needs the session blocks `fail` with \"evidence unavailable\"",
+                       "names the exit status and the stderr text", "L2 and L4"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+    def test_the_sessions_rules_sit_in_their_own_section_apart_from_the_ledger_section(self):
+        order = [self.full.index(heading) for heading in ("## Reading the ledger", "## Reading the sessions", "## The verdict file")]
+        self.assertEqual(order, sorted(order))
+        ledger = self.full.split("## Reading the ledger", 1)[1].split("##", 1)[0]
+        self.assertNotIn("sessions", ledger)
+
+    def test_the_sources_of_evidence_sentence_names_the_sessions_show_output(self):
+        sources = self.full.split("## The six items", 1)[1].split("- **L1.**", 1)[0]
+        self.assertIn("`sessions show` output", sources)
+
+    def test_the_pre_dispatch_variant_does_not_name_sessions_show(self):
+        self.assertNotIn("sessions show", self.variant)
 
     def test_the_pre_dispatch_variant_reads_the_plan_review_events_from_ledger_show(self):
         steps = self.variant.split("Steps:", 1)[1].split("**L1, pre-dispatch.**", 1)[0]
