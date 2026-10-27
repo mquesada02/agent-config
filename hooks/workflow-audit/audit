@@ -1412,7 +1412,8 @@ def cmd_record(argv):
 
 # ---- check: the S results and the digest for the auditor ----
 
-LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 8192  # the sessions budget holds the pointer line with a worktree path of 4096 bytes
+# The sessions budget holds the pointer line with a worktree path of 4096 bytes (the Linux path limit).
+LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 8192
 DIGEST_LIMIT = LEDGER_BUDGET + COMMITS_BUDGET + SESSIONS_BUDGET  # 28 KB
 PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT, COMMIT_LIMIT = 500, 200, 100, 200, 200  # in characters; the budgets are in bytes
 OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1  # room for the widest marker line that _fit appends, and its newline
@@ -1514,9 +1515,11 @@ def _sessions_show(argv):
     dir_fd, _, _ = _open_ledger_dir(argv[1])
     try:
         try:
-            lines, status = ["sessions"] + _session_lines(_audited_transcripts(argv[1], dir_fd)), 0
+            audited = _audited_transcripts(argv[1], dir_fd)
         except Unavailable as problem:
             lines, status = [f"sessions unavailable: {problem}"], 2
+        else:
+            lines, status = ["sessions"] + _session_lines(audited), 0
     finally:
         os.close(dir_fd)
     sys.stdout.buffer.write(_utf8("\n".join(lines) + "\n"))

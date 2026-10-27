@@ -7,6 +7,7 @@ from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, find
 
 DIGEST_MARKER = "--- digest ---"
 S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
+OLD_SESSIONS_BUDGET = 30720  # the digest budget before the sessions moved to `audit sessions show`
 LIMIT = 28672  # 28 KB, written out here on purpose: the test checks the number in the spec, not the code's own constant
 
 
@@ -313,7 +314,7 @@ class SessionsShowTest(SessionCase):
         self.start_branch("feature", "feat: a")
         result = self.show()
         lines = self.lines(result)
-        self.assertGreater(len(result.stdout), 30720)
+        self.assertGreater(len(result.stdout), OLD_SESSIONS_BUDGET)
         self.assertIn("session second-session.jsonl", lines)
         self.assertEqual(lines[-1], "  bash 2026-10-15T12:00:05Z make second")
         self.assertNotIn(b"more lines omitted", result.stdout)
