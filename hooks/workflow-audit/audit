@@ -70,7 +70,10 @@ GENERATED_WITH = re.compile(r"generated with.*claude", re.IGNORECASE)
 ROBOT = "\U0001F916"
 
 SEPARATOR_CHARS = frozenset("&|;()\n")
-WORD_BREAKS = " \t\n;&|"  # a character after which a word starts, so a `#` there starts a comment; the join and the splitter share it
+# A character after which a word starts, so a `#` there starts a comment. `_join_as_bash`, `_paren_end` and `_mask_substitutions` share it;
+# the last two also start a word after `(` and `)` (WORD_STARTS), and the join tracks its parentheses with a stack. Keep the three scans in step.
+WORD_BREAKS = " \t\n;&|"
+WORD_STARTS = WORD_BREAKS + "()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # Words that can stand before a command: shell keywords of compound commands, and wrappers that run the next word.
@@ -167,7 +170,7 @@ def _join_as_bash(text):
                 out.append(char)
                 index += 1
                 continue
-            if comment and backtick and char == "\\" and text[index + 1:index + 2] in ("`", "\\"):  # an escaped pair, as in the scan for the closing backtick
+            if comment and backtick and char == "\\" and text[index + 1:index + 2] in ("`", "\\"):  # as `_backtick_end`
                 out.append(text[index:index + 2])
                 index += 2
                 continue
@@ -1697,7 +1700,7 @@ def _paren_end(text, index):
                     return index + 1
                 depth -= 1
             index += 1
-            word_start = char in WORD_BREAKS or char in "()"
+            word_start = char in WORD_STARTS
     raise ValueError("No closing parenthesis")
 
 
@@ -1713,7 +1716,6 @@ def _mask_substitutions(command):
         char, body = command[index], None
         if char == "#" and word_start:
             index = _line_end(command, index)
-            word_start = False  # the newline that follows starts the next word
             continue
         if char == "\\":
             end = index + 2
@@ -1734,7 +1736,7 @@ def _mask_substitutions(command):
         else:
             masked.append(f"{marker}{len(substitutions)}{marker}")
             substitutions.append((command[index:end], body))
-        word_start = body is None and (char in WORD_BREAKS or char in "()")
+        word_start = body is None and char in WORD_STARTS
         index = end
     return "".join(masked), marker, substitutions
 
