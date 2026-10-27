@@ -540,6 +540,22 @@ class ContinuedLineTest(GateTestCase):
         self.two_branches()
         self.assert_allowed(self.gate("gh pr create \\\\\n --head two"))  # bash runs `gh pr create \` on `one`, then `--head two` as another command
 
+    def test_a_closing_backtick_ends_a_comment_in_the_body_so_the_line_joins(self):
+        self.two_branches()
+        self.git("checkout", "two")  # joined: --head one is read and allows; not joined: checked on two, no record
+        self.assert_allowed(self.gate("gh pr create `a # b` \\\n --head one"))
+
+    def test_an_escaped_backtick_or_backslash_in_a_backtick_comment_does_not_end_it_early(self):
+        self.two_branches()
+        self.git("checkout", "two")
+        for command in ("gh pr create `a # b \\` c`# \\\n --head one", "gh pr create `a # b \\\\`# \\\n --head one"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_hash_in_a_double_quoted_substitution_is_quoted_text_for_the_join(self):
+        self.two_branches()
+        self.assert_denied(self.gate('gh pr create --head one "$(true # \n)" --head two'), "no record")
+
 
 class QuotedTextTest(GateTestCase):
     def test_a_quoted_gated_command_does_not_offset_an_unresolved_one(self):
@@ -631,6 +647,84 @@ class NestedCommandTest(GateTestCase):
     def test_a_substitution_in_single_quotes_is_text(self):
         self.audited_branch()
         self.assert_allowed(self.gate("echo '$(true' && gh pr create --title t"))
+
+
+class CommentTest(GateTestCase):
+    """An unquoted `#` at the start of a word starts a comment that ends at the end of its line."""
+
+    def two_branches(self, checked_out):
+        """`one` has a passing record, `two` is pushed without one; `checked_out` is checked out."""
+        self.audited_branch("one")
+        self.start_branch("two", "feat: b")
+        self.git("checkout", checked_out)
+
+    def test_a_head_in_a_comment_is_not_read(self):
+        self.two_branches("one")
+        self.assert_denied(self.gate("gh pr create --head two # --head one"), "no record")
+
+    def test_a_quote_in_a_comment_does_not_make_the_command_unparsable(self):
+        self.two_branches("one")
+        self.assert_denied(self.gate("gh pr create --head two # don't"), "no record")
+
+    def test_a_hash_in_a_word_or_in_quotes_is_text(self):
+        self.audited_branch()
+        for title in ("a#b", '"#"', "'#'"):
+            with self.subTest(title=title):
+                self.assert_allowed(self.gate(f"gh pr create --title {title}"))
+
+    def test_the_words_after_a_hash_in_a_word_or_in_quotes_are_still_read(self):
+        self.two_branches("two")
+        for title in ("a#b", '"#"', "'#'"):
+            with self.subTest(title=title):
+                self.assert_denied(self.gate(f"gh pr create --head one --title {title} --head two"), "no record")
+        self.assert_denied(self.gate('gh pr create --head one "a"#b --head two'), "no record")
+        self.assert_denied(self.gate("gh pr create --head one $# --head two"), "no record")
+
+    def test_a_gated_command_on_the_line_after_a_comment_is_checked(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate("true # x\ngh pr create"), "no record")
+
+    def test_a_closing_paren_in_a_comment_does_not_close_a_substitution(self):
+        self.two_branches("two")
+        self.assert_allowed(self.gate("gh pr create --head two $(true # )\n) --head one"))
+
+    def test_a_closing_backtick_ends_the_body_and_its_comment(self):
+        self.audited_branch()
+        for body in ("#x", "a # b", "a#b"):
+            with self.subTest(body=body):
+                self.assert_allowed(self.gate(f"echo `{body}` && gh pr create"))
+
+    def test_a_dollar_paren_or_a_backtick_in_a_comment_opens_nothing(self):
+        self.two_branches("two")
+        for command in ("gh pr create --head one # $(x", "gh pr create --head one # `x"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_quote_in_a_comment_inside_a_substitution_opens_nothing(self):
+        self.two_branches("one")
+        self.assert_denied(self.gate("gh pr create --head two $(true # don't\n)"), "no record")
+
+    def test_a_comment_starts_after_each_word_break(self):
+        self.start_branch("feature", "feat: a")
+        for separator in (";", "&", "|", "\t"):
+            with self.subTest(separator=separator):
+                self.assert_denied(self.gate(f"true{separator}# don't\ngh pr create"), "no record")
+
+    def test_a_comment_starts_after_a_subshell_paren_and_after_a_dollar_paren(self):
+        self.start_branch("feature", "feat: a")
+        for command in ("(# c\ngh pr create)", "echo $(#c\ntrue) && gh pr create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "no record")
+
+    def test_a_dollar_paren_whose_closing_paren_is_in_a_comment_is_unbalanced(self):
+        self.audited_branch()
+        self.assert_denied(self.gate("gh pr create $(true # )"), "no branch to check: the command cannot be parsed")
+
+    def test_the_raw_text_count_still_sees_comment_text(self):
+        self.audited_branch()
+        for command in ("# gh pr create", "echo x # gh pr create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
 
 
 if __name__ == "__main__":

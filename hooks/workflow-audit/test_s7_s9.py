@@ -324,6 +324,18 @@ class S9SubstitutionTest(S9Case):
         self.assert_clean(["rm $(true) x"])
 
 
+class S9CommentTest(S9Case):
+    def test_a_recursive_delete_on_the_line_after_a_comment_is_flagged(self):
+        self.assert_flagged(["ls # x \\\n rm -rf y", "ls `# x \\\n rm -rf y`", "echo x # c \\\nrm -rf y"])
+
+    def test_a_recursive_delete_only_in_a_comment_is_clean(self):
+        self.assert_clean(["ls # rm -rf x"])
+
+    def test_a_dollar_paren_whose_closing_paren_is_in_a_comment_is_unavailable(self):
+        self.register_session("s1", [self.edit(), bash_row("echo $(rm -rf x # )", "b1", 2)])
+        self.assert_item(self.items()["S9"], "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
+
+
 class S9DockerTest(S9Case):
     def test_docker_prune_fails(self):
         self.assert_flagged(["docker system prune", "docker system prune -af", "docker image prune", "docker container prune",

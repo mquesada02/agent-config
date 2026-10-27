@@ -142,6 +142,10 @@ class RetryOfTest(DispatchGateCase):
             with self.subTest(flag=flag):
                 self.assert_denied(self.gate(f"{WS} {flag} t1"), "no pre-dispatch record")
 
+    def test_a_retry_of_in_a_comment_is_not_read(self):
+        self.assert_denied(self.gate(f"{WS} # --retry-of t1"), "no pre-dispatch record")
+        self.assert_allowed(self.gate(f"{WS} --retry-of t1 # c"))
+
     def test_a_retry_of_next_to_a_dispatch_without_it_is_denied(self):
         self.assert_denied(self.gate(f"{WS} --retry-of t1 && {WS}"), "no pre-dispatch record")
         self.assert_denied(self.gate(f"{WS} ; {WS} --retry-of t1"), "no pre-dispatch record")
