@@ -2,12 +2,14 @@
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
 #   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
-#   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 50 KB; writes no file
+#   audit sessions show --worktree <path>         print every block of the audited sessions, with no size cap; writes no file
+#   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 28 KB; writes no file
 #   audit record --worktree <path> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
 # Exit codes of `check`: 0 it ran (a failed item is output, not an error), 2 it refused.
+# Exit codes of `sessions show`: 0 the blocks are printed, 2 the sessions cannot be audited or it refused.
 # Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
 import json
 import os
@@ -55,7 +57,7 @@ PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
 MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
 CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
-USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
          " | audit record --pre-dispatch --worktree <path> --map <issue> --llm <file> | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -1410,8 +1412,9 @@ def cmd_record(argv):
 
 # ---- check: the S results and the digest for the auditor ----
 
-LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 30720
-DIGEST_LIMIT = LEDGER_BUDGET + COMMITS_BUDGET + SESSIONS_BUDGET  # 50 KB
+# The sessions budget holds the pointer line with a worktree path of 4096 bytes (the Linux path limit).
+LEDGER_BUDGET, COMMITS_BUDGET, SESSIONS_BUDGET = 16384, 4096, 8192
+DIGEST_LIMIT = LEDGER_BUDGET + COMMITS_BUDGET + SESSIONS_BUDGET  # 28 KB
 PROMPT_LIMIT, COMMAND_LIMIT, FIELD_LIMIT, PATH_LIMIT, COMMIT_LIMIT = 500, 200, 100, 200, 200  # in characters; the budgets are in bytes
 OMITTED_RESERVE = len("[99999999 more lines omitted]") + 1  # room for the widest marker line that _fit appends, and its newline
 
@@ -1485,9 +1488,8 @@ def _commit_lines(worktree):
     return [f"commits since {base[:7]}"] + [_flat(line, COMMIT_LIMIT) for line in log.stdout.splitlines()] + [stat.stdout.strip() or "no diff"]
 
 
-def _session_lines(audited, problem):
-    if audited is None:
-        return [f"digest unavailable: {problem}"]
+def _session_lines(audited):
+    """The block lines of the audited sessions, whole; the caller handles the case that they cannot be read."""
     lines = []
     for transcripts in audited:
         main, subagents = transcripts[0], transcripts[1:]
@@ -1506,12 +1508,50 @@ def _session_lines(audited, problem):
     return lines
 
 
+def _sessions_show(argv):
+    """`audit sessions show --worktree <path>`: print every session block and write nothing; exit 2 when the sessions cannot be audited."""
+    if len(argv) != 2 or argv[0] != "--worktree":
+        raise Refusal(USAGE)
+    dir_fd, _, _ = _open_ledger_dir(argv[1])
+    try:
+        try:
+            audited = _audited_transcripts(argv[1], dir_fd)
+        except Unavailable as problem:
+            lines, status = [f"sessions unavailable: {problem}"], 2
+        else:
+            lines, status = ["sessions"] + _session_lines(audited), 0
+    finally:
+        os.close(dir_fd)
+    sys.stdout.buffer.write(_utf8("\n".join(lines) + "\n"))
+    sys.stdout.flush()
+    return status
+
+
+def cmd_sessions(argv):
+    try:
+        if argv[:1] == ["show"]:
+            return _sessions_show(argv[1:])
+        raise Refusal(USAGE)
+    except Refusal as refusal:
+        print(refusal, file=sys.stderr)
+    except Exception as error:
+        print(f"cannot show the sessions: {error}", file=sys.stderr)
+    return 2
+
+
+def _sessions_section(worktree, audited, problem):
+    """One pointer line with the session count and the command that reads the blocks, or the `digest unavailable` line."""
+    if audited is None:
+        return [f"digest unavailable: {problem}"]
+    return [f"sessions: {len(audited)} audited; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit sessions show --worktree {worktree}"]
+
+
 def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
-    """The text for the auditor: the ledger pointer, the commits and one block per audited session, at most DIGEST_LIMIT bytes."""
+    """The text for the auditor: the ledger pointer, the commits and the sessions pointer, at most DIGEST_LIMIT bytes."""
     # The sections are joined with two newlines, so the first two budgets give up one byte each to keep the total at DIGEST_LIMIT.
     sections = (_fit(_ledger_section(worktree, dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
                 _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
-                _fit(_session_lines(audited, problem), SESSIONS_BUDGET))
+                _fit(_sessions_section(worktree, audited, problem), SESSIONS_BUDGET))
     text = "\n".join("\n".join(section) for section in sections)
     data = _utf8(text)
     if len(data) > DIGEST_LIMIT:  # a last guard; the section budgets keep the digest under the limit
@@ -2130,6 +2170,8 @@ def cmd_session_start():
 def main(argv):
     if argv[:1] == ["ledger"]:
         return cmd_ledger(argv[1:])
+    if argv[:1] == ["sessions"]:
+        return cmd_sessions(argv[1:])
     if argv[:1] == ["check"]:
         return cmd_check(argv[1:])
     if argv[:1] == ["record"]:
