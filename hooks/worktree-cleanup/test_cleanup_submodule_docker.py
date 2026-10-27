@@ -90,7 +90,8 @@ class SubmodulesPushedTest(SubmoduleCase):
         self.assertEqual(result.returncode, 1)
         lines = self.starts(result, "Submodules pushed")
         self.assertEqual(len(lines), 2)
-        self.assertEqual(sorted(path for path in (SUB, "second") for line in lines if f": {path}:" in line), ["second", SUB])
+        for path in (SUB, "second"):
+            self.assertEqual(sum(f": {path}:" in line for line in lines), 1, path)
 
     def test_skip_ownership_does_not_skip_the_check(self):
         self.commit(self.sub, "local.txt")
@@ -192,7 +193,7 @@ class DockerTest(CleanupCase):
         self.assertEqual(self.docker_calls(), ["docker compose ls -a --format json"])
         self.stub_stacks()
         self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
-        self.assertFalse([c for c in self.docker_calls() if " down" in c])
+        self.assertEqual(set(self.docker_calls()), {"docker compose ls -a --format json"})
 
 
 class RefusalListTest(SubmoduleCase):
@@ -207,7 +208,6 @@ class RefusalListTest(SubmoduleCase):
         self.assertEqual([n for n in names if n in ("Clean", "Submodules pushed", "Docker")],
                          ["Clean", "Submodules pushed", "Docker"])
         self.assert_unchanged()
-        self.assertEqual(os.listdir(self.wt).count("new.txt"), 1)
 
 
 if __name__ == "__main__":

@@ -240,7 +240,10 @@ def check_docker(target):
     reasons = []
     for stack in stacks:
         files = stack.get("ConfigFiles") if isinstance(stack, dict) else None
-        paths = [os.path.realpath(path) for path in files.split(",") if os.path.isabs(path)] if isinstance(files, str) else []
+        if not isinstance(files, str):
+            continue
+        # ConfigFiles is comma-separated, so a path that holds a comma is not recognised (a limit of that field).
+        paths = [os.path.realpath(path) for path in files.split(",") if os.path.isabs(path)]
         if any(path == target or path.startswith(target + os.sep) for path in paths):
             reasons.append(f"Docker: stack {stack.get('Name') or '(unnamed)'} has a config file in the worktree")
     return reasons
