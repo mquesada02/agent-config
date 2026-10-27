@@ -82,6 +82,10 @@ class BriefTextTest(unittest.TestCase):
         self.assertIn("draft done report", numbered[index + 2])
         self.assertNotIn("ledger show", numbered[index + 1])
         self.assertNotIn("sessions show", numbered[index - 1])
+
+    def test_no_step_text_names_a_step_number(self):
+        steps = self.full.split("## Steps", 1)[1].split("## The six items", 1)[0]
+        numbered = [line for line in steps.splitlines() if re.match(r"\d+\. ", line)]
         self.assertFalse([line for line in numbered if re.search(r"\bsteps? \d", line)])
 
     def test_the_full_variant_reads_the_session_blocks_with_sessions_show_into_a_file_page_by_page(self):
@@ -97,7 +101,7 @@ class BriefTextTest(unittest.TestCase):
         section = self.full.split("## Reading the sessions", 1)[1].split("##", 1)[0]
         for phrase in ("other than 0 or 2", "does not start with a line that is exactly `sessions` or `sessions unavailable: <why>`",
                        "`sessions unavailable` output makes each item that needs the session blocks `fail` with \"evidence unavailable\"",
-                       "evidence unavailable", "names the exit status and the stderr text", "L2 and L4"):
+                       "names the exit status and the stderr text", "L2 and L4"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
 
