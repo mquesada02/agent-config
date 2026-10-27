@@ -197,7 +197,7 @@ Never use `rm -rf` or other recursive deletes. To remove something:
 
 ## 14. Docker containers
 
-Docker containers and volumes stay on disk after the session ends. Before you start, or run anything that starts, a container or a `docker compose` stack, and before you remove a worktree, read `~/.claude/docs/agents/docker.md` and follow it. Before you finish, leave behind no container or volume that you created, except a long-lived development stack that you left running or stopped with `docker compose stop`. Remove only the containers and volumes that you created, or that belong to a worktree you remove. Never run any `docker ... prune` command.
+Docker containers and volumes stay on disk after the session ends. Before you start, or run anything that starts, a container or a `docker compose` stack, and before you remove a worktree, read `~/.claude/docs/agents/docker.md` and follow it. Before you finish, leave behind no container or volume that you created, except a long-lived development stack that you left running or stopped with `docker compose stop`. Remove only the containers and volumes that you created, or that belong to a worktree you remove. Never run any `docker ... prune` command. The cleanup command `~/.claude/hooks/worktree-cleanup/cleanup` refuses while a compose stack has config files in the target worktree; remove such a stack by hand first (ask first when it can hold data), then run the command again.
 
 ## 15. CPU load
 

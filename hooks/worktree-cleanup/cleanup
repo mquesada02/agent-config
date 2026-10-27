@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # Safe worktree cleanup (spec #156, ticket spec #172). Standard library only.
 #   cleanup [--skip-ownership] <worktree path>
-# Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 5 (Merged), 6 (Pushed) and 7 (Main checkout),
+# Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 4 (Submodules pushed), 5 (Merged), 6 (Pushed), 7 (Main checkout) and 8 (Docker),
 # then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -132,6 +133,29 @@ def check_clean(target):
     return []
 
 
+def check_submodules(target):
+    """Check 4: every initialized submodule has its HEAD on a remote-tracking branch, after a fetch."""
+    listing = git(target, "ls-files", "-s", "-z")
+    if listing.returncode != 0:
+        return [f"Submodules pushed: git ls-files failed: {failure_text(listing)}"]
+    reasons = []
+    for entry in listing.stdout.split("\0"):
+        meta, _, path = entry.partition("\t")
+        folder = os.path.join(target, path)
+        if not meta.startswith("160000 ") or not os.path.exists(os.path.join(folder, ".git")):
+            continue
+        fetch = git(folder, "fetch")
+        if fetch.returncode != 0:
+            reasons.append(f"Submodules pushed: {path}: fetch failed: {failure_text(fetch)}")
+            continue
+        contains = git(folder, "branch", "-r", "--contains", "HEAD")
+        if contains.returncode != 0:
+            reasons.append(f"Submodules pushed: {path}: listing the remote branches of HEAD failed: {failure_text(contains)}")
+        elif not contains.stdout.strip():
+            reasons.append(f"Submodules pushed: {path}: HEAD is on no remote-tracking branch")
+    return reasons
+
+
 def check_merged(target, branch, tip):
     """Return (reasons, base, default, numbers). Numbers are those of the merged PRs at the tip; None when the check fails."""
     prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "merged",
@@ -203,6 +227,26 @@ def check_main_checkout(checkout):
         if os.path.exists(os.path.join(git_dir, name)):
             return [f"Main checkout: a merge or rebase is in progress ({name})"]
     return []
+
+
+def check_docker(target):
+    """Check 8: no compose stack has a config file inside the target. No `docker` on PATH passes."""
+    if shutil.which("docker") is None:
+        return []
+    result = run("docker", "compose", "ls", "-a", "--format", "json")
+    stacks = read_json(result)
+    if not isinstance(stacks, list):
+        return [f"Docker: docker compose ls -a did not give a list of stacks: {failure_text(result)}"]
+    reasons = []
+    for stack in stacks:
+        files = stack.get("ConfigFiles") if isinstance(stack, dict) else None
+        if not isinstance(files, str):
+            continue
+        # ConfigFiles is comma-separated, so a path that holds a comma is not recognised (a limit of that field).
+        paths = [os.path.realpath(path) for path in files.split(",") if os.path.isabs(path)]
+        if any(path == target or path.startswith(target + os.sep) for path in paths):
+            reasons.append(f"Docker: stack {stack.get('Name') or '(unnamed)'} has a config file in the worktree")
+    return reasons
 
 
 def remote_ref_present(target, branch):
@@ -309,12 +353,14 @@ def main(argv):
     if reasons:
         reasons.append(SKIP_COMMAND.format(path=target))
     reasons += check_clean(target)
+    reasons += check_submodules(target)
     tip = git(target, "rev-parse", "HEAD").stdout.strip()
     merged, base, default, numbers = check_merged(target, facts["branch"], tip)
     reasons += merged
     pushed, ref_absent = check_pushed(target, facts["branch"], tip, numbers)
     reasons += pushed
     reasons += check_main_checkout(facts["checkout"])
+    reasons += check_docker(target)
     if reasons:
         return refuse(reasons)
     own = anchor is None or anchor == record["id"]

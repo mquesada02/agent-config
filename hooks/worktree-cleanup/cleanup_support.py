@@ -68,7 +68,7 @@ class CleanupCase(unittest.TestCase):
         os.mkdir(self.stub_dir)
         self.bin = os.path.join(self.root, "bin")
         os.mkdir(self.bin)
-        for name in ("orca", "gh"):
+        for name in ("orca", "gh", "docker"):
             path = os.path.join(self.bin, name)
             with open(path, "w") as f:
                 f.write(STUB)
@@ -80,6 +80,7 @@ class CleanupCase(unittest.TestCase):
         self.stub_terminal(self.anchor_id)
         self.stub_gh_merged()
         self.stub("gh repo view", json.dumps({"defaultBranchRef": {"name": "main"}}))
+        self.stub("docker compose ls", "[]")
         self.stub_rm_effect()
 
     def commit(self, repo, name):
@@ -121,8 +122,23 @@ class CleanupCase(unittest.TestCase):
                                     "delay": delay, "delete_branch": delete_branch}
         self.stub("orca worktree rm", json.dumps({"ok": True}))
 
-    def run_cleanup(self, *args, handle=HANDLE, wait_interval="0.05", wait_limit="1", cwd=None):
-        env = dict(self.env, PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_DIR=self.stub_dir,
+    def no_docker_path(self):
+        """A PATH folder with the orca and gh stubs and the real tools the script and the stubs need, but no docker."""
+        folder = os.path.join(self.root, "bin-no-docker")
+        os.makedirs(folder, exist_ok=True)
+        for name in ("orca", "gh"):
+            link = os.path.join(folder, name)
+            if not os.path.lexists(link):
+                os.symlink(os.path.join(self.bin, name), link)
+        for name in ("git", "python3", "sh", "sleep"):
+            link = os.path.join(folder, name)
+            if not os.path.lexists(link):
+                os.symlink(shutil.which(name), link)
+        return folder
+
+    def run_cleanup(self, *args, handle=HANDLE, wait_interval="0.05", wait_limit="1", cwd=None, no_docker=False):
+        path = self.no_docker_path() if no_docker else self.bin + os.pathsep + os.environ["PATH"]
+        env = dict(self.env, PATH=path, STUB_DIR=self.stub_dir,
                    WORKTREE_CLEANUP_WAIT_INTERVAL=wait_interval, WORKTREE_CLEANUP_WAIT_LIMIT=wait_limit)
         if handle is None:
             env.pop("ORCA_TERMINAL_HANDLE", None)
