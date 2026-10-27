@@ -107,11 +107,22 @@ class RemoteBranchTest(CleanupCase):
         self.assertEqual(len(self.rm_calls()), 1)
 
     def test_an_absent_remote_ref_skips_the_delete(self):
+        git("--git-dir", self.remote, "update-ref", "refs/pull/7/head", self.tip, env=self.env)
         git("push", "-q", "origin", "--delete", self.BRANCH, cwd=self.main, env=self.env)
         result = self.run_cleanup(self.wt)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("skipped", self.starts(result, "Remote branch")[0])
+        line = self.starts(result, "Remote branch")[0]
+        self.assertIn("skipped, no remote ref", line)
+        self.assertNotIn("already gone", line)
+        for step in ("Switch and pull", "Worktree", "Local branch"):
+            self.assertTrue(self.starts(result, step), step)
         self.assertFalse(os.path.exists(self.wt))
+
+    def test_a_present_remote_ref_is_deleted(self):
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("deleted", self.starts(result, "Remote branch")[0])
+        self.assertFalse(self.remote_has(self.BRANCH))
 
     def write_hook(self, body):
         path = os.path.join(self.remote, "hooks", "pre-receive")

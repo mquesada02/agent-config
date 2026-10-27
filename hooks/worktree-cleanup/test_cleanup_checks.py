@@ -199,6 +199,101 @@ class MergedTest(CleanupCase):
         self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
 
 
+class PushedTest(CleanupCase):
+    def delete_remote_branch(self):
+        git("push", "-q", "origin", "--delete", self.BRANCH, cwd=self.main, env=self.env)
+
+    def set_pull_ref(self, number, sha):
+        git("--git-dir", self.remote, "update-ref", f"refs/pull/{number}/head", sha, env=self.env)
+
+    def assert_pushed_refusal(self, result):
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.starts(result, "Pushed")), 1)
+        self.assertTrue(os.path.isdir(self.wt))
+        self.assertEqual(self.rm_calls(), [])
+
+    def test_the_branch_ref_at_the_tip_passes(self):
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.starts(result, "Pushed"))
+
+    def test_the_branch_ref_at_another_sha_refuses(self):
+        git("push", "-q", "-f", "origin", "HEAD:refs/heads/" + self.BRANCH, cwd=self.main, env=self.env)
+        self.assert_pushed_refusal(self.run_cleanup(self.wt))
+
+    def test_a_failed_ls_remote_refuses(self):
+        git("remote", "set-url", "origin", os.path.join(self.root, "missing.git"), cwd=self.main, env=self.env)
+        self.assert_pushed_refusal(self.run_cleanup(self.wt))
+
+    def test_an_absent_branch_ref_with_the_pull_ref_at_the_tip_passes(self):
+        self.set_pull_ref(7, self.tip)
+        self.delete_remote_branch()
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.starts(result, "Pushed"))
+
+    def test_an_absent_branch_ref_with_the_pull_ref_at_another_sha_refuses(self):
+        self.set_pull_ref(7, self.git_out(self.main, "rev-parse", "HEAD"))
+        self.delete_remote_branch()
+        self.assert_pushed_refusal(self.run_cleanup(self.wt))
+
+    def test_an_absent_branch_ref_with_no_pull_ref_refuses(self):
+        self.delete_remote_branch()
+        self.assert_pushed_refusal(self.run_cleanup(self.wt))
+
+    def test_an_absent_branch_ref_with_check_5_failed_refuses_with_the_no_merged_pr_reason(self):
+        self.delete_remote_branch()
+        self.stub_gh_merged(prs=[])
+        result = self.run_cleanup(self.wt)
+        self.assert_pushed_refusal(result)
+        self.assertIn("no merged PR", self.starts(result, "Pushed")[0])
+
+    def test_a_later_matching_pull_ref_at_the_tip_rescues_an_earlier_absent_one(self):
+        self.stub_gh_merged(prs=[{"number": 8, "headRefOid": self.tip, "baseRefName": "main"},
+                                 {"number": 7, "headRefOid": self.tip, "baseRefName": "main"}])
+        self.set_pull_ref(8, self.tip)
+        self.delete_remote_branch()
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class MainCheckoutTest(CleanupCase):
+    def assert_main_refusal(self, result):
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.starts(result, "Main checkout")), 1)
+        self.assert_unchanged()
+
+    def test_a_clean_main_checkout_passes(self):
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.starts(result, "Main checkout"))
+
+    def test_a_tracked_uncommitted_change_refuses(self):
+        with open(os.path.join(self.main, "base.txt"), "w") as f:
+            f.write("changed")
+        self.assert_main_refusal(self.run_cleanup(self.wt))
+
+    def test_a_merge_head_refuses(self):
+        with open(os.path.join(self.main, ".git", "MERGE_HEAD"), "w") as f:
+            f.write(self.tip + "\n")
+        self.assert_main_refusal(self.run_cleanup(self.wt))
+
+    def test_a_rebase_merge_folder_refuses(self):
+        os.mkdir(os.path.join(self.main, ".git", "rebase-merge"))
+        self.assert_main_refusal(self.run_cleanup(self.wt))
+
+    def test_a_rebase_apply_folder_refuses(self):
+        os.mkdir(os.path.join(self.main, ".git", "rebase-apply"))
+        self.assert_main_refusal(self.run_cleanup(self.wt))
+
+    def test_only_untracked_files_pass(self):
+        with open(os.path.join(self.main, "untracked.txt"), "w") as f:
+            f.write("x")
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.starts(result, "Main checkout"))
+
+
 class RefusalTest(CleanupCase):
     def test_a_refusal_lists_every_failed_check_and_changes_nothing(self):
         with open(os.path.join(self.wt, "new.txt"), "w") as f:
@@ -212,6 +307,24 @@ class RefusalTest(CleanupCase):
         self.assertFalse(self.starts(result, "Target"))
         self.assert_unchanged()
         self.assertEqual(os.listdir(self.wt).count("new.txt"), 1)
+
+    def test_pushed_and_main_checkout_join_the_list_and_nothing_changes(self):
+        with open(os.path.join(self.wt, "new.txt"), "w") as f:
+            f.write("x")
+        with open(os.path.join(self.main, "base.txt"), "w") as f:
+            f.write("changed")
+        git("push", "-q", "origin", "--delete", self.BRANCH, cwd=self.main, env=self.env)
+        self.stub_show()
+        self.stub_gh_merged(prs=[])
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 1)
+        for marker in ("Ownership", "Clean", "Merged", "Pushed", "Main checkout"):
+            self.assertEqual(len(self.starts(result, marker)), 1, marker)
+        self.assertEqual(self.rm_calls(), [])
+        self.assertTrue(os.path.isdir(self.wt))
+        self.assertEqual(self.git_out(self.main, "branch", "--show-current"), "main")
+        with open(os.path.join(self.main, "base.txt")) as f:
+            self.assertEqual(f.read(), "changed")
 
 
 if __name__ == "__main__":

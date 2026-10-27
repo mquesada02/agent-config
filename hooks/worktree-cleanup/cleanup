@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Safe worktree cleanup (spec #156, ticket spec #172). Standard library only.
 #   cleanup [--skip-ownership] <worktree path>
-# Runs checks 1 (Target), 2 (Ownership), 3 (Clean) and 5 (Merged), then the section 8 after-merge actions:
-# remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
+# Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 5 (Merged), 6 (Pushed) and 7 (Main checkout),
+# then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import json
 import os
@@ -132,38 +132,90 @@ def check_clean(target):
     return []
 
 
-def check_merged(target, branch):
-    tip = git(target, "rev-parse", "HEAD").stdout.strip()
+def check_merged(target, branch, tip):
+    """Return (reasons, base, default, numbers). Numbers are those of the merged PRs at the tip; None when the check fails."""
     prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "merged",
                         "--json", "number,headRefOid,baseRefName", cwd=target))
     if not isinstance(prs, list):
-        return ["Merged: could not read the merged PRs from GitHub"], None, None
-    bases = {pr.get("baseRefName") for pr in prs if isinstance(pr, dict) and pr.get("headRefOid") == tip}
+        return ["Merged: could not read the merged PRs from GitHub"], None, None, None
+    matching = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefOid") == tip]
+    bases = {pr.get("baseRefName") for pr in matching}
     if not bases:
-        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head"], None, None
+        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head"], None, None, None
     if len(bases) > 1:
-        return ["Merged: matching PRs have different base branches, the base cannot be chosen"], None, None
+        return ["Merged: matching PRs have different base branches, the base cannot be chosen"], None, None, None
     repo = read_json(run("gh", "repo", "view", "--json", "defaultBranchRef", cwd=target))
     try:
         default = repo["defaultBranchRef"]["name"]
     except (KeyError, TypeError):
         default = None
     if not default:
-        return ["Merged: could not read the default branch from GitHub"], None, None
-    return [], bases.pop(), default
+        return ["Merged: could not read the default branch from GitHub"], None, None, None
+    return [], bases.pop(), default, sorted(pr["number"] for pr in matching if isinstance(pr.get("number"), int))
+
+
+def remote_ref_sha(target, ref):
+    """Return (sha, error). The sha is None when the ref is absent on the remote."""
+    result = git(target, "ls-remote", REMOTE, ref)
+    if result.returncode != 0:
+        return None, failure_text(result)
+    for line in result.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if name == ref:
+            return sha, None
+    return None, None
+
+
+def check_pushed(target, branch, tip, numbers):
+    """Return (reasons, branch_ref_absent)."""
+    sha, error = remote_ref_sha(target, f"refs/heads/{branch}")
+    if error:
+        return [f"Pushed: could not read {REMOTE}: {error}"], False
+    if sha == tip:
+        return [], False
+    if sha:
+        return [f"Pushed: {REMOTE} has {branch} at {sha[:12]}, not the local tip {tip[:12]}"], False
+    if not numbers:
+        return [f"Pushed: {branch} is absent on {REMOTE} and check 5 failed, so no merged PR gives a pull ref to compare"], True
+    problem = None
+    for number in numbers:
+        pull, error = remote_ref_sha(target, f"refs/pull/{number}/head")
+        if pull == tip:
+            return [], True
+        if error:
+            problem = f"could not read the pull ref of PR {number}: {error}"
+        else:
+            problem = f"the pull ref of PR {number} is {(pull or 'absent')[:12]}, not the local tip {tip[:12]}"
+    return [f"Pushed: {branch} is absent on {REMOTE} and {problem}"], True
+
+
+def check_main_checkout(checkout):
+    status = git(checkout, "status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        return [f"Main checkout: git status failed: {failure_text(status)}"]
+    if status.stdout.strip():
+        return ["Main checkout: it has uncommitted changes to tracked files"]
+    result = git(checkout, "rev-parse", "--git-dir")
+    if result.returncode != 0:
+        return [f"Main checkout: git rev-parse --git-dir failed: {failure_text(result)}"]
+    git_dir = os.path.join(checkout, result.stdout.strip())
+    for name in ("MERGE_HEAD", "rebase-merge", "rebase-apply"):
+        if os.path.exists(os.path.join(git_dir, name)):
+            return [f"Main checkout: a merge or rebase is in progress ({name})"]
+    return []
 
 
 def remote_ref_present(target, branch):
-    result = git(target, "ls-remote", REMOTE, f"refs/heads/{branch}")
-    if result.returncode != 0:
-        raise ActionFailed(f"Remote branch: could not read {REMOTE}: {failure_text(result)}")
-    return bool(result.stdout.strip())
+    sha, error = remote_ref_sha(target, f"refs/heads/{branch}")
+    if error:
+        raise ActionFailed(f"Remote branch: could not read {REMOTE}: {error}")
+    return bool(sha)
 
 
-def delete_remote_branch(target, branch, protected):
+def delete_remote_branch(target, branch, protected, ref_absent):
     if protected:
         return "skipped, protected branch"
-    if not remote_ref_present(target, branch):
+    if ref_absent:
         return "skipped, no remote ref"
     pushed = git(target, "push", REMOTE, "--delete", branch)
     if pushed.returncode == 0:
@@ -204,7 +256,7 @@ def delete_local_branch(checkout, branch):
     return "deleted"
 
 
-def act(target, facts, base, default, own, interval, limit):
+def act(target, facts, base, default, ref_absent, own, interval, limit):
     branch, checkout = facts["branch"], facts["checkout"]
     done = []
 
@@ -213,7 +265,7 @@ def act(target, facts, base, default, own, interval, limit):
         say(f"{name}: {outcome}")
 
     try:
-        step("Remote branch", delete_remote_branch(target, branch, branch in PROTECTED or branch == default))
+        step("Remote branch", delete_remote_branch(target, branch, branch in PROTECTED or branch == default, ref_absent))
         switch_and_pull(checkout, base)
         step("Switch and pull", f"{base} pulled with --ff-only")
         if own:
@@ -257,12 +309,16 @@ def main(argv):
     if reasons:
         reasons.append(SKIP_COMMAND.format(path=target))
     reasons += check_clean(target)
-    merged, base, default = check_merged(target, facts["branch"])
+    tip = git(target, "rev-parse", "HEAD").stdout.strip()
+    merged, base, default, numbers = check_merged(target, facts["branch"], tip)
     reasons += merged
+    pushed, ref_absent = check_pushed(target, facts["branch"], tip, numbers)
+    reasons += pushed
+    reasons += check_main_checkout(facts["checkout"])
     if reasons:
         return refuse(reasons)
     own = anchor is None or anchor == record["id"]
-    return act(target, facts, base, default, own, interval, limit)
+    return act(target, facts, base, default, ref_absent, own, interval, limit)
 
 
 if __name__ == "__main__":
