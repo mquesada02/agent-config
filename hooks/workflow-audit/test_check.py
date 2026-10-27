@@ -1,4 +1,5 @@
 import os
+import pathlib
 import re
 import unittest
 
@@ -6,11 +7,18 @@ from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, find
 
 DIGEST_MARKER = "--- digest ---"
 S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
-LIMIT = 51200  # 50 KB, written out here on purpose: the test checks the number in the spec, not the code's own constant
+LIMIT = 28672  # 28 KB, written out here on purpose: the test checks the number in the spec, not the code's own constant
 
 
 def prompt_row(text, seconds=0):
     return {"type": "user", "timestamp": stamp(seconds), "version": VERSION, "message": {"role": "user", "content": text}}
+
+
+def long_rows():
+    """Synthetic rows that fill far more than the old 30 KB sessions budget: 3000 Bash calls and 500 launches."""
+    rows = [bash_row("echo " + "ä€" * 100 + str(n), f"b{n}", 3) for n in range(3000)]
+    rows += [call_row("Agent", {"description": "x" * 500, "subagent_type": "y" * 500, "model": "z" * 500}, f"a{n}", 4) for n in range(500)]
+    return rows
 
 
 class CheckCase(AuditCase):
@@ -101,54 +109,75 @@ class RefusalTest(CheckCase):
         self.refused(self.check())
 
 
-class DigestTest(CheckCase):
+class SessionCase(CheckCase):
     default_session = False
 
     def session(self, rows, subagents=None, name="main-session"):
         subagents = {"rev1": subagent_rows()} if subagents is None else subagents  # the reviewer of the default ledger
         return self.register_session(name, [edit_row(os.path.join(self.repo, "edited.txt"), "e1", 2)] + rows, subagents=subagents)
 
-    def test_holds_the_ledger_the_commits_and_the_session(self):
+    def show(self, worktree=None, *extra):
+        return self.audit("sessions", "show", "--worktree", worktree or self.repo, *extra)
+
+
+class DigestTest(SessionCase):
+    def shown(self):
+        """The text of `audit sessions show` for the same worktree."""
+        result = self.show()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.decode()
+
+    def test_holds_the_ledger_and_the_commits_and_the_sessions_pointer_not_the_blocks(self):
         self.default_ledger = False
         self.session([
             prompt_row("Invented prompt: change the sample.", 1),
             bash_row("make test", "b1", 5),
             call_row("Agent", {"description": "Invented review", "subagent_type": "general-purpose", "model": "sonnet"}, "a1", 6),
-            call_row("Skill", {"skill": "invented-skill"}, "k1", 7),
         ], subagents={"rev1": subagent_rows()})
         self.start_branch("feature", "feat: first change")
         self.write_ledger("feature", [round_event()])
         _, _, digest = self.parts(self.check())
-        for needle in ("feat: first change", "Invented prompt: change the sample.", "2026-10-15T12:00:05Z make test",
-                       "edited.txt", "Invented review", "general-purpose", "sonnet", "invented-skill", "agent-rev1.jsonl", "claude-sonnet-5-5"):
-            with self.subTest(needle):
-                self.assertIn(needle, digest)
+        self.assertIn("feat: first change", digest)
+        self.assertIn("ledger: 1 events;", digest)
+        for text in ("Invented prompt", "make test", "Invented review", "agent-rev1.jsonl", "session main-session"):
+            with self.subTest(text):
+                self.assertNotIn(text, digest)
+
+    def test_the_sessions_section_is_one_pointer_line_with_the_count_and_the_worktree(self):
+        self.session([bash_row("make test", "b1", 5)])
+        self.session([bash_row("make other", "b2", 5)], name="second-session")
+        self.start_branch("feature", "feat: a")
+        _, _, digest = self.parts(self.check())
+        pointer = ("sessions: 2 audited; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit sessions show "
+                   f"--worktree {self.repo}")
+        self.assertEqual(digest.splitlines()[-1], pointer)
+        self.assertEqual(len([line for line in digest.splitlines() if line.startswith("sessions")]), 1)
+        self.assertNotIn("  bash ", digest)
+        self.assertNotIn("subagent", digest)
 
     def test_the_first_prompt_skips_a_compaction_summary(self):
         self.session([{**prompt_row("Invented summary", 1), "isCompactSummary": True}, prompt_row("Invented real prompt", 2)])
         self.start_branch("feature", "feat: a")
-        _, _, digest = self.parts(self.check())
-        self.assertIn("Invented real prompt", digest)
-        self.assertNotIn("Invented summary", digest)
+        shown = self.shown()
+        self.assertIn("Invented real prompt", shown)
+        self.assertNotIn("Invented summary", shown)
 
     def test_the_first_prompt_skips_a_task_notification(self):
         self.session([prompt_row("<task-notification>x</task-notification>", 1), prompt_row("Invented real prompt", 2)])
         self.start_branch("feature", "feat: a")
-        _, _, digest = self.parts(self.check())
-        self.assertIn("Invented real prompt", digest)
+        self.assertIn("Invented real prompt", self.shown())
 
     def test_a_session_with_no_prompt_shows_none(self):
         self.session([])
         self.start_branch("feature", "feat: a")
-        _, _, digest = self.parts(self.check())
-        self.assertIn("(none)", digest)
+        self.assertIn("(none)", self.shown())
 
     def test_a_launch_with_missing_fields_fails_no_item(self):
         self.session([call_row("Agent", {}, "a1", 3), call_row("Skill", {}, "k1", 4)])
         self.start_branch("feature", "feat: a")
-        lines, _, digest = self.parts(self.check())
+        lines, _, _ = self.parts(self.check())
         self.assertEqual(lines[-1], "result pass")
-        self.assertIn("?", digest)
+        self.assertIn("  agent: ? | ? | ?", self.shown())
 
     def test_a_launch_with_a_bad_id_still_fails_the_audit(self):
         self.session([call_row("Agent", {}, 7, 3)])
@@ -162,19 +191,17 @@ class DigestTest(CheckCase):
         self.start_branch("feature", "feat: a")
         lines, size, digest = self.parts(self.check())
         self.assertEqual(lines[-1], "result pass")
-        self.assertIn("prompt", digest)
+        self.assertIn("sessions: 1 audited;", digest)
         self.assertEqual(size, f"digest {len(digest.encode('utf-8'))} bytes")
 
-    def test_a_long_session_is_cut_to_the_limit_and_says_so(self):
-        rows = [bash_row("echo " + "ä€" * 100 + str(n), f"b{n}", 3) for n in range(3000)]
-        rows += [call_row("Agent", {"description": "x" * 500, "subagent_type": "y" * 500, "model": "z" * 500}, f"a{n}", 4) for n in range(500)]
-        self.session(rows)
+    def test_a_long_session_adds_no_omitted_lines_marker_to_the_digest(self):
+        self.session(long_rows())
         self.start_branch("feature", "feat: a")
         _, size, digest = self.parts(self.check())
         self.assertLessEqual(len(digest.encode("utf-8")), LIMIT)
         self.assertEqual(size, f"digest {len(digest.encode('utf-8'))} bytes")
-        self.assertRegex(digest, r"\[\d+ more lines omitted\]")
-        digest.encode("utf-8")  # still valid text
+        self.assertNotIn("more lines omitted", digest)
+        self.assertIn("sessions: 1 audited;", digest)
 
     def test_a_long_ledger_and_a_long_commit_list_are_cut_too(self):
         self.default_ledger = False
@@ -243,6 +270,140 @@ class DigestTest(CheckCase):
         lines, _, digest = self.parts(self.check())
         self.assertIn("S8 fail", lines)
         self.assertIn("commits unavailable: evidence unavailable: none of origin/HEAD, origin/main and origin/master exists", digest)
+
+
+class SessionsShowTest(SessionCase):
+    def lines(self, result):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        return result.stdout.decode().splitlines()
+
+    def digest_why(self):
+        """The text after `digest unavailable: ` in the digest of `audit check` for the same worktree."""
+        _, _, digest = self.parts(self.check())
+        return next(line for line in digest.splitlines() if line.startswith("digest unavailable: ")).removeprefix("digest unavailable: ")
+
+    def refused_like_ledger_show(self, worktree=None):
+        result, ledger = self.show(worktree), self.audit("ledger", "show", "--worktree", worktree or self.repo)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, b"")
+        self.assertTrue(ledger.stderr)
+        self.assertEqual(result.stderr, ledger.stderr)
+
+    def test_prints_the_header_then_every_block_in_registry_order(self):
+        self.session([prompt_row("Invented prompt: change the sample.", 1), bash_row("make test", "b1", 5),
+                      call_row("Agent", {"description": "Invented review", "subagent_type": "general-purpose", "model": "sonnet"}, "a1", 6),
+                      call_row("Skill", {"skill": "invented-skill"}, "k1", 7)])
+        self.session([bash_row("make other", "b2", 5)], name="second-session", subagents={})
+        self.start_branch("feature", "feat: a")
+        lines = self.lines(self.show())
+        self.assertEqual(lines[0], "sessions")
+        self.assertEqual([line for line in lines if line.startswith("session ")], ["session main-session.jsonl", "session second-session.jsonl"])
+        text = "\n".join(lines)
+        for needle in ("  prompt: Invented prompt: change the sample.", "  edits: 1", "  edited: " + os.path.join(self.repo, "edited.txt"),
+                       "  bash 2026-10-15T12:00:05Z make test", "  agent: Invented review | general-purpose | sonnet", "  skill: invented-skill",
+                       "  subagent agent-rev1.jsonl first row 2000-01-01T00:00:00Z models: claude-sonnet-5-5"):
+            with self.subTest(needle):
+                self.assertIn(needle, text)
+        self.assertLess(text.index("make test"), text.index("make other"))
+
+    def test_a_first_session_over_the_old_budget_does_not_hide_the_second(self):
+        self.session(long_rows())
+        self.session([bash_row("make second", "b9", 5)], name="second-session", subagents={})
+        self.start_branch("feature", "feat: a")
+        result = self.show()
+        lines = self.lines(result)
+        self.assertGreater(len(result.stdout), 30720)
+        self.assertIn("session second-session.jsonl", lines)
+        self.assertEqual(lines[-1], "  bash 2026-10-15T12:00:05Z make second")
+        self.assertNotIn(b"more lines omitted", result.stdout)
+
+    def test_a_very_large_input_is_printed_in_full(self):
+        self.session(long_rows())
+        self.start_branch("feature", "feat: a")
+        lines = self.lines(self.show())
+        self.assertEqual(len([line for line in lines if line.startswith("  bash ")]), 3000)
+        self.assertEqual(len([line for line in lines if line.startswith("  agent: ")]), 500)
+        self.assertIn("agent-rev1.jsonl", lines[-1])
+        self.assertNotIn("more lines omitted", "\n".join(lines))
+
+    def test_non_ascii_text_is_printed_as_is_and_a_lone_surrogate_does_not_stop_it(self):
+        self.session([prompt_row("x\udc80 prompt ä€ é", 1), bash_row("echo ä€ \ud800", "b1", 3)])
+        self.start_branch("feature", "feat: a")
+        text = self.show().stdout.decode()
+        self.assertTrue(text.startswith("sessions\n"))
+        self.assertIn("prompt ä€ é", text)
+        self.assertIn("echo ä€ ", text)
+
+    def test_leaves_the_runtime_folder_unchanged_and_creates_no_lock_file(self):
+        self.session([bash_row("make test", "b1", 5)])
+        self.start_branch("feature", "feat: a")
+        names = self.runtime_files()
+        contents = {name: pathlib.Path(self.runtime, name).read_bytes() for name in names}
+        self.assertEqual(self.show().returncode, 0)
+        self.assertEqual(self.runtime_files(), names)
+        self.assertEqual({name: pathlib.Path(self.runtime, name).read_bytes() for name in names}, contents)
+        self.assertEqual([name for name in names if name.endswith(".lock")], [])
+
+    def test_with_no_runtime_folder_it_creates_only_that_folder(self):
+        self.git("checkout", "-b", "feature")
+        self.assertFalse(os.path.exists(self.runtime))
+        self.assertEqual(self.show().returncode, 2)
+        self.assertEqual(os.listdir(self.runtime), [])
+        self.assertEqual(os.stat(self.runtime).st_mode & 0o777, 0o700)
+
+    def test_no_audited_session_prints_one_unavailable_line_with_the_why_of_the_digest(self):
+        self.git("checkout", "-b", "feature")
+        cases = {
+            "no registered session": lambda: None,
+            "a session that does not touch the worktree": lambda: self.register_session("other", [bash_row("echo hi", "b1", 1)]),
+            "an unreadable transcript": lambda: self.register_path("bad", self.root),
+        }
+        for name, setup in cases.items():
+            with self.subTest(name):
+                if os.path.exists(os.path.join(self.runtime, "sessions.jsonl")):
+                    os.unlink(os.path.join(self.runtime, "sessions.jsonl"))
+                setup()
+                result = self.show()
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(result.stdout.decode().splitlines(), [f"sessions unavailable: {self.digest_why()}"])
+
+    def test_a_refusal_has_the_texts_of_ledger_show_and_wins_over_unavailable(self):
+        self.refused_like_ledger_show(self.root)  # not a git worktree
+        self.assertFalse(os.path.exists(self.runtime))
+        self.git("checkout", "-b", "feature")
+        self.git("checkout", "--detach")
+        self.refused_like_ledger_show()
+        self.git("checkout", "feature")
+        self.git("remote", "remove", "origin")
+        self.refused_like_ledger_show()
+        self.assertFalse(os.path.exists(self.runtime))
+        self.git("remote", "add", "origin", self.origin)
+        os.makedirs(self.runtime)
+        os.chmod(self.runtime, 0o755)
+        self.refused_like_ledger_show()
+
+    def test_the_checks_run_in_the_order_of_ledger_show(self):
+        self.git("checkout", "-b", "feature")
+        os.makedirs(self.runtime)
+        os.chmod(self.runtime, 0o755)
+        self.git("remote", "remove", "origin")
+        self.refused_like_ledger_show()
+        self.assertIn(b"no remote URL for origin", self.show().stderr)
+
+    def test_a_bad_command_line_prints_the_usage_text(self):
+        self.start_branch("feature", "feat: a")
+        usage = self.audit("bogus").stderr
+        self.assertIn(b"audit sessions show --worktree <path>", usage)
+        for args in (("sessions",), ("sessions", "show"), ("sessions", "show", "--worktree"),
+                     ("sessions", "show", "--worktree", self.repo, "--worktree", self.repo),
+                     ("sessions", "show", "--worktree", self.repo, "extra"), ("sessions", "list", "--worktree", self.repo)):
+            with self.subTest(args):
+                result = self.audit(*args)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertEqual(result.stderr, usage)
 
 
 if __name__ == "__main__":
