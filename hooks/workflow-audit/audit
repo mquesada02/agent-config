@@ -94,6 +94,7 @@ LAUNCH_FIELDS = {"Agent": ("description", "subagent_type", "model"), "Skill": ("
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
 TEST_COMMAND_HEADING = "### Test command"
+MAX_LINK_HOPS = 40  # the links S2 follows to reach a declaration file, as the kernel limits a path lookup
 # S7: a worker session is a session whose main transcript has a user text row that holds both phrases of the Orca dispatch preamble.
 WORKER_MARKERS = ("You are a dispatched worker", "--dispatch-id")
 MODEL_LIMIT = 40
@@ -580,16 +581,68 @@ def check_s1(worktree, audited):
     return False, "\n".join(shown)
 
 
-def _declaration_text(worktree, path):
-    listed = _git(worktree, "ls-tree", "HEAD", "--", path)
+def _git_bytes(cwd, *args):
+    import subprocess  # imported here: the hook's common path never runs git
+
+    return subprocess.run(["git", "-C", cwd, *args], capture_output=True, timeout=GIT_TIMEOUT_SECONDS)
+
+
+def _tree_entry(worktree, path):
+    """(mode, type, sha) of the entry at `path` in HEAD, or None when there is none."""
+    listed = _git_bytes(worktree, "ls-tree", "-z", "HEAD", "--", path)
     if listed.returncode != 0:
-        raise Unavailable(f"git ls-tree failed for {path}: {listed.stderr.strip()}")
-    if not listed.stdout.strip():
-        return None
-    shown = _git(worktree, "show", f"HEAD:{path}")
+        raise Unavailable(f"git ls-tree failed for {path}: {listed.stderr.decode(errors='replace').strip()}")
+    record = listed.stdout.split(b"\0")[0]
+    return tuple(record.partition(b"\t")[0].decode().split()) if record else None
+
+
+def _blob(worktree, path, sha):
+    shown = _git_bytes(worktree, "cat-file", "blob", sha)
     if shown.returncode != 0:
-        raise Unavailable(f"git show failed for {path}: {shown.stderr.strip()}")
+        raise Unavailable(f"git cat-file failed for {path}: {shown.stderr.decode(errors='replace').strip()}")
     return shown.stdout
+
+
+def _declaration_text(worktree, path):
+    """(the resolved path, the text) of `path` at HEAD, or None when it is absent. The path is resolved one component at a
+    time against the HEAD tree, as the filesystem does: a link, to a file or to a folder, is replaced by its target, and
+    `..` goes back to the last real folder. Anything that is not a regular file inside the repository is a ValueError."""
+    pending, resolved, entry, hops = path.split("/"), [], None, 0
+    while pending:
+        part = pending.pop(0)
+        if entry is not None and entry[1] != "tree":
+            raise ValueError(f"{path} resolves through {'/'.join(resolved)}, which is not a directory")
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not resolved:
+                raise ValueError(f"{path} leaves the repository")
+            resolved.pop()
+            entry = ("040000", "tree", None)  # a folder, as the parent of a real folder is
+            continue
+        candidate = "/".join(resolved + [part])
+        entry = _tree_entry(worktree, candidate)
+        if entry is None:
+            if hops == 0:
+                return None  # no link was followed: the file is simply absent
+            raise ValueError(f"{path} resolves to {candidate}, which is not in HEAD")
+        if entry[0] == "120000":
+            hops += 1
+            if hops > MAX_LINK_HOPS:
+                raise ValueError(f"{path} follows more than {MAX_LINK_HOPS} links, so it loops")
+            try:
+                target = _blob(worktree, candidate, entry[2]).decode()
+            except UnicodeDecodeError:
+                raise ValueError(f"the link {candidate} has a target that is not valid UTF-8") from None
+            if target.startswith("/"):
+                raise ValueError(f"{path} leaves the repository through the link {candidate} to {target}")
+            pending[:0] = target.split("/")
+            entry = None  # the link is replaced by its target, which is looked up next, in the folder of the link
+            continue
+        resolved.append(part)
+    if entry is None or entry[0] not in ("100644", "100755"):
+        raise ValueError(f"{path} resolves to {'/'.join(resolved) or '.'}, which is not a regular file")
+    return "/".join(resolved), _blob(worktree, path, entry[2]).decode(errors="replace")
 
 
 def _sections(text):
@@ -619,11 +672,12 @@ def _sections(text):
 
 def _declared_command(worktree):
     """The declared test command, or "none". Raises ValueError for a declaration problem."""
-    sections = []
+    sections, seen = [], set()
     for path in (".claude/CLAUDE.md", "CLAUDE.md"):
-        text = _declaration_text(worktree, path)
-        if text is not None:
-            sections += _sections(text)
+        found = _declaration_text(worktree, path)
+        if found is not None and found[0] not in seen:  # two paths that resolve to one file declare once
+            seen.add(found[0])
+            sections += _sections(found[1])
     if len(sections) != 1:
         raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in .claude/CLAUDE.md and CLAUDE.md, found {len(sections)}")
     if len(sections[0]) != 1 or not sections[0][0]:

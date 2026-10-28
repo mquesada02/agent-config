@@ -18,8 +18,9 @@ class TranscriptCase(AuditCase):
         super().setUp()
         self.wt = self.repo
 
-    def branch(self, files=None):
-        """Branch `feature` off main with a pushed commit; `files` maps a path to its text (None removes it)."""
+    def branch(self, files=None, links=None, gitlinks=()):
+        """Branch `feature` off main with a pushed commit; `files` maps a path to its text (None removes it),
+        `links` maps a path to the target of a symlink (str or bytes) and `gitlinks` lists paths of submodule entries."""
         files = {"CLAUDE.md": declaration(self.test_command), **(files or {})}
         self.git("checkout", "-b", "feature")
         for path, text in files.items():
@@ -31,6 +32,13 @@ class TranscriptCase(AuditCase):
             with open(full, "w") as handle:
                 handle.write(text)
             self.git("add", path)
+        for path, target in (links or {}).items():
+            full = os.path.join(self.repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            os.symlink(target, full)
+            self.git("add", path)
+        for path in gitlinks:
+            self.git("update-index", "--add", "--cacheinfo", f"160000,{self.git('rev-parse', 'HEAD')},{path}")
         self.git("commit", "--allow-empty", "-m", "feat: declare tests")
         self.git("push", "-u", "origin", "feature")
         return self.git("rev-parse", "HEAD")
@@ -358,6 +366,88 @@ class DeclarationTest(TranscriptCase):
 
     def test_none_passes_with_a_note(self):
         self.assert_item(self.declared({"CLAUDE.md": declaration("none")}), "S2", "pass", "none")
+
+    def linked(self, links, files=None, gitlinks=()):
+        """The items for a branch where a link may take the place of CLAUDE.md (a file in `files` brings it back)."""
+        tip = self.branch({"CLAUDE.md": None, **(files or {})}, links, gitlinks)
+        return self.items(worktree=(self.wt, tip))
+
+    def assert_each_fails(self, cases, text):
+        """Each case is (links, files, gitlinks) and must fail S2 with `text`, in a fresh repo."""
+        for index, (links, files, gitlinks) in enumerate(cases):
+            with self.subTest(case=index):
+                if index:
+                    self.setUp()
+                self.assert_item(self.linked(links, files, gitlinks), "S2", "fail", text)
+
+    def test_a_symlink_to_a_file_is_followed(self):
+        self.assert_item(self.linked({"CLAUDE.md": "AGENTS.md"}, {"AGENTS.md": declaration("make test")}), "S2", "pass")
+
+    def test_a_chain_of_links_and_a_relative_target_in_a_folder_are_followed(self):
+        items = self.linked({"CLAUDE.md": "docs/b.md", "docs/b.md": "../a.md"}, {"a.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
+
+    def test_a_target_through_a_symlinked_folder_resolves_as_the_filesystem_does(self):
+        files = {"deep/er/x": "x", "deep/AGENTS.md": declaration("make test"), "AGENTS.md": "# no section\n"}
+        self.assert_item(self.linked({"sub": "deep/er", "CLAUDE.md": "sub/../AGENTS.md"}, files), "S2", "pass")
+
+    def test_the_committed_target_is_read_not_the_working_tree(self):
+        tip = self.branch({"CLAUDE.md": None, "AGENTS.md": declaration("make test")}, {"CLAUDE.md": "AGENTS.md"})
+        with open(os.path.join(self.repo, "AGENTS.md"), "w") as handle:
+            handle.write("# no section\n")
+        self.assert_item(self.items(worktree=(self.wt, tip)), "S2", "pass")
+
+    def test_a_dot_claude_link_to_the_same_file_counts_it_once(self):
+        items = self.linked({".claude/CLAUDE.md": "../CLAUDE.md"}, {"CLAUDE.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
+
+    def test_two_links_to_the_same_file_count_it_once(self):
+        links = {"CLAUDE.md": "AGENTS.md", ".claude/CLAUDE.md": "../AGENTS.md"}
+        self.assert_item(self.linked(links, {"AGENTS.md": declaration("make test")}), "S2", "pass")
+
+    def test_a_link_that_leaves_the_repository_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": target}, {"docs/x.md": "text"}, ())
+                                for target in ("../outside.md", "/etc/hostname", "docs/../../x")], "leaves the repository")
+
+    def test_a_link_loop_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": "a.md", "a.md": "CLAUDE.md"}, None, ())], "loops")
+
+    def test_a_chain_of_40_links_is_followed_and_41_is_a_loop(self):
+        def chain(length):
+            links = {"CLAUDE.md": "l1" if length > 1 else "AGENTS.md", **{f"l{i}": f"l{i + 1}" for i in range(1, length - 1)}}
+            if length > 1:
+                links[f"l{length - 1}"] = "AGENTS.md"
+            return links
+
+        files = {"AGENTS.md": declaration("make test")}
+        self.assert_item(self.linked(chain(40), files), "S2", "pass")
+        self.setUp()
+        self.assert_item(self.linked(chain(41), files), "S2", "fail", "loops")
+
+    def test_a_link_to_a_missing_path_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": "gone.md"}, None, ())], "not in HEAD")
+
+    def test_a_link_to_something_that_is_not_a_file_fails_s2(self):
+        files = {"docs/x.md": "text"}
+        self.assert_each_fails([({"CLAUDE.md": target}, files, ()) for target in ("docs", ".", "docs/..")], "not a regular file")
+
+    def test_a_link_to_a_submodule_entry_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": "mod"}, None, ["mod"])], "not a regular file")
+
+    def test_a_regular_file_in_the_middle_of_a_path_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": target}, {"AGENTS.md": declaration("make test")}, ())
+                                for target in ("AGENTS.md/x", "AGENTS.md/", "AGENTS.md/.", "AGENTS.md/..")], "not a directory")
+
+    def test_a_link_target_that_is_not_utf8_fails_s2(self):
+        self.assert_each_fails([({"CLAUDE.md": b"\xff.md"}, None, ())], "not valid UTF-8")
+
+    def test_a_symlinked_dot_claude_folder_is_followed(self):
+        files = {"cfg/CLAUDE.md": declaration("make test")}
+        self.assert_item(self.linked({".claude": "cfg"}, files), "S2", "pass")
+
+    def test_a_symlinked_dot_claude_folder_without_the_file_fails_s2(self):
+        files = {"CLAUDE.md": declaration("make test"), "cfg/x": "text"}
+        self.assert_item(self.linked({".claude": "cfg"}, files), "S2", "fail", "not in HEAD")
 
 
 class S2Test(TranscriptCase):
