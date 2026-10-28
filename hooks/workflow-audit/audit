@@ -1471,10 +1471,10 @@ def _pre_dispatch_arguments(argv):
 
 
 def _plan_review_view(ledger):
-    """A new Ledger with the round and finding events of the pre-dispatch loops and the status events of those findings."""
+    """A new Ledger with the round, finding and extension events of the pre-dispatch loops and the status events of those findings."""
     view, findings = Ledger(), set()
     for event in ledger.events:
-        if event["kind"] in ("round", "finding") and event["loop"] in PRE_DISPATCH_LOOPS:
+        if event["kind"] in ("round", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
             if event["kind"] == "finding":
                 findings.add(event["id"])
             view.apply(event)
