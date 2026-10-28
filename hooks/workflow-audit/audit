@@ -85,6 +85,16 @@ SEPARATOR_CHARS = frozenset("&|;()\n")
 WORD_BREAKS = " \t\n;&|"
 WORD_STARTS = WORD_BREAKS + "()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
+# Commands that copy their input to a file or to the output and never run it: the body of a quoted heredoc they read is data.
+DATA_COMMANDS = frozenset(("cat", "tee"))
+# Builtins and keywords with which the shell itself changes what a command name runs (an external program cannot change its parent shell).
+# A context that holds one of these words, or a PATH word, does not show what `cat` is. `read`, `printf`, `getopts`, `mapfile`, `readarray`
+# and `unset` are here because they build or remove a name or a function (`printf -v`, `read $x`); keep them. `BASH_CMDS[cat]=/path` has no
+# such word: its bracket makes the command word unresolved (UNRESOLVABLE_PATH below), and S9HeredocTest checks it.
+SHELL_STATE_WORDS = frozenset(("alias", "unalias", "hash", "enable", "eval", "source", ".", "declare", "typeset", "export", "readonly", "local", "let",
+                               "read", "readarray", "mapfile", "getopts", "unset", "set", "shopt", "trap", "printf", "coproc", "function"))
+# A heredoc operator `<<` (not `<<<`) with its end word. The group `dash` is `-` for `<<-`; the group `word` is the end word as written.
+HEREDOC_OPERATOR = re.compile(r"(?<!<)<<(?P<dash>-?)[ \t]*(?P<word>'[^']*'|\"[^\"]*\"|\\?[^\s;&|<>()'\"\\]+)(?=[\s;&|<>()]|$)")
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # Words that can stand before a command: shell keywords of compound commands, and wrappers that run the next word.
 COMMAND_PREFIX_WORDS = frozenset(("!", "{", "if", "elif", "while", "until", "then", "do", "else", "time", "env", "command", "exec"))
@@ -1527,7 +1537,7 @@ def _segment_problems(words, depth):
 
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
-    command = _join_as_bash(command)  # the gates' join, as bash joins
+    command = _join_as_bash(strip_data_heredocs(command))  # the gates' join, as bash joins
     try:
         items = split_command(command)
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
@@ -2108,6 +2118,72 @@ def _next_separator(items, index):
     return index
 
 
+def _reads_as_data(context, after, items, segment):
+    """True when the reader of a quoted heredoc is a data command and the checks here find nothing that can run its body: `context`
+    is the parsed text up to the operator, `after` the rest of the operator line, `items` its split, `segment` the words of the command
+    that holds the operator. The name `cat` is trusted only when the text shows nothing that can change it: only the shell itself
+    (SHELL_STATE_WORDS, a PATH word, a command word it expands) does that. What lives outside the text (an alias, a function or a script
+    that is already there) is not seen."""
+    if re.search(r"[(`]", context) or re.search(r"[|(`]|<<|[<>]&", after):
+        return False  # a substitution, a subshell, a pipe, a descriptor or a second heredoc may run the body
+    command = _command_words(segment)
+    if not command or command[0] not in DATA_COMMANDS:  # the bare name: a path such as ./cat is another program
+        return False
+    segments = [item for item in items if isinstance(item, list)]
+    words = [word for segment_words in segments for word in segment_words]
+    if not SHELL_STATE_WORDS.isdisjoint(words) or any(word == "PATH" or word.startswith(("PATH=", "PATH+=")) for word in words):
+        return False  # a rebind of `cat` in the text may replace the reader
+    return not any(UNRESOLVABLE_PATH.search(found[0]) for found in map(_command_words, segments) if found)
+
+
+def strip_data_heredocs(command):
+    """The command without the body lines of each quoted heredoc that a data command reads: bash does not run that body.
+    The operator and end lines stay. Every other body stays. From the first line that this scan cannot follow with the rules of bash,
+    nothing more is removed: a continued line, a line with two heredocs (or a here-string next to one), an end word it cannot read,
+    a quote left open, an ANSI-C quote, or a body with no end line. A script that a data command writes and bash then runs is not seen.
+    A caller strips before it joins continued lines: bash does not join the lines of a quoted body, and a continued line stops this scan."""
+    lines = command.split("\n")
+    kept, parsed, index = [], [], 0  # `parsed` holds the lines that the shell parses: the body of a heredoc is not one
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        parsed.append(line)
+        index += 1
+        operators = len(re.findall(r"(?<!<)<<(?!<)", line))
+        if CONTINUED_LINE.search(line + "\n") or operators > 1:
+            break
+        if not operators:
+            continue
+        operator = HEREDOC_OPERATOR.search(line)
+        if operator is None:
+            break  # a heredoc whose end word this scan cannot read: its body may hold lines that look like a heredoc
+        text = "\n".join(parsed)
+        context = text[:len(text) - len(line) + operator.start()]
+        try:
+            items = split_command(context)
+        except ValueError:
+            continue  # the operator is inside a quote
+        segment = items[-1] if items and isinstance(items[-1], list) else []
+        if any(word.startswith("#") for word in segment):
+            continue  # the operator is in a comment
+        if "$'" in text:
+            break  # shlex and bash disagree on where an ANSI-C quote ends (`$'a\\''`), so the quote state is unknown; this stops the strip of every later heredoc
+        try:
+            split_command(text)
+        except ValueError:
+            break  # the rest of the line leaves a quote open, so the body starts on a later line than this scan assumes
+        word = operator.group("word")
+        end_line = word.strip("'\"\\")
+        end = next((n for n in range(index, len(lines)) if (lines[n].lstrip("\t") if operator.group("dash") else lines[n]) == end_line), None)
+        if end is None:
+            break
+        strip = word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], items, segment)
+        if not strip:
+            kept.extend(lines[index:end])  # a body that stays
+        index = end
+    return "\n".join(kept + lines[index:])
+
+
 def _operator(separator):
     """A separator token without its parentheses and newlines: shlex joins adjacent separators, so `&\n` and `|(` are one token."""
     return "".join(char for char in separator if char not in "()\n")
@@ -2603,7 +2679,7 @@ def _final_reason(command, segments, unfollowed):
 
 def gate_reason(command, cwd, session_id=None):
     """The deny reason for a Bash command, or None to allow it."""
-    command = _join_as_bash(command)  # so a continued command is one segment with all its words
+    command = _join_as_bash(strip_data_heredocs(command))  # so a continued command is one segment with all its words
     try:
         items = split_command(command)
     except Exception:

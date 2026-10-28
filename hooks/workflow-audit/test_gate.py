@@ -901,5 +901,42 @@ class VariableRuleTest(GateTestCase):
         self.assert_denied(self.gate('echo "$(gh pr create)" && gh pr $X'), "no branch to check: gh pr create inside")
 
 
+class HeredocBodyTest(GateTestCase):
+    # A pull request command that the audited branch denies, so a test passes only when the strip hides it.
+    DENIED = "gh pr create --head nobranch"
+
+    def setUp(self):
+        super().setUp()
+        self.audited_branch()
+
+    def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
+        for command in (f"cat > f <<'EOF'\ndon't\n{self.DENIED}\nEOF", f'tee f <<"EOF"\n{self.DENIED}\nEOF',
+                        f"cat <<\\EOF\n{self.DENIED}\nEOF", f"FOO=1 cat<<-'EOF'\n\t{self.DENIED}\n\tEOF",
+                        "cat > f <<'EOF'\ndon't\norca orchestration worker-start --task t\nEOF"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_the_commands_outside_the_body_are_still_gated(self):
+        self.assert_allowed(self.gate(f"cat <<'EOF'\n{self.DENIED}\nEOF\n" + PR))
+        self.assertIsNotNone(self.denial(self.gate(f"cat <<'EOF'\ngh pr create\nEOF\n{self.DENIED}")))
+
+    def test_a_fake_heredoc_or_a_continued_line_hides_nothing(self):
+        for command in ("echo \"a\ncat <<'EOF'\n\" ; orca orchestration worker-start --task t\nEOF", f"echo \"a\ncat <<'EOF'\n\" ; {self.DENIED}\nEOF",
+                        f"bash \\\ncat <<'EOF'\n{self.DENIED}\nEOF"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.denial(self.gate(command)))
+
+    def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_gated(self):
+        for command in (f"bash <<'EOF'\n{self.DENIED}\nEOF", f"sh <<'EOF'\n{self.DENIED}\nEOF", f"tee >(sh) <<'EOF'\n{self.DENIED}\nEOF",
+                        f"cat <<'EOF' | bash\n{self.DENIED}\nEOF", f"cat <<EOF\n{self.DENIED}\nEOF", f"./cat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"function cat {{ bash; }}; cat <<'EOF'\n{self.DENIED}\nEOF", f"function tee {{ sh; }}; tee f <<'EOF'\n{self.DENIED}\nEOF",
+                        f"shopt -s expand_aliases\nalias cat=bash\ncat <<'EOF'\n{self.DENIED}\nEOF", f"hash -p /bin/bash cat\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"PATH=./bin cat <<'EOF'\n{self.DENIED}\nEOF", f"export PATH=./bin:$PATH\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"ha\"\"sh -p /bin/echo cat\ncat <<'EOF'\n{self.DENIED}\nEOF", f"source ./defs.sh\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"coproc bash\ncat <<'EOF' >&${{COPROC[1]}}\n{self.DENIED}\nEOF"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.denial(self.gate(command)))
+
+
 if __name__ == "__main__":
     unittest.main()

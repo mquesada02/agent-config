@@ -470,6 +470,81 @@ class S9UnsplittableTest(S9Case):
             self.assertIn(expected, item["evidence"])
 
 
+class S9HeredocTest(S9Case):
+    def test_the_body_of_a_quoted_heredoc_read_by_a_data_command_is_not_command_text(self):
+        for command in ("cat > f <<'EOF'\ndon't\nrm -rf x\nEOF", 'tee f <<"EOF"\ndon\'t\nrm -rf x\nEOF', "cat <<\\EOF\ndon't\nrm -rf x\nEOF",
+                        "cat <<-'EOF'\n\tdon't\n\trm -rf x\n\tEOF", "echo x | tee -a f <<'EOF'\ndon't rm x\nEOF", 'cat <<-"EOF"\n\trm -rf x\n\tEOF',
+                        "FOO=1 cat<<'EOF'\nrm -rf x\nEOF", "python3 -I - <<'PY'\nx = '''don't'''\nPY\ncat > r.sh <<'EOF'\nrm -f \"$o\"\nEOF\nchmod +x r.sh"):
+            with self.subTest(command=command):
+                self.assert_clean([command])
+
+    def test_the_commands_outside_the_body_are_still_checked(self):
+        self.assert_flagged(["cat <<'EOF'\ndon't\nEOF\nrm -rf y", "cat <<'EOF' && rm -rf y\ndon't\nEOF", "rm -rf y; cat <<'EOF'\nx\nEOF"])
+
+    def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_command_text(self):
+        self.assert_flagged(["bash <<'EOF'\nrm -rf x\nEOF", "sh <<'EOF'\nrm -rf x\nEOF", "python3 - <<'EOF'\nrm -rf x\nEOF",
+                             "ssh host <<'EOF'\nrm -rf x\nEOF", "eval <<'EOF'\nrm -rf x\nEOF", "xargs <<'EOF'\nrm -rf x\nEOF",
+                             "bash <<'EOF'\ndon't\nrm x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF"])
+
+    def test_a_path_that_ends_in_a_data_command_name_is_not_a_data_command(self):
+        self.assert_flagged(["./cat <<'EOF'\nrm -rf x\nEOF", "/tmp/x/tee f <<'EOF'\nrm -rf x\nEOF", "bin/cat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_function_that_replaces_a_data_command_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["function cat { bash; }; cat <<'EOF'\nrm -rf x\nEOF", "function tee { sh; }; tee f <<'EOF'\nrm -rf x\nEOF",
+                             "function cat () { bash; }\ncat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_an_alias_a_hash_entry_or_a_path_change_that_replaces_a_data_command_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["shopt -s expand_aliases\nalias cat=bash\ncat <<'EOF'\nrm -rf x\nEOF", "hash -p /bin/bash cat\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "export PATH=./bin:$PATH\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "declare -x PATH=./bin\ntee f <<'EOF'\nrm -rf x\nEOF", "enable -f ./lib.so cat\ncat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_rebind_that_hides_its_word_or_uses_another_builtin_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["ha\"\"sh -p /bin/echo cat\ncat <<'EOF'\nrm -rf x\nEOF", "shopt -s expand_aliases\nal\"\"ias cat=bash\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "declare PA\"\"TH=./bin\ncat <<'EOF'\nrm -rf x\nEOF", "x=ha; $x\"\"sh -p /bin/echo cat\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "printf -v f 'cat%b%b { bash; }' '\\x28' '\\x29'; eval \"$f\"\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "source ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", ". ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", "x=PATH; read $x\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "env PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "coproc bash\ncat <<'EOF' >&${COPROC[1]}\nrm -rf x\nEOF",
+                             "exec 3>p\ncat <<'EOF' >&3\nrm -rf x\nEOF", "BASH_CMDS[cat]=/bin/bash\ncat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_plain_command_before_a_data_command_does_not_keep_the_body(self):
+        for command in ("mkdir -p d && cd d && cat > f <<'EOF'\nrm -rf x\nEOF", "git add f && cat > g <<'EOF'\nrm -rf x\nEOF",
+                        "chmod +x r.sh\ncat > s.sh <<'EOF'\nrm -rf x\nEOF", "echo done; cat > f <<'EOF'\nrm -rf x\nEOF", "cd \"$d\" && tee f <<'EOF'\nrm -rf x\nEOF"):
+            with self.subTest(command=command):
+                self.assert_clean([command])
+
+    def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
+        self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
+                             "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "tee >(sh) <<'EOF'\nrm -rf x\nEOF", "sudo cat <<'EOF'\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])
+
+    def test_an_unquoted_heredoc_body_is_still_command_text(self):
+        self.assert_flagged(["cat <<EOF\nrm -rf x\nEOF", "cat <<EOF\ndon't\nrm x\nEOF"])
+
+    def test_a_heredoc_operator_inside_quotes_or_with_no_end_line_hides_nothing(self):
+        self.assert_flagged(["echo \"<<'EOF'\"\nrm -rf x", "echo '<<'EOF'\nrm -rf x", "cat <<'EOF'\nrm -rf x", "cat <<'EOF'\nrm -rf x\nEOF2"])
+
+    def test_a_fake_heredoc_in_a_multi_line_quote_hides_nothing(self):
+        self.assert_flagged(["echo \"a\ncat <<'EOF'\n\" ; rm -rf x\nEOF", "echo 'a\ncat <<\"EOF\"\n' ; rm -rf x\nEOF",
+                             "# cat <<'EOF'\nrm -rf x\nEOF", "echo hi # cat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_quote_opened_on_the_operator_line_hides_nothing(self):
+        self.assert_flagged(["cat <<'E' \"x\ny\"\nbody\nE\nrm -rf /tmp/a", "cat <<'E' 'x\ny'\nbody\nE\nrm -rf /tmp/a",
+                             "cat <<'E' > \"a\nb\"\nbody\nE\nrm -rf /tmp/a", "cat <<'E' \"x\ny\" ; rm -rf z\nbody\nE",
+                             "cat <<'E' 'x\ny' && rm -rf z\nbody\nE"])
+
+    def test_a_heredoc_with_an_end_word_that_is_not_read_hides_nothing(self):
+        self.assert_flagged(['cat <<E"x"\ncat <<\'F\'\nEx\nrm -rf /y\nF', "cat <<E\\ x\ncat <<'F'\nE x\nrm -rf /y\nF",
+                             "cat <<'E'x\ncat <<'F'\nEx\nrm -rf /y\nF", 'cat <<-E"x"\ncat <<\'F\'\nEx\nrm -rf /y\nF'])
+
+    def test_an_ansi_c_quote_that_shlex_and_bash_read_differently_hides_nothing(self):
+        self.assert_flagged(["cat <<'E' $'a\\'\n';rm -rf y;echo $'\nE\n'", "echo $'a\\'\ncat <<'E'\n';rm -rf y;echo $'\nE\n'"])
+
+    def test_a_continued_line_before_or_after_the_operator_hides_nothing(self):
+        self.assert_flagged(["bash \\\ncat <<'EOF'\nrm -rf x\nEOF", "env \\\ncat <<'EOF'\nrm -rf x\nEOF", "cat <<'EOF' \\\n| bash\nrm -rf x\nEOF"])
+
+    def test_an_earlier_heredoc_with_an_odd_quote_does_not_stop_the_strip(self):
+        self.assert_clean(["cat <<EOF\ndon't\nEOF\ncat > f <<'EOF'\nrm -f x\nEOF", "bash <<'A'\ndon't\nA\ntee f <<'B'\nrm -f x\nB"])
+
+
 class MissingEvidenceTest(SafetyCase):
     def both_unavailable(self, expect_exit=1):
         tip = self.start_branch("feature", "feat: a")
