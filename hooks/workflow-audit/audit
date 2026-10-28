@@ -782,8 +782,9 @@ class Ledger:
             key = (event["loop"], event["phase"])
             if len(_normalise(event["quote"])) < MIN_QUOTE:
                 raise LedgerError(f"the quote is under {MIN_QUOTE} characters after normalising")
-            if self.rounds.get(key, 0) < self.effective_cap(*key):
-                raise LedgerError(f"round {self.effective_cap(*key)} of {key[0]} {key[1]} is not recorded: the cap is not reached")
+            cap = self.effective_cap(*key)
+            if self.rounds.get(key, 0) < cap:
+                raise LedgerError(f"round {cap} of {key[0]} {key[1]} is not recorded: the cap is not reached")
             self.extra_rounds[key] = self.extra_rounds.get(key, 0) + event["rounds"]
         else:
             self.commits.append((position, event))
