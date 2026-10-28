@@ -931,7 +931,9 @@ class HeredocBodyTest(GateTestCase):
                         f"cat <<'EOF' | bash\n{self.DENIED}\nEOF", f"cat <<EOF\n{self.DENIED}\nEOF", f"./cat <<'EOF'\n{self.DENIED}\nEOF",
                         f"function cat {{ bash; }}; cat <<'EOF'\n{self.DENIED}\nEOF", f"function tee {{ sh; }}; tee f <<'EOF'\n{self.DENIED}\nEOF",
                         f"shopt -s expand_aliases\nalias cat=bash\ncat <<'EOF'\n{self.DENIED}\nEOF", f"hash -p /bin/bash cat\ncat <<'EOF'\n{self.DENIED}\nEOF",
-                        f"PATH=./bin cat <<'EOF'\n{self.DENIED}\nEOF", f"export PATH=./bin:$PATH\ncat <<'EOF'\n{self.DENIED}\nEOF"):
+                        f"PATH=./bin cat <<'EOF'\n{self.DENIED}\nEOF", f"export PATH=./bin:$PATH\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"ha\"\"sh -p /bin/echo cat\ncat <<'EOF'\n{self.DENIED}\nEOF", f"source ./defs.sh\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"coproc bash\ncat <<'EOF' >&${{COPROC[1]}}\n{self.DENIED}\nEOF"):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
 

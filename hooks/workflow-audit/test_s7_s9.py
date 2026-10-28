@@ -498,6 +498,20 @@ class S9HeredocTest(S9Case):
                              "PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "export PATH=./bin:$PATH\ncat <<'EOF'\nrm -rf x\nEOF",
                              "declare -x PATH=./bin\ntee f <<'EOF'\nrm -rf x\nEOF", "enable -f ./lib.so cat\ncat <<'EOF'\nrm -rf x\nEOF"])
 
+    def test_a_rebind_that_hides_its_word_or_uses_another_builtin_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["ha\"\"sh -p /bin/echo cat\ncat <<'EOF'\nrm -rf x\nEOF", "shopt -s expand_aliases\nal\"\"ias cat=bash\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "declare PA\"\"TH=./bin\ncat <<'EOF'\nrm -rf x\nEOF", "x=ha; $x\"\"sh -p /bin/echo cat\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "printf -v f 'cat%b%b { bash; }' '\\x28' '\\x29'; eval \"$f\"\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "source ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", ". ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", "x=PATH; read $x\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "env PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "coproc bash\ncat <<'EOF' >&${COPROC[1]}\nrm -rf x\nEOF",
+                             "exec 3>p\ncat <<'EOF' >&3\nrm -rf x\nEOF"])
+
+    def test_a_plain_command_before_a_data_command_does_not_keep_the_body(self):
+        for command in ("mkdir -p d && cd d && cat > f <<'EOF'\nrm -rf x\nEOF", "git add f && cat > g <<'EOF'\nrm -rf x\nEOF",
+                        "chmod +x r.sh\ncat > s.sh <<'EOF'\nrm -rf x\nEOF", "echo done; cat > f <<'EOF'\nrm -rf x\nEOF", "cd \"$d\" && tee f <<'EOF'\nrm -rf x\nEOF"):
+            with self.subTest(command=command):
+                self.assert_clean([command])
+
     def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
         self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
                              "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "tee >(sh) <<'EOF'\nrm -rf x\nEOF", "sudo cat <<'EOF'\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])

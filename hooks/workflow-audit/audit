@@ -82,6 +82,10 @@ WORD_STARTS = WORD_BREAKS + "()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
 # Commands that copy their input to a file or to the output and never run it: the body of a quoted heredoc they read is data.
 DATA_COMMANDS = frozenset(("cat", "tee"))
+# Builtins and keywords with which the shell itself changes what a command name runs (an external program cannot change its parent shell).
+# A context that holds one of these words, or a PATH word, does not show what `cat` is.
+SHELL_STATE_WORDS = frozenset(("alias", "unalias", "hash", "enable", "eval", "source", ".", "declare", "typeset", "export", "readonly", "local", "let",
+                               "read", "readarray", "mapfile", "getopts", "unset", "set", "shopt", "trap", "printf", "coproc", "function"))
 # A heredoc operator `<<` (not `<<<`) with its end word. The group `dash` is `-` for `<<-`; the group `word` is the end word as written.
 HEREDOC_OPERATOR = re.compile(r"(?<!<)<<(?P<dash>-?)[ \t]*(?P<word>'[^']*'|\"[^\"]*\"|\\?[^\s;&|<>()'\"\\]+)(?=[\s;&|<>()]|$)")
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -2016,11 +2020,17 @@ def _next_separator(items, index):
     return index
 
 
-def _reads_as_data(context, after, segment):
+def _reads_as_data(context, after, items, segment):
     """True when the reader of a quoted heredoc is a data command and the checks here find nothing that can run its body: `context`
-    is the parsed text up to the operator, `after` the rest of the operator line, `segment` the words of the command that holds it."""
-    if re.search(r"[(`]|\b(?:function|alias|hash|enable|PATH)\b", context) or re.search(r"[|(`]|<<", after):
-        return False  # a substitution, a subshell, a pipe or a second heredoc may run the body; a function, an alias, a hash entry, a builtin or a PATH change in the text may replace the reader
+    is the parsed text up to the operator, `after` the rest of the operator line, `items` its split, `segment` the words of the command
+    that holds the operator. The name `cat` is trusted only when the text shows nothing that can change it: only the shell itself
+    (SHELL_STATE_WORDS, a PATH word, a command word it expands) does that. What lives outside the text (an alias, a function or a script
+    that is already there) is not seen."""
+    words = [word for item in items if isinstance(item, list) for word in item]
+    rebinds = SHELL_STATE_WORDS.intersection(words) or any(word == "PATH" or word.startswith(("PATH=", "PATH+=")) for word in words)
+    unresolved = any(UNRESOLVABLE_PATH.search(command[0]) for command in map(_command_words, (item for item in items if isinstance(item, list))) if command)
+    if re.search(r"[(`]", context) or re.search(r"[|(`]|<<|[<>]&", after) or rebinds or unresolved:
+        return False  # a substitution, a subshell, a pipe, a descriptor or a second heredoc may run the body; a rebind of `cat` in the text may replace the reader
     command = _command_words(segment)
     return bool(command) and command[0] in DATA_COMMANDS  # the bare name: a path such as ./cat is another program
 
@@ -2066,7 +2076,7 @@ def strip_data_heredocs(command):
         end = next((n for n in range(index, len(lines)) if (lines[n].lstrip("\t") if operator.group("dash") else lines[n]) == end_line), None)
         if end is None:
             break
-        strip = word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], segment)
+        strip = word[0] in "'\"\\" and _reads_as_data(context, line[operator.end():], items, segment)
         if not strip:
             kept.extend(lines[index:end])  # a body that stays
         index = end
