@@ -250,7 +250,11 @@ def _commit_problem(message):
 
 
 def _commit_base(worktree):
-    """(the merge base of HEAD with the remote default branch, None), or (None, why there is none)."""
+    """(the base of the branch, None), or (None, why there is none).
+
+    The base is the merge base with HEAD that leaves the fewest commits in base..HEAD, among the remote default
+    branch (origin/HEAD, else origin/main, else origin/master) and origin/develop. A tie goes to the default branch,
+    so a branch based on the default branch gets the merge base with it, as before."""
     default = None
     for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
         if _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
@@ -258,10 +262,19 @@ def _commit_base(worktree):
             break
     if default is None:
         return None, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
-    base = _git_output(worktree, "merge-base", default, "HEAD")
-    if not base:
-        return None, f"evidence unavailable: no merge base of {default} and HEAD"
-    return base, None
+    best = None
+    for ref in (default, "refs/remotes/origin/develop"):
+        if ref != default and not _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
+            continue
+        base = _git_output(worktree, "merge-base", ref, "HEAD")
+        if not base:
+            if ref == default:
+                return None, f"evidence unavailable: no merge base of {ref} and HEAD"
+            continue
+        count = int(_git_output(worktree, "rev-list", "--count", f"{base}..HEAD"))
+        if best is None or count < best[0]:
+            best = (count, base)
+    return best[1], None
 
 
 def check_s8(worktree):
@@ -580,15 +593,43 @@ def check_s1(worktree, audited):
     return False, "\n".join(shown)
 
 
-def _declaration_text(worktree, path):
-    listed = _git(worktree, "ls-tree", "HEAD", "--", path)
+def _tree_entry(worktree, path):
+    """(mode, type, sha) of the entry at `path` in HEAD, or None when there is none."""
+    listed = _git(worktree, "ls-tree", "-z", "HEAD", "--", path)
     if listed.returncode != 0:
         raise Unavailable(f"git ls-tree failed for {path}: {listed.stderr.strip()}")
-    if not listed.stdout.strip():
+    for record in listed.stdout.split("\0"):
+        fields, _, name = record.partition("\t")
+        if name == path:  # a path such as "." lists a whole tree: only the entry for the path itself counts
+            return tuple(fields.split())
+    return None
+
+
+def _declaration_text(worktree, path):
+    """The text of `path` at HEAD. A git symlink is followed to a regular file inside the repository; any other link is a ValueError."""
+    import posixpath
+
+    entry, seen, current = _tree_entry(worktree, path), [path], path
+    if entry is None:
         return None
-    shown = _git(worktree, "show", f"HEAD:{path}")
+    while entry[0] == "120000":
+        link = _git(worktree, "cat-file", "blob", entry[2])
+        if link.returncode != 0:
+            raise Unavailable(f"git cat-file failed for {current}: {link.stderr.strip()}")
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(current), link.stdout))
+        if posixpath.isabs(link.stdout) or target == ".." or target.startswith("../"):
+            raise ValueError(f"{path} is a symlink that leaves the repository: {link.stdout!r}")
+        if target in seen:
+            raise ValueError(f"{path} is a symlink chain that loops at {target}")
+        seen.append(target)
+        current, entry = target, _tree_entry(worktree, target)
+        if entry is None:
+            raise ValueError(f"{path} is a symlink to {target}, which is not in HEAD")
+    if entry[1] != "blob":
+        raise ValueError(f"{path} resolves to {current}, which is not a regular file")
+    shown = _git(worktree, "cat-file", "blob", entry[2])
     if shown.returncode != 0:
-        raise Unavailable(f"git show failed for {path}: {shown.stderr.strip()}")
+        raise Unavailable(f"git cat-file failed for {current}: {shown.stderr.strip()}")
     return shown.stdout
 
 

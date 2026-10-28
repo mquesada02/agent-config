@@ -356,6 +356,62 @@ class DeclarationTest(TranscriptCase):
     def test_a_line_that_starts_with_the_fence_closes_it(self):
         self.assert_item(self.declared({"CLAUDE.md": "### Test command\n\n```\nmake test\n```bash\n"}), "S2", "pass")
 
+    def link_branch(self, links, files):
+        """Branch `feature` where CLAUDE.md is removed, `files` are regular files and `links` map a path to a symlink target."""
+        self.git("checkout", "-b", "feature")
+        self.git("rm", "-q", "CLAUDE.md")
+        for path, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(self.repo, path)), exist_ok=True)
+            with open(os.path.join(self.repo, path), "w") as handle:
+                handle.write(text)
+            self.git("add", path)
+        for path, target in links.items():
+            os.makedirs(os.path.dirname(os.path.join(self.repo, path)), exist_ok=True)
+            os.symlink(target, os.path.join(self.repo, path))
+            self.git("add", path)
+        self.git("commit", "-m", "feat: declare tests")
+        self.git("push", "-u", "origin", "feature")
+        return self.git("rev-parse", "HEAD")
+
+    def linked(self, links, files):
+        tip = self.link_branch(links, files)
+        self.assertEqual(self.record().returncode in (0, 1), True)
+        return {item["id"]: item for item in self.read_record(tip)["items"]}
+
+    def test_a_symlink_to_a_file_in_the_repository_is_followed(self):
+        items = self.linked({"CLAUDE.md": "AGENTS.md"}, {"AGENTS.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
+
+    def test_a_symlink_chain_and_a_relative_target_in_a_folder_are_followed(self):
+        items = self.linked({"CLAUDE.md": "docs/b.md", "docs/b.md": "../a.md"}, {"a.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
+
+    def test_a_symlink_that_leaves_the_repository_fails_s2(self):
+        for target in ("../outside.md", "/etc/hostname"):
+            with self.subTest(target=target):
+                self.setUp()
+                items = self.linked({"CLAUDE.md": target}, {})
+                self.assert_item(items, "S2", "fail", "leaves the repository")
+
+    def test_a_symlink_loop_fails_s2(self):
+        items = self.linked({"CLAUDE.md": "a.md", "a.md": "CLAUDE.md"}, {})
+        self.assert_item(items, "S2", "fail", "loops")
+
+    def test_a_symlink_to_a_missing_file_fails_s2(self):
+        items = self.linked({"CLAUDE.md": "gone.md"}, {})
+        self.assert_item(items, "S2", "fail", "not in HEAD")
+
+    def test_a_symlink_to_the_root_does_not_read_another_file(self):
+        for target in (".", "docs/.."):
+            with self.subTest(target=target):
+                self.setUp()
+                items = self.linked({"CLAUDE.md": target}, {"A.md": declaration("make test"), "docs/x.md": "text"})
+                self.assert_item(items, "S2", "fail", "not in HEAD")
+
+    def test_a_symlink_to_a_folder_fails_s2(self):
+        items = self.linked({"CLAUDE.md": "docs"}, {"docs/x.md": "text"})
+        self.assert_item(items, "S2", "fail", "not a regular file")
+
     def test_none_passes_with_a_note(self):
         self.assert_item(self.declared({"CLAUDE.md": declaration("none")}), "S2", "pass", "none")
 

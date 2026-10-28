@@ -68,6 +68,48 @@ class S8Test(AuditCase):
     def test_a_human_signoff_is_not_attribution(self):
         self.assert_s8("feat: a\n\nSigned-off-by: A Human <h@example.com>", True)
 
+    def push_develop(self):
+        """origin/develop is one attributed commit ahead of main."""
+        self.git("checkout", "-B", "develop", "main")
+        self.commit("feat: develop work\n\nCo-authored-by: Someone <s@example.com>")
+        self.git("push", "-f", "-u", "origin", "develop")
+
+    def test_a_branch_based_on_develop_is_judged_on_its_own_commits(self):
+        self.push_develop()
+        self.git("checkout", "-b", "work")
+        self.commit("feat: own work")
+        self.git("push", "-u", "origin", "work")
+        passed, evidence = self.s8()
+        self.assertTrue(passed, evidence)
+        self.assertIn("1 commits since", evidence)
+
+    def test_a_bad_commit_on_a_branch_based_on_develop_still_fails(self):
+        self.push_develop()
+        self.git("checkout", "-b", "work")
+        bad = self.commit("oops")
+        self.git("push", "-u", "origin", "work")
+        passed, evidence = self.s8()
+        self.assertFalse(passed)
+        self.assertIn(bad[:7], evidence)
+
+    def test_a_branch_based_on_main_ignores_a_develop_that_is_ahead(self):
+        self.push_develop()
+        self.git("checkout", "-b", "work", "main")
+        bad = self.commit("oops")
+        self.git("push", "-u", "origin", "work")
+        passed, evidence = self.s8()
+        self.assertFalse(passed)
+        self.assertIn(bad[:7], evidence)
+
+    def test_the_commit_lines_of_a_develop_branch_hold_only_its_own_commits(self):
+        self.push_develop()
+        self.git("checkout", "-b", "work")
+        self.commit("feat: own work")
+        self.git("push", "-u", "origin", "work")
+        text = self.audit("check", "--worktree", self.repo).stdout.decode()
+        self.assertIn("feat: own work", text)
+        self.assertNotIn("develop work", text)
+
     def test_the_failing_commit_is_named_in_the_evidence(self):
         self.git("checkout", "-b", "work")
         good = self.commit("feat: good")
@@ -123,10 +165,11 @@ class S8Test(AuditCase):
         self.git("checkout", "-b", "develop")
         self.commit("bad develop commit")
         self.git("push", "-u", "origin", "develop")
-        self.start_branch("work", "feat: fine")
+        self.git("checkout", "main")
+        self.start_branch("work", "oops")
         passed, evidence = self.s8()
         self.assertFalse(passed)
-        self.assertIn("bad develop commit", evidence)
+        self.assertIn("oops", evidence)
 
     def test_origin_master_is_the_last_resort(self):
         self.git("branch", "-m", "main", "master")
