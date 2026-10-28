@@ -99,6 +99,8 @@ Ledger: the loop session keeps one findings ledger per task. It writes the ledge
 - `verdict`: the result of a verifier for a Blocking finding, with the verifier agent id.
 - `status`: a finding becomes fixed, deferred or rejected. A finding is open until a `status` event closes it.
 - `phase-commit`: the SHA of the commit made at the start of the quality phase.
+- `extension`: the owner's approval of extra rounds of one loop phase, with the loop, the phase, the rounds (1 to 5) and the owner's own words as the quote.
+At a cap, the session that asked the user and got the approval writes the `extension` event (for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) and the owner's own words as the quote.
 The loop session also keeps a copy of the entries in the scratchpad, and gives that copy to every reviewer. A finding that matches a ledger entry is not new. Reviewers do not report rejected or deferred entries again, unless they add new evidence.
 
 1. **Correctness phase.** Run /mattpocock-skills:code-review. Confirm each Blocking finding with a verifier, then fix each confirmed one. Record the Minor findings in the ledger. Every round reviews the full diff. Reviewers report only findings that are new to the ledger. Done after one round with no new confirmed Blocking finding. Cap: 5 rounds.
