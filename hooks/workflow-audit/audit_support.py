@@ -110,6 +110,10 @@ def status_event(finding="I1", status="fixed", **extra):
     return event("status", finding=finding, status=status, **extra)
 
 
+def extension_event(loop="code-review", phase="correctness", rounds=1, quote="one more round", **extra):
+    return event("extension", loop=loop, phase=phase, rounds=rounds, quote=quote, **extra)
+
+
 def phase_commit_event(sha, **extra):
     return event("phase-commit", sha=sha, **extra)
 

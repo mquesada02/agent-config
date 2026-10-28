@@ -38,6 +38,7 @@ EVENT_KEYS = {
     "finding": ("id", "loop", "phase", "round", "loc", "type", "reason"),
     "verdict": ("finding", "verifier", "result"),
     "status": ("finding", "status"),
+    "extension": ("loop", "phase", "rounds", "quote"),
     "phase-commit": ("sha",),
 }
 AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -46,6 +47,9 @@ SHA = re.compile(r"[0-9a-f]{40}")
 MAX_REVIEWERS = 20
 LOC_LIMIT = 200
 REASON_LIMIT = 500
+QUOTE_LIMIT = 500
+MIN_QUOTE = 8
+MAX_EXTENSION_ROUNDS = 5
 MAX_LEDGER_LINE_BYTES = 4096
 SYNTHETIC_MODEL = "<synthetic>"
 AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
@@ -687,8 +691,8 @@ def _matches(pattern):
     return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
-def _plain_text(limit):
-    return lambda value: (isinstance(value, str) and 1 <= len(value) <= limit
+def _plain_text(limit, minimum=1):
+    return lambda value: (isinstance(value, str) and minimum <= len(value) <= limit
                           and not any(ord(char) < 32 or ord(char) == 127 for char in value))
 
 
@@ -710,6 +714,8 @@ VALID_VALUE = {
     "reason": _plain_text(REASON_LIMIT),
     "result": lambda value: value in LEDGER_RESULTS,
     "status": lambda value: value in LEDGER_STATUSES,
+    "rounds": lambda value: type(value) is int and 1 <= value <= MAX_EXTENSION_ROUNDS,
+    "quote": _plain_text(QUOTE_LIMIT, MIN_QUOTE),
     "sha": _matches(SHA),
 }
 
@@ -741,6 +747,10 @@ class Ledger:
         self.findings = {}      # id -> {"event": the finding event, "status": latest status or None}
         self.verdicts = []
         self.commits = []       # (position, event)
+        self.extra_rounds = {}  # (loop, phase) -> the rounds that the extension events add to the cap
+
+    def effective_cap(self, loop, phase):
+        return PHASE_CAPS[phase] + self.extra_rounds.get((loop, phase), 0)
 
     def apply(self, event):
         _check_event_shape(event)
@@ -768,6 +778,14 @@ class Ledger:
             if event["finding"] not in self.findings:
                 raise LedgerError(f"no finding {event['finding']}")
             self.findings[event["finding"]]["status"] = event["status"]
+        elif kind == "extension":
+            key = (event["loop"], event["phase"])
+            if len(_normalise(event["quote"])) < MIN_QUOTE:
+                raise LedgerError(f"the quote is under {MIN_QUOTE} characters after normalising")
+            cap = self.effective_cap(*key)
+            if self.rounds.get(key, 0) < cap:
+                raise LedgerError(f"round {cap} of {key[0]} {key[1]} is not recorded: the cap is not reached")
+            self.extra_rounds[key] = self.extra_rounds.get(key, 0) + event["rounds"]
         else:
             self.commits.append((position, event))
         self.events.append(event)
@@ -805,6 +823,8 @@ events and their flags (every flag is required for its event and refused for the
   finding       --id --loop --phase --round --loc --type --reason
   verdict       --finding <id> --verifier <agent id> --result
   status        --finding <id> --status
+  extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
+                loop phase reached its cap, which is the base cap plus the rounds of its extensions)
   phase-commit  --sha <40 hex>
 loop values:  %s
 phase values: %s (caps: %s)
@@ -839,6 +859,8 @@ def _ledger_event(argv):
     parser.add_argument("--verifier", action=Once)
     parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
     parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
+    parser.add_argument("--rounds", type=int, action=Once)
+    parser.add_argument("--quote", action=Once)
     parser.add_argument("--sha", action=Once)
     args = parser.parse_args(argv)
     expected = set(EVENT_KEYS[args.event])
@@ -952,7 +974,8 @@ def _truncate_lines(lines):
 
 def check_s3(ledger):
     """Returns (passed, evidence)."""
-    capped = {event["loop"] for _, event in ledger.round_events if event["round"] >= PHASE_CAPS[event["phase"]]}
+    capped = {event["loop"] for _, event in ledger.round_events
+              if event["round"] >= ledger.effective_cap(event["loop"], event["phase"])}
     open_findings = [entry["event"] for entry in ledger.findings.values() if entry["status"] is None]
     blocked = [event for event in open_findings if event["loop"] not in capped]
     exempt = [event for event in open_findings if event["loop"] in capped]
