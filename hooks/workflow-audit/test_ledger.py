@@ -43,6 +43,9 @@ class LedgerCase(AuditCase):
     def written(self):
         return [json.loads(line) for line in self.raw().splitlines()]
 
+    def compact(self, events):
+        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
+
     def ok(self, kind, *flags, **kwargs):
         result = self.ledger(kind, *flags, **kwargs)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -377,9 +380,6 @@ class ShowTest(LedgerCase):
     def show(self, *extra, worktree=None, **kwargs):
         args = ("--worktree", worktree or self.repo) if worktree != "" else ()
         return self.audit("ledger", "show", *args, *extra, **kwargs)
-
-    def compact(self, events):
-        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
 
     def digest_ledger_line(self):
         """The `ledger unavailable` line that the digest of `audit check` prints, for the same worktree."""
@@ -915,9 +915,6 @@ class LinkedShowTest(LedgerCase):
 
     def show(self):
         return self.audit("ledger", "show", "--worktree", self.repo)
-
-    def compact(self, events):
-        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
 
     def assert_block(self, block):
         events = self.own()
