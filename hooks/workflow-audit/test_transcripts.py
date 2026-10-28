@@ -414,10 +414,8 @@ class DeclarationTest(TranscriptCase):
 
     def test_a_chain_of_40_links_is_followed_and_41_is_a_loop(self):
         def chain(length):
-            links = {"CLAUDE.md": "l1" if length > 1 else "AGENTS.md", **{f"l{i}": f"l{i + 1}" for i in range(1, length - 1)}}
-            if length > 1:
-                links[f"l{length - 1}"] = "AGENTS.md"
-            return links
+            names = ["CLAUDE.md"] + [f"l{i}" for i in range(1, length)]
+            return dict(zip(names, names[1:] + ["AGENTS.md"]))
 
         files = {"AGENTS.md": declaration("make test")}
         self.assert_item(self.linked(chain(40), files), "S2", "pass")

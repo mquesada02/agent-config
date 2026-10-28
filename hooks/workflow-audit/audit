@@ -676,8 +676,9 @@ def _declared_command(worktree):
     for path in (".claude/CLAUDE.md", "CLAUDE.md"):
         found = _declaration_text(worktree, path)
         if found is not None and found[0] not in seen:  # two paths that resolve to one file declare once
-            seen.add(found[0])
-            sections += _sections(found[1])
+            resolved, text = found
+            seen.add(resolved)
+            sections += _sections(text)
     if len(sections) != 1:
         raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in .claude/CLAUDE.md and CLAUDE.md, found {len(sections)}")
     if len(sections[0]) != 1 or not sections[0][0]:
