@@ -1799,14 +1799,22 @@ def _command_words(segment):
     return segment[index:]
 
 
+def _is_gh(word):
+    return os.path.basename(word) == "gh"
+
+
+def _is_orca(word):
+    return os.path.basename(word) in ORCA_COMMANDS
+
+
 def _is_pr_create(segment):
     words = _command_words(segment)
-    return len(words) >= 3 and os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]
+    return len(words) >= 3 and _is_gh(words[0]) and words[1:3] == ["pr", "create"]
 
 
 def _is_worker_start(segment):
     words = _command_words(segment)
-    return len(words) >= 3 and os.path.basename(words[0]) in ORCA_COMMANDS and words[1:3] == ["orchestration", "worker-start"]
+    return len(words) >= 3 and _is_orca(words[0]) and words[1:3] == ["orchestration", "worker-start"]
 
 
 def _is_help(segment):
@@ -2190,11 +2198,15 @@ def _has_unaccounted_text(form, segment, segments):
     return len(form.pattern.findall(_segment_text(segment, segments))) > accounted
 
 
+def _form_reason(form):
+    return UNCHECKED_REASON % form.count_text + form.pointer
+
+
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
     normalised = _normalise(command)
     for form in GATED_FORMS:
-        reason = UNCHECKED_REASON % form.count_text + form.pointer
+        reason = _form_reason(form)
         matching = sum(form.segment(segment) for segment in segments)
         if form.pattern is None:
             if _occurrences(command, form.count_text) > matching:
@@ -2205,6 +2217,49 @@ def _unchecked_reason(command, segments):
         if any(_has_unaccounted_text(form, segment, segments) for segment in segments):  # per segment
             return reason
     return None
+
+
+# The gated commands that a variable can build: the form, whether a literal first word is the gated program, and the other gated words.
+VARIABLE_FORMS = ((PR_FORM, _is_gh, ("pr", "create")), (DISPATCH_FORM, _is_orca, ("orchestration", "worker-start")))
+
+
+def _variable_fit(words, is_first_word, rest):
+    """Whether the command words can become the gated command after variable expansion: some reading matches the three gated words in
+    order, where a word with a `$` stands for 0 to 3 of them and any other word equals the next one. The reading must use at least one
+    `$` word and one literal word; the words after the match are arguments and are not read."""
+    gated = len(rest) + 1
+    seen, pending = set(), [(0, 0, False, False)]  # (position, gated words used, `$` word used, literal word used)
+    while pending:
+        state = pending.pop()
+        if state in seen:
+            continue
+        seen.add(state)
+        position, used, variable, literal = state
+        if used == gated:
+            if variable and literal:
+                return True
+            continue
+        if position == len(words):
+            continue
+        word = words[position]
+        if "$" in word:
+            pending.extend((position + 1, used + count, True, literal) for count in range(gated - used + 1))
+        elif is_first_word(word) if used == 0 else word == rest[used - 1]:
+            pending.append((position + 1, used + 1, variable, True))
+    return False
+
+
+def _variable_reason(segments):
+    """The deny reason when a segment can become a gated command through a variable, else None."""
+    for form, is_first_word, rest in VARIABLE_FORMS:
+        if any(_variable_fit(_command_words(segment), is_first_word, rest) for segment in segments):
+            return _form_reason(form)
+    return None
+
+
+def _final_reason(command, segments, unfollowed):
+    """The deny reason of the checks that run after the segment checks: the existing ones, then the variable rule."""
+    return UNFOLLOWED_REASON if unfollowed else _unchecked_reason(command, segments) or _variable_reason(segments)
 
 
 def gate_reason(command, cwd, session_id=None):
@@ -2230,7 +2285,7 @@ def gate_reason(command, cwd, session_id=None):
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
     unfollowed = ("$(" in command or "`" in command) and _occurrences(command, PR_FORM.count_text) > pr_matches
     if not pr_creates and not dispatches:
-        return UNFOLLOWED_REASON if unfollowed else _unchecked_reason(command, segments)
+        return _final_reason(command, segments, unfollowed)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
         return "hook input unreadable: no working directory for a matching command"
     dir_fd = None
@@ -2270,9 +2325,7 @@ def gate_reason(command, cwd, session_id=None):
                 reason = _dispatch_reason(runtime_dir, dir_fd, session_id)
                 if reason:
                     return reason
-        if unfollowed:
-            return UNFOLLOWED_REASON
-        return _unchecked_reason(command, segments)
+        return _final_reason(command, segments, unfollowed)
     except Exception as error:
         return f"hook error: {error}"
     finally:
