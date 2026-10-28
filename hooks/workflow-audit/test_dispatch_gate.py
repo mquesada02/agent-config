@@ -360,5 +360,29 @@ class SubstitutionTest(DispatchGateCase):
                 self.assert_denied(self.gate(command), "no pre-dispatch record")
 
 
+class VariableRuleTest(DispatchGateCase):
+    """A segment whose leading words can become `orchestration worker-start` after variable expansion is denied."""
+
+    def test_a_segment_that_can_become_the_gated_command_is_denied_with_a_passing_record(self):
+        self.pd_record()
+        for command in ("orca-ide orchestration $W", "$O orchestration worker-start", "$O worker-start", "echo $(orca orchestration $W)",
+                        f"{WS} && orca-ide orchestration $W"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
+    def test_a_segment_that_cannot_become_the_gated_command_is_allowed(self):
+        for command in ("echo $X", "orca-ide orchestration", "orca-ide orchestration list $N", "orca-ide worktree list $N",
+                        "orca-ide orchestration worker-start --task $T --retry-of t1"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_the_pr_form_gets_its_own_reason_in_a_dispatch_command(self):
+        self.pd_record()
+        self.assert_denied(self.gate("$TERRAFORM create"), "unchecked command form: run gh pr create as a plain command")
+
+    def test_an_existing_check_keeps_its_reason(self):
+        self.assert_denied(self.gate(f"{WS} && orca-ide orchestration $W"), "no pre-dispatch record")
+
+
 if __name__ == "__main__":
     unittest.main()

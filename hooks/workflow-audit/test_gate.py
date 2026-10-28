@@ -727,5 +727,65 @@ class CommentTest(GateTestCase):
                 self.assert_denied(self.gate(command), UNCHECKED)
 
 
+class VariableRuleTest(GateTestCase):
+    """A segment whose leading words can become `gh pr create` after variable expansion is denied."""
+
+    DENIED = ("gh pr $X", "gh $X", "gh $X create", "gh $X list", "gh pr cre$X --title t", "$G pr create", "$X create", "$KUBECTL create -f x",
+              "$HOME/bin/gh pr create", "$X gh pr create", "gh pr $X --help", "gh pr '$X'", "X=create; gh pr $X")
+    ALLOWED = ("gh pr", "gh", "$EDITOR file", "$HOME/bin/tool --x", "$EDITOR notes create", "echo $X", "gh pr list", "gh issue view $N",
+               "gh issue $X", "gh api $URL")
+
+    def test_a_segment_that_can_become_the_gated_command_is_denied_with_a_passing_record(self):
+        self.audited_branch()
+        for command in self.DENIED:
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_a_segment_that_cannot_become_the_gated_command_is_allowed(self):
+        self.audited_branch()
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_variable_segment_next_to_an_allowed_gated_command_is_denied(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate("gh pr create"))
+        self.assert_denied(self.gate("gh pr create && gh pr $X"), UNCHECKED)
+
+    def test_a_variable_segment_in_a_substitution_is_denied(self):
+        self.audited_branch()
+        for command in ("echo $(gh pr $X)", "echo `gh pr $X`", "(cd x && gh pr $X)"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_the_accepted_false_positives_are_denied(self):
+        self.audited_branch()
+        for command in ("${GH:-gh} pr create", "$TERRAFORM create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+
+    def test_prefix_words_are_skipped_and_arguments_are_not_read(self):
+        self.audited_branch()
+        for command in ("FOO=1 $G pr create", "env $X create"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED)
+        self.assert_allowed(self.gate("gh pr create $X"))
+
+    def test_the_dispatch_form_gets_its_own_reason_in_a_pr_command(self):
+        self.audited_branch()
+        self.assert_denied(self.gate("$O worker-start"), "unchecked command form: run orchestration worker-start as a plain command")
+
+    def test_a_long_run_of_variable_words_is_allowed_in_time(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate(" ".join(f"$v{index}" for index in range(200))))
+
+    def test_an_existing_check_keeps_its_reason(self):
+        self.start_branch("one", "feat: a")  # no record
+        self.assert_denied(self.gate("gh pr create --head one $X"), "no record")
+        self.audited_branch("two", "feat: b")
+        self.assert_denied(self.gate("gh pr create --head '$B'"), "no branch to check")
+        self.assert_denied(self.gate('echo "$(gh pr create)" && gh pr $X'), "no branch to check: gh pr create inside")
+
+
 if __name__ == "__main__":
     unittest.main()
