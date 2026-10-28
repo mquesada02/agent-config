@@ -2,8 +2,8 @@ import json
 import os
 import unittest
 
-from audit_support import (AuditCase, PASSING_LLM, bash_row, edit_row, extension_event, finding_event, phase_commit_event, queued_row,
-                           round_event, stamp, status_event, subagent_rows)
+from audit_support import (AuditCase, PASSING_LLM, bash_row, edit_row, extension_event, finding_event, link_event, phase_commit_event,
+                           queued_row, round_event, stamp, status_event, subagent_rows)
 
 SID = "main-session-1"
 LOOP_3, LOOP_41 = "plan-review-3", "plan-review-4.1"
@@ -94,6 +94,16 @@ class RecordTest(PreDispatchCase):
         self.git("push", "-u", "origin", "feature")
         reason = self.denial(self.gate("gh pr create --fill"))
         self.assertTrue(reason.startswith("no record"), reason)
+
+
+class LinkTest(PreDispatchCase):
+    def test_a_link_event_does_not_change_the_pre_dispatch_audit(self):
+        without = self.pre_dispatch()
+        before = self.read_pre_dispatch()["items"]
+        self.write_ledger("feature", self.plan_events(link_event()))
+        with_link = self.pre_dispatch()
+        self.assertEqual((with_link.returncode, with_link.stdout), (without.returncode, without.stdout))
+        self.assertEqual(self.read_pre_dispatch()["items"], before)
 
 
 class LedgerViewTest(PreDispatchCase):

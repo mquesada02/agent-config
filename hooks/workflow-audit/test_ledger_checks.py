@@ -2,7 +2,7 @@
 import os
 import unittest
 
-from audit_support import (EARLY, LATE, AuditCase, edit_row, extension_event, finding_event, phase_commit_event, round_event,
+from audit_support import (EARLY, LATE, AuditCase, edit_row, extension_event, finding_event, link_event, phase_commit_event, round_event,
                            status_event, subagent_rows, verdict_event)
 
 FINAL = {"phase": "final"}
@@ -27,6 +27,7 @@ class LedgerChecksCase(AuditCase):
             self.write_ledger("feature", events if events is not None else raw)
         result = self.record()
         self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.returncode = result.returncode
         return {item["id"]: item for item in self.read_record(self.tip)["items"]}
 
     def check(self, items, name, result, text=None):
@@ -248,6 +249,26 @@ class S6Test(LedgerChecksCase):
     def test_without_a_final_round_of_the_code_review_loop_it_passes_with_a_note(self):
         self.check(self.items([round_event()]), "S6", "pass", "no section 6 final round")
         self.check(self.items([round_event(1, loop="plan-review-3", **FINAL)]), "S6", "pass", "no section 6 final round")
+
+
+class LinkIsolationTest(LedgerChecksCase):
+    def test_a_link_between_the_phase_commit_and_the_final_round_does_not_replace_the_phase_commit(self):
+        parent = self.git("rev-parse", "HEAD~1")
+        events = [round_event(), phase_commit_event(parent), link_event(), round_event(1, **FINAL)]
+        self.check(self.items(events), "S6", "pass", f"phase-commit {parent[:7]} is an ancestor of HEAD")
+
+    def test_a_link_changes_only_the_event_count_of_s3(self):
+        parent = self.git("rev-parse", "HEAD~1")
+        events = [round_event(), phase_commit_event(parent), round_event(1, **FINAL)]
+        without = self.items(events)
+        code_without = self.returncode
+        with_link = self.items(events + [link_event()])
+        self.assertEqual(self.returncode, code_without)
+        self.assertEqual({name: item["result"] for name, item in with_link.items()}, {name: item["result"] for name, item in without.items()})
+        self.assertEqual(without["S3"]["evidence"], "3 events, 0 findings, none open")
+        self.assertEqual(with_link["S3"]["evidence"], "4 events, 0 findings, none open")
+        for name in ("S4", "S5", "S6", "XC"):
+            self.assertEqual(with_link[name]["evidence"], without[name]["evidence"], name)
 
 
 class CrossCheckTest(LedgerChecksCase):

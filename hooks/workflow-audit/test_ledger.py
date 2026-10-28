@@ -2,10 +2,15 @@
 import datetime
 import json
 import os
+import shutil
 import stat
+import subprocess
+import sys
+import time
 import unittest
 
-from audit_support import AuditCase, extension_event, finding_event, round_event, status_event, subagent_rows, verdict_event
+from audit_support import (AUDIT, EARLY, AuditCase, extension_event, finding_event, link_event, round_event, status_event,
+                           subagent_rows, verdict_event)
 
 SHA = "a" * 40
 ROUND = ("--loop", "code-review", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
@@ -611,6 +616,290 @@ class RoundSubagentTest(LedgerCase):
             text = " ".join(self.audit(*args).stdout.decode().split())
             self.assertIn("each reviewer must be a subagent of the current session (CLAUDE_CODE_SESSION_ID)", text)
             self.assertIn("another id is refused and nothing is written", text)
+
+
+PLAN = "plan-review-5.3"
+GOOD_URL = "https://github.com/o/r"
+LINK = ("--from-branch", "src", "--ticket", "T-1")
+GH_ARGV = ["pr", "list", "--repo", "o/r", "--head", "src", "--state", "merged", "--json", "number", "--limit", "1"]
+
+
+class LinkCase(LedgerCase):
+    """`audit ledger link`: the origin is a GitHub URL (the check 6 needs a pair), so every ledger path is keyed by self.url."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_origin(GOOD_URL)
+        self.fake_gh("merged")
+
+    def set_origin(self, url):
+        self.url = url
+        self.git("remote", "set-url", "origin", url)
+
+    def ledger_file(self, branch="feature", url=None):
+        return super().ledger_file(branch, url or self.url)
+
+    def source(self, events=None, branch="src"):
+        self.write_ledger(branch, [round_event(loop=PLAN)] if events is None else events, url=self.url)
+
+    def link_refused(self, *flags, **kwargs):
+        return self.refused("link", *(flags or LINK), **kwargs)
+
+
+class LinkAcceptTest(LinkCase):
+    def test_a_valid_link_is_appended_as_one_line_with_the_exact_keys(self):
+        self.source()
+        self.ok("link", *LINK)
+        [event] = self.written()
+        self.assertEqual(list(event), ["kind", "time", "source", "ticket"])
+        self.assertEqual((event["kind"], event["source"], event["ticket"]), ("link", "src", "T-1"))
+        self.assertEqual(self.gh_calls(), [GH_ARGV])
+
+    def test_each_accepted_origin_form_gives_its_owner_and_repo_to_gh(self):
+        forms = ["https://github.com/o/r", "https://github.com/o/r.git", "https://github.com/o/r/", "https://github.com/o/r.git/",
+                 "ssh://git@github.com/o/r", "ssh://git@github.com/o/r.git", "git@github.com:o/r", "git@github.com:o/r.git",
+                 "git@github.com:o/r/", "https://github.com/o.x_y-z/r.w_1-2"]
+        for url in forms:
+            with self.subTest(url):
+                self.set_origin(url)
+                self.source()
+                self.ok("link", *LINK)
+                pair = url.split("github.com")[1].lstrip("/:").removesuffix("/").removesuffix(".git")
+                self.assertEqual(self.gh_calls()[-1], [*GH_ARGV[:3], pair, *GH_ARGV[4:]])
+        self.assertEqual(len(self.gh_calls()), len(forms))
+
+    def test_non_ascii_text_is_accepted_in_the_ticket_and_the_source(self):
+        self.source(branch="fé/ö")
+        self.ok("link", "--from-branch", "fé/ö", "--ticket", "Ünï-1")
+        self.assertEqual((self.written()[0]["source"], self.written()[0]["ticket"]), ("fé/ö", "Ünï-1"))
+
+    def test_a_link_after_other_events_is_accepted_and_events_may_follow_it(self):
+        self.source()
+        self.ok("round", *ROUND)
+        self.ok("link", *LINK)
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "2", "--reviewer", "rev1")
+        self.assertEqual([event["kind"] for event in self.written()], ["round", "link", "round"])
+
+
+class LinkRefuseTest(LinkCase):
+    def test_a_link_to_the_own_branch_is_refused_before_any_other_check(self):
+        message = self.link_refused("--from-branch", "feature", "--ticket", "T-1")
+        self.assertIn("--from-branch", message)
+        self.assertIn("own branch", message)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_missing_source_ledger_is_refused(self):
+        self.assertIn("no ledger for src", self.link_refused())
+        self.write_ledger("src", [round_event(loop=PLAN)], url=os.path.join(self.root, "elsewhere.git"))  # keyed by another remote
+        self.assertIn("no ledger for src", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_an_invalid_source_ledger_is_refused(self):
+        self.source(["not json"])
+        self.assertIn("invalid", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_source_without_a_plan_review_round_is_refused(self):
+        self.source([round_event(), round_event(loop="plan-review-3")])
+        self.assertIn(PLAN, self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_source_that_holds_a_link_is_refused(self):
+        self.source([round_event(loop=PLAN), link_event(source="older")])
+        self.assertIn("holds a link", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_second_link_is_refused_before_gh_runs(self):
+        self.source()
+        self.write_ledger("feature", [link_event(source="older")], url=self.url)
+        self.assertIn("already holds a link", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_an_invalid_own_ledger_is_refused_before_gh_runs(self):
+        self.source()
+        self.write_ledger("feature", ["not json"], url=self.url)
+        self.assertIn("the ledger holds an invalid line", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_the_first_failing_check_gives_the_message(self):
+        self.write_ledger("feature", [link_event(source="older")], url=self.url)  # check 5 fails, and so does check 2
+        self.assertIn("no ledger for src", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+        self.source()  # check 5 fails, and so would check 6 (not merged)
+        self.gh_mode("not-merged")
+        self.assertIn("already holds a link", self.link_refused())
+        self.assertEqual(self.gh_calls(), [])
+        self.assertIn("own branch", self.link_refused("--from-branch", "feature", "--ticket", "T-1"))  # checks 1 and 5 fail
+
+    def test_an_unmerged_source_is_refused(self):
+        self.source()
+        self.gh_mode("not-merged")
+        self.assertIn("no merged PR", self.link_refused())
+        self.assertEqual(self.gh_calls(), [GH_ARGV])
+
+    def test_a_gh_that_fails_or_prints_bad_output_is_refused(self):
+        self.source()
+        for mode, text in (("error", "exited with status 1"), ("bad", "not the expected JSON")):
+            with self.subTest(mode):
+                self.gh_mode(mode)
+                self.assertIn(text, self.link_refused())
+        self.assertEqual(len(self.gh_calls()), 2)
+
+    def test_gh_output_that_is_not_an_array_of_objects_with_an_integer_number_is_refused(self):
+        self.source()
+        for output in ('{"number":1}', '[{"number":"1"}]', '[{"number":true}]', "[1]", "[{}]", "null"):
+            with self.subTest(output):
+                with open(os.path.join(self.root, "fake-gh", "gh"), "w") as handle:
+                    handle.write(f"#!{sys.executable}\nprint({output!r})\n")
+                self.assertIn("not the expected JSON", self.link_refused())
+
+    def test_a_missing_gh_is_refused(self):
+        self.source()
+        bin_dir = os.path.join(self.root, "no-gh")
+        os.mkdir(bin_dir)
+        os.symlink(shutil.which("git"), os.path.join(bin_dir, "git"))
+        self.assertIn("gh", self.link_refused(env={"PATH": bin_dir}))
+
+    def test_a_gh_that_does_not_return_within_20_seconds_is_refused(self):
+        self.source()
+        self.gh_mode("sleep:30")
+        self.assertIn("20 seconds", self.link_refused())
+        self.assertEqual(self.gh_calls(), [GH_ARGV])
+
+    def test_an_origin_that_gives_no_owner_and_repo_is_refused_and_gh_does_not_run(self):
+        urls = {
+            "another host": "https://gitlab.com/o/r", "host in capitals": "https://GitHub.com/o/r", "http": "http://github.com/o/r",
+            "git scheme": "git://github.com/o/r", "a port": "https://github.com:443/o/r", "a port in the ssh URL": "ssh://git@github.com:22/o/r",
+            "another user": "ssh://other@github.com/o/r", "another user, scp-like": "other@github.com:o/r", "userinfo on https": "https://u@github.com/o/r",
+            "a local path": "/srv/git/o/r.git", "a missing part": "https://github.com/o", "an extra path part": "https://github.com/o/r/x",
+            "a path prefix": "git@github.com:pre/o/r", "a leading slash": "git@github.com:/o/r", "a query": "https://github.com/o/r?x=1",
+            "a fragment": "https://github.com/o/r#f", "repo/.git": "https://github.com/o/r/.git", "owner dot": "https://github.com/./r",
+            "owner dot dot": "https://github.com/../r", "repo dot": "https://github.com/o/.", "repo dot dot": "https://github.com/o/..",
+            "an empty repo": "https://github.com/o/.git", "a bad character": "https://github.com/o/r s",
+        }
+        for name, url in urls.items():
+            with self.subTest(name):
+                self.set_origin(url)
+                self.source()
+                message = self.link_refused()
+                self.assertIn("owner/repo", message)
+                self.assertIn(url, message)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_bad_ticket_key_is_refused(self):
+        self.source()
+        for ticket in ("", "x" * 65, "a\nb", "a\tb", "a\x7fb"):
+            with self.subTest(repr(ticket)):
+                self.assertIn("malformed event", self.link_refused("--from-branch", "src", "--ticket", ticket))
+        self.assertEqual(self.gh_calls(), [])
+        self.ok("link", "--from-branch", "src", "--ticket", "x" * 64)
+
+    def test_a_bad_source_name_is_refused(self):
+        for name in ("", "x" * 256, "a\nb", "a\x1fb"):
+            with self.subTest(repr(name)):
+                self.source(branch=name or "x")
+                self.assertIn("malformed event", self.link_refused("--from-branch", name, "--ticket", "T-1"))
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_missing_or_repeated_flag_is_refused(self):
+        self.source()
+        cases = {
+            "no --from-branch": ("--ticket", "T-1"),
+            "no --ticket": ("--from-branch", "src"),
+            "no flags": (),
+            "--from-branch twice": (*LINK, "--from-branch", "src"),
+            "--ticket twice": (*LINK, "--ticket", "T-1"),
+        }
+        for name, flags in cases.items():
+            with self.subTest(name):
+                message = self.refused("link", *flags)
+                self.assertNotIn("--source", message)
+                self.assertTrue(message.startswith("usage:"))
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_the_flags_of_other_events_are_refused_on_link_and_the_link_flags_on_other_events(self):
+        self.source()
+        for flags in (("--loop", "code-review"), ("--sha", SHA), ("--reviewer", "rev1"), ("--status", "fixed"), ("--result", "confirmed")):
+            with self.subTest(flags):
+                message = self.link_refused(*LINK, *flags)
+                self.assertIn("not allowed", message)
+        self.assertNotIn("--source", self.link_refused(*LINK, "--sha", SHA))
+        self.assertIn("--from-branch", self.refused("round", *ROUND, "--from-branch", "src"))
+        self.assertIn("--ticket", self.refused("status", *STATUS, "--ticket", "T-1"))
+        self.assertIn("--from-branch", self.refused("phase-commit", "--sha", SHA, "--from-branch", "src", "--ticket", "T-1"))
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_the_refusals_of_every_event_hold_for_link(self):
+        self.source()
+        self.git("checkout", "--detach")
+        self.link_refused()
+        self.git("checkout", "feature")
+        self.git("remote", "remove", "origin")
+        self.link_refused()
+        self.link_refused(worktree=self.root)
+        self.assertEqual(self.gh_calls(), [])
+
+
+class LinkLockTest(LinkCase):
+    def start_link(self):
+        """Start the link call and wait until the fake gh has recorded its argv, so that gh is running."""
+        process = subprocess.Popen([sys.executable, "-I", AUDIT, "ledger", "link", "--worktree", self.repo, *LINK], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(process.wait)
+        deadline = time.monotonic() + 10
+        while not self.gh_calls() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(self.gh_calls(), [GH_ARGV])
+        return process
+
+    def test_gh_does_not_run_under_the_lock_of_the_own_ledger(self):
+        self.source()
+        self.gh_mode("sleep:8")  # longer than the 5 seconds that a call waits for the lock
+        process = self.start_link()
+        self.ok("round", *ROUND)
+        stdout, stderr = process.communicate()
+        self.assertEqual((process.returncode, stdout), (0, b"ok link\n"), stderr)
+        self.assertEqual([event["kind"] for event in self.written()], ["round", "link"])
+
+    def test_check_5_is_repeated_under_the_lock(self):
+        self.source()
+        self.gh_mode("sleep:8")
+        process = self.start_link()
+        self.write_ledger("feature", [link_event(source="older")], url=self.url)  # another call links while gh runs
+        before = self.raw()
+        stdout, stderr = process.communicate()
+        self.assertEqual((process.returncode, stdout), (2, b""), stderr)
+        self.assertIn("this ledger already holds a link: a branch continues exactly one branch", stderr.decode())
+        self.assertEqual(self.raw(), before)
+        self.assertEqual(len(self.written()), 1)
+
+
+class LinkReplayTest(LinkCase):
+    def test_a_hand_written_bad_link_line_refuses_the_next_append_and_the_ledger_is_unavailable(self):
+        bad = {
+            "missing key": {"kind": "link", "time": EARLY, "source": "src"},
+            "extra key": {**link_event(), "sha": SHA},
+            "empty ticket": link_event(ticket=""),
+            "ticket too long": link_event(ticket="x" * 65),
+            "control character in the source": link_event(source="a\nb"),
+            "source not a string": link_event(source=1),
+            "second link": None,
+        }
+        for name, line in bad.items():
+            with self.subTest(name):
+                self.write_ledger("feature", [link_event(), link_event()] if line is None else [line], url=self.url)
+                self.assertIn("the ledger holds an invalid line", self.refused("round", *ROUND))
+                show = self.audit("ledger", "show", "--worktree", self.repo)
+                self.assertEqual(show.returncode, 2)
+                self.assertIn("ledger unavailable", show.stdout.decode() + show.stderr.decode())
+                self.assertIn("ledger unavailable", self.audit("check", "--worktree", self.repo, "--base", "main").stdout.decode())
+
+    def test_the_help_and_the_usage_name_link_and_its_flags_and_checks(self):
+        text = self.audit("ledger", "--help").stdout.decode()
+        for word in ("link", "--from-branch", "--ticket", "merged PR", "plan-review-5.3"):
+            self.assertIn(word, text)
+        usage = self.audit("nope").stderr.decode()
+        self.assertIn("audit ledger link --worktree <path> --from-branch <branch> --ticket <id>", usage)
 
 
 if __name__ == "__main__":
