@@ -1799,14 +1799,22 @@ def _command_words(segment):
     return segment[index:]
 
 
+def _is_gh(word):
+    return os.path.basename(word) == "gh"
+
+
+def _is_orca(word):
+    return os.path.basename(word) in ORCA_COMMANDS
+
+
 def _is_pr_create(segment):
     words = _command_words(segment)
-    return len(words) >= 3 and os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]
+    return len(words) >= 3 and _is_gh(words[0]) and words[1:3] == ["pr", "create"]
 
 
 def _is_worker_start(segment):
     words = _command_words(segment)
-    return len(words) >= 3 and os.path.basename(words[0]) in ORCA_COMMANDS and words[1:3] == ["orchestration", "worker-start"]
+    return len(words) >= 3 and _is_orca(words[0]) and words[1:3] == ["orchestration", "worker-start"]
 
 
 def _is_help(segment):
@@ -2190,11 +2198,15 @@ def _has_unaccounted_text(form, segment, segments):
     return len(form.pattern.findall(_segment_text(segment, segments))) > accounted
 
 
+def _form_reason(form):
+    return UNCHECKED_REASON % form.count_text + form.pointer
+
+
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
     normalised = _normalise(command)
     for form in GATED_FORMS:
-        reason = UNCHECKED_REASON % form.count_text + form.pointer
+        reason = _form_reason(form)
         matching = sum(form.segment(segment) for segment in segments)
         if form.pattern is None:
             if _occurrences(command, form.count_text) > matching:
@@ -2208,10 +2220,7 @@ def _unchecked_reason(command, segments):
 
 
 # The gated commands that a variable can build: the form, whether a literal first word is the gated program, and the other gated words.
-VARIABLE_FORMS = (
-    (PR_FORM, lambda word: os.path.basename(word) == "gh", ("pr", "create")),
-    (DISPATCH_FORM, lambda word: os.path.basename(word) in ORCA_COMMANDS, ("orchestration", "worker-start")),
-)
+VARIABLE_FORMS = ((PR_FORM, _is_gh, ("pr", "create")), (DISPATCH_FORM, _is_orca, ("orchestration", "worker-start")))
 
 
 def _variable_fit(words, is_first_word, rest):
@@ -2244,7 +2253,7 @@ def _variable_reason(segments):
     """The deny reason when a segment can become a gated command through a variable, else None."""
     for form, is_first_word, rest in VARIABLE_FORMS:
         if any(_variable_fit(_command_words(segment), is_first_word, rest) for segment in segments):
-            return UNCHECKED_REASON % form.count_text + form.pointer
+            return _form_reason(form)
     return None
 
 
