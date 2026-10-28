@@ -493,6 +493,11 @@ class S9HeredocTest(S9Case):
         self.assert_flagged(["function cat { bash; }; cat <<'EOF'\nrm -rf x\nEOF", "function tee { sh; }; tee f <<'EOF'\nrm -rf x\nEOF",
                              "function cat () { bash; }\ncat <<'EOF'\nrm -rf x\nEOF"])
 
+    def test_an_alias_a_hash_entry_or_a_path_change_that_replaces_a_data_command_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["shopt -s expand_aliases\nalias cat=bash\ncat <<'EOF'\nrm -rf x\nEOF", "hash -p /bin/bash cat\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "export PATH=./bin:$PATH\ncat <<'EOF'\nrm -rf x\nEOF",
+                             "declare -x PATH=./bin\ntee f <<'EOF'\nrm -rf x\nEOF", "enable -f ./lib.so cat\ncat <<'EOF'\nrm -rf x\nEOF"])
+
     def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
         self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
                              "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "tee >(sh) <<'EOF'\nrm -rf x\nEOF", "sudo cat <<'EOF'\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])

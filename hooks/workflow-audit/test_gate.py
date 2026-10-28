@@ -929,7 +929,9 @@ class HeredocBodyTest(GateTestCase):
     def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_gated(self):
         for command in (f"bash <<'EOF'\n{self.DENIED}\nEOF", f"sh <<'EOF'\n{self.DENIED}\nEOF", f"tee >(sh) <<'EOF'\n{self.DENIED}\nEOF",
                         f"cat <<'EOF' | bash\n{self.DENIED}\nEOF", f"cat <<EOF\n{self.DENIED}\nEOF", f"./cat <<'EOF'\n{self.DENIED}\nEOF",
-                        f"function cat {{ bash; }}; cat <<'EOF'\n{self.DENIED}\nEOF", f"function tee {{ sh; }}; tee f <<'EOF'\n{self.DENIED}\nEOF"):
+                        f"function cat {{ bash; }}; cat <<'EOF'\n{self.DENIED}\nEOF", f"function tee {{ sh; }}; tee f <<'EOF'\n{self.DENIED}\nEOF",
+                        f"shopt -s expand_aliases\nalias cat=bash\ncat <<'EOF'\n{self.DENIED}\nEOF", f"hash -p /bin/bash cat\ncat <<'EOF'\n{self.DENIED}\nEOF",
+                        f"PATH=./bin cat <<'EOF'\n{self.DENIED}\nEOF", f"export PATH=./bin:$PATH\ncat <<'EOF'\n{self.DENIED}\nEOF"):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
 
