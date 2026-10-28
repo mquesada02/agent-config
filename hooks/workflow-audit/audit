@@ -70,6 +70,10 @@ GENERATED_WITH = re.compile(r"generated with.*claude", re.IGNORECASE)
 ROBOT = "\U0001F916"
 
 SEPARATOR_CHARS = frozenset("&|;()\n")
+# A character after which a word starts, so a `#` there starts a comment. `_join_as_bash`, `_paren_end` and `_mask_substitutions` share it;
+# the last two also start a word after `(` and `)` (WORD_STARTS), and the join tracks its parentheses with a stack. Keep the three scans in step.
+WORD_BREAKS = " \t\n;&|"
+WORD_STARTS = WORD_BREAKS + "()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
 ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # Words that can stand before a command: shell keywords of compound commands, and wrappers that run the next word.
@@ -161,10 +165,19 @@ def _join_as_bash(text):
     while index < len(text):
         char = text[index]
         if comment or quote == "'":
+            if comment and backtick and char == "`":  # the closing backtick ends the body and its comment
+                comment, backtick, word_start, dollar = False, False, False, False
+                out.append(char)
+                index += 1
+                continue
+            if comment and backtick and char == "\\" and text[index + 1:index + 2] in ("`", "\\"):  # as `_backtick_end`
+                out.append(text[index:index + 2])
+                index += 2
+                continue
             out.append(char)
             comment = comment and char != "\n"
             quote = None if quote == "'" and char == "'" else quote
-            word_start, dollar = char in " \t\n;&|", False
+            word_start, dollar = char in WORD_BREAKS, False
         elif char == "\\":
             pair = text[index:index + 2]
             if pair != "\\\n":  # a joined pair is not there for bash, so it leaves word_start as it was
@@ -191,7 +204,7 @@ def _join_as_bash(text):
                 backtick = not backtick
                 word_start = backtick  # an opening backtick starts a word, a closing one does not
             else:
-                word_start = char in " \t\n;&|"
+                word_start = char in WORD_BREAKS
             out.append(char)
             dollar = char == "$"
         index += 1
@@ -1656,11 +1669,17 @@ def _backtick_end(text, index):
     raise ValueError("No closing backtick")
 
 
+def _line_end(text, index):
+    """The index of the newline that ends the comment starting at `index`, or the end of the text."""
+    end = text.find("\n", index)
+    return len(text) if end < 0 else end
+
+
 def _paren_end(text, index):
-    """The index after the `)` that closes the `$(` whose body starts at `index`, following parentheses, substitutions and quotes."""
-    depth = 0
+    """The index after the `)` that closes the `$(` whose body starts at `index`, following parentheses, substitutions, quotes and comments."""
+    depth, word_start = 0, True
     while index < len(text):
-        char = text[index]
+        char, starts_word, word_start = text[index], word_start, False
         if char == "\\":
             index += 2
         elif char == "'":
@@ -1671,6 +1690,8 @@ def _paren_end(text, index):
             index = _backtick_end(text, index + 1) + 1
         elif text.startswith("$(", index):
             index = _paren_end(text, index + 2)
+        elif char == "#" and starts_word:
+            index = _line_end(text, index)
         else:
             if char == "(":
                 depth += 1
@@ -1679,18 +1700,23 @@ def _paren_end(text, index):
                     return index + 1
                 depth -= 1
             index += 1
+            word_start = char in WORD_STARTS
     raise ValueError("No closing parenthesis")
 
 
 def _mask_substitutions(command):
     """The command with each unquoted substitution replaced by a placeholder: a marker, the number of the substitution and the marker again.
-    Returns the masked text, the marker and the list of (text of the substitution, text of its body). A backtick body is unescaped as bash does."""
+    A comment (an unquoted `#` at the start of a word) is dropped up to its newline. Returns the masked text, the marker and the list of
+    (text of the substitution, text of its body). A backtick body is unescaped as bash does."""
     marker = next((chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command), None)  # a private-use character that the command lacks
     if marker is None:
         raise ValueError("No free placeholder character")
-    masked, substitutions, index = [], [], 0
+    masked, substitutions, index, word_start = [], [], 0, True
     while index < len(command):
         char, body = command[index], None
+        if char == "#" and word_start:
+            index = _line_end(command, index)
+            continue
         if char == "\\":
             end = index + 2
         elif char == "'":
@@ -1710,6 +1736,7 @@ def _mask_substitutions(command):
         else:
             masked.append(f"{marker}{len(substitutions)}{marker}")
             substitutions.append((command[index:end], body))
+        word_start = body is None and char in WORD_STARTS
         index = end
     return "".join(masked), marker, substitutions
 
