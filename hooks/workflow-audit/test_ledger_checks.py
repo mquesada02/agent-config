@@ -2,8 +2,8 @@
 import os
 import unittest
 
-from audit_support import (EARLY, LATE, AuditCase, edit_row, finding_event, phase_commit_event, round_event, status_event,
-                           subagent_rows, verdict_event)
+from audit_support import (EARLY, LATE, AuditCase, edit_row, extension_event, finding_event, phase_commit_event, round_event,
+                           status_event, subagent_rows, verdict_event)
 
 FINAL = {"phase": "final"}
 
@@ -80,6 +80,30 @@ class S3Test(LedgerChecksCase):
         events = ([round_event(1), finding_event("I1", kind="Minor")]
                   + [round_event(n, **FINAL) for n in range(1, 4)])
         self.check(self.items(events), "S3", "pass", "stopped at cap: 1 open findings")
+
+    def test_a_round_at_the_extended_cap_lets_findings_stay_open(self):
+        events = ([round_event(n) for n in range(1, 6)] + [extension_event(), round_event(6), finding_event("I1", n=6)])
+        self.check(self.items(events), "S3", "pass", "stopped at cap: 1 open findings")
+
+    def test_after_an_extension_and_before_the_extra_round_the_findings_are_not_exempt(self):
+        events = [round_event(n) for n in range(1, 6)] + [extension_event(), finding_event("I1", n=5)]
+        self.check(self.items(events), "S3", "fail", "1 findings have no status")
+
+    def test_two_extensions_add_up_in_s3(self):
+        events = ([round_event(n) for n in range(1, 6)] + [extension_event(), round_event(6), extension_event(),
+                  finding_event("I1", n=6)])
+        self.check(self.items(events), "S3", "fail", "1 findings have no status")  # the cap is 7 and round 6 is below it
+        self.check(self.items(events + [round_event(7)]), "S3", "pass", "stopped at cap: 1 open findings")
+
+    def test_a_correctness_extension_does_not_raise_the_final_cap(self):
+        events = ([round_event(n) for n in range(1, 6)] + [extension_event(), finding_event("I1", n=5)]
+                  + [round_event(n, **FINAL) for n in range(1, 3)])
+        self.check(self.items(events), "S3", "fail", "1 findings have no status")
+
+    def test_a_final_extension_does_not_raise_the_correctness_cap(self):
+        events = ([round_event(n, **FINAL) for n in range(1, 4)] + [extension_event(**FINAL)]
+                  + [round_event(n) for n in range(1, 5)] + [finding_event("I1", n=4)])
+        self.check(self.items(events), "S3", "fail", "1 findings have no status")
 
     def test_a_cap_in_one_loop_does_not_let_another_loop_leave_findings_open(self):
         events = ([round_event(n) for n in range(1, 6)] + [round_event(1, loop="plan-review-3"),

@@ -5,7 +5,7 @@ import os
 import stat
 import unittest
 
-from audit_support import AuditCase, finding_event, round_event, status_event, verdict_event
+from audit_support import AuditCase, extension_event, finding_event, round_event, status_event, verdict_event
 
 SHA = "a" * 40
 ROUND = ("--loop", "code-review", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
@@ -245,6 +245,124 @@ class ReplayRuleTest(LedgerCase):
     def test_a_ledger_that_does_not_end_with_a_newline_refuses_an_append(self):
         with open(self.ledger_file(), "w") as handle:
             handle.write(json.dumps(round_event()))
+        self.refused("round", "--loop", "code-review", "--phase", "correctness", "--round", "2", "--reviewer", "rev1")
+
+
+class ExtensionTest(LedgerCase):
+    QUOTE = "allow one more round"
+
+    def rounds(self, count, phase="correctness", loop="code-review"):
+        for number in range(1, count + 1):
+            self.ok("round", "--loop", loop, "--phase", phase, "--round", str(number), "--reviewer", "rev1")
+
+    def extension_flags(self, loop="code-review", phase="correctness", rounds="1", quote=QUOTE):
+        return ("--loop", loop, "--phase", phase, "--rounds", rounds, "--quote", quote)
+
+    def at_cap(self):
+        self.rounds(5)
+
+    def test_a_valid_extension_is_written_and_shown(self):
+        self.at_cap()
+        self.ok("extension", *self.extension_flags())
+        event = self.written()[-1]
+        event.pop("time")
+        self.assertEqual(event, {"kind": "extension", "loop": "code-review", "phase": "correctness", "rounds": 1,
+                                 "quote": self.QUOTE})
+        shown = self.audit("ledger", "show", "--worktree", self.repo).stdout.decode().splitlines()
+        self.assertEqual(json.loads(shown[-1])["kind"], "extension")
+        self.assertEqual(json.loads(shown[-1])["quote"], self.QUOTE)
+
+    def test_the_rounds_value_must_be_an_integer_from_1_to_5(self):
+        self.at_cap()
+        for value in ("0", "6", "abc", "2.5", "-1"):
+            with self.subTest(value):
+                self.refused("extension", *self.extension_flags(rounds=value))
+        self.ok("extension", *self.extension_flags(rounds="5"))
+        self.assertEqual(self.written()[-1]["rounds"], 5)
+
+    def test_the_quote_must_hold_8_to_500_characters_without_control_characters(self):
+        self.at_cap()
+        for name, quote in {"7 characters": "1234567", "501 characters": "x" * 501, "control character": "abcd\x07efgh",
+                            "newline": "abcd\nefgh", "empty": ""}.items():
+            with self.subTest(name):
+                self.refused("extension", *self.extension_flags(quote=quote))
+        self.ok("extension", *self.extension_flags(quote="x" * 8))
+
+    def test_a_quote_that_is_shorter_than_8_characters_after_normalising_is_refused(self):
+        self.at_cap()
+        for name, quote in {"8 apostrophes": "'" * 8, "8 spaces": " " * 8, "8 double quotes": '"' * 8,
+                            "quotes and spaces": "' ' ' ' "}.items():
+            with self.subTest(name):
+                self.refused("extension", *self.extension_flags(quote=quote))
+
+    def test_a_bad_loop_or_phase_a_missing_flag_and_a_flag_of_another_event_are_refused(self):
+        self.at_cap()
+        self.refused("extension", *self.extension_flags(loop="section-6"))
+        self.refused("extension", *self.extension_flags(phase="quality"))
+        self.refused("extension", "--loop", "code-review", "--phase", "correctness", "--rounds", "1")
+        self.refused("extension", "--loop", "code-review", "--phase", "correctness", "--quote", self.QUOTE)
+        self.refused("extension", *self.extension_flags(), "--round", "1")
+        self.refused("round", *ROUND, "--rounds", "1")
+        self.refused("round", *ROUND, "--quote", self.QUOTE)
+
+    def test_an_extension_before_the_cap_is_reached_is_refused(self):
+        self.refused("extension", *self.extension_flags())  # no round at all
+        self.rounds(4)
+        self.refused("extension", *self.extension_flags())  # one round short of the cap
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "5", "--reviewer", "rev1")
+        self.ok("extension", *self.extension_flags())
+
+    def test_an_extension_is_accepted_after_the_extra_round_was_recorded(self):
+        self.rounds(6)
+        self.ok("extension", *self.extension_flags())
+
+    def test_a_round_over_the_effective_cap_is_still_accepted(self):
+        self.at_cap()
+        self.ok("extension", *self.extension_flags())
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "6", "--reviewer", "rev1")
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "7", "--reviewer", "rev1")
+
+    def test_two_extensions_add_up(self):
+        self.at_cap()
+        self.ok("extension", *self.extension_flags(rounds="2"))  # the cap is 7
+        self.refused("extension", *self.extension_flags(rounds="1"))  # round 5 is below 7
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "6", "--reviewer", "rev1")
+        self.refused("extension", *self.extension_flags(rounds="1"))  # round 6 is below 7
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "7", "--reviewer", "rev1")
+        self.ok("extension", *self.extension_flags(rounds="1"))
+        self.refused("extension", *self.extension_flags(rounds="1"))  # the cap is 8 now
+
+    def test_an_extension_applies_to_one_loop_phase_only(self):
+        self.rounds(4)
+        self.rounds(3, phase="final")
+        self.refused("extension", *self.extension_flags())  # correctness is at 4 of 5, final is at its cap
+        self.ok("extension", *self.extension_flags(phase="final"))
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "5", "--reviewer", "rev1")
+        self.refused("extension", *self.extension_flags(phase="final", rounds="1"))  # the final cap is 4, final round is 3
+        self.ok("extension", *self.extension_flags())  # correctness is at its base cap
+        self.refused("extension", *self.extension_flags(loop="plan-review-3"))  # another loop has no round
+
+    def test_an_event_over_the_line_limit_is_refused(self):
+        self.at_cap()
+        # a non-BMP character is escaped to 12 ASCII bytes, so 500 of them make 6000 bytes
+        self.assertIn("event too long", self.refused("extension", *self.extension_flags(quote="\U0001d11e" * 500)))
+
+    def test_a_phase_commit_after_an_extension_is_recorded_as_one(self):
+        self.at_cap()
+        self.ok("extension", *self.extension_flags())
+        self.ok("phase-commit", "--sha", SHA)
+        self.assertEqual([event["kind"] for event in self.written()][-2:], ["extension", "phase-commit"])
+        self.ok("round", "--loop", "code-review", "--phase", "correctness", "--round", "6", "--reviewer", "rev1")
+
+    def test_the_help_lists_the_event_and_its_flags(self):
+        for args in (("ledger", "--help"), ("ledger", "extension", "--help")):
+            text = self.audit(*args).stdout.decode()
+            self.assertIn("extension", text)
+            self.assertIn("--rounds", text)
+            self.assertIn("--quote", text)
+
+    def test_a_ledger_file_with_an_invalid_extension_refuses_every_append(self):
+        self.write_ledger("feature", [round_event(), extension_event()])  # the cap is not reached
         self.refused("round", "--loop", "code-review", "--phase", "correctness", "--round", "2", "--reviewer", "rev1")
 
 
