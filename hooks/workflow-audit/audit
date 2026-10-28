@@ -985,10 +985,10 @@ def _own_ledger(dir_fd, name):
         raise Refusal(f"the ledger holds an invalid line, nothing is written: {problem}")
 
 
-def _check_link(worktree, dir_fd, branch, remote_url, event):
+def _check_link(worktree, dir_fd, branch, remote_url, name, event):
     """The checks 1 to 6 of `audit ledger link`, in this order. None of them takes the lock of the own ledger."""
     source = event["source"]
-    try:
+    try:  # the same check as `Ledger.apply` makes, run first so that `gh` never runs for a bad value
         _check_event_shape(event)
     except LedgerError as problem:
         raise Refusal(f"malformed event: {problem}")
@@ -1001,7 +1001,7 @@ def _check_link(worktree, dir_fd, branch, remote_url, event):
         raise Refusal(f"--from-branch {source!r}: its ledger holds no plan-review-5.3 round")
     if ledger.link is not None:
         raise Refusal(f"--from-branch {source!r}: its ledger holds a link, and a link must not point at a link")
-    if _own_ledger(dir_fd, _ledger_name(remote_url, branch)).link is not None:
+    if _own_ledger(dir_fd, name).link is not None:  # read without the lock; `_ledger` repeats it under the lock
         raise Refusal("this ledger already holds a link: a branch continues exactly one branch")
     _check_merged(worktree, remote_url, source)
 
@@ -1015,7 +1015,7 @@ def _ledger(argv):
     runtime_dir = _runtime()
     try:
         if event["kind"] == "link":
-            _check_link(worktree, dir_fd, branch, remote_url, event)
+            _check_link(worktree, dir_fd, branch, remote_url, name, event)
         try:
             lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
         except BlockingIOError:
