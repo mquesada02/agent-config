@@ -201,6 +201,14 @@ class AuditCase(unittest.TestCase):
         self.register_path(session_id, path, started_at)
         return path
 
+    def add_subagent(self, session_id, name, rows=None):
+        """Write the subagent transcript `name` of an already registered session. Returns its path."""
+        sub_folder = os.path.join(self.root, "projects", session_id, "subagents")
+        os.makedirs(sub_folder, exist_ok=True)
+        path = os.path.join(sub_folder, f"agent-{name}.jsonl")
+        self.write_rows(path, subagent_rows() if rows is None else rows)
+        return path
+
     def register_path(self, session_id, path, started_at="2026-10-15T12:00:00+00:00"):
         os.makedirs(self.runtime, exist_ok=True)
         os.chmod(self.runtime, 0o700)
@@ -251,7 +259,9 @@ class AuditCase(unittest.TestCase):
                 handle.write((item if isinstance(item, str) else json.dumps(item)) + "\n")
 
     def ledger(self, kind, *flags, worktree=None, env=None, cwd=None):
-        return self.audit("ledger", kind, "--worktree", worktree or self.repo, *flags, env=env, cwd=cwd)
+        """Run `audit ledger` as the registered default session; an `env` entry, even None, overrides that."""
+        return self.audit("ledger", kind, "--worktree", worktree or self.repo, *flags,
+                          env={"CLAUDE_CODE_SESSION_ID": "default-session", **(env or {})}, cwd=cwd)
 
     def write_llm(self, content):
         with open(self.llm_path, "w") as handle:

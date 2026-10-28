@@ -118,7 +118,7 @@ class S3Test(LedgerChecksCase):
     def test_events_written_under_two_session_ids_are_read_back_as_one_ledger(self):
         loop = ("--loop", "code-review", "--phase", "correctness")
         self.assertEqual(self.ledger("round", *loop, "--round", "1", "--reviewer", "rev1",
-                                     env={"CLAUDE_CODE_SESSION_ID": "session-a"}, cwd=self.main).returncode, 0)
+                                     env={"CLAUDE_CODE_SESSION_ID": "default-session"}, cwd=self.main).returncode, 0)
         self.assertEqual(self.ledger("finding", "--id", "I1", *loop, "--round", "1", "--loc", "a.py:1", "--type", "Minor",
                                      "--reason", "r", env={"CLAUDE_CODE_SESSION_ID": "session-b"}).returncode, 0)
         self.assertEqual(self.ledger("status", "--finding", "I1", "--status", "fixed",

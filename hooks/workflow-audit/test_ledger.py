@@ -5,7 +5,7 @@ import os
 import stat
 import unittest
 
-from audit_support import AuditCase, extension_event, finding_event, round_event, status_event, verdict_event
+from audit_support import AuditCase, extension_event, finding_event, round_event, status_event, subagent_rows, verdict_event
 
 SHA = "a" * 40
 ROUND = ("--loop", "code-review", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
@@ -59,6 +59,7 @@ class LedgerCase(AuditCase):
 
 class AppendTest(LedgerCase):
     def test_each_event_is_appended_as_one_json_line_with_its_keys(self):
+        self.add_subagent("default-session", "rev2")
         self.ok("round", *ROUND, "--reviewer", "rev2")
         self.ok("finding", *FINDING)
         self.ok("verdict", *VERDICT)
@@ -97,7 +98,7 @@ class AppendTest(LedgerCase):
                 self.assertIn(value, text)
 
     def test_the_ledger_is_the_same_for_any_cwd_and_any_session_id(self):
-        self.ok("round", *ROUND, env={"CLAUDE_CODE_SESSION_ID": "session-a"}, cwd=self.root)
+        self.ok("round", *ROUND, env={"CLAUDE_CODE_SESSION_ID": "default-session"}, cwd=self.root)
         self.ok("finding", *FINDING, env={"CLAUDE_CODE_SESSION_ID": "session-b"}, cwd=self.repo)
         self.ok("status", *STATUS, env={"CLAUDE_CODE_SESSION_ID": None}, cwd=self.main)
         self.assertEqual([event["kind"] for event in self.written()], ["round", "finding", "status"])
@@ -484,6 +485,132 @@ class ShowTest(LedgerCase):
         self.assertIn("audit ledger show --worktree <path>", text)
         self.assertIn("prints every event", text)
         self.assertIn("writes nothing", text)
+
+
+class RoundSubagentTest(LedgerCase):
+    """`round` is accepted only for reviewers that are subagent transcripts of the current session."""
+    LOOP = ROUND[:-2]
+    NO_SESSION = {"CLAUDE_CODE_SESSION_ID": None}
+
+    def round_flags(self, *reviewers):
+        return (*self.LOOP, *[arg for name in reviewers for arg in ("--reviewer", name)])
+
+    def sessions_file(self):
+        return os.path.join(self.runtime, "sessions.jsonl")
+
+    def test_a_real_subagent_of_the_registered_session_is_accepted(self):
+        self.ok("round", *ROUND)
+        self.assertEqual(self.written()[0]["reviewers"], ["rev1"])
+
+    def test_a_refused_placeholder_leaves_the_ledger_unchanged_and_the_real_round_follows(self):
+        message = self.refused("round", *self.round_flags("pending"))
+        self.assertIn("pending", message)
+        self.assertIn("subagent", message)
+        self.assertIsNone(self.raw())
+        self.ok("round", *ROUND)
+        self.assertEqual([event["round"] for event in self.written()], [1])
+
+    def test_one_bad_id_among_good_ones_refuses_the_event(self):
+        self.add_subagent("default-session", "rev2")
+        for reviewers in (("rev1", "pending", "rev2"), ("pending", "rev1"), ("rev1", "rev2", "pending")):
+            with self.subTest(reviewers):
+                message = self.refused("round", *self.round_flags(*reviewers))
+                self.assertIn("pending", message)
+                self.assertIn("subagent", message)
+        self.ok("round", *self.round_flags("rev1", "rev2"))
+
+    def test_a_subagent_of_another_registered_session_is_refused(self):
+        self.register_session("other-session", [], subagents={"other1": subagent_rows()})
+        message = self.refused("round", *self.round_flags("other1"))
+        self.assertIn("other1", message)
+        self.assertIn("subagent", message)
+        self.ok("round", *self.round_flags("rev1"), env={"CLAUDE_CODE_SESSION_ID": "default-session"})
+
+    def test_a_missing_or_invalid_session_variable_is_refused(self):
+        for name, env in {"unset": self.NO_SESSION, "empty": {"CLAUDE_CODE_SESSION_ID": ""},
+                          "bad characters": {"CLAUDE_CODE_SESSION_ID": "a b"}, "too long": {"CLAUDE_CODE_SESSION_ID": "a" * 129},
+                          "path separator": {"CLAUDE_CODE_SESSION_ID": "../x"}}.items():
+            with self.subTest(name):
+                self.assertIn("CLAUDE_CODE_SESSION_ID", self.refused("round", *ROUND, env=env))
+
+    def test_a_missing_registry_is_refused(self):
+        os.remove(self.sessions_file())
+        message = self.refused("round", *ROUND)
+        self.assertIn("registry", message)
+        self.assertIn("missing", message)
+
+    def test_an_empty_registry_is_refused(self):
+        with open(self.sessions_file(), "w"):
+            pass
+        message = self.refused("round", *ROUND)
+        self.assertIn("registry", message)
+        self.assertIn("empty", message)
+
+    def test_an_unreadable_registry_is_refused(self):
+        os.remove(self.sessions_file())
+        os.mkdir(self.sessions_file())
+        self.assertIn("registry", self.refused("round", *ROUND))
+
+    def test_a_registry_with_a_bad_line_is_refused(self):
+        with open(self.sessions_file(), "a") as handle:
+            handle.write("not json\n")
+        self.assertIn("registry", self.refused("round", *ROUND))
+
+    def test_an_unregistered_session_is_refused(self):
+        message = self.refused("round", *ROUND, env={"CLAUDE_CODE_SESSION_ID": "ghost-session"})
+        self.assertIn("registry", message)
+        self.assertIn("ghost-session", message)
+
+    def test_a_reviewer_id_with_a_bad_format_is_refused(self):
+        outside = os.path.join(self.root, "projects", "default-session", "outside.jsonl")
+        self.write_rows(outside, [])
+        for bad in ("a b", "../x", "a/b", "..", "", "a" * 65, "../../outside"):
+            with self.subTest(bad):
+                message = self.refused("round", *self.round_flags(bad))
+                self.assertIn("subagent", message)
+
+    def test_a_round_with_no_reviewer_is_refused(self):
+        message = self.refused("round", *self.LOOP)
+        self.assertIn("needs exactly", message)
+        self.assertIn("--reviewer", message)
+
+    def test_a_symlink_or_a_folder_in_place_of_the_transcript_is_refused(self):
+        folder = os.path.join(self.root, "projects", "default-session", "subagents")
+        os.symlink(os.path.join(folder, "agent-rev1.jsonl"), os.path.join(folder, "agent-link.jsonl"))
+        os.mkdir(os.path.join(folder, "agent-dir.jsonl"))
+        for name in ("link", "dir"):
+            with self.subTest(name):
+                message = self.refused("round", *self.round_flags(name))
+                self.assertIn(name, message)
+                self.assertIn("subagent", message)
+
+    def test_a_folder_with_21_subagents_still_meets_the_reviewer_limit(self):
+        names = [f"r{n}" for n in range(21)]
+        for name in names:
+            self.add_subagent("default-session", name)
+        self.refused("round", *self.round_flags(*names))
+        self.ok("round", *self.round_flags(*names[:20]))
+
+    def test_the_other_events_need_no_session(self):
+        self.write_ledger("feature", [round_event(n) for n in range(1, 6)])
+        self.ok("finding", *FINDING, env=self.NO_SESSION)
+        self.ok("verdict", *VERDICT, env=self.NO_SESSION)
+        self.ok("status", *STATUS, env=self.NO_SESSION)
+        self.ok("extension", "--loop", "code-review", "--phase", "correctness", "--rounds", "1", "--quote", "one more round please",
+                env=self.NO_SESSION)
+        self.ok("phase-commit", "--sha", SHA, env=self.NO_SESSION)
+
+    def test_a_ledger_with_an_unknown_reviewer_still_replays(self):
+        self.write_ledger("feature", [round_event(reviewers=("ghost",))])
+        result = self.audit("ledger", "show", "--worktree", self.repo, env=self.NO_SESSION)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"reviewers":["ghost"]', result.stdout.decode().replace(" ", ""))
+
+    def test_the_help_states_the_rule(self):
+        for args in (("ledger", "--help"), ("ledger", "round", "--help")):
+            text = " ".join(self.audit(*args).stdout.decode().split())
+            self.assertIn("each reviewer must be a subagent of the current session (CLAUDE_CODE_SESSION_ID)", text)
+            self.assertIn("another id is refused and nothing is written", text)
 
 
 if __name__ == "__main__":
