@@ -156,7 +156,7 @@ When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
 - if not, create a merge commit 
 
-After merging: delete the remote branch, remove the worktree (section 10), then in the main checkout switch to the **base** branch, pull, and delete the local branch.
+After merging, run `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>`. It is the only cleanup path: it deletes the remote branch (unless the branch is protected), switches the main checkout to the **base** branch, pulls, and removes the worktree and the local branch. For the session's own worktree, finish the report and the memory update first, because the session ends at the last step. On a refusal, fix the cause or ask the user.
 
 ## 9. Model selection
 
@@ -168,7 +168,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
 - Every Orca ticket worker gets its own child worktree: its parent (lineage) is the coordinator's worktree, and its git base is the repository's default branch, not the coordinator's branch.
 - Outside a git repository, skip worktrees and work in place.
-- After the branch is merged, delete the worktree before deleting the local branch (see section 8).
+- After the branch is merged, clean up with `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>` (see section 8).
 
 ## 11. Task delegation
 
@@ -194,6 +194,7 @@ A notification with nothing new needs only a text reply, not a tool call.
 Never use `rm -rf` or other recursive deletes. To remove something:
 - If it may be needed again, move it to a dated backup folder (`<dir>-backup-YYYY-MM-DD/`) and tell the user the path.
 - If it must go, move it to `/tmp`, which the system clears, or give the user the command to delete it manually.
+- To remove a worktree folder, use `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>` (section 8). It is the only way a session removes a worktree folder, and the only exception to this rule; the user's `!` overrides are user actions, not session exceptions.
 
 ## 14. Docker containers
 

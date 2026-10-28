@@ -1,4 +1,4 @@
-# Text tests of ticket #100: the new rules in CLAUDE.md (sections 6, 7, 8 and 11) and the test-command declaration of this repo.
+# Text tests of tickets #100, #164 and #166: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
 import os
 import re
 import shutil
@@ -111,6 +111,32 @@ class SectionsEightAndElevenTest(RuleTextCase):
 
     def test_the_auditor_subagent_is_an_allowed_agent_use(self):
         self.assert_in(section(read(ROOT_CLAUDE_MD), 11), "- The auditor subagent: section 6 step 5 and section 7.")
+
+
+class WorktreeCleanupRuleTest(RuleTextCase):
+    """Ticket #166: sections 8, 10 and 13 name the cleanup command as the only cleanup path."""
+
+    COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
+    FINISH_FIRST = "finish the report and the memory update first"
+
+    def test_sections_eight_ten_and_thirteen_name_the_command(self):
+        for number in (8, 10, 13):
+            with self.subTest(section=number):
+                self.assertIn(self.COMMAND, section(read(ROOT_CLAUDE_MD), number))
+
+    def test_section_eight_makes_the_command_the_only_path_and_states_the_refusal_rule(self):
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        self.assert_in(text, "is the only cleanup path", "On a refusal, fix the cause or ask the user")
+        self.assert_not_in(text, "delete the remote branch, remove the worktree (section 10)")
+
+    def test_section_eight_says_to_finish_the_report_and_memory_update_after_the_command_in_its_paragraph(self):
+        paragraph = next(part for part in section(read(ROOT_CLAUDE_MD), 8).split("\n\n") if self.COMMAND in part)
+        self.assertIn(self.FINISH_FIRST, paragraph)
+        self.assertGreater(paragraph.index(self.FINISH_FIRST), paragraph.index(self.COMMAND))
+
+    def test_section_thirteen_names_the_command_as_the_only_exception_and_keeps_the_user_overrides_out(self):
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 13), "the only exception",
+                       "the user's `!` overrides are user actions, not session exceptions")
 
 
 class DockerCleanupRuleTest(RuleTextCase):
