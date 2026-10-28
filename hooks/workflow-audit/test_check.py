@@ -3,7 +3,7 @@ import pathlib
 import re
 import unittest
 
-from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, finding_event, round_event, stamp, subagent_rows
+from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, finding_event, link_event, round_event, stamp, subagent_rows
 
 DIGEST_MARKER = "--- digest ---"
 S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
@@ -231,6 +231,14 @@ class DigestTest(SessionCase):
         self.assertEqual(len([line for line in digest.splitlines() if line.startswith("ledger")]), 1)
         for text in ("Invented reason text", '"kind"', "code-review"):
             self.assertNotIn(text, digest)
+
+    def test_a_link_counts_as_one_event_in_the_pointer_line(self):
+        self.default_ledger = False
+        self.session([])
+        self.start_branch("feature", "feat: a")
+        self.write_ledger("feature", [round_event(), link_event()])
+        _, _, digest = self.parts(self.check())
+        self.assertTrue(digest.startswith("ledger: 2 events; read them with:"), digest)
 
     def test_a_long_ledger_adds_no_omitted_lines_marker_to_the_digest(self):
         self.default_ledger = False

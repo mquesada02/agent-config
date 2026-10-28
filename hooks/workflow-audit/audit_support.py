@@ -149,6 +149,32 @@ def phase_commit_event(sha, **extra):
     return event("phase-commit", sha=sha, **extra)
 
 
+def link_event(source="src", ticket="T-1", **extra):
+    return event("link", source=source, ticket=ticket, **extra)
+
+
+FAKE_GH = """\
+#!{python}
+import json, os, sys, time
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "gh-argv.jsonl"), "a") as handle:
+    handle.write(json.dumps(sys.argv[1:]) + "\\n")
+mode = open(os.path.join(here, "gh-mode")).read().strip()
+if mode.startswith("sleep:"):
+    time.sleep(float(mode.split(":")[1]))
+    mode = "merged"
+if mode == "merged":
+    print('[{{"number":143}}]')
+elif mode == "not-merged":
+    print("[]")
+elif mode == "error":
+    print("gh: simulated failure", file=sys.stderr)
+    sys.exit(1)
+else:
+    print("not json at all")
+"""
+
+
 class AuditCase(unittest.TestCase):
     default_session = True  # register one synthetic session that edited a file in the worktree
     default_ledger = True  # start_branch writes a ledger of one round, reviewed by the default session's subagent "rev1"
@@ -187,6 +213,31 @@ class AuditCase(unittest.TestCase):
         if self.default_session:
             self.register_session("default-session", [edit_row(os.path.join(self.repo, "edited.txt"), "t1", 1)],
                                   subagents={"rev1": subagent_rows()})
+
+    def fake_gh(self, mode="merged"):
+        """Put a fake `gh` first on PATH. It appends its argv to gh-argv.jsonl and answers by the mode in the file gh-mode:
+        merged, not-merged, error, bad (output that is not JSON) or sleep:<seconds> (then merged). Returns the folder."""
+        folder = os.path.join(self.root, "fake-gh")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "gh")
+        with open(path, "w") as handle:
+            handle.write(FAKE_GH.format(python=sys.executable))
+        os.chmod(path, 0o755)
+        self.gh_mode(mode)
+        self.env["PATH"] = folder + os.pathsep + os.environ["PATH"]
+        return folder
+
+    def gh_mode(self, mode):
+        with open(os.path.join(self.root, "fake-gh", "gh-mode"), "w") as handle:
+            handle.write(mode)
+
+    def gh_calls(self):
+        """The argv (without `gh`) of each run of the fake `gh`, in order."""
+        path = os.path.join(self.root, "fake-gh", "gh-argv.jsonl")
+        if not os.path.exists(path):
+            return []
+        with open(path) as handle:
+            return [json.loads(line) for line in handle]
 
     def register_session(self, session_id, rows, subagents=None, started_at="2026-10-15T12:00:00+00:00"):
         """Write a transcript (and subagent transcripts, a dict of name -> rows) and register it. Returns its path."""
