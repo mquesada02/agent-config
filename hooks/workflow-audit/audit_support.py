@@ -195,9 +195,7 @@ class AuditCase(unittest.TestCase):
         path = os.path.join(folder, f"{session_id}.jsonl")
         self.write_rows(path, rows)
         for name, sub_rows in (subagents or {}).items():
-            sub_folder = os.path.join(folder, session_id, "subagents")
-            os.makedirs(sub_folder, exist_ok=True)
-            self.write_rows(os.path.join(sub_folder, f"agent-{name}.jsonl"), sub_rows)
+            self.add_subagent(session_id, name, sub_rows)
         self.register_path(session_id, path, started_at)
         return path
 

@@ -511,6 +511,11 @@ def _touches(transcript, spellings, root):
     return any(_inside(os.path.realpath(cwd), root) for cwd in transcript.cwds)
 
 
+def _subagents_folder(transcript_path):
+    """The folder of the subagent transcripts (agent-<id>.jsonl) of the session whose main transcript is `transcript_path`."""
+    return os.path.splitext(transcript_path)[0] + "/subagents"
+
+
 def _audited_transcripts(worktree, dir_fd):
     """The transcripts of every registered session that touches the worktree, and the versions read.
     A session whose main transcript is missing (ENOENT), and a subagent file that is missing, are skipped.
@@ -523,7 +528,7 @@ def _audited_transcripts(worktree, dir_fd):
         raise Unavailable("no registered session (empty or wiped registry)")
     audited = []
     for _, path in sessions:
-        folder = os.path.splitext(path)[0] + "/subagents"
+        folder = _subagents_folder(path)
         paths = [path]
         if os.path.isdir(folder):
             paths += sorted(os.path.join(folder, name) for name in os.listdir(folder) if re.fullmatch(r"agent-.+\.jsonl", name))
@@ -933,7 +938,7 @@ def _check_round_reviewers(dir_fd, reviewers):
     transcript = dict(sessions).get(session_id)
     if transcript is None:
         raise Refusal(f"session {session_id} is not in the registry, so no reviewer can be proven a subagent of it")
-    folder = os.path.splitext(transcript)[0] + "/subagents"
+    folder = _subagents_folder(transcript)
     for reviewer in reviewers:
         if not AGENT_ID.fullmatch(reviewer):
             raise Refusal(f"reviewer id {reviewer!r} is not a valid subagent id of session {session_id}")
