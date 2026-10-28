@@ -2,11 +2,16 @@ import json
 import os
 import unittest
 
-from audit_support import (AuditCase, PASSING_LLM, edit_row, finding_event, phase_commit_event, round_event, status_event,
-                           subagent_rows)
+from audit_support import (AuditCase, PASSING_LLM, bash_row, edit_row, extension_event, finding_event, phase_commit_event, queued_row,
+                           round_event, stamp, status_event, subagent_rows)
 
 SID = "main-session-1"
 LOOP_3, LOOP_41 = "plan-review-3", "plan-review-4.1"
+QUOTE = "please allow one more final round"
+HUMAN, PEER = {"kind": "human"}, {"kind": "peer"}
+ALL_PASS = {"S3": "pass", "S5": "pass", "S7": "pass", "XC": "pass"}
+S5_FAILS = {**ALL_PASS, "S5": "fail"}
+NOT_FOUND ="extension 1 (plan-review-3 final +1): quote not found in real user input"
 L1_ONLY = {"L1": PASSING_LLM["L1"]}
 
 
@@ -213,6 +218,103 @@ class UnreadableTranscriptTest(PreDispatchCase):
             self.assertIn("evidence unavailable: cannot read transcript missing.jsonl", self.pd_item(name)["evidence"])
         self.assertEqual(self.pd_item("S3")["result"], "pass")
         self.assertEqual(self.pd_item("S5")["result"], "pass")
+
+
+def rounds(loop, phase, count):
+    """Rounds 1 to `count` with explicit times, so that each reviewer starts after the previous round (XC)."""
+    return [round_event(n, loop=loop, phase=phase, time=at(n)) for n in range(1, count + 1)]
+
+
+def write_command(worktree, loop=LOOP_3):
+    """The coordinator's Bash command that writes the extension; `worktree` is typed as given."""
+    return (f"python3 -I ~/.claude/hooks/workflow-audit/audit ledger extension --worktree {worktree} --loop {loop} "
+            f"--phase final --rounds 1 --quote '{QUOTE}'")
+
+
+class ExtensionOfAnotherWorktreeTest(PreDispatchCase):
+    """The ledger is A's (self.repo). The coordinator session of another worktree wrote the extension and holds the owner's words."""
+
+    def coordinator(self, human, command=None, loop=LOOP_3):
+        rows = [bash_row(command or write_command(self.repo, loop), "w1", 150)]
+        rows.append(human)
+        self.register_session("coordinator", rows)
+
+    def ledger_of(self, loop, count=4, extension=True):
+        extension_events = [extension_event(loop=loop, phase="final", rounds=1, quote=QUOTE, time=stamp(200))] if extension else []
+        other = LOOP_41 if loop == LOOP_3 else LOOP_3
+        self.write_ledger("feature", [*rounds(loop, "final", count), round_event(loop=other), *extension_events])
+
+    def assert_items(self, expected):
+        result = self.pre_dispatch()
+        for name, outcome in expected.items():
+            self.assertEqual(self.pd_item(name)["result"], outcome, (name, self.pd_item(name)["evidence"]))
+        return result
+
+    def test_the_driving_case_passes(self):
+        self.ledger_of(LOOP_3)
+        self.coordinator(queued_row(QUOTE, 100, HUMAN))
+        result = self.assert_items(ALL_PASS)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_the_same_ledger_without_the_extension_fails_s5(self):
+        self.ledger_of(LOOP_3, extension=False)
+        self.coordinator(queued_row(QUOTE, 100, HUMAN))
+        self.assert_items(S5_FAILS)
+        self.assertEqual(self.pd_item("S5")["evidence"], "plan-review-3 final: round 4 is past the cap of 3")
+
+    def test_a_quote_only_in_a_peer_message_fails_s5(self):
+        self.ledger_of(LOOP_3)
+        self.coordinator(queued_row(QUOTE, 100, PEER))
+        self.assert_items({"S5": "fail"})
+        self.assertEqual(self.pd_item("S5")["evidence"], NOT_FOUND)
+
+    def test_a_write_command_typed_with_a_tilde_does_not_put_the_session_in_the_audit(self):
+        self.ledger_of(LOOP_3)
+        self.coordinator(queued_row(QUOTE, 100, HUMAN), command=write_command("~/../repo"))
+        self.assert_items({"S5": "fail"})
+        self.assertEqual(self.pd_item("S5")["evidence"], NOT_FOUND)
+
+    def test_a_plan_review_4_1_extension_counts(self):
+        self.ledger_of(LOOP_41)
+        self.coordinator(queued_row(QUOTE, 100, HUMAN), loop=LOOP_41)
+        self.assert_items(ALL_PASS)
+        self.ledger_of(LOOP_41, extension=False)
+        self.assert_items(S5_FAILS)
+        self.assertEqual(self.pd_item("S5")["evidence"], "plan-review-4.1 final: round 4 is past the cap of 3")
+
+    def test_an_extension_of_another_loop_stays_out_of_the_view(self):
+        for loop, phase, count in (("code-review", "correctness", 5), ("plan-review-5.3", "final", 3)):
+            with self.subTest(loop=loop):
+                extension = extension_event(loop=loop, phase=phase, rounds=1, quote=QUOTE, time=stamp(200))
+                self.write_ledger("feature", [*self.plan_events(), *rounds(loop, phase, count), extension])
+                result = self.assert_items(ALL_PASS)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_s3_uses_the_extended_cap(self):
+        events = [*rounds(LOOP_3, "final", 3), round_event(loop=LOOP_41), finding_event("P1", loop=LOOP_3, phase="final", n=3)]
+        self.write_ledger("feature", events)
+        self.assert_items({"S3": "pass"})
+        self.write_ledger("feature", [*events, extension_event(loop=LOOP_3, phase="final", rounds=1, quote=QUOTE, time=stamp(200))])
+        self.assert_items({"S3": "fail"})
+        self.assertIn("P1", self.pd_item("S3")["evidence"])
+
+
+class ExtensionWithoutSessionTest(PreDispatchCase):
+    default_session = False
+
+    def test_a_tilde_write_command_with_no_session_in_the_audit_is_evidence_unavailable(self):
+        events = [*rounds(LOOP_3, "final", 4), round_event(loop=LOOP_41),
+                  extension_event(loop=LOOP_3, phase="final", rounds=1, quote=QUOTE, time=stamp(200))]
+        self.write_ledger("feature", events)
+        self.register_session("coordinator", [bash_row(write_command("~/../repo"), "w1", 150), queued_row(QUOTE, 100, HUMAN)])
+        self.pre_dispatch()
+        self.assertEqual(self.pd_item("S5")["result"], "fail")
+        self.assertEqual(self.pd_item("S5")["evidence"], "evidence unavailable: no registered session touches the worktree")
+
+    def test_a_ledger_without_an_extension_needs_no_transcript(self):
+        self.pre_dispatch()
+        self.assertEqual(self.pd_item("S5")["result"], "pass")
+        self.assertEqual(self.pd_item("S5")["evidence"], "2 rounds in 2 loop phases, none past a cap")
 
 
 class RefusalTest(PreDispatchCase):
