@@ -1074,17 +1074,17 @@ def _real_input(audited):
         main = transcripts[0]
         if _is_worker(transcripts):
             continue
-        rows = [(entry["index"], entry) for entry in main.inputs + main.answered]
-        for index, entry in sorted(rows, key=lambda pair: pair[0]):
-            where = f"{main.name} row {index + 1}"
-            moment = _row_time(entry["time"])
+        for entry in sorted(main.inputs + main.answered, key=lambda entry: entry["index"]):
+            where = f"{main.name} row {entry['index'] + 1}"
             if "texts" in entry:
-                if _origin_kind(entry["origin"], entry["field"], where) == "human":
+                if _origin_kind(entry["origin"], entry["field"], where) == "human" and entry["texts"]:
+                    moment = _row_time(entry["time"])
                     units += [(moment, _normalise(text)) for text in entry["texts"]]
             elif entry["answers"] is not ABSENT and main.asks.intersection(entry["ids"]):
                 answers = entry["answers"]
                 if not isinstance(answers, dict) or not all(isinstance(value, str) for value in answers.values()):
                     raise Unavailable(f"malformed answers in {where}")
+                moment = _row_time(entry["time"])
                 units += [(moment, _normalise(value)) for value in answers.values()]
     return units
 

@@ -27,11 +27,9 @@ def extension(at=EXTENSION_AT, quote=QUOTE, **extra):
 
 
 class ExtensionCase(LedgerChecksCase):
-    owner_path = None
-
     def s5(self, rows, events=None, **session):
         """The S5 item for a ledger (default: rounds 1 to 5 and one extension) and one registered session that holds `rows`."""
-        self.owner_path = self.register_session(
+        self.register_session(
             "owner", [edit_row(os.path.join(self.repo, "b.txt"), "e1", 1)] + list(rows), **session)
         return self.items(events if events is not None else rounds(5) + [extension()])["S5"]
 
