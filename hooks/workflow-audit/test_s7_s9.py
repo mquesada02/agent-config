@@ -504,7 +504,7 @@ class S9HeredocTest(S9Case):
                              "printf -v f 'cat%b%b { bash; }' '\\x28' '\\x29'; eval \"$f\"\ncat <<'EOF'\nrm -rf x\nEOF",
                              "source ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", ". ./defs.sh\ncat <<'EOF'\nrm -rf x\nEOF", "x=PATH; read $x\ncat <<'EOF'\nrm -rf x\nEOF",
                              "env PATH=./bin cat <<'EOF'\nrm -rf x\nEOF", "coproc bash\ncat <<'EOF' >&${COPROC[1]}\nrm -rf x\nEOF",
-                             "exec 3>p\ncat <<'EOF' >&3\nrm -rf x\nEOF"])
+                             "exec 3>p\ncat <<'EOF' >&3\nrm -rf x\nEOF", "BASH_CMDS[cat]=/bin/bash\ncat <<'EOF'\nrm -rf x\nEOF"])
 
     def test_a_plain_command_before_a_data_command_does_not_keep_the_body(self):
         for command in ("mkdir -p d && cd d && cat > f <<'EOF'\nrm -rf x\nEOF", "git add f && cat > g <<'EOF'\nrm -rf x\nEOF",

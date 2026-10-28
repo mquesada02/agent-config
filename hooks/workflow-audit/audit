@@ -83,7 +83,9 @@ PIPE_OPERATORS = frozenset(("|", "|&"))
 # Commands that copy their input to a file or to the output and never run it: the body of a quoted heredoc they read is data.
 DATA_COMMANDS = frozenset(("cat", "tee"))
 # Builtins and keywords with which the shell itself changes what a command name runs (an external program cannot change its parent shell).
-# A context that holds one of these words, or a PATH word, does not show what `cat` is.
+# A context that holds one of these words, or a PATH word, does not show what `cat` is. `read`, `printf`, `getopts`, `mapfile`, `readarray`
+# and `unset` are here because they build or remove a name or a function (`printf -v`, `read $x`); keep them. `BASH_CMDS[cat]=/path` has no
+# such word: its bracket makes the command word unresolved (UNRESOLVABLE_PATH below), and S9HeredocTest checks it.
 SHELL_STATE_WORDS = frozenset(("alias", "unalias", "hash", "enable", "eval", "source", ".", "declare", "typeset", "export", "readonly", "local", "let",
                                "read", "readarray", "mapfile", "getopts", "unset", "set", "shopt", "trap", "printf", "coproc", "function"))
 # A heredoc operator `<<` (not `<<<`) with its end word. The group `dash` is `-` for `<<-`; the group `word` is the end word as written.
@@ -2026,13 +2028,16 @@ def _reads_as_data(context, after, items, segment):
     that holds the operator. The name `cat` is trusted only when the text shows nothing that can change it: only the shell itself
     (SHELL_STATE_WORDS, a PATH word, a command word it expands) does that. What lives outside the text (an alias, a function or a script
     that is already there) is not seen."""
-    words = [word for item in items if isinstance(item, list) for word in item]
-    rebinds = SHELL_STATE_WORDS.intersection(words) or any(word == "PATH" or word.startswith(("PATH=", "PATH+=")) for word in words)
-    unresolved = any(UNRESOLVABLE_PATH.search(command[0]) for command in map(_command_words, (item for item in items if isinstance(item, list))) if command)
-    if re.search(r"[(`]", context) or re.search(r"[|(`]|<<|[<>]&", after) or rebinds or unresolved:
-        return False  # a substitution, a subshell, a pipe, a descriptor or a second heredoc may run the body; a rebind of `cat` in the text may replace the reader
+    if re.search(r"[(`]", context) or re.search(r"[|(`]|<<|[<>]&", after):
+        return False  # a substitution, a subshell, a pipe, a descriptor or a second heredoc may run the body
     command = _command_words(segment)
-    return bool(command) and command[0] in DATA_COMMANDS  # the bare name: a path such as ./cat is another program
+    if not command or command[0] not in DATA_COMMANDS:  # the bare name: a path such as ./cat is another program
+        return False
+    segments = [item for item in items if isinstance(item, list)]
+    words = [word for segment_words in segments for word in segment_words]
+    if not SHELL_STATE_WORDS.isdisjoint(words) or any(word == "PATH" or word.startswith(("PATH=", "PATH+=")) for word in words):
+        return False  # a rebind of `cat` in the text may replace the reader
+    return not any(UNRESOLVABLE_PATH.search(found[0]) for found in map(_command_words, segments) if found)
 
 
 def strip_data_heredocs(command):
