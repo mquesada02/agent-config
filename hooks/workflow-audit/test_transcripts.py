@@ -375,8 +375,12 @@ class DeclarationTest(TranscriptCase):
 
     def linked(self, links, files):
         tip = self.link_branch(links, files)
-        self.assertEqual(self.record().returncode in (0, 1), True)
+        self.assertIn(self.record().returncode, (0, 1))
         return {item["id"]: item for item in self.read_record(tip)["items"]}
+
+    def test_a_regular_file_is_read_as_before(self):
+        items = self.linked({}, {"CLAUDE.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
 
     def test_a_symlink_to_a_file_in_the_repository_is_followed(self):
         items = self.linked({"CLAUDE.md": "AGENTS.md"}, {"AGENTS.md": declaration("make test")})

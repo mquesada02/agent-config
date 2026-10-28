@@ -13,6 +13,7 @@
 # Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
 import json
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -255,26 +256,24 @@ def _commit_base(worktree):
     The base is the merge base with HEAD that leaves the fewest commits in base..HEAD, among the remote default
     branch (origin/HEAD, else origin/main, else origin/master) and origin/develop. A tie goes to the default branch,
     so a branch based on the default branch gets the merge base with it, as before."""
-    default = None
-    for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
-        if _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
-            default = ref
-            break
+    def exists(ref):
+        return bool(_git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"))
+
+    default = next((ref for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master") if exists(ref)), None)
     if default is None:
         return None, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
-    best = None
-    for ref in (default, "refs/remotes/origin/develop"):
-        if ref != default and not _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
-            continue
-        base = _git_output(worktree, "merge-base", ref, "HEAD")
-        if not base:
-            if ref == default:
-                return None, f"evidence unavailable: no merge base of {ref} and HEAD"
-            continue
-        count = int(_git_output(worktree, "rev-list", "--count", f"{base}..HEAD"))
-        if best is None or count < best[0]:
-            best = (count, base)
-    return best[1], None
+    default_base = _git_output(worktree, "merge-base", default, "HEAD")
+    if not default_base:
+        return None, f"evidence unavailable: no merge base of {default} and HEAD"
+    develop = "refs/remotes/origin/develop"
+    develop_base = _git_output(worktree, "merge-base", develop, "HEAD") if exists(develop) else None
+    if develop_base and _count(worktree, develop_base) < _count(worktree, default_base):  # strict: a tie goes to the default
+        return develop_base, None
+    return default_base, None
+
+
+def _count(worktree, base):
+    return int(_git_output(worktree, "rev-list", "--count", f"{base}..HEAD"))
 
 
 def check_s8(worktree):
@@ -607,8 +606,6 @@ def _tree_entry(worktree, path):
 
 def _declaration_text(worktree, path):
     """The text of `path` at HEAD. A git symlink is followed to a regular file inside the repository; any other link is a ValueError."""
-    import posixpath
-
     entry, seen, current = _tree_entry(worktree, path), [path], path
     if entry is None:
         return None

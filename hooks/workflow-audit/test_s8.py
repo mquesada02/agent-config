@@ -82,6 +82,9 @@ class S8Test(AuditCase):
         passed, evidence = self.s8()
         self.assertTrue(passed, evidence)
         self.assertIn("1 commits since", evidence)
+        text = self.audit("check", "--worktree", self.repo).stdout.decode()  # the L5 digest holds the same range
+        self.assertIn("feat: own work", text)
+        self.assertNotIn("develop work", text)
 
     def test_a_bad_commit_on_a_branch_based_on_develop_still_fails(self):
         self.push_develop()
@@ -100,15 +103,6 @@ class S8Test(AuditCase):
         passed, evidence = self.s8()
         self.assertFalse(passed)
         self.assertIn(bad[:7], evidence)
-
-    def test_the_commit_lines_of_a_develop_branch_hold_only_its_own_commits(self):
-        self.push_develop()
-        self.git("checkout", "-b", "work")
-        self.commit("feat: own work")
-        self.git("push", "-u", "origin", "work")
-        text = self.audit("check", "--worktree", self.repo).stdout.decode()
-        self.assertIn("feat: own work", text)
-        self.assertNotIn("develop work", text)
 
     def test_the_failing_commit_is_named_in_the_evidence(self):
         self.git("checkout", "-b", "work")
