@@ -17,7 +17,7 @@ class FlowTest(AuditCase):
     def test_a_passing_audit_opens_the_gate(self):
         tip = self.start_branch("feature", "feat(audit): add a thing")
         self.assertTrue(self.denial(self.gate(PR)).startswith("no record"))
-        checked = self.audit("check", "--worktree", self.repo)
+        checked = self.audit("check", "--worktree", self.repo, "--base", "main")
         self.assertEqual(checked.returncode, 0, checked.stderr)
         lines = checked.stdout.decode().splitlines()
         self.assertEqual([line for line in lines if line.endswith(" fail")], [])
@@ -30,7 +30,7 @@ class FlowTest(AuditCase):
 
     def test_a_failed_audit_is_recorded_and_the_gate_denies_it(self):
         tip = self.start_branch("feature", "feat: a thing\n\nCo-Authored-By: Someone <someone@example.com>")
-        checked = self.audit("check", "--worktree", self.repo)
+        checked = self.audit("check", "--worktree", self.repo, "--base", "main")
         self.assertEqual(checked.returncode, 0, checked.stderr)
         self.assertIn("S8 fail", checked.stdout.decode().splitlines())
         recorded = self.record()

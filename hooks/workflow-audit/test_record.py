@@ -133,11 +133,11 @@ class RecordTest(AuditCase):
         self.start_branch("feature", "feat: a")
         cases = [
             ["record"],
-            ["record", "--worktree", self.repo],
-            ["record", "--llm", self.llm_path],
-            ["record", "--worktree", self.repo, "--llm", self.llm_path, "extra"],
-            ["record", "--worktree", self.repo, "--worktree", self.repo, "--llm", self.llm_path],
-            ["record", "--worktree", self.repo, "--llm"],
+            ["record", "--worktree", self.repo, "--base", "main"],
+            ["record", "--llm", self.llm_path, "--base", "main"],
+            ["record", "--worktree", self.repo, "--base", "main", "--llm", self.llm_path, "extra"],
+            ["record", "--worktree", self.repo, "--worktree", self.repo, "--base", "main", "--llm", self.llm_path],
+            ["record", "--worktree", self.repo, "--base", "main", "--llm"],
             ["ledger"],
             ["hook"],
             ["hook", "nope"],

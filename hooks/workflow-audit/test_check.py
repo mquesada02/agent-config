@@ -24,7 +24,7 @@ def long_rows():
 
 class CheckCase(AuditCase):
     def check(self, worktree=None, *extra):
-        return self.audit("check", "--worktree", worktree or self.repo, *extra)
+        return self.audit("check", "--worktree", worktree or self.repo, "--base", "main", *extra)
 
     def parts(self, result):
         """(the lines before the digest marker, the size line, the digest text)."""
@@ -99,8 +99,9 @@ class RefusalTest(CheckCase):
 
     def test_the_argument_form_is_strict(self):
         self.start_branch("feature", "feat: a")
-        for args in (("check",), ("check", "--worktree"), ("check", "--worktree", self.repo, "--llm", self.llm_path),
-                     ("check", "--llm", self.llm_path), ("check", "--worktree", self.repo, "extra")):
+        base = ("--base", "main")
+        for args in (("check",), ("check", "--worktree"), ("check", "--worktree", self.repo, *base, "--llm", self.llm_path),
+                     ("check", "--llm", self.llm_path, *base), ("check", "--worktree", self.repo, *base, "extra")):
             with self.subTest(args):
                 self.refused(self.audit(*args))
 
@@ -264,13 +265,13 @@ class DigestTest(SessionCase):
         _, _, digest = self.parts(self.check())
         self.assertIn("ledger unavailable: evidence unavailable: no ledger for feature", digest)
 
-    def test_no_default_branch_gives_commits_unavailable(self):
+    def test_no_base_branch_on_origin_gives_commits_unavailable(self):
         self.session([])
         self.start_branch("feature", "feat: a")
         self.git("update-ref", "-d", "refs/remotes/origin/main")
         lines, _, digest = self.parts(self.check())
         self.assertIn("S8 fail", lines)
-        self.assertIn("commits unavailable: evidence unavailable: none of origin/HEAD, origin/main and origin/master exists", digest)
+        self.assertIn("commits unavailable: evidence unavailable: no such ref origin/main", digest)
 
 
 class SessionsShowTest(SessionCase):
