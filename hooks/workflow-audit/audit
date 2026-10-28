@@ -1454,7 +1454,7 @@ def _record(argv):
         items = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch))[0] + l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
-            "sha": tip, "remote_url": remote_url, "branch": branch,
+            "sha": tip, "remote_url": remote_url, "branch": branch, "base": base_branch,
             "time": _now(), "items": items, "result": result,
         })
         if len(text) > runtime_dir.MAX_READ_BYTES:
@@ -2180,23 +2180,23 @@ def _raw_match(text, form):
     return bool(_occurrences(text, form.raw_text))
 
 
-def _head_option(arguments):
-    """The last --head/-H value, or None when absent."""
-    head = None
+def _branch_option(arguments, long, short):
+    """The last value of the `long` or `short` option (--head/-H, --base/-B), or None when absent."""
+    value = None
     index = 0
     while index < len(arguments):
         word = arguments[index]
-        if word in ("--head", "-H"):
-            head = arguments[index + 1] if index + 1 < len(arguments) else ""
+        if word in (long, short):
+            value = arguments[index + 1] if index + 1 < len(arguments) else ""
             index += 1
-        elif word.startswith("--head="):
-            head = word[len("--head="):]
-        elif word.startswith("-H") and not word.startswith("--"):
-            head = word[2:].removeprefix("=")
+        elif word.startswith(long + "="):
+            value = word[len(long) + 1:]
+        elif word.startswith(short) and not word.startswith("--"):
+            value = word[2:].removeprefix("=")
         index += 1
-    if head is not None and ("$" in head or "`" in head):
+    if value is not None and ("$" in value or "`" in value):
         return ""  # a variable or a substitution cannot be resolved: like a missing value
-    return head
+    return value
 
 
 def _after_cd(cwd, segment):
@@ -2234,9 +2234,12 @@ def _is_stale(runtime_dir, dir_fd, tip, url, branch):
 
 def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
     """Why `gh pr create` is denied, or None when it is allowed. `cwd` is None when a cd could not be resolved."""
-    head = _head_option(arguments)
+    head = _branch_option(arguments, "--head", "-H")
+    base = _branch_option(arguments, "--base", "-B")
     if cwd is None or head == "":
         return "no branch to check: the working directory or the --head value cannot be resolved"
+    if base == "":
+        return "no base to check: the --base value cannot be resolved"
     if head is None:
         branch = _git_output(cwd, "symbolic-ref", "--short", "-q", "HEAD")
     else:
@@ -2258,6 +2261,15 @@ def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
         return f"remote mismatch: the record of {tip[:7]} is for {record['remote_url']}, not {url}."
     if record["result"] != "pass":
         return f"failed record: the audit of {branch} at {tip[:7]} failed. Report the failed items to the user."
+    if not isinstance(record.get("base"), str) or not record["base"]:
+        return f"old record: the record of {tip[:7]} has no base. Run the audit again with --base."
+    if base is None:  # gh uses the default branch of the repository
+        default = _git_output(cwd, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
+        base = default.removeprefix("origin/") if default else None
+        if not base:
+            return "no base to check: the default branch cannot be resolved (origin/HEAD is not set). Pass --base."
+    if record["base"] != base:
+        return f"base mismatch: the audit of {tip[:7]} is for the base {record['base']}, not {base}. Run the audit again with --base {base}."
     return None
 
 

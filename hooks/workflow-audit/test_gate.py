@@ -290,6 +290,67 @@ class HeadBranchTest(GateTestCase):
         self.assert_allowed(self.gate(f"gh pr create --head feature && gh pr create --head owner:feature"))
 
 
+class BaseTest(GateTestCase):
+    def audited_on_develop(self):
+        """A branch `work` off the pushed branch `develop`, audited with --base develop. The default branch stays main."""
+        self.git("checkout", "-b", "develop")
+        self.commit("feat: on develop")
+        self.git("push", "-u", "origin", "develop")
+        tip = self.start_branch("work", "feat: on work")
+        self.assertEqual(self.record_base("develop").returncode, 0)
+        return tip
+
+    def record_base(self, base):
+        return self.audit("record", "--worktree", self.repo, "--base", base, "--llm", self.llm_path)
+
+    def test_the_base_of_the_audit_is_stored_in_the_record(self):
+        tip = self.audited_branch()
+        self.assertEqual(self.read_record(tip)["base"], "main")
+
+    def test_a_matching_base_is_allowed_in_every_form(self):
+        self.audited_on_develop()
+        for option in ("--base develop", "--base=develop", "-B develop", "-B=develop", "-Bdevelop", "--base main --base develop"):
+            with self.subTest(option=option):
+                self.assert_allowed(self.gate(f"{PR} {option}"))
+
+    def test_a_different_base_is_refused_in_every_form(self):
+        self.audited_branch()
+        for option in ("--base develop", "--base=develop", "-B develop", "-B=develop", "-Bdevelop", "--base main --base develop"):
+            with self.subTest(option=option):
+                reason = self.assert_denied(self.gate(f"{PR} {option}"), "base mismatch")
+                self.assertIn("develop", reason)
+
+    def test_a_missing_base_is_compared_with_the_default_branch(self):
+        self.audited_on_develop()
+        self.assert_denied(self.gate(PR), "base mismatch")
+
+    def test_a_missing_base_is_allowed_when_the_record_is_for_the_default_branch(self):
+        self.audited_branch()
+        self.assert_allowed(self.gate(PR))
+        self.assert_allowed(self.gate(f"{PR} --base main"))
+
+    def test_an_unresolvable_default_branch_is_refused(self):
+        self.audited_branch()
+        self.git("remote", "set-head", "origin", "--delete")
+        self.assert_denied(self.gate(PR), "no base to check")
+        self.assert_allowed(self.gate(f"{PR} --base main"))
+
+    def test_an_empty_or_missing_base_value_is_refused(self):
+        self.audited_branch()
+        for option in ("--base=", "--base", "-B=", "-B"):
+            with self.subTest(option=option):
+                self.assert_denied(self.gate(f"gh pr create {option}"), "no base to check")
+
+    def test_a_record_without_a_base_is_refused(self):
+        tip = self.audited_branch()
+        record = self.read_record(tip)
+        del record["base"]
+        with open(os.path.join(self.runtime, f"{tip}.json"), "w") as handle:
+            json.dump(record, handle)
+        self.assert_denied(self.gate(PR), "old record")
+        self.assert_denied(self.gate(f"{PR} --base main"), "old record")
+
+
 class NoBranchTest(GateTestCase):
     def test_a_detached_head_without_head_has_no_branch_to_check(self):
         self.git("checkout", "--detach")
