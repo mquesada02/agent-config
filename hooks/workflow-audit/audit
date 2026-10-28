@@ -511,6 +511,11 @@ def _touches(transcript, spellings, root):
     return any(_inside(os.path.realpath(cwd), root) for cwd in transcript.cwds)
 
 
+def _subagents_folder(transcript_path):
+    """The folder of the subagent transcripts (agent-<id>.jsonl) of the session whose main transcript is `transcript_path`."""
+    return os.path.splitext(transcript_path)[0] + "/subagents"
+
+
 def _audited_transcripts(worktree, dir_fd):
     """The transcripts of every registered session that touches the worktree, and the versions read.
     A session whose main transcript is missing (ENOENT), and a subagent file that is missing, are skipped.
@@ -523,7 +528,7 @@ def _audited_transcripts(worktree, dir_fd):
         raise Unavailable("no registered session (empty or wiped registry)")
     audited = []
     for _, path in sessions:
-        folder = os.path.splitext(path)[0] + "/subagents"
+        folder = _subagents_folder(path)
         paths = [path]
         if os.path.isdir(folder):
             paths += sorted(os.path.join(folder, name) for name in os.listdir(folder) if re.fullmatch(r"agent-.+\.jsonl", name))
@@ -840,7 +845,9 @@ def _ledger_name(remote_url, branch):
 
 LEDGER_HELP = """\
 events and their flags (every flag is required for its event and refused for the others):
-  round         --loop --phase --round <n> --reviewer <agent id> (repeat for each reviewer, 1 to 20, all different)
+  round         --loop --phase --round <n> --reviewer <agent id> (repeat for each reviewer, 1 to 20, all different;
+                each reviewer must be a subagent of the current session (CLAUDE_CODE_SESSION_ID);
+                another id is refused and nothing is written, so write the round after its reviewers ran)
   finding       --id --loop --phase --round --loc --type --reason
   verdict       --finding <id> --verifier <agent id> --result
   status        --finding <id> --status
@@ -911,6 +918,39 @@ def _open_ledger_dir(worktree):
     return dir_fd, branch, remote_url
 
 
+def _check_round_reviewers(dir_fd, reviewers):
+    """Refuse (nothing is written) a reviewer id that is not a subagent transcript of the current session.
+    Fails closed: it also refuses when the session or its registry entry cannot be found."""
+    import stat
+
+    runtime_dir = _runtime()
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not runtime_dir.valid_session_id(session_id):
+        raise Refusal("no session id: CLAUDE_CODE_SESSION_ID is missing or invalid, "
+                      "a round event is checked against the subagents of the session that wrote it")
+    try:
+        os.stat(SESSIONS_FILE, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        raise Refusal("the registry is missing: no session is registered, so no reviewer can be proven a subagent")
+    sessions = _registered_sessions(dir_fd)
+    if not sessions:
+        raise Refusal("the registry is empty: no session is registered, so no reviewer can be proven a subagent")
+    transcript = dict(sessions).get(session_id)
+    if transcript is None:
+        raise Refusal(f"session {session_id} is not in the registry, so no reviewer can be proven a subagent of it")
+    folder = _subagents_folder(transcript)
+    for reviewer in reviewers:
+        if not AGENT_ID.fullmatch(reviewer):
+            raise Refusal(f"reviewer id {reviewer!r} is not a valid subagent id of session {session_id}")
+        try:
+            is_file = stat.S_ISREG(os.lstat(f"{folder}/agent-{reviewer}.jsonl").st_mode)
+        except OSError:
+            is_file = False
+        if not is_file:
+            raise Refusal(f"reviewer {reviewer} is not a subagent of session {session_id}: "
+                          f"no transcript file agent-{reviewer}.jsonl beside its main transcript")
+
+
 def _ledger(argv):
     import stat
 
@@ -919,6 +959,8 @@ def _ledger(argv):
     name = _ledger_name(remote_url, branch)
     runtime_dir = _runtime()
     try:
+        if event["kind"] == "round":
+            _check_round_reviewers(dir_fd, event["reviewers"])
         try:
             lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
         except BlockingIOError:
