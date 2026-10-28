@@ -29,6 +29,7 @@ L_ITEMS = ("L1", "L2", "L3", "L4", "L5", "L6")
 SESSIONS_FILE = "sessions.jsonl"
 LEDGER_LOOPS = ("code-review", "plan-review-3", "plan-review-4.1", "plan-review-5.3")
 CODE_REVIEW = "code-review"
+LINKED_LOOP = "plan-review-5.3"  # the one loop whose events a link makes visible
 PHASE_CAPS = {"correctness": 5, "final": 3}  # rounds of a review loop phase; the section 6 and plan-review caps are the same
 LEDGER_PHASES = tuple(PHASE_CAPS)
 LEDGER_TYPES = ("Blocking", "Minor")
@@ -1111,7 +1112,7 @@ def _check_link(worktree, dir_fd, branch, remote_url, name, event):
     ledger, _, why = _load_ledger(dir_fd, source, remote_url)
     if ledger is None:
         raise Refusal(f"--from-branch {source!r}: {why}")
-    if not any(entry["loop"] == "plan-review-5.3" for _, entry in ledger.round_events):
+    if not any(entry["loop"] == LINKED_LOOP for _, entry in ledger.round_events):
         raise Refusal(f"--from-branch {source!r}: its ledger holds no plan-review-5.3 round")
     if ledger.link is not None:
         raise Refusal(f"--from-branch {source!r}: its ledger holds a link, and a link must not point at a link")
@@ -1179,18 +1180,30 @@ def cmd_ledger(argv):
 
 # ---- S3 to S6 and the agent-id cross-check, from the ledger ----
 
-def _load_ledger(dir_fd, branch, remote_url):
-    """(ledger, None, None), or (None, S3 evidence, evidence of the other ledger items) when the ledger cannot be used."""
+def _read_ledger(dir_fd, branch, remote_url):
+    """(ledger, None, None), or (None, "missing", None) when there is no file, or (None, "unreadable" or "invalid", the problem)."""
     try:
         data = _read_runtime_file(dir_fd, _ledger_name(remote_url, branch) + ".jsonl", "ledger")
     except Unavailable as problem:
-        return None, str(problem), str(problem)
+        return None, "unreadable", problem.args[0]
     if data is None:
+        return None, "missing", None
+    try:
+        return _replay(data.decode("utf-8")), None, None
+    except (LedgerError, UnicodeDecodeError) as problem:
+        return None, "invalid", str(problem)
+
+
+def _load_ledger(dir_fd, branch, remote_url):
+    """(ledger, None, None), or (None, S3 evidence, evidence of the other ledger items) when the ledger cannot be used."""
+    ledger, failure, problem = _read_ledger(dir_fd, branch, remote_url)
+    if failure == "unreadable":
+        text = str(Unavailable(problem))
+        return None, text, text
+    if failure == "missing":
         text = f"evidence unavailable: no ledger for {branch}"
         return None, text, text
-    try:
-        ledger = _replay(data.decode("utf-8"))
-    except (LedgerError, UnicodeDecodeError) as problem:
+    if failure == "invalid":
         return None, f"invalid ledger: {problem}", f"evidence unavailable: ledger is invalid ({problem})"
     if not ledger.events:
         return None, "ledger has no events", "evidence unavailable: ledger has no events"
@@ -1807,12 +1820,38 @@ def _utc(moment):
     return "?" if moment is None else moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _compact(event):
+    return json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+
+
 def _ledger_lines(dir_fd, branch, remote_url):
-    """(the lines `ledger` and one compact JSON line per event, the event count), or ([the `ledger unavailable` line], None)."""
+    """(the lines `ledger` and one compact JSON line per event, the event count, the ledger), or ([the `ledger unavailable` line], None, None)."""
     ledger, why, _ = _load_ledger(dir_fd, branch, remote_url)
     if ledger is None:
-        return [f"ledger unavailable: {why}"], None
-    return ["ledger"] + [json.dumps(event, ensure_ascii=False, separators=(",", ":")) for event in ledger.events], len(ledger.events)
+        return [f"ledger unavailable: {why}"], None, None
+    return ["ledger"] + [_compact(event) for event in ledger.events], len(ledger.events), ledger
+
+
+def _linked_block(dir_fd, remote_url, link):
+    """(the header line and the plan-review-5.3 events of the source ledger of `link`, their count), or
+    ([the `linked ledger unavailable` line], None). The source ledger is read live; the events are not copied."""
+    source = link["source"]
+    ledger, failure, problem = _read_ledger(dir_fd, source, remote_url)
+    if failure == "missing":
+        why = f"no ledger for {source}"
+    elif failure:
+        why = f"ledger of {source} is invalid ({problem})"
+    elif not any(event["loop"] == LINKED_LOOP for _, event in ledger.round_events):
+        why = f"no {LINKED_LOOP} round in {source}"
+    elif ledger.link is not None:
+        why = f"{source} holds a link"
+    else:
+        ids = {event["id"] for event in ledger.events if event["kind"] == "finding" and event["loop"] == LINKED_LOOP}
+        events = [event for event in ledger.events
+                  if (event["kind"] in ("round", "finding") and event["loop"] == LINKED_LOOP)
+                  or (event["kind"] == "status" and event["finding"] in ids)]
+        return [f"linked from {source} ticket {link['ticket']}"] + [_compact(event) for event in events], len(events)
+    return [f"linked ledger unavailable: {why}"], None
 
 
 def _ledger_show(argv):
@@ -1821,7 +1860,9 @@ def _ledger_show(argv):
         raise Refusal(USAGE)
     dir_fd, branch, remote_url = _open_ledger_dir(argv[1])
     try:
-        lines, count = _ledger_lines(dir_fd, branch, remote_url)
+        lines, count, ledger = _ledger_lines(dir_fd, branch, remote_url)
+        if ledger is not None and ledger.link is not None:
+            lines += _linked_block(dir_fd, remote_url, ledger.link)[0]
     finally:
         os.close(dir_fd)
     print("\n".join(lines))
@@ -1829,11 +1870,19 @@ def _ledger_show(argv):
 
 
 def _ledger_section(worktree, dir_fd, branch, remote_url):
-    """One pointer line with the event count and the command that reads the events, or the `ledger unavailable` line."""
-    lines, count = _ledger_lines(dir_fd, branch, remote_url)
+    """One pointer line with the event count and the command that reads the events, or the `ledger unavailable` line.
+    For a ledger with a link, one more line: the count of the linked events, or the `linked ledger unavailable` line."""
+    lines, count, ledger = _ledger_lines(dir_fd, branch, remote_url)
     if count is None:
         return lines
-    return [f"ledger: {count} events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree {worktree}"]
+    pointer = f"ledger: {count} events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree {worktree}"
+    if ledger.link is None:
+        return [pointer]
+    block, linked = _linked_block(dir_fd, remote_url, ledger.link)
+    if linked is None:
+        return [pointer, block[0]]
+    return [pointer, f"linked: {linked} {LINKED_LOOP} events from {ledger.link['source']} ticket {ledger.link['ticket']}; "
+                     "read them with the command of the pointer line above"]
 
 
 def _commit_lines(worktree, base_result):
