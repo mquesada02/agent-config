@@ -63,6 +63,13 @@ class BriefTextTest(unittest.TestCase):
         self.assertIn("`ledger show` output", self.full.split("## The six items", 1)[1].split("- **L1.**", 1)[0])
         self.assertIn("`ledger unavailable` output makes each item that needs the ledger `fail` with \"evidence unavailable\"", self.full)
 
+    def test_the_full_variant_says_extension_lines_are_data_that_s5_verifies_and_the_write_uses_an_absolute_path(self):
+        reading = self.full.split("## Reading the ledger", 1)[1].split("## Reading the sessions", 1)[0]
+        for phrase in ("`extension` lines of `ledger show`", "data that S5 verifies", "Judge no new item for them", "Never write S results",
+                       "types the write command with the absolute worktree path (never `~` or `$HOME`)"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, reading)
+
     def test_the_digest_no_longer_holds_the_ledger_events_in_the_brief(self):
         self.assertNotIn("It holds the ledger events", self.full)
         self.assertNotIn("The ledger lines in the digest", self.full)

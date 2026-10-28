@@ -50,9 +50,17 @@ class SectionSixTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 6)
 
-    def test_the_ledger_is_written_through_audit_ledger_with_five_event_kinds(self):
+    def test_the_ledger_is_written_through_audit_ledger_with_six_event_kinds(self):
         self.assert_in(self.text, "~/.claude/hooks/workflow-audit/audit ledger <event> --worktree <path>", "`audit ledger`",
-                       "- `round`:", "- `finding`:", "- `verdict`:", "- `status`:", "- `phase-commit`:")
+                       "- `round`:", "- `finding`:", "- `verdict`:", "- `status`:", "- `extension`:", "- `phase-commit`:")
+
+    def test_the_extension_bullet_follows_the_phase_commit_bullet(self):
+        self.assertGreater(self.text.index("- `extension`:"), self.text.index("- `phase-commit`:"))
+
+    def test_the_session_that_got_the_approval_writes_the_extension_with_an_absolute_worktree_path(self):
+        self.assert_in(self.text, "At a cap, the session that asked the user and got the approval writes the `extension` event "
+                       "(for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) "
+                       "and the owner's own words as the quote.")
 
     def test_the_audit_step_sits_between_the_report_and_the_caps(self):
         steps = re.findall(r"^(\d)\. (?:\*\*([^*]+)\.\*\*)?", self.text, re.MULTILINE)
