@@ -1090,7 +1090,7 @@ def _own_ledger(dir_fd, name):
 
 
 def _check_link(worktree, dir_fd, branch, remote_url, name, event):
-    """The checks 1 to 6 of `audit ledger link`, in this order. None of them takes the lock of the own ledger."""
+    """The checks 1 to 6 of `audit ledger link`, in this order. None of them takes the lock of the own ledger; `_ledger` repeats check 5 under it."""
     source = event["source"]
     try:  # the same check as `Ledger.apply` makes, run first so that `gh` never runs for a bad value
         _check_event_shape(event)
