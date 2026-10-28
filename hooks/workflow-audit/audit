@@ -310,6 +310,9 @@ def _instant(value, where):
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
+ABSENT = object()  # a row key that is not in the row (a key with the value null is present)
+
+
 class Transcript:
     """The rows of one transcript file that S1 and S2 read."""
 
@@ -320,6 +323,9 @@ class Transcript:
         self.notices = []    # texts that hold a task notification
         self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
+        self.inputs = []     # dicts of the user rows and queued_command prompts that S5 reads: index, raw time, raw origin, field, texts
+        self.asks = set()    # the ids of the AskUserQuestion tool_use blocks; only S5 reads them
+        self.answered = []   # dicts of the user rows with a tool_result block: index, raw time, tool_use ids, raw toolUseResult.answers; only S5 reads them
         self.cwds = set()
         self.versions = set()
         self.models = set()  # the message.model of the assistant rows, None when it is not a string
@@ -357,6 +363,8 @@ def _read_row(transcript, index, row):
         attachment = row.get("attachment")
         if isinstance(attachment, dict) and attachment.get("type") == "queued_command" and isinstance(attachment.get("prompt"), str):
             transcript.notices.append(attachment["prompt"])
+            transcript.inputs.append({"index": index, "time": row.get("timestamp"), "origin": attachment.get("origin", ABSENT),
+                                      "field": "attachment.origin", "texts": [attachment["prompt"]]})
         return
     if kind == "system":
         return
@@ -372,9 +380,11 @@ def _read_row(transcript, index, row):
     content = message.get("content")
     # Claude Code writes a compaction summary; no one sent it, so it is not a prompt
     is_summary = row.get("isCompactSummary") is True
+    texts = []
     if isinstance(content, str) and kind == "user":
         blocks = []
         transcript.notices.append(content)
+        texts = [content]
         if not is_summary:
             transcript.prompts.append(content)
     elif isinstance(content, list) and all(isinstance(block, dict) and isinstance(block.get("type"), str) for block in content):
@@ -386,6 +396,9 @@ def _read_row(transcript, index, row):
                 transcript.prompts.extend(texts)
     else:
         raise Unavailable(f"unknown content shape in {where}")
+    if kind == "user" and not is_summary:
+        transcript.inputs.append({"index": index, "time": row.get("timestamp"), "origin": row.get("origin", ABSENT), "field": "origin", "texts": texts})
+    answered = []
     if kind == "assistant":
         model = message.get("model")
         transcript.models.add(model if isinstance(model, str) else None)
@@ -394,12 +407,16 @@ def _read_row(transcript, index, row):
             if not isinstance(block.get("tool_use_id"), str) or not isinstance(block.get("is_error", False), bool):
                 raise Unavailable(f"bad tool_result in {where}")
             transcript.results.setdefault(block["tool_use_id"], []).append(block.get("is_error", False))
+            answered.append(block["tool_use_id"])
         elif kind == "assistant" and block["type"] == "tool_use":
             if not isinstance(block.get("id"), str) or not isinstance(block.get("name"), str) or not isinstance(block.get("input"), dict):
                 raise Unavailable(f"bad tool_use in {where}")
             name, tool_input = block["name"], block["input"]
             if name in LAUNCH_FIELDS:
                 transcript.launches.append((name, [tool_input.get(key) if isinstance(tool_input.get(key), str) else None for key in LAUNCH_FIELDS[name]]))
+                continue
+            if name == "AskUserQuestion":
+                transcript.asks.add(block["id"])
                 continue
             if name not in EDIT_TOOLS and name != "Bash":
                 continue
@@ -421,6 +438,10 @@ def _read_row(transcript, index, row):
                     path = os.path.join(call["cwd"], path)
                 call["path"] = os.path.realpath(path)
             transcript.calls.append(call)
+    if answered:
+        result = row.get("toolUseResult")
+        transcript.answered.append({"index": index, "time": row.get("timestamp"), "ids": answered,
+                                    "answers": result.get("answers", ABSENT) if isinstance(result, dict) else ABSENT})
 
 
 def _read_transcript(path, text):
@@ -1024,10 +1045,79 @@ def check_s4(ledger, agents, problem):
     return True, f"{len(blocking)} Blocking findings, each with a verdict by a Sonnet subagent"
 
 
-def check_s5(ledger):
-    """Returns (passed, evidence)."""
-    failures = [f"{loop} {phase}: round {number} is past the cap of {PHASE_CAPS[phase]}"
-                for (loop, phase), number in ledger.rounds.items() if number > PHASE_CAPS[phase]]
+def _is_worker(transcripts):
+    return any(all(marker in text for marker in WORKER_MARKERS) for text in transcripts[0].prompts)
+
+
+def _row_time(value):
+    """The moment of a raw row timestamp, None when it is not readable."""
+    try:
+        return _instant(value, "a transcript row")
+    except Unavailable:
+        return None
+
+
+def _origin_kind(value, field, where):
+    if value is ABSENT:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("kind"), str):
+        raise Unavailable(f"malformed {field} in {where}")
+    return value["kind"]
+
+
+def _real_input(audited):
+    """(moment or None, normalised text) of every block of real user input, in the order of the audited sessions, then the rows, then
+    the blocks or values. Only the main transcript of a session that is not a worker session counts.
+    Raises Unavailable for a malformed origin, attachment.origin or answers in a row that is read."""
+    units = []
+    for transcripts in audited:
+        main = transcripts[0]
+        if _is_worker(transcripts):
+            continue
+        rows = [(entry["index"], entry) for entry in main.inputs + main.answered]
+        for index, entry in sorted(rows, key=lambda pair: pair[0]):
+            where = f"{main.name} row {index + 1}"
+            moment = _row_time(entry["time"])
+            if "texts" in entry:
+                if _origin_kind(entry["origin"], entry["field"], where) == "human":
+                    units += [(moment, _normalise(text)) for text in entry["texts"]]
+            elif entry["answers"] is not ABSENT and main.asks.intersection(entry["ids"]):
+                answers = entry["answers"]
+                if not isinstance(answers, dict) or not all(isinstance(value, str) for value in answers.values()):
+                    raise Unavailable(f"malformed answers in {where}")
+                units += [(moment, _normalise(value)) for value in answers.values()]
+    return units
+
+
+def _unbacked_extensions(ledger, extensions, audited):
+    """The S5 evidence lines of the extensions whose quote is not found in real user input. Each extension takes the earliest unused
+    block that is after the round at the cap in force before it and not after the extension."""
+    units, used, caps, failures = _real_input(audited), set(), {}, []
+    for number, event in enumerate(extensions, 1):
+        key = (event["loop"], event["phase"])
+        cap = caps.get(key, PHASE_CAPS[event["phase"]])
+        caps[key] = cap + event["rounds"]
+        capped = next(round_event for _, round_event in ledger.round_events if (round_event["loop"], round_event["phase"]) == key and round_event["round"] == cap)
+        low, high, quote = _instant(capped["time"], "the ledger"), _instant(event["time"], "the ledger"), _normalise(event["quote"])
+        found = next((position for position, (moment, text) in enumerate(units)
+                      if position not in used and moment is not None and low < moment <= high and quote in text), None)
+        if found is None:
+            failures.append(f"extension {number} ({event['loop']} {event['phase']} +{event['rounds']}): quote not found in real user input")
+        else:
+            used.add(found)
+    return failures
+
+
+def check_s5(ledger, audited, problem):
+    """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`; they are needed
+    only when the ledger holds an extension."""
+    failures = [f"{loop} {phase}: round {number} is past the cap of {ledger.effective_cap(loop, phase)}"
+                for (loop, phase), number in ledger.rounds.items() if number > ledger.effective_cap(loop, phase)]
+    extensions = [event for event in ledger.events if event["kind"] == "extension"]
+    if extensions:
+        if audited is None:
+            return False, problem
+        failures += _unbacked_extensions(ledger, extensions, audited)
     if failures:
         return False, _truncate_lines(failures)
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
@@ -1115,7 +1205,7 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
         return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")]
     agents = None if audited is None else _agents(audited)
     text = str(problem)
-    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger),
+    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text),
             _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)]
 
 
@@ -1141,7 +1231,7 @@ def check_s7(audited, problem):
         return False, problem
     failures, subagents, workers = [], 0, 0
     for transcripts in audited:
-        is_worker = any(all(marker in text for marker in WORKER_MARKERS) for text in transcripts[0].prompts)
+        is_worker = _is_worker(transcripts)
         workers += is_worker
         subagents += len(transcripts) - 1
         for transcript in (transcripts if is_worker else transcripts[1:]):
@@ -1414,7 +1504,7 @@ def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
         return [_s_item("S3", False, s3_evidence), _s_item("S5", False, other_evidence), s7, _s_item("XC", False, other_evidence)]
     view = _plan_review_view(ledger)
     agents = None if audited is None else _agents(audited)
-    return [_check_item("S3", check_s3_pre_dispatch, view), _check_item("S5", check_s5, view), s7, _check_item("XC", check_xc, view, agents, text)]
+    return [_check_item("S3", check_s3_pre_dispatch, view), _check_item("S5", check_s5, view, audited, text), s7, _check_item("XC", check_xc, view, agents, text)]
 
 
 def _pre_dispatch(argv):

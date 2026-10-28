@@ -73,6 +73,37 @@ def notification_attachment_row(call_id, **kwargs):
     return {"type": "attachment", "version": VERSION, "attachment": {"type": "queued_command", "prompt": notification_text(call_id, **kwargs)}}
 
 
+ABSENT = object()  # a row key that the helper does not write
+
+
+def owner_row(content, seconds, origin=ABSENT, version=VERSION, **extra):
+    """A user row with a text prompt; `origin` is the whole value of the row key (a dict such as {"kind": "human"}), ABSENT writes none."""
+    row = {"type": "user", "timestamp": stamp(seconds), "version": version, "message": {"role": "user", "content": content}}
+    if origin is not ABSENT:
+        row["origin"] = origin
+    row.update(extra)
+    return row
+
+
+def queued_row(prompt, seconds, origin=ABSENT, version=VERSION, **extra):
+    """A queued_command attachment row; `origin` is the whole value of the attachment key."""
+    attachment = {"type": "queued_command", "prompt": prompt}
+    if origin is not ABSENT:
+        attachment["origin"] = origin
+    row = {"type": "attachment", "timestamp": stamp(seconds), "version": version, "attachment": attachment}
+    row.update(extra)
+    return row
+
+
+def ask_rows(call_id, answers, seconds, question="invented question text?"):
+    """An AskUserQuestion tool_use row and the user row that answers it; `answers` is the whole toolUseResult.answers value."""
+    ask = call_row("AskUserQuestion", {"questions": [{"question": question, "options": [{"label": "a"}, {"label": "b"}]}]}, call_id, seconds)
+    reply = result_row(call_id, seconds + 1)
+    if answers is not ABSENT:
+        reply["toolUseResult"] = {"answers": answers}
+    return [ask, reply]
+
+
 EARLY = "2000-01-01T00:00:00.000Z"  # before every ledger event, which is stamped with the real time
 LATE = "9999-01-01T00:00:00.000Z"  # after every ledger event
 SONNET = "claude-sonnet-5-5"
