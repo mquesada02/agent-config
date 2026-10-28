@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Workflow audit (spec #92, ticket #94). Standard library only; run as `python3 -I <path>/audit ...`.
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
+#   audit ledger link --worktree <path> --from-branch <branch> --ticket <id>   append a link to the ledger of an earlier branch of the ticket, after six checks
 #   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
 #   audit sessions show --worktree <path>         print every block of the audited sessions, with no size cap; writes no file
 #   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 28 KB; writes no file
@@ -40,7 +41,11 @@ EVENT_KEYS = {
     "status": ("finding", "status"),
     "extension": ("loop", "phase", "rounds", "quote"),
     "phase-commit": ("sha",),
+    "link": ("source", "ticket"),
 }
+FLAG_NAMES = {"reviewers": "--reviewer", "source": "--from-branch"}  # the keys whose command flag is not --<key>
+MAX_SOURCE = 255
+MAX_TICKET = 64
 AGENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 FINDING_ID = re.compile(r"[A-Za-z0-9_.-]{1,32}")
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -61,7 +66,7 @@ PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
 MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
 CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
-USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger link --worktree <path> --from-branch <branch> --ticket <id> | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
          " | audit record --pre-dispatch --worktree <path> --map <issue> --llm <file> | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -738,6 +743,8 @@ VALID_VALUE = {
     "rounds": lambda value: type(value) is int and 1 <= value <= MAX_EXTENSION_ROUNDS,
     "quote": _plain_text(QUOTE_LIMIT, MIN_QUOTE),
     "sha": _matches(SHA),
+    "source": _plain_text(MAX_SOURCE),
+    "ticket": _plain_text(MAX_TICKET),
 }
 
 
@@ -769,6 +776,7 @@ class Ledger:
         self.verdicts = []
         self.commits = []       # (position, event)
         self.extra_rounds = {}  # (loop, phase) -> the rounds that the extension events add to the cap
+        self.link = None        # the link event, at most one
 
     def effective_cap(self, loop, phase):
         return PHASE_CAPS[phase] + self.extra_rounds.get((loop, phase), 0)
@@ -807,6 +815,10 @@ class Ledger:
             if self.rounds.get(key, 0) < cap:
                 raise LedgerError(f"round {cap} of {key[0]} {key[1]} is not recorded: the cap is not reached")
             self.extra_rounds[key] = self.extra_rounds.get(key, 0) + event["rounds"]
+        elif kind == "link":
+            if self.link is not None:
+                raise LedgerError("a ledger holds at most one link event")
+            self.link = event
         else:
             self.commits.append((position, event))
         self.events.append(event)
@@ -847,9 +859,14 @@ events and their flags (every flag is required for its event and refused for the
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
                 loop phase reached its cap, which is the base cap plus the rounds of its extensions)
   phase-commit  --sha <40 hex>
+  link          --from-branch <source branch, 1 to 255 characters> --ticket <1 to 64 characters> (this branch continues the ticket of the
+                source branch; at most one link in a ledger)
 loop values:  %s
 phase values: %s (caps: %s)
 A review round is recorded with its `round` event before the findings of that round.
+`link` checks, in this order, and refuses at the first that fails: (1) the source is not this branch; (2) the source ledger exists for the same
+origin URL and is valid; (3) it holds a plan-review-5.3 round; (4) it holds no link; (5) this ledger holds no link; (6) `gh` shows a merged PR
+for the source branch in the GitHub repository of the origin URL (one `gh` call, 20 seconds, never under the ledger lock).
 `audit ledger show --worktree <path>` prints every event of the ledger, one compact JSON line each, and writes nothing.
 """ % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
 
@@ -883,14 +900,17 @@ def _ledger_event(argv):
     parser.add_argument("--rounds", type=int, action=Once)
     parser.add_argument("--quote", action=Once)
     parser.add_argument("--sha", action=Once)
+    parser.add_argument("--from-branch", dest="source", action=Once, help="the branch whose plan review this branch continues (link)")
+    parser.add_argument("--ticket", action=Once, help="the ticket key (link)")
     args = parser.parse_args(argv)
     expected = set(EVENT_KEYS[args.event])
     given = {key for key in VALID_VALUE if getattr(args, key, None) is not None}
     if given != expected:
-        flags = lambda keys: ", ".join("--reviewer" if key == "reviewers" else f"--{key}" for key in EVENT_KEYS[args.event] if key in keys)
+        flag = lambda key: FLAG_NAMES.get(key, f"--{key}")
+        flags = lambda keys: ", ".join(flag(key) for key in EVENT_KEYS[args.event] if key in keys)
         parser.error(f"a {args.event} event needs exactly {flags(expected)}"
                      + (f" (missing {flags(expected - given)})" if expected - given else "")
-                     + (f" (not allowed: {', '.join(sorted(given - expected))})" if given - expected else ""))
+                     + (f" (not allowed: {', '.join(sorted(flag(key) for key in given - expected))})" if given - expected else ""))
     event = {"kind": args.event, "time": _now("milliseconds")}
     event.update({key: getattr(args, key) for key in EVENT_KEYS[args.event]})
     return args.worktree, event
@@ -911,6 +931,81 @@ def _open_ledger_dir(worktree):
     return dir_fd, branch, remote_url
 
 
+GITHUB_PREFIXES = ("https://github.com/", "ssh://git@github.com/", "git@github.com:")
+GITHUB_NAME = re.compile(r"([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)")
+
+
+def _github_pair(remote_url):
+    """The `owner/repo` pair of an origin URL of the accepted forms, else None."""
+    prefix = next((prefix for prefix in GITHUB_PREFIXES if remote_url.startswith(prefix)), None)
+    if prefix is None:
+        return None
+    rest = remote_url[len(prefix):].removesuffix("/").removesuffix(".git")
+    match = GITHUB_NAME.fullmatch(rest)
+    if match is None or {".", ".."} & set(match.groups()):
+        return None
+    return rest
+
+
+def _check_merged(worktree, remote_url, source):
+    """Refuse unless `gh` shows a merged PR for the branch `source` in the GitHub repository of the origin URL. Runs `gh` once."""
+    import subprocess  # imported here: the hook's common path never runs gh
+
+    pair = _github_pair(remote_url)
+    if pair is None:
+        raise Refusal(f"cannot derive an owner/repo pair from the origin URL {_cut(remote_url, 200)!r}: gh was not run")
+    command = ["gh", "pr", "list", "--repo", pair, "--head", source, "--state", "merged", "--json", "number", "--limit", "1"]
+    try:
+        result = subprocess.run(command, cwd=worktree, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+                                timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise Refusal(f"gh did not answer within {GIT_TIMEOUT_SECONDS} seconds: no merged PR can be shown for {source!r}")
+    except OSError as problem:
+        raise Refusal(f"cannot run gh to look for a merged PR of {source!r}: {problem}")
+    if result.returncode != 0:
+        raise Refusal(f"gh exited with status {result.returncode}: {_cut(result.stderr.strip(), 300)}")
+    try:
+        merged = json.loads(result.stdout)
+    except (ValueError, RecursionError):
+        merged = None
+    if not isinstance(merged, list):
+        raise Refusal("gh printed output that is not the expected JSON array")
+    if not merged:
+        raise Refusal(f"no merged PR for {source!r} in {pair}")
+    if not (isinstance(merged[0], dict) and type(merged[0].get("number")) is int):
+        raise Refusal("gh printed output that is not the expected JSON: an element has no integer number")
+
+
+def _own_ledger(dir_fd, name):
+    """The replayed ledger of the file `name`; a ledger that cannot be used is a refusal."""
+    data = _read_runtime_file(dir_fd, name + ".jsonl", "ledger")
+    try:
+        return _replay(data.decode("utf-8") if data else "")
+    except (LedgerError, UnicodeDecodeError) as problem:
+        raise Refusal(f"the ledger holds an invalid line, nothing is written: {problem}")
+
+
+def _check_link(worktree, dir_fd, branch, remote_url, event):
+    """The checks 1 to 6 of `audit ledger link`, in this order. None of them takes the lock of the own ledger."""
+    source = event["source"]
+    try:
+        _check_event_shape(event)
+    except LedgerError as problem:
+        raise Refusal(f"malformed event: {problem}")
+    if source == branch:
+        raise Refusal(f"--from-branch {source!r} is the own branch of this worktree: a branch cannot vouch for itself")
+    ledger, _, why = _load_ledger(dir_fd, source, remote_url)
+    if ledger is None:
+        raise Refusal(f"--from-branch {source!r}: {why}")
+    if not any(entry["loop"] == "plan-review-5.3" for _, entry in ledger.round_events):
+        raise Refusal(f"--from-branch {source!r}: its ledger holds no plan-review-5.3 round")
+    if ledger.link is not None:
+        raise Refusal(f"--from-branch {source!r}: its ledger holds a link, and a link must not point at a link")
+    if _own_ledger(dir_fd, _ledger_name(remote_url, branch)).link is not None:
+        raise Refusal("this ledger already holds a link: a branch continues exactly one branch")
+    _check_merged(worktree, remote_url, source)
+
+
 def _ledger(argv):
     import stat
 
@@ -919,16 +1014,14 @@ def _ledger(argv):
     name = _ledger_name(remote_url, branch)
     runtime_dir = _runtime()
     try:
+        if event["kind"] == "link":
+            _check_link(worktree, dir_fd, branch, remote_url, event)
         try:
             lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
         except BlockingIOError:
             raise Refusal("the ledger is locked by another call")
         try:
-            data = _read_runtime_file(dir_fd, name + ".jsonl", "ledger")
-            try:
-                ledger = _replay(data.decode("utf-8") if data else "")
-            except (LedgerError, UnicodeDecodeError) as problem:
-                raise Refusal(f"the ledger holds an invalid line, nothing is written: {problem}")
+            ledger = _own_ledger(dir_fd, name)
             try:
                 ledger.apply(event)
             except LedgerError as problem:
