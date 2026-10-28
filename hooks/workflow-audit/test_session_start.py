@@ -114,7 +114,7 @@ class ModuleSearchPathTest(AuditCase):
         os.mkdir(shadow)
         with open(os.path.join(shadow, "runtime_dir.py"), "w") as handle:
             handle.write("raise RuntimeError('the shadow module was imported')\n")
-        result = subprocess.run([sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, AUDIT, "record", "--worktree", self.repo, "--llm", self.llm_path],
+        result = subprocess.run([sys.executable, "-I", "-c", SHADOW_DRIVER, shadow, AUDIT, "record", "--worktree", self.repo, "--base", "main", "--llm", self.llm_path],
                                 env=self.env, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.record_files()), 1)

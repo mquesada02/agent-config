@@ -264,7 +264,7 @@ class AuditCase(unittest.TestCase):
                               capture_output=True, timeout=60)
 
     def record(self, worktree=None):
-        return self.audit("record", "--worktree", worktree or self.repo, "--llm", self.llm_path)
+        return self.audit("record", "--worktree", worktree or self.repo, "--base", "main", "--llm", self.llm_path)
 
     def record_files(self):
         if not os.path.isdir(self.runtime):

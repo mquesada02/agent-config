@@ -3,8 +3,9 @@
 #   audit ledger <event> --worktree <path> ...   append one validated event to the findings ledger (audit ledger --help)
 #   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
 #   audit sessions show --worktree <path>         print every block of the audited sessions, with no size cap; writes no file
-#   audit check --worktree <path>                 print S1-S9, XC and a transcript digest of at most 28 KB; writes no file
-#   audit record --worktree <path> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
+#   audit check --worktree <path> --base <branch>  print S1-S9, XC and a transcript digest of at most 28 KB; writes no file
+#   audit record --worktree <path> --base <branch> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
+#   (--base is the PR target: S8 and the digest commits are the commits since the merge base of HEAD and origin/<branch>)
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
 # Exit codes of `record`: 0 record written and passed, 1 record written and failed, 2 nothing written.
@@ -61,7 +62,7 @@ PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
 MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
 CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
-USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> | audit record --worktree <path> --llm <file>"
+USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> --base <branch> | audit record --worktree <path> --base <branch> --llm <file>"
          " | audit record --pre-dispatch --worktree <path> --map <issue> --llm <file> | audit hook pre-tool-use | audit hook session-start")
 
 # The ten types of skills/smart-commits/SKILL.md.
@@ -249,24 +250,30 @@ def _commit_problem(message):
     return None
 
 
-def _commit_base(worktree):
-    """(the merge base of HEAD with the remote default branch, None), or (None, why there is none)."""
-    default = None
-    for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
-        if _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
-            default = ref
-            break
-    if default is None:
-        return None, "evidence unavailable: none of origin/HEAD, origin/main and origin/master exists"
-    base = _git_output(worktree, "merge-base", default, "HEAD")
-    if not base:
-        return None, f"evidence unavailable: no merge base of {default} and HEAD"
+def _commit_base(worktree, branch):
+    """(the merge base of HEAD with origin/<branch>, None), or (None, why there is none). Never raises: every failure is
+    "evidence unavailable". An empty range is a failure too, so a pass never rests on 0 commits."""
+    import subprocess  # imported here: the hook's common path never runs git
+
+    ref = f"refs/remotes/origin/{branch}"
+    try:
+        if _git(worktree, "check-ref-format", f"refs/heads/{branch}").returncode != 0:
+            return None, f"evidence unavailable: {branch} is not a branch name"
+        if not _git_output(worktree, "rev-parse", "--verify", "-q", ref + "^{commit}"):
+            return None, f"evidence unavailable: no such ref origin/{branch}"
+        base = _git_output(worktree, "merge-base", ref, "HEAD")
+        if not base:
+            return None, f"evidence unavailable: no merge base of origin/{branch} and HEAD"
+        if base == _git_output(worktree, "rev-parse", "HEAD"):
+            return None, f"evidence unavailable: HEAD is already in origin/{branch}: no commits to check"
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as problem:
+        return None, f"evidence unavailable: git failed: {problem}"
     return base, None
 
 
-def check_s8(worktree):
-    """Returns (passed, evidence)."""
-    base, why = _commit_base(worktree)
+def check_s8(worktree, base_result):
+    """Returns (passed, evidence). `base_result` is the (base, why) pair of `_commit_base`, computed once per audit."""
+    base, why = base_result
     if base is None:
         return False, why
     log = _git(worktree, "log", "-z", "--format=%H%n%B", f"{base}..HEAD")
@@ -1376,16 +1383,23 @@ def _load_llm(path, names=L_ITEMS):
     return items
 
 
-def _record_arguments(argv):
+def _flag_values(argv, flags):
+    """The values of the flags `flags`, each given once as a flag/value pair, in any order. The value of `--base` is not empty and does
+    not start with `--`. Any other argument form is a usage error."""
     values = {}
     for index in range(0, len(argv), 2):
         flag = argv[index]
-        if flag not in ("--worktree", "--llm") or flag in values or index + 1 >= len(argv):
+        if flag not in flags or flag in values or index + 1 >= len(argv):
             raise Refusal(USAGE)
         values[flag] = argv[index + 1]
-    if set(values) != {"--worktree", "--llm"}:
+    if set(values) != set(flags) or not values["--base"] or values["--base"].startswith("--"):
         raise Refusal(USAGE)
-    return values["--worktree"], values["--llm"]
+    return values
+
+
+def _record_arguments(argv):
+    values = _flag_values(argv, ("--worktree", "--llm", "--base"))
+    return values["--worktree"], values["--llm"], values["--base"]
 
 
 def _now(timespec="seconds"):
@@ -1406,20 +1420,20 @@ def _transcript_items(worktree, dir_fd):
     return items, audited, None
 
 
-def _run_items(worktree, dir_fd, branch, remote_url):
+def _run_items(worktree, dir_fd, branch, remote_url, base_result):
     """(the items S1 to S9 and XC in record order, the audited transcripts, the reason they cannot be read).
-    The transcripts are None when they cannot be read."""
+    The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
     items, audited, problem = _transcript_items(worktree, dir_fd)
     items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
     items.append(_check_item("S7", check_s7, audited, str(problem)))
-    passed, evidence = check_s8(worktree)
+    passed, evidence = check_s8(worktree, base_result)
     items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
     items.append(_check_item("S9", check_s9, audited, str(problem)))
     return items, audited, problem
 
 
 def _record(argv):
-    worktree, llm_path = _record_arguments(argv)
+    worktree, llm_path, base_branch = _record_arguments(argv)
     l_items = _load_llm(llm_path)
     branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
     if not branch:
@@ -1437,7 +1451,7 @@ def _record(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        items = _run_items(worktree, dir_fd, branch, remote_url)[0] + l_items
+        items = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch))[0] + l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
             "sha": tip, "remote_url": remote_url, "branch": branch,
@@ -1618,8 +1632,8 @@ def _ledger_section(worktree, dir_fd, branch, remote_url):
     return [f"ledger: {count} events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree {worktree}"]
 
 
-def _commit_lines(worktree):
-    base, why = _commit_base(worktree)
+def _commit_lines(worktree, base_result):
+    base, why = base_result
     if base is None:
         return [f"commits unavailable: {why}"]
     log = _git(worktree, "log", "--format=%h %s", f"{base}..HEAD")
@@ -1687,11 +1701,11 @@ def _sessions_section(worktree, audited, problem):
     return [f"sessions: {len(audited)} audited; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit sessions show --worktree {worktree}"]
 
 
-def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
+def _digest(worktree, dir_fd, branch, remote_url, audited, problem, base_result):
     """The text for the auditor: the ledger pointer, the commits and the sessions pointer, at most DIGEST_LIMIT bytes."""
     # The sections are joined with two newlines, so the first two budgets give up one byte each to keep the total at DIGEST_LIMIT.
     sections = (_fit(_ledger_section(worktree, dir_fd, branch, remote_url), LEDGER_BUDGET - 1),
-                _fit(_commit_lines(worktree), COMMITS_BUDGET - 1),
+                _fit(_commit_lines(worktree, base_result), COMMITS_BUDGET - 1),
                 _fit(_sessions_section(worktree, audited, problem), SESSIONS_BUDGET))
     text = "\n".join("\n".join(section) for section in sections)
     data = _utf8(text)
@@ -1702,9 +1716,8 @@ def _digest(worktree, dir_fd, branch, remote_url, audited, problem):
 
 
 def _check(argv):
-    if len(argv) != 2 or argv[0] != "--worktree":
-        raise Refusal(USAGE)
-    worktree = argv[1]
+    values = _flag_values(argv, ("--worktree", "--base"))
+    worktree, base_branch = values["--worktree"], values["--base"]
     branch = _git_output(worktree, "symbolic-ref", "--short", "-q", "HEAD")
     if not branch:
         raise Refusal(f"no branch to check: {worktree} is not a git worktree or HEAD is detached")
@@ -1716,8 +1729,9 @@ def _check(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        items, audited, problem = _run_items(worktree, dir_fd, branch, remote_url)
-        digest = _digest(worktree, dir_fd, branch, remote_url, audited, problem)
+        base_result = _commit_base(worktree, base_branch)
+        items, audited, problem = _run_items(worktree, dir_fd, branch, remote_url, base_result)
+        digest = _digest(worktree, dir_fd, branch, remote_url, audited, problem, base_result)
     finally:
         os.close(dir_fd)
     lines = []

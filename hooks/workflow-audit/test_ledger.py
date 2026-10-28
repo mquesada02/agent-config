@@ -376,7 +376,7 @@ class ShowTest(LedgerCase):
 
     def digest_ledger_line(self):
         """The `ledger unavailable` line that the digest of `audit check` prints, for the same worktree."""
-        text = self.audit("check", "--worktree", self.repo).stdout.decode()
+        text = self.audit("check", "--worktree", self.repo, "--base", "main").stdout.decode()
         return next(line for line in text.splitlines() if line.startswith("ledger unavailable:"))
 
     def unavailable(self, why_start):

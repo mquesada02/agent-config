@@ -423,7 +423,7 @@ class S2Test(TranscriptCase):
                 row_cwd = "/elsewhere" if elsewhere else self.wt
                 self.register_session("s1", [self.own_edit("e1", 10), bash_row("cd . && make test", "b1", 20, cwd=row_cwd), result_row("b1", 21)])
                 tip = self.branch()
-                result = self.audit("record", "--worktree", self.wt, "--llm", self.llm_path, cwd=self.wt)
+                result = self.audit("record", "--worktree", self.wt, "--base", "main", "--llm", self.llm_path, cwd=self.wt)
                 self.assertIn(result.returncode, (0, 1), result.stderr)
                 self.assertEqual(self.item(tip, "S2")["result"], expected)
 

@@ -101,51 +101,12 @@ class S8Test(AuditCase):
         self.assertFalse(passed)
         self.assertIn("Merge branch", evidence)
 
-    def test_head_on_the_default_branch_has_zero_commits_and_passes(self):
-        self.commit("old bad commit")
-        self.git("push", "origin", "main")
-        passed, evidence = self.s8()
-        self.assertTrue(passed, evidence)
-        self.assertIn("0 commits", evidence)
-
-    def test_origin_head_wins_over_origin_main(self):
-        # develop holds a bad commit. Against origin/main the range would hold it; against origin/HEAD (develop) it does not.
-        self.git("checkout", "-b", "develop")
-        self.commit("bad develop commit")
-        self.git("push", "-u", "origin", "develop")
-        self.git("remote", "set-head", "origin", "develop")
-        self.start_branch("work", "feat: fine")
-        passed, evidence = self.s8()
-        self.assertTrue(passed, evidence)
-        self.assertIn("1 commits", evidence)
-
-    def test_origin_main_is_used_when_there_is_no_origin_head(self):
-        self.git("checkout", "-b", "develop")
-        self.commit("bad develop commit")
-        self.git("push", "-u", "origin", "develop")
-        self.start_branch("work", "feat: fine")
-        passed, evidence = self.s8()
-        self.assertFalse(passed)
-        self.assertIn("bad develop commit", evidence)
-
-    def test_origin_master_is_the_last_resort(self):
-        self.git("branch", "-m", "main", "master")
-        self.git("push", "origin", "master")
-        self.git("symbolic-ref", "HEAD", "refs/heads/master", cwd=self.origin)
-        self.git("push", "origin", "--delete", "main")
-        self.git("fetch", "--prune", "origin")
-        self.assertEqual(self.git("branch", "-r", "--list", "origin/main"), "")
-        self.start_branch("work", "oops")
-        passed, evidence = self.s8()
-        self.assertFalse(passed)
-        self.assertIn("oops", evidence)
-
-    def test_no_default_branch_is_evidence_unavailable(self):
+    def test_no_base_branch_on_origin_is_evidence_unavailable(self):
         self.start_branch("work", "feat: fine")
         self.git("update-ref", "-d", "refs/remotes/origin/main")
         passed, evidence = self.s8()
         self.assertFalse(passed)
-        self.assertTrue(evidence.startswith("evidence unavailable"), evidence)
+        self.assertEqual(evidence, "evidence unavailable: no such ref origin/main")
 
     def test_no_merge_base_is_evidence_unavailable(self):
         self.git("checkout", "--orphan", "island")

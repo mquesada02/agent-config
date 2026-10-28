@@ -34,14 +34,23 @@ class BriefTextTest(unittest.TestCase):
             with self.subTest(phrase):
                 self.assertIn(phrase, self.text)
 
-    def test_names_the_three_inputs_including_the_done_report(self):
-        self.assertIn("The path of the session's draft done report", self.text)
-        self.assertIn("The worktree path", self.text)
-        self.assertIn("The path where you write the verdict file", self.text)
+    def test_names_the_four_inputs_including_the_done_report_and_the_pr_target(self):
+        inputs = self.full.split("## Inputs", 1)[1].split("## Steps", 1)[0]
+        self.assertIn("gives you three paths and a branch name", inputs)
+        self.assertIn("The path of the session's draft done report", inputs)
+        self.assertIn("The worktree path", inputs)
+        self.assertIn("The path where you write the verdict file", inputs)
+        self.assertIn("The PR target: the base branch of the PR, called `<PR target>` below.", inputs)
 
     def test_gives_the_literal_command_lines(self):
-        self.assertIn(f"python3 -I {AUDIT_PATH} check --worktree <worktree>", self.text)
-        self.assertIn(f"python3 -I {AUDIT_PATH} record --worktree <worktree> --llm <verdict file>", self.text)
+        self.assertIn(f"python3 -I {AUDIT_PATH} check --worktree <worktree> --base <PR target>", self.full)
+        self.assertIn(f"python3 -I {AUDIT_PATH} record --worktree <worktree> --base <PR target> --llm <verdict file>", self.full)
+
+    def test_the_pre_dispatch_check_passes_the_pr_target_and_its_record_does_not(self):
+        self.assertIn("The PR target: the base branch of the PR, called `<PR target>`.", self.variant)
+        self.assertIn(f"python3 -I {AUDIT_PATH} check --worktree <worktree> --base <PR target>`, then", self.variant)
+        record = next(line for line in self.variant.splitlines() if "record --pre-dispatch" in line and line.startswith("4."))
+        self.assertNotIn("--base", record)
 
     def test_both_variants_read_the_ledger_with_ledger_show_into_a_file_page_by_page(self):
         command = f"python3 -I {AUDIT_PATH} ledger show --worktree <worktree> > <verdict file>.ledger.txt"
@@ -155,7 +164,7 @@ class BriefTextTest(unittest.TestCase):
     def test_describes_the_pre_dispatch_variant(self):
         variant = self.text.split("## Pre-dispatch variant", 1)[1]
         for phrase in ("The map issue number", "The worktree path", "The path where you write the verdict file", "exactly the key `L1`",
-                       f"python3 -I {AUDIT_PATH} check --worktree <worktree>",
+                       f"python3 -I {AUDIT_PATH} check --worktree <worktree> --base <PR target>",
                        f"python3 -I {AUDIT_PATH} record --pre-dispatch --worktree <worktree> --map <issue> --llm <verdict file>",
                        "plan-review-3", "plan-review-4.1", "quotes the line it rests on", "there is no push check",
                        "you never fix anything", "never write S results", "never takes S results from you", "evidence unavailable"):

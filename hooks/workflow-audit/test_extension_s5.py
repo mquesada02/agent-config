@@ -347,7 +347,7 @@ class FixtureTest(LedgerChecksCase):
 
 class CommandTest(ExtensionCase):
     def check_lines(self):
-        result = self.audit("check", "--worktree", self.repo)
+        result = self.audit("check", "--worktree", self.repo, "--base", "main")
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.decode().splitlines()
 

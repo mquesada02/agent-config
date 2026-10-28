@@ -70,7 +70,9 @@ class SectionSixTest(RuleTextCase):
 
     def test_the_audit_step_names_the_brief_the_push_the_pr_and_the_fail_rule(self):
         self.assert_in(self.text, "Before you tell the user that the task is done", "write the draft done report to your scratchpad",
-                       "Push the branch", "~/.claude/hooks/workflow-audit/auditor-brief.md", "the path of the draft done report",
+                       "Push the branch", "~/.claude/hooks/workflow-audit/auditor-brief.md",
+                       "Give it the worktree path, the path of the draft done report, the path of the verdict file and the PR target "
+                       "(the base branch of the PR).",
                        "`audit check`", "`audit record`", "open the PR with `gh pr create`",
                        "On a fail, report each failed item with its evidence and ask the user", "Do not fix the failed items yourself",
                        "`! gh pr create`", "the coordinator audits it")
@@ -91,6 +93,7 @@ class SectionSevenTest(RuleTextCase):
     def test_the_main_session_runs_the_pre_dispatch_audit_before_the_first_dispatch(self):
         self.assert_in(self.text, "Before the first dispatch, the main section 7 session runs the pre-dispatch audit",
                        "`audit record --pre-dispatch --worktree <path> --map <issue> --llm <file>`",
+                       "It gives it the PR target (the base branch of the PR) with the worktree path and the map issue.",
                        "This replaces the manual step 4.1 evidence check", "A hook blocks `orchestration worker-start` until this audit passes",
                        "a plain `worker-start --retry-of` for a worker handover is exempt",
                        "A context-handoff successor of the main session runs the audit again before its next dispatch")
@@ -203,7 +206,7 @@ class AuditReadsTheDeclarationTest(AuditCase):
         self.git("add", ".claude/CLAUDE.md")
         self.git("commit", "-q", "-m", "docs: declare the test command")
         self.git("push", "-q", "origin", "feature")
-        checked = self.audit("check", "--worktree", self.repo)
+        checked = self.audit("check", "--worktree", self.repo, "--base", "main")
         self.assertEqual(checked.returncode, 0, checked.stderr)
         lines = checked.stdout.decode().splitlines()
         start = next(index for index, line in enumerate(lines) if line.startswith("S2 "))
