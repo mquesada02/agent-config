@@ -376,6 +376,12 @@ class VariableRuleTest(DispatchGateCase):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
+    def test_a_variable_after_an_orca_name_is_an_accepted_false_positive(self):
+        self.pd_record()
+        for command in ("orca $CMD", "orca-ide $SUB"):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED_DISPATCH)
+
     def test_the_pr_form_gets_its_own_reason_in_a_dispatch_command(self):
         self.pd_record()
         self.assert_denied(self.gate("$TERRAFORM create"), "unchecked command form: run gh pr create as a plain command")
