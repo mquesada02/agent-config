@@ -70,6 +70,15 @@ class BriefTextTest(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, reading)
 
+    def test_the_full_variant_says_round_reviewer_ids_are_checked_at_write_time_and_xc_checks_them_later(self):
+        reading = self.full.split("## Reading the ledger", 1)[1].split("## Reading the sessions", 1)[0]
+        for phrase in ("checked when the event is written", "not a subagent of the writing session", "XC still checks them later",
+                       "Judge no new item for this write-time check"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, reading)
+        self.assertGreater(reading.index("checked when the event is written"), reading.index("`extension` lines of `ledger show`"))
+        self.assertNotIn("checked when the event is written", self.variant)
+
     def test_the_digest_no_longer_holds_the_ledger_events_in_the_brief(self):
         self.assertNotIn("It holds the ledger events", self.full)
         self.assertNotIn("The ledger lines in the digest", self.full)

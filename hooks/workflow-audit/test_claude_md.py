@@ -54,6 +54,11 @@ class SectionSixTest(RuleTextCase):
         self.assert_in(self.text, "~/.claude/hooks/workflow-audit/audit ledger <event> --worktree <path>", "`audit ledger`",
                        "- `round`:", "- `finding`:", "- `verdict`:", "- `status`:", "- `extension`:", "- `phase-commit`:")
 
+    def test_the_round_bullet_says_reviewer_ids_are_subagents_of_the_loop_session_and_a_round_is_written_after_its_reviewers_ran(self):
+        bullet = re.search(r"^- `round`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "reviewer agent ids", "is a subagent of the loop session", "`audit ledger` refuses another id",
+                       "(exit 2, nothing written)", "write the `round` event only after its reviewers ran")
+
     def test_the_extension_bullet_follows_the_phase_commit_bullet(self):
         self.assertGreater(self.text.index("- `extension`:"), self.text.index("- `phase-commit`:"))
 

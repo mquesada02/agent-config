@@ -94,7 +94,7 @@ Roles. The agent that reports a finding never fixes it, so a second agent checks
   4. Run the affected tests.
 
 Ledger: the loop session keeps one findings ledger per task. It writes the ledger only through `python3 -I ~/.claude/hooks/workflow-audit/audit ledger <event> --worktree <path> ...` (the `audit ledger` command), which rejects a malformed event at once. The event kinds are:
-- `round`: each review round, with its loop, phase, round number and reviewer agent ids.
+- `round`: each review round, with its loop, phase, round number and reviewer agent ids. Each reviewer id is a subagent of the loop session; `audit ledger` refuses another id (exit 2, nothing written), so write the `round` event only after its reviewers ran.
 - `finding`: each finding, with its id, `file:line`, type and a one-line reason.
 - `verdict`: the result of a verifier for a Blocking finding, with the verifier agent id.
 - `status`: a finding becomes fixed, deferred or rejected. A finding is open until a `status` event closes it.

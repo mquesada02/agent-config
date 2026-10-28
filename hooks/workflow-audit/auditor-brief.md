@@ -45,6 +45,7 @@ Evidence for every item comes from the digest, the `ledger show` output, the `se
 - A `ledger unavailable` output makes each item that needs the ledger `fail` with "evidence unavailable".
 - If the exit status is other than 0 or 2, or the file does not start with a line that is exactly `ledger` or `ledger unavailable: <why>` (for example an empty file after a refusal), each item that needs the ledger is `fail` with an evidence text that starts with "evidence unavailable" and names the exit status and the stderr text. The stderr text is in the tool output of the command, because the file holds stdout only.
 - `extension` lines of `ledger show` are data that S5 verifies, as it verifies a round over its cap. Judge no new item for them. Never write S results. The session that writes the event (the coordinator, for a worker's ledger) types the write command with the absolute worktree path (never `~` or `$HOME`), because discovery matches the path text as typed.
+- `round` reviewer ids are checked when the event is written: `audit ledger round` refuses an id that is not a subagent of the writing session. XC still checks them later; XC also checks the Sonnet model and the start time. Judge no new item for this write-time check.
 
 ## Reading the sessions
 
