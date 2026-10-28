@@ -85,6 +85,7 @@ ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 COMMAND_PREFIX_WORDS = frozenset(("!", "{", "if", "elif", "while", "until", "then", "do", "else", "time", "env", "command", "exec"))
 UNRESOLVABLE_PATH = re.compile(r"[$`*?\[]")
 RECORD_NAME = re.compile(r"[0-9a-f]{40}\.json")
+REMOTE_DEFAULT = re.compile(r"ref: refs/heads/(\S+)\tHEAD")  # the first line of `git ls-remote --symref origin HEAD`
 
 # Claude Code versions the transcript reader is tested against; each needs a fixtures/session-<version>.jsonl.
 TESTED_VERSIONS = ("2.1.301",)
@@ -2263,11 +2264,17 @@ def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
         return f"failed record: the audit of {branch} at {tip[:7]} failed. Report the failed items to the user."
     if not isinstance(record.get("base"), str) or not record["base"]:
         return f"old record: the record of {tip[:7]} has no base. Run the audit again with --base."
-    if base is None:  # gh uses the default branch of the repository
-        default = _git_output(cwd, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
-        base = default.removeprefix("origin/") if default else None
+    if base is None:  # without --base, gh uses the branch.<head>.gh-merge-base config, else the default branch of the repository
+        configured = _git_output(cwd, "config", "--get", f"branch.{branch}.gh-merge-base")
+        if configured is not None:
+            base = configured
+        else:
+            # The remote answers, not the local origin/HEAD: that one is set once at clone time and can be stale.
+            heads = _git_output(cwd, "ls-remote", "--symref", "origin", "HEAD")
+            match = REMOTE_DEFAULT.match(heads or "")
+            base = match.group(1) if match else None
         if not base:
-            return "no base to check: the default branch cannot be resolved (origin/HEAD is not set). Pass --base."
+            return "no base to check: the base that gh uses cannot be resolved (empty gh-merge-base, or no default branch on origin). Pass --base."
     if record["base"] != base:
         return f"base mismatch: the audit of {tip[:7]} is for the base {record['base']}, not {base}. Run the audit again with --base {base}."
     return None

@@ -180,7 +180,6 @@ class AuditCase(unittest.TestCase):
         self.git("add", "CLAUDE.md", cwd=self.main)
         self.git("commit", "-m", "docs: declare no tests", cwd=self.main)
         self.git("push", "-u", "origin", "main", cwd=self.main)
-        self.git("remote", "set-head", "origin", "main", cwd=self.main)  # origin/HEAD: the default branch that `gh pr create` uses
         self.git("checkout", "--detach", cwd=self.main)
         self.git("worktree", "add", self.repo, "main", cwd=self.main)
         self.llm_path = os.path.join(self.root, "llm.json")
