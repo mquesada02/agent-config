@@ -30,8 +30,12 @@ class BaseCase(AuditCase):
         self.start_branch("work", "feat: on work")
         return self.git("merge-base", "origin/develop", "HEAD")
 
-    def record_with(self, *flags):
-        return self.audit("record", "--worktree", self.repo, *flags, "--llm", self.llm_path)
+    @property
+    def shim_log(self):
+        return os.path.join(self.root, "shim.log")
+
+    def record_with(self, *flags, env=None):
+        return self.audit("record", "--worktree", self.repo, *flags, "--llm", self.llm_path, env=env)
 
     def s8(self, base):
         """(passed, evidence) of the S8 item that `record --base <base>` writes for the current tip."""
@@ -55,7 +59,6 @@ class BaseCase(AuditCase):
         with open(path, "w") as handle:
             handle.write(GIT_SHIM)
         os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
-        self.shim_log = os.path.join(self.root, "shim.log")
         env = {"PATH": folder + os.pathsep + os.environ["PATH"], "REAL_GIT": shutil.which("git"), "GIT_SHIM_LOG": self.shim_log}
         if fail:
             env["GIT_SHIM_FAIL"] = "1"
@@ -193,7 +196,7 @@ class OnePerAuditTest(BaseCase):
         self.assertIn("S8 fail", lines)
         self.assertIn("  evidence unavailable: git failed: git merge-base exited with status 5: fatal: simulated failure", lines)
         self.assertIn("commits unavailable: evidence unavailable: git failed", digest)
-        result = self.audit("record", "--worktree", self.repo, "--base", "main", "--llm", self.llm_path, env=env)
+        result = self.record_with("--base", "main", env=env)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(self.item(self.git("rev-parse", "HEAD"), "S8")["result"], "fail")
 
@@ -205,7 +208,7 @@ class OnePerAuditTest(BaseCase):
         self.assertIn(f"1 commits since {base[:7]}", " ".join(lines))
         self.assertIn(f"commits since {base[:7]}", digest)
         os.remove(self.shim_log)
-        result = self.audit("record", "--worktree", self.repo, "--base", "develop", "--llm", self.llm_path, env=env)
+        result = self.record_with("--base", "develop", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.merge_base_calls()), 1)
 
