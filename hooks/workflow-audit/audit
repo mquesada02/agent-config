@@ -2019,10 +2019,10 @@ def _next_separator(items, index):
 def _reads_as_data(context, after, segment):
     """True when the reader of a quoted heredoc is a data command and the checks here find nothing that can run its body: `context`
     is the parsed text up to the operator, `after` the rest of the operator line, `segment` the words of the command that holds it."""
-    if re.search(r"[(`]", context) or re.search(r"[|(`]|<<", after):
-        return False  # a substitution, a subshell, a pipe or a second heredoc may run the body
+    if re.search(r"[(`]|\bfunction\b", context) or re.search(r"[|(`]|<<", after):
+        return False  # a substitution, a subshell, a function definition, a pipe or a second heredoc may run the body
     command = _command_words(segment)
-    return bool(command) and os.path.basename(command[0]) in DATA_COMMANDS
+    return bool(command) and command[0] in DATA_COMMANDS  # the bare name: a path such as ./cat is another program
 
 
 def strip_data_heredocs(command):

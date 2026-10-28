@@ -486,6 +486,13 @@ class S9HeredocTest(S9Case):
                              "ssh host <<'EOF'\nrm -rf x\nEOF", "eval <<'EOF'\nrm -rf x\nEOF", "xargs <<'EOF'\nrm -rf x\nEOF",
                              "bash <<'EOF'\ndon't\nrm x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF"])
 
+    def test_a_path_that_ends_in_a_data_command_name_is_not_a_data_command(self):
+        self.assert_flagged(["./cat <<'EOF'\nrm -rf x\nEOF", "/tmp/x/tee f <<'EOF'\nrm -rf x\nEOF", "bin/cat <<'EOF'\nrm -rf x\nEOF"])
+
+    def test_a_function_that_replaces_a_data_command_keeps_the_body_as_command_text(self):
+        self.assert_flagged(["function cat { bash; }; cat <<'EOF'\nrm -rf x\nEOF", "function tee { sh; }; tee f <<'EOF'\nrm -rf x\nEOF",
+                             "function cat () { bash; }\ncat <<'EOF'\nrm -rf x\nEOF"])
+
     def test_a_body_that_a_pipe_or_a_substitution_can_run_is_still_command_text(self):
         self.assert_flagged(["cat <<'EOF' | bash\nrm -rf x\nEOF", "tee f <<'EOF' | sh\ndon't\nrm x\nEOF", 'bash -c "$(cat <<\'EOF\'\nrm -rf x\nEOF\n)"',
                              "cat <<'EOF' > >(bash)\nrm -rf x\nEOF", "tee >(sh) <<'EOF'\nrm -rf x\nEOF", "sudo cat <<'EOF'\nrm -rf x\nEOF", "x=`cat <<'EOF'\nrm -rf x\nEOF\n`; eval $x"])
