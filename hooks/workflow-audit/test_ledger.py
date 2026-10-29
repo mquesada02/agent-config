@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import pathlib
 import shutil
 import stat
 import subprocess
@@ -41,6 +42,9 @@ class LedgerCase(AuditCase):
 
     def written(self):
         return [json.loads(line) for line in self.raw().splitlines()]
+
+    def compact(self, events):
+        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
 
     def ok(self, kind, *flags, **kwargs):
         result = self.ledger(kind, *flags, **kwargs)
@@ -376,9 +380,6 @@ class ShowTest(LedgerCase):
     def show(self, *extra, worktree=None, **kwargs):
         args = ("--worktree", worktree or self.repo) if worktree != "" else ()
         return self.audit("ledger", "show", *args, *extra, **kwargs)
-
-    def compact(self, events):
-        return [json.dumps(item, ensure_ascii=False, separators=(",", ":")) for item in events]
 
     def digest_ledger_line(self):
         """The `ledger unavailable` line that the digest of `audit check` prints, for the same worktree."""
@@ -900,6 +901,117 @@ class LinkReplayTest(LinkCase):
             self.assertIn(word, text)
         usage = self.audit("nope").stderr.decode()
         self.assertIn("audit ledger link --worktree <path> --from-branch <branch> --ticket <id>", usage)
+
+
+class LinkedShowTest(LedgerCase):
+    """`audit ledger show` after the own events: the linked block, read live from the source ledger."""
+
+    HEADER = "linked from src ticket T-1"
+    UNAVAILABLE = "linked ledger unavailable: "
+
+    def own(self, *extra):
+        self.write_ledger("feature", [round_event(), link_event(), *extra])
+        return [round_event(), link_event(), *extra]
+
+    def show(self):
+        return self.audit("ledger", "show", "--worktree", self.repo)
+
+    def assert_block(self, block):
+        events = self.own()
+        result = self.show()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout.decode().splitlines(), ["ledger"] + self.compact(events) + block)
+
+    def test_the_block_holds_only_the_plan_review_events_and_the_status_events_of_those_findings_in_source_order(self):
+        plan = [round_event(loop=PLAN), finding_event("P1", loop=PLAN, kind="Blocking"), finding_event("P2", loop=PLAN, kind="Minor")]
+        source = [round_event(), plan[0], finding_event("C1"), plan[1], verdict_event("C1"), status_event("C1"), plan[2],
+                  status_event("P1"), round_event(loop="plan-review-3"), finding_event("Q1", loop="plan-review-3", kind="Minor"),
+                  status_event("Q1", status="deferred"), round_event(loop=PLAN, phase="final"), status_event("P2", status="deferred")]
+        self.write_ledger("src", source)
+        self.assert_block([self.HEADER] + self.compact([plan[0], plan[1], plan[2], status_event("P1"), round_event(loop=PLAN, phase="final"),
+                                                         status_event("P2", status="deferred")]))
+
+    def test_the_other_events_of_the_source_do_not_appear(self):
+        self.write_ledger("src", [round_event(loop=PLAN), round_event(), finding_event("C1"), verdict_event("C1"), status_event("C1"),
+                                  {"kind": "phase-commit", "time": EARLY, "sha": SHA}])
+        shown = self.show().stdout.decode()
+        for text in ('"C1"', '"verdict"', '"phase-commit"', SHA):
+            with self.subTest(text):
+                self.assertNotIn(text, shown)
+
+    def test_a_missing_source_ledger(self):
+        self.assert_block([self.UNAVAILABLE + "no ledger for src"])
+
+    def test_an_invalid_source_ledger_names_the_replay_problem(self):
+        self.write_ledger("src", [round_event(loop=PLAN), "{not json"])
+        self.assert_block([self.UNAVAILABLE + "ledger of src is invalid (line 2: not JSON)"])
+
+    def test_a_source_ledger_that_is_not_utf8_or_not_readable_is_invalid(self):
+        os.makedirs(self.runtime, exist_ok=True)
+        os.chmod(self.runtime, 0o700)
+        with open(self.ledger_file("src"), "wb") as handle:
+            handle.write(b"\xff\xfe\n")
+        self.own()
+        prefix = self.UNAVAILABLE + "ledger of src is invalid ("
+        self.assertTrue(self.show().stdout.decode().splitlines()[-1].startswith(prefix))
+        os.unlink(self.ledger_file("src"))
+        os.mkdir(self.ledger_file("src"))
+        self.assertTrue(self.show().stdout.decode().splitlines()[-1].startswith(prefix))
+
+    def test_a_source_without_a_plan_review_round_even_an_empty_one(self):
+        for name, events in {"other loop": [round_event()], "empty file": [],
+                             "only a finding of another loop": [round_event(loop="plan-review-3"), finding_event("Q1", loop="plan-review-3")]}.items():
+            with self.subTest(name):
+                self.write_ledger("src", events)
+                self.assert_block([self.UNAVAILABLE + "no plan-review-5.3 round in src"])
+
+    def test_a_source_that_holds_a_link(self):
+        self.write_ledger("src", [round_event(loop=PLAN), link_event(source="older")])
+        self.assert_block([self.UNAVAILABLE + "src holds a link"])
+
+    def test_two_causes_at_once_print_the_first(self):
+        self.write_ledger("src", [link_event(source="older")])  # a link and no plan-review-5.3 round
+        self.assert_block([self.UNAVAILABLE + "no plan-review-5.3 round in src"])
+
+    def test_the_source_is_read_live_at_each_call(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        self.assertEqual(self.show().stdout.decode().splitlines()[-2:], [self.HEADER, self.compact([round_event(loop=PLAN)])[0]])
+        os.unlink(self.ledger_file("src"))
+        self.assertEqual(self.show().stdout.decode().splitlines()[-1], self.UNAVAILABLE + "no ledger for src")
+
+    def test_the_link_event_is_an_own_event_and_the_block_lines_are_not(self):
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        events = self.own()
+        lines = self.show().stdout.decode().splitlines()
+        self.assertEqual(lines[1:1 + len(events)], self.compact(events))
+        self.assertEqual(lines[1 + len(events)], self.HEADER)
+
+    def test_an_unavailable_own_ledger_keeps_exit_status_2_and_no_block(self):
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        self.write_ledger("feature", [round_event(), link_event(), link_event()])
+        result = self.show()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(len(result.stdout.decode().splitlines()), 1)
+        self.assertTrue(result.stdout.decode().startswith("ledger unavailable: invalid ledger: line 3:"), result.stdout)
+
+    def test_a_branch_with_no_link_prints_the_old_output(self):
+        events = [round_event(), finding_event()]
+        self.write_ledger("feature", events)
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        self.assertEqual(self.show().stdout.decode().splitlines(), ["ledger"] + self.compact(events))
+
+    def test_show_writes_nothing_and_creates_no_lock_file_with_a_link(self):
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        self.own()
+        names = sorted(os.listdir(self.runtime))
+        before = {name: pathlib.Path(self.runtime, name).read_bytes() for name in names}
+        self.assertEqual(self.show().returncode, 0)
+        self.assertEqual(sorted(os.listdir(self.runtime)), names)
+        self.assertEqual({name: pathlib.Path(self.runtime, name).read_bytes() for name in names}, before)
+        self.assertEqual([name for name in names if name.endswith(".lock")], [])
 
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@ import pathlib
 import re
 import unittest
 
-from audit_support import VERSION, AuditCase, bash_row, call_row, edit_row, finding_event, link_event, round_event, stamp, subagent_rows
+from audit_support import (EARLY, VERSION, AuditCase, bash_row, call_row, edit_row, finding_event, link_event, round_event, stamp,
+                           status_event, subagent_rows, verdict_event)
 
+PLAN = "plan-review-5.3"
 DIGEST_MARKER = "--- digest ---"
 S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
 OLD_SESSIONS_BUDGET = 30720  # the digest budget before the sessions moved to `audit sessions show`
@@ -280,6 +282,133 @@ class DigestTest(SessionCase):
         lines, _, digest = self.parts(self.check())
         self.assertIn("S8 fail", lines)
         self.assertIn("commits unavailable: evidence unavailable: no such ref origin/main", digest)
+
+
+class LinkedDigestTest(SessionCase):
+    """The `linked:` line of the digest; the linked events are read with `audit ledger show`."""
+
+    POINTER = "ledger: 2 events; read them with: python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree "
+
+    def setUp(self):
+        super().setUp()
+        self.default_ledger = False
+        self.session([])
+        self.start_branch("feature", "feat: a")
+
+    def own(self, *extra):
+        self.write_ledger("feature", [round_event(), link_event(), *extra])
+
+    def digest(self):
+        return self.parts(self.check())[2].splitlines()
+
+    def test_a_link_adds_one_linked_line_with_the_count_after_the_pointer_line(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN), finding_event("P1", loop=PLAN), finding_event("P2", loop=PLAN, kind="Minor"),
+                                  status_event("P1"), round_event(), finding_event("C1"), verdict_event("C1")])
+        lines = self.digest()
+        self.assertEqual(lines[0], self.POINTER + self.repo)
+        self.assertEqual(lines[1], "linked: 4 plan-review-5.3 events from src ticket T-1; read them with the command of the pointer line above")
+        self.assertTrue(lines[2].startswith("commits since "), lines[2])
+
+    def test_the_digest_holds_no_linked_event(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN), {**finding_event("P1", loop=PLAN), "reason": "Invented linked reason"}])
+        digest = "\n".join(self.digest())
+        for text in ("Invented linked reason", '"kind"', '"loop"', "linked from"):
+            with self.subTest(text):
+                self.assertNotIn(text, digest)
+
+    def test_an_unavailable_source_gives_the_unavailable_line_in_place_of_the_linked_line(self):
+        self.own()
+        cases = {"no ledger for src": None, "ledger of src is invalid (line 1: not JSON)": ["{not json"],
+                 "no plan-review-5.3 round in src": [round_event()], "src holds a link": [round_event(loop=PLAN), link_event(source="o")]}
+        for why, events in cases.items():
+            with self.subTest(why):
+                if events is not None:
+                    self.write_ledger("src", events)
+                lines = self.digest()
+                self.assertEqual(lines[0], self.POINTER + self.repo)
+                self.assertEqual(lines[1], "linked ledger unavailable: " + why)
+
+    def test_a_branch_with_no_link_has_the_old_digest(self):
+        self.write_ledger("feature", [round_event(), finding_event()])
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        lines = self.digest()
+        self.assertTrue(lines[0].startswith("ledger: 2 events;"), lines[0])
+        self.assertTrue(lines[1].startswith("commits since "), lines[1])
+        self.assertNotIn("linked", "\n".join(lines))
+
+    def test_a_bad_link_line_makes_the_own_ledger_unavailable_and_check_exits_0(self):
+        for name, line in {"wrong keys": {"kind": "link", "time": EARLY, "source": "src"}, "bad value": link_event(ticket=""),
+                           "second link": link_event(source="o")}.items():
+            with self.subTest(name):
+                self.write_ledger("feature", [round_event(), link_event(), line] if name == "second link" else [round_event(), line])
+                self.write_ledger("src", [round_event(loop=PLAN)])
+                lines, _, digest = self.parts(self.check())
+                self.assertIn("S3 fail", lines)
+                self.assertEqual(lines[-1], "result fail")
+                self.assertTrue(digest.splitlines()[0].startswith("ledger unavailable: invalid ledger: line "), digest)
+                self.assertNotIn("linked", digest)
+
+    def test_the_count_line_counts_each_round_finding_and_status_of_a_big_block_and_the_digest_stays_within_the_limit(self):
+        self.own()
+        source = [round_event(loop=PLAN)] + [{**finding_event(f"P{n}", loop=PLAN), "reason": "r" * 400} for n in range(400)]
+        self.write_ledger("src", source)
+        _, size, digest = self.parts(self.check())
+        self.assertEqual(digest.splitlines()[1], "linked: 401 plan-review-5.3 events from src ticket T-1; read them with the command of the pointer line above")
+        self.assertLessEqual(len(digest.encode("utf-8")), 28672)
+        self.assertEqual(size, f"digest {len(digest.encode('utf-8'))} bytes")
+        self.assertNotIn("more lines omitted", digest)
+
+    def test_the_longest_source_and_ticket_keep_both_ledger_lines_whole(self):
+        source, ticket = "s" * 255, "t" * 64
+        self.write_ledger("feature", [round_event(), link_event(source=source, ticket=ticket)])
+        self.write_ledger(source, [round_event(loop=PLAN)])
+        lines = self.digest()
+        self.assertEqual(lines[1], f"linked: 1 plan-review-5.3 events from {source} ticket {ticket}; read them with the command of the pointer line above")
+        self.assertNotIn("more lines omitted", "\n".join(lines))
+
+    def test_the_own_count_and_the_sessions_pointer_line_do_not_depend_on_the_link(self):
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        self.write_ledger("feature", [round_event(), finding_event("I2", kind="Minor")])
+        without = self.digest()
+        self.own()
+        with_link = self.digest()
+        self.assertEqual(with_link[0], without[0])  # a link event replaces one finding: the count is 2 both times
+        self.assertEqual(with_link[-1], without[-1])
+        self.assertTrue(with_link[-1].startswith("sessions: 1 audited;"), with_link[-1])
+        self.assertNotIn("  bash ", "\n".join(with_link))
+        self.assertEqual([line for line in with_link if line.startswith("sessions")], [with_link[-1]])
+
+    def test_check_leaves_all_files_unchanged_and_creates_no_lock_file(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        names = self.runtime_files()
+        contents = {name: pathlib.Path(self.runtime, name).read_bytes() for name in names}
+        self.check()
+        self.assertEqual(self.runtime_files(), names)
+        self.assertEqual({name: pathlib.Path(self.runtime, name).read_bytes() for name in names}, contents)
+        self.assertEqual([name for name in names if name.endswith(".lock")], [])
+
+    def test_open_blocking_findings_and_a_cap_in_the_linked_block_change_no_own_check(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        clean = self.parts(self.check())[0]
+        events = [round_event(loop=PLAN), round_event(2, loop=PLAN), finding_event("P1", loop=PLAN), round_event(loop=PLAN, phase="final"),
+                  round_event(), round_event(1, phase="final"), finding_event("C1"), finding_event("C2", loop=PLAN, n=2)]
+        self.write_ledger("src", events)
+        self.assertEqual(self.parts(self.check())[0], clean)
+
+    def test_record_gives_the_same_items_with_and_without_a_blocking_linked_finding(self):
+        self.own()
+        self.write_ledger("src", [round_event(loop=PLAN)])
+        tip = self.git("rev-parse", "HEAD")
+        first = self.record()
+        before = self.read_record(tip)["items"]
+        self.write_ledger("src", [round_event(loop=PLAN), finding_event("P1", loop=PLAN)])
+        second = self.record()
+        self.assertEqual((second.returncode, second.stdout), (first.returncode, first.stdout))
+        self.assertEqual(self.read_record(tip)["items"], before)
 
 
 class SessionsShowTest(SessionCase):
