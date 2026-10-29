@@ -136,6 +136,50 @@ class BriefTextTest(unittest.TestCase):
         ledger = self.full.split("## Reading the ledger", 1)[1].split("##", 1)[0]
         self.assertNotIn("sessions", ledger)
 
+    def ledger_section(self):
+        return self.full.split("## Reading the ledger", 1)[1].split("## Reading the sessions", 1)[0]
+
+    def l6_item(self):
+        return self.full.split("- **L6.**", 1)[1].split("## Reading the ledger", 1)[0]
+
+    def test_the_ledger_section_limits_the_json_line_rule_to_the_own_events(self):
+        section = self.ledger_section()
+        self.assertIn("one compact JSON line per own event", section)
+        self.assertNotIn("one compact JSON line per event", section)
+        self.assertIn("The own events are the JSON lines after the line `ledger` and before the first line that starts with `linked `", section)
+
+    def test_the_ledger_section_describes_the_two_header_lines_of_the_linked_block(self):
+        section = self.ledger_section()
+        for phrase in ("`linked from <source> ticket <ticket>`", "`linked ledger unavailable: <why>`",
+                       "its two header lines are not JSON", "the event lines under `linked from` are JSON",
+                       "The lines of the linked block are not own events"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+
+    def test_the_ledger_section_says_l1_to_l5_ignore_the_linked_block_and_only_l6_reads_it(self):
+        section = self.ledger_section()
+        self.assertIn("L1 to L5 read only the own events and ignore the linked block", section)
+        self.assertIn("Only L6 reads the linked block", section)
+
+    def test_l6_gives_the_link_rules(self):
+        item = self.l6_item()
+        for phrase in ("in the own events or in the linked block", "A `linked from` line counts as a sign of a ticket",
+                       "the link's ticket key equals the ticket that the draft done report names",
+                       "whether or not the own events also hold plan-review rounds",
+                       "L6 fails with \"evidence unavailable\" when the block is `linked ledger unavailable`",
+                       "L6 fails when the keys differ", "no plan-review rounds in either place"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, item)
+
+    def test_the_linked_block_text_is_not_in_the_steps_or_the_sessions_section(self):
+        steps = self.full.split("## Steps", 1)[1].split("## The six items", 1)[0]
+        sessions = self.full.split("## Reading the sessions", 1)[1].split("## The verdict file", 1)[0]
+        self.assertNotIn("linked", steps)
+        self.assertNotIn("linked", sessions)
+
+    def test_the_pre_dispatch_variant_does_not_name_the_linked_block(self):
+        self.assertNotIn("linked", self.variant)
+
     def test_the_sources_of_evidence_sentence_names_the_sessions_show_output(self):
         sources = self.full.split("## The six items", 1)[1].split("- **L1.**", 1)[0]
         self.assertIn("`sessions show` output", sources)
