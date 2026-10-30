@@ -110,10 +110,13 @@ class CleanupCase(unittest.TestCase):
     def local_has(self, branch):
         return bool(self.git_out(self.main, "branch", "--list", branch))
 
-    def stub(self, key, stdout="", rc=0, stderr=""):
-        self.config[key] = {"stdout": stdout, "rc": rc, "stderr": stderr}
+    def write_config(self):
         with open(os.path.join(self.stub_dir, "config.json"), "w") as f:
             json.dump(self.config, f)
+
+    def stub(self, key, stdout="", rc=0, stderr=""):
+        self.config[key] = {"stdout": stdout, "rc": rc, "stderr": stderr}
+        self.write_config()
 
     def stub_show(self, parent=None, caller=None, ok=True, rc=0):
         worktree = {"id": self.wt_id, "parentWorktreeId": parent}
@@ -127,8 +130,7 @@ class CleanupCase(unittest.TestCase):
     def stub_sequence(self, key, answers):
         """Answer the calls of one key in order, one {"stdout", "rc"} dict each; the last answer repeats."""
         self.config[key] = [{"stdout": "", "rc": 0, "stderr": "", **answer} for answer in answers]
-        with open(os.path.join(self.stub_dir, "config.json"), "w") as f:
-            json.dump(self.config, f)
+        self.write_config()
 
     def stub_run_current(self, run_id=RUN_ID, ok=True, rc=0, coordinator="term_stale"):
         run = {"id": run_id, "coordinator_handle": coordinator} if run_id else None

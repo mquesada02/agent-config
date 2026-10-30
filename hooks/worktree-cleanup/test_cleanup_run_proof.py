@@ -51,6 +51,11 @@ class StubTest(RunProofCase):
         self.assert_run_proof_passes(self.run_cleanup(self.wt))
         self.assertEqual(len(self.worker_calls()), 2)
 
+    def test_the_two_argument_key_answers_a_call_with_more_arguments(self):
+        self.stub("orca orchestration worker-list", json.dumps(self.worker_page([self.own_row()])))
+        self.assert_run_proof_passes(self.run_cleanup(self.wt))
+        self.assertIn(f"--run {RUN_ID} --limit 100 --json", self.worker_calls()[0])
+
 
 class RunProofTest(RunProofCase):
     def test_the_run_proof_alone_lets_a_merged_worktree_through_with_a_stale_coordinator(self):
@@ -85,6 +90,11 @@ class RunProofTest(RunProofCase):
     def test_a_worker_terminal_gets_no_proof(self):
         self.stub_worker_pages(self.worker_page([self.own_row(handle="term_worker"),
                                                  self.worker_row(worktree="other-id", handle=HANDLE)]))
+        self.assert_no_proof(self.run_cleanup(self.wt))
+
+    def test_a_worker_terminal_on_page_two_gets_no_proof(self):
+        self.stub_worker_pages(self.worker_page([self.own_row()], next_cursor="cur1"),
+                               self.worker_page([self.worker_row(worktree="other-id", handle=HANDLE)]))
         self.assert_no_proof(self.run_cleanup(self.wt))
 
     def test_a_row_with_neither_worktree_field_matches_nothing(self):

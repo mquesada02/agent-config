@@ -154,7 +154,7 @@ def row_worktree(row):
 
 
 def run_proof(worktree_id, handle):
-    """Ownership proof 4: the target is the worktree of a Dispatch of the Run bound to this terminal, and this terminal is no worker of the Run."""
+    """The Run proof: the target is the worktree of a Dispatch of the Run bound to this terminal, and this terminal is no worker of the Run."""
     if not handle:
         return False
     current = read_json(run("orca", "orchestration", "run-current", "--json"))
