@@ -580,16 +580,16 @@ class S1Test(TranscriptCase):
         self.assertEqual(item["result"], "pass", item["evidence"])
 
     def test_a_memory_note_edit_passes_with_the_default_config_folder(self):
-        os.symlink(self.main, os.path.join(self.home, ".claude"))
-        del self.env["CLAUDE_CONFIG_DIR"]
-        item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
-        self.assertEqual(item["result"], "pass", item["evidence"])
-
-    def test_a_memory_note_edit_passes_with_an_empty_config_folder_variable(self):
-        os.symlink(self.main, os.path.join(self.home, ".claude"))
-        self.env["CLAUDE_CONFIG_DIR"] = ""
-        item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
-        self.assertEqual(item["result"], "pass", item["evidence"])
+        for value in ("unset", ""):
+            with self.subTest(value=value):
+                self.setUp()
+                os.symlink(self.main, os.path.join(self.home, ".claude"))
+                if value == "unset":
+                    del self.env["CLAUDE_CONFIG_DIR"]
+                else:
+                    self.env["CLAUDE_CONFIG_DIR"] = value
+                item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
+                self.assertEqual(item["result"], "pass", item["evidence"])
 
     def test_a_memory_path_under_another_config_folder_fails(self):
         self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.root, "elsewhere")
