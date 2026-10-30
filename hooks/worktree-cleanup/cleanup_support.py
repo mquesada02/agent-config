@@ -9,9 +9,11 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLEANUP = os.path.join(HERE, "cleanup")
 HANDLE = "term_test"
+RUN_ID = "run_test"
 
 # One stub for `orca` and `gh`. It logs "<name> <args>" to calls.log and answers from config.json,
-# keyed by "<name> <first two args>". Calls of `orca worktree rm` can remove the worktree like Orca does.
+# keyed by "<name> <all args>", else by "<name> <first two args>". A list value is a sequence of answers,
+# one per call of that key (the last repeats). Calls of `orca worktree rm` can remove the worktree like Orca does.
 STUB = """#!/usr/bin/env python3
 import json, os, subprocess, sys
 d = os.environ["STUB_DIR"]
@@ -21,7 +23,17 @@ with open(os.path.join(d, "calls.log"), "a") as f:
     f.write(name + " " + " ".join(args) + "\\n")
 cfg = json.load(open(os.path.join(d, "config.json")))
 key = " ".join([name] + args[:2])
-entry = cfg.get(key, {"rc": 1, "stderr": "unstubbed call"})
+full = " ".join([name] + args)
+config_key = full if full in cfg else key
+entry = cfg.get(config_key, {"rc": 1, "stderr": "unstubbed call"})
+if isinstance(entry, list):
+    counts_path = os.path.join(d, "counts.json")
+    counts = json.load(open(counts_path)) if os.path.exists(counts_path) else {}
+    n = counts.get(config_key, 0)
+    counts[config_key] = n + 1
+    with open(counts_path, "w") as f:
+        json.dump(counts, f)
+    entry = entry[min(n, len(entry) - 1)]
 effect = cfg.get("rm_effect")
 if key == "orca worktree rm" and effect and entry.get("rc", 0) == 0:
     command = "sleep %s; git -C %s worktree remove --force %s" % (effect.get("delay", 0), effect["repo"], effect["path"])
@@ -98,10 +110,13 @@ class CleanupCase(unittest.TestCase):
     def local_has(self, branch):
         return bool(self.git_out(self.main, "branch", "--list", branch))
 
-    def stub(self, key, stdout="", rc=0, stderr=""):
-        self.config[key] = {"stdout": stdout, "rc": rc, "stderr": stderr}
+    def write_config(self):
         with open(os.path.join(self.stub_dir, "config.json"), "w") as f:
             json.dump(self.config, f)
+
+    def stub(self, key, stdout="", rc=0, stderr=""):
+        self.config[key] = {"stdout": stdout, "rc": rc, "stderr": stderr}
+        self.write_config()
 
     def stub_show(self, parent=None, caller=None, ok=True, rc=0):
         worktree = {"id": self.wt_id, "parentWorktreeId": parent}
@@ -111,6 +126,34 @@ class CleanupCase(unittest.TestCase):
 
     def stub_terminal(self, worktree_id, rc=0):
         self.stub("orca terminal show", json.dumps({"ok": True, "result": {"terminal": {"worktreeId": worktree_id}}}), rc=rc)
+
+    def stub_sequence(self, key, answers):
+        """Answer the calls of one key in order, one {"stdout", "rc"} dict each; the last answer repeats."""
+        self.config[key] = [{"stdout": "", "rc": 0, "stderr": "", **answer} for answer in answers]
+        self.write_config()
+
+    def stub_run_current(self, run_id=RUN_ID, ok=True, rc=0, coordinator="term_stale"):
+        run = {"id": run_id, "coordinator_handle": coordinator} if run_id else None
+        result = {"run": run} if run else {}
+        self.stub("orca orchestration run-current", json.dumps({"ok": ok, "result": result}), rc=rc)
+
+    def worker_row(self, worktree=None, handle=None, via="resource", dispatch="ctx_one"):
+        """A worker-list row. `via` is where the worktree id sits: "resource", or "projection" with resource null."""
+        row = {"dispatchId": dispatch, "workerState": "succeeded", "terminalState": "retained",
+               "agentTerminalHandle": handle, "resource": None, "projection": {"workspace": {}}}
+        if worktree and via == "resource":
+            row["resource"] = {"worktreeId": worktree}
+        elif worktree:
+            row["projection"]["workspace"]["id"] = worktree
+        return row
+
+    def worker_page(self, rows, next_cursor=None):
+        page = {"limit": 100, "total": len(rows), "hasMore": next_cursor is not None, "nextCursor": next_cursor}
+        return {"ok": True, "result": {"workers": rows, "page": page}}
+
+    def stub_worker_pages(self, *pages):
+        """The pages of `worker-list`, one per call, in order."""
+        self.stub_sequence("orca orchestration worker-list", [{"stdout": json.dumps(page)} for page in pages])
 
     def stub_gh_merged(self, prs=None, rc=0):
         if prs is None:
