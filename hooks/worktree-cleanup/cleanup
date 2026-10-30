@@ -124,6 +124,52 @@ def check_ownership(record, anchor, handle):
     return ["Ownership: no proof that this session owns the worktree"]
 
 
+def worker_rows(run_id):
+    """Every row of `worker-list` for the Run, all pages. None when the list is not read in full."""
+    rows = []
+    cursor = ()
+    while True:
+        listed = read_json(run("orca", "orchestration", "worker-list", "--run", run_id, "--limit", "100", "--json", *cursor))
+        result = listed.get("result") if isinstance(listed, dict) and listed.get("ok") is True else None
+        workers = result.get("workers") if isinstance(result, dict) else None
+        page = result.get("page") if isinstance(result, dict) else None
+        if not isinstance(workers, list) or not isinstance(page, dict):
+            return None
+        rows += workers
+        if page.get("hasMore") is False:
+            return rows
+        if page.get("hasMore") is not True or not page.get("nextCursor"):
+            return None
+        cursor = ("--cursor", page["nextCursor"])
+
+
+def row_worktree(row):
+    """The Orca worktree id of a Dispatch row: `resource.worktreeId`, or the projection when `resource` is null."""
+    resource = row.get("resource")
+    if resource is None:
+        projection = row.get("projection")
+        workspace = projection.get("workspace") if isinstance(projection, dict) else None
+        return workspace.get("id") if isinstance(workspace, dict) else None
+    return resource.get("worktreeId") if isinstance(resource, dict) else None
+
+
+def run_proof(worktree_id, handle):
+    """Ownership proof 4: the target is the worktree of a Dispatch of the Run bound to this terminal, and this terminal is no worker of the Run."""
+    if not handle:
+        return False
+    current = read_json(run("orca", "orchestration", "run-current", "--json"))
+    try:
+        run_id = current["result"]["run"]["id"] if current["ok"] is True else None
+    except (KeyError, TypeError):
+        return False
+    if not isinstance(run_id, str) or not run_id:
+        return False
+    rows = [row for row in worker_rows(run_id) or [] if isinstance(row, dict)]
+    if any(row.get("agentTerminalHandle") == handle for row in rows):
+        return False
+    return any(row_worktree(row) == worktree_id for row in rows)
+
+
 def check_clean(target):
     status = git(target, "status", "--porcelain")
     if status.returncode != 0:
@@ -350,6 +396,9 @@ def main(argv):
     anchor = anchor_worktree(handle)
     record = facts["record"]
     reasons = [] if skip else check_ownership(record, anchor, handle)
+    run_only = bool(reasons) and run_proof(record["id"], handle)
+    if run_only:
+        reasons = []
     if reasons:
         reasons.append(SKIP_COMMAND.format(path=target))
     reasons += check_clean(target)
@@ -363,7 +412,7 @@ def main(argv):
     reasons += check_docker(target)
     if reasons:
         return refuse(reasons)
-    own = anchor is None or anchor == record["id"]
+    own = not run_only and (anchor is None or anchor == record["id"])
     return act(target, facts, base, default, ref_absent, own, interval, limit)
 
 
