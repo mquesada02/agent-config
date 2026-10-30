@@ -421,6 +421,7 @@ def main(argv):
     run_only = bool(reasons) and run_proof(record["id"], handle, rows)
     if run_only:
         reasons = []
+    # The skip command would not lift a blocker, so it is not printed beside one.
     if reasons and not blockers:
         reasons.append(SKIP_COMMAND.format(path=target))
     reasons += blockers

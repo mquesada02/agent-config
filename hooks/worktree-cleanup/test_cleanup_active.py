@@ -18,7 +18,7 @@ class ActiveCase(RunProofCase):
         return self.own_row(state=ACTIVE, **kwargs)
 
     def run_under(self, proof):
-        """Run the cleanup with no #149 proof ("none" and "run"), with a #149 proof, or with the ownership skip flag."""
+        """Run the cleanup with no #149 proof ("none"), with a #149 proof, or with the ownership skip flag."""
         if proof == "skip":
             return self.run_cleanup(SKIP_FLAG, self.wt)
         if proof == "149":
@@ -172,9 +172,14 @@ class NoBoundRunTest(ActiveCase):
         self.assertEqual(self.run_cleanup(SKIP_FLAG, self.wt).returncode, 0)
         self.assertEqual(self.worker_calls(), [])
 
-    def test_a_149_proof_passes_when_run_current_fails(self):
+    def test_a_149_proof_passes_when_run_current_has_ok_false(self):
         self.stub_show(parent=self.anchor_id)
-        self.stub_run_current(rc=1)
+        self.stub_run_current(ok=False)
+        self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
+
+    def test_a_149_proof_passes_when_there_is_no_bound_run(self):
+        self.stub_show(parent=self.anchor_id)
+        self.stub_run_current(run_id=None)
         self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
 
     def test_no_proof_still_refuses_with_the_skip_command_when_run_current_fails(self):
