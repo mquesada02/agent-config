@@ -566,6 +566,63 @@ class S2Test(TranscriptCase):
 
 
 class S1Test(TranscriptCase):
+    def setUp(self):
+        super().setUp()
+        self.env["CLAUDE_CONFIG_DIR"] = self.main  # as in ~/.claude, the main checkout is the Claude config folder
+
+    def s1_after_main_edit(self, *parts):
+        path = os.path.join(self.main, *parts)
+        self.register_session("s1", [self.own_edit(), edit_row(path, "e2", 11)])
+        return self.items()["S1"]
+
+    def test_a_memory_note_edit_in_the_main_checkout_passes(self):
+        item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
+        self.assertEqual(item["result"], "pass", item["evidence"])
+
+    def test_a_memory_note_edit_passes_with_the_default_config_folder(self):
+        for value in ("unset", ""):
+            with self.subTest(value=value):
+                self.setUp()
+                os.symlink(self.main, os.path.join(self.home, ".claude"))
+                if value == "unset":
+                    del self.env["CLAUDE_CONFIG_DIR"]
+                else:
+                    self.env["CLAUDE_CONFIG_DIR"] = value
+                item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
+                self.assertEqual(item["result"], "pass", item["evidence"])
+
+    def test_a_memory_path_under_another_config_folder_fails(self):
+        self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.root, "elsewhere")
+        item = self.s1_after_main_edit("projects", "-home-x", "memory", "note.md")
+        self.assertEqual(item["result"], "fail", item["evidence"])
+
+    def test_paths_that_only_look_like_a_memory_note_fail(self):
+        for parts in (("projects", "x", "memory-old", "f"), ("projects", "memory", "f"), ("hooks", "projects", "x", "memory", "f"),
+                      ("projects", "x", "memory"), ("x", "projects", "x", "memory", "f")):
+            with self.subTest(parts=parts):
+                self.setUp()
+                item = self.s1_after_main_edit(*parts)
+                self.assertEqual(item["result"], "fail", item["evidence"])
+
+    def test_an_untracked_hook_or_settings_file_edit_in_the_main_checkout_fails(self):
+        for parts in (("hooks", "biome-fix.sh"), (".claude", "settings.local.json"), (".mcp.json",)):
+            with self.subTest(parts=parts):
+                self.setUp()
+                item = self.s1_after_main_edit(*parts)
+                self.assertEqual(item["result"], "fail", item["evidence"])
+
+    def test_a_dot_dot_out_of_the_memory_folder_fails(self):
+        item = self.s1_after_main_edit("projects", "x", "memory", "..", "..", "..", "hooks", "f")
+        self.assertEqual(item["result"], "fail", item["evidence"])
+
+    def test_a_symlink_out_of_the_memory_folder_fails(self):
+        os.makedirs(os.path.join(self.main, "projects", "x", "memory"))
+        os.makedirs(os.path.join(self.main, "hooks"))
+        os.symlink(os.path.join(self.main, "hooks"), os.path.join(self.main, "projects", "x", "memory", "link"))
+        item = self.s1_after_main_edit("projects", "x", "memory", "link", "f")
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn(os.path.join(self.main, "hooks", "f"), item["evidence"])
+
     def test_an_edit_in_the_main_checkout_fails(self):
         path = os.path.join(self.main, "x.txt")
         self.register_session("s1", [self.own_edit(), edit_row(path, "e2", 11)])
