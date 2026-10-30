@@ -15,6 +15,7 @@ USAGE = "Usage: cleanup [--skip-ownership] <worktree path>"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
 REMOTE = "origin"
 PROTECTED = ("develop", "main")
+SETTLED_STATES = ("succeeded", "failed", "abandoned")
 DEFAULT_WAIT_INTERVAL = 1.0
 DEFAULT_WAIT_LIMIT = 60.0
 
@@ -153,21 +154,40 @@ def row_worktree(row):
     return resource.get("worktreeId") if isinstance(resource, dict) else None
 
 
-def run_proof(worktree_id, handle):
-    """The Run proof: the target is the worktree of a Dispatch of the Run bound to this terminal, and this terminal is no worker of the Run."""
-    if not handle:
-        return False
+def bound_run():
+    """(run id, rows) of the Run that Orca binds to this terminal. (None, None) when no Run is bound.
+    The rows are None when the worker list is not read in full; an empty list is a full read."""
     current = read_json(run("orca", "orchestration", "run-current", "--json"))
     try:
         run_id = current["result"]["run"]["id"] if current["ok"] is True else None
     except (KeyError, TypeError):
-        return False
+        return None, None
     if not isinstance(run_id, str) or not run_id:
+        return None, None
+    rows = worker_rows(run_id)
+    return run_id, None if rows is None else [row for row in rows if isinstance(row, dict)]
+
+
+def run_proof(worktree_id, handle, rows):
+    """The Run proof: the target is the worktree of a Dispatch of the bound Run, and this terminal is no worker of the Run."""
+    if not handle or rows is None:
         return False
-    rows = [row for row in worker_rows(run_id) or [] if isinstance(row, dict)]
     if any(row.get("agentTerminalHandle") == handle for row in rows):
         return False
     return any(row_worktree(row) == worktree_id for row in rows)
+
+
+def check_active(run_id, rows, worktree_id):
+    """The refusals of the bound Run: its list is not read in full, or a Dispatch on the target is not settled."""
+    if run_id is None:
+        return []
+    if rows is None:
+        return [f"Bound Run: cannot check run {run_id} for an active worker, its worker list was not read in full"]
+    active = [row["dispatchId"] if isinstance(row.get("dispatchId"), str) else "(no id)"
+              for row in rows if row_worktree(row) == worktree_id and row.get("workerState") not in SETTLED_STATES]
+    if active:
+        return [f"Active worker: Dispatch {', '.join(active)} is still active on this worktree; release the worker first"]
+    return []
 
 
 def check_clean(target):
@@ -395,12 +415,15 @@ def main(argv):
     handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
     anchor = anchor_worktree(handle)
     record = facts["record"]
+    run_id, rows = bound_run()
+    blockers = check_active(run_id, rows, record["id"])
     reasons = [] if skip else check_ownership(record, anchor, handle)
-    run_only = bool(reasons) and run_proof(record["id"], handle)
+    run_only = bool(reasons) and run_proof(record["id"], handle, rows)
     if run_only:
         reasons = []
-    if reasons:
+    if reasons and not blockers:
         reasons.append(SKIP_COMMAND.format(path=target))
+    reasons += blockers
     reasons += check_clean(target)
     reasons += check_submodules(target)
     tip = git(target, "rev-parse", "HEAD").stdout.strip()
