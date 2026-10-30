@@ -594,6 +594,16 @@ def _main_checkout(worktree):
     return paths[0], paths[1:]
 
 
+def _is_memory_note(path):
+    """True when the resolved `path` is a file below <Claude config folder>/projects/<project>/memory/ (the auto memory).
+    The config folder is read from the environment of the auditor: it is CLAUDE_CONFIG_DIR, or ~/.claude when that is unset or empty."""
+    config = os.path.realpath(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+    if not _inside(path, config):
+        return False
+    parts = path[len(config):].strip("/").split("/")
+    return len(parts) >= 4 and parts[0] == "projects" and parts[2] == "memory"
+
+
 def check_s1(worktree, audited):
     """Returns (passed, evidence)."""
     root = os.path.realpath(worktree)
@@ -601,7 +611,8 @@ def check_s1(worktree, audited):
     if root == main:
         return False, "the audited worktree is the main checkout"
     found = [f"{t.name}: {c['path']}" for transcripts in audited for t in transcripts for c in t.calls
-             if c["tool"] in EDIT_TOOLS and _inside(c["path"], main) and not any(_inside(c["path"], other) for other in others)]
+             if c["tool"] in EDIT_TOOLS and _inside(c["path"], main) and not any(_inside(c["path"], other) for other in others)
+             and not _is_memory_note(c["path"])]
     if not found:
         return True, f"{len(audited)} sessions audited, no edit in the main checkout"
     shown = found[:10]
