@@ -8,6 +8,13 @@ when nothing changed. It fails closed: on any error, or after 5 seconds, it prin
 Residual risks (the later tickets add theirs to this comment):
 - The secret stays in the command text (`tool_input`), in OpenTelemetry and analytics, and in the
   background task output file on disk.
+- The PreToolUse rewrite hook (redact_pre.py) adds ` || echo command-failed` to a Bash command so that a
+  failed command reaches this hook. An explicit `exit N` in the command ends the shell before the suffix,
+  so its output reaches the model through PostToolUseFailure, unredacted.
+- With the rewrite, the model sees `command-failed`, not the exit code number, and a failed call no longer
+  has the native error flag.
+- Some commands (a heredoc, a last line that ends with `;`, `&`, a backslash, `|`, `||` or `&&`, a comment) are
+  refused once by the rewrite hook and must be rephrased.
 - A numeric-only secret under a matched key passes the value guard.
 - For an event that cannot be read at all, the notice is in the Bash shape. For a Read or Grep call,
   Claude Code ignores a notice of the wrong shape and shows the original output.

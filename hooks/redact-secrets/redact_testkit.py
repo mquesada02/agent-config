@@ -6,6 +6,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 POST = os.path.join(HERE, "redact_post.py")
+PRE = os.path.join(HERE, "redact_pre.py")
 
 
 def bash_event(stdout, stderr=""):
@@ -23,15 +24,20 @@ def bash_event(stdout, stderr=""):
     }
 
 
-def run_post(stdin, sleep=None):
-    """Run the PostToolUse hook; stdin is a dict (sent as JSON) or a raw string."""
+def run_hook(script, stdin, switch=None):
+    """Run a hook script; stdin is a dict (sent as JSON) or a raw string. switch sets REDACT_SECRETS_TEST_SLEEP."""
     env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
-    if sleep is not None:
-        env["REDACT_SECRETS_TEST_SLEEP"] = sleep
+    if switch is not None:
+        env["REDACT_SECRETS_TEST_SLEEP"] = switch
     data = stdin if isinstance(stdin, str) else json.dumps(stdin)
     return subprocess.run(
-        [sys.executable, "-I", POST], input=data, capture_output=True, text=True, env=env, timeout=30
+        [sys.executable, "-I", script], input=data, capture_output=True, text=True, env=env, timeout=30
     )
+
+
+def run_post(stdin, sleep=None):
+    """Run the PostToolUse hook."""
+    return run_hook(POST, stdin, sleep)
 
 
 def updated_output(result):
@@ -50,3 +56,17 @@ def redact(text):
     assert result.returncode == 0, result.stderr
     output = updated_output(result)
     return text if output is None else output["stdout"]
+
+
+def bash_pre_event(command, **extra):
+    """A PreToolUse event for a Bash call; extra keys become more tool_input fields."""
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command, **extra},
+    }
+
+
+def run_pre(stdin, switch=None):
+    """Run the PreToolUse rewrite hook."""
+    return run_hook(PRE, stdin, switch)
