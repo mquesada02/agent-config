@@ -7,6 +7,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 POST = os.path.join(HERE, "redact_post.py")
 PRE = os.path.join(HERE, "redact_pre.py")
+FILTER = os.path.join(HERE, "redact_filter.py")
 
 
 def bash_event(stdout, stderr=""):
@@ -70,3 +71,26 @@ def bash_pre_event(command, **extra):
 def run_pre(stdin, switch=None):
     """Run the PreToolUse rewrite hook."""
     return run_hook(PRE, stdin, switch)
+
+
+def monitor_pre_event(command, **extra):
+    """A PreToolUse event for a Monitor call; extra keys become more tool_input fields."""
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Monitor",
+        "tool_input": {"command": command, **extra},
+    }
+
+
+def filter_env(switch=None):
+    env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
+    if switch is not None:
+        env["REDACT_SECRETS_TEST_SLEEP"] = switch
+    return env
+
+
+def run_filter(data, switch=None):
+    """Run the Monitor line filter with bytes on stdin. Bytes mode keeps line endings and invalid UTF-8 exact."""
+    return subprocess.run(
+        [sys.executable, "-I", "-u", FILTER], input=data, capture_output=True, env=filter_env(switch), timeout=30
+    )
