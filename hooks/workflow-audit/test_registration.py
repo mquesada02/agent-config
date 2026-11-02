@@ -101,13 +101,16 @@ class HookOrderTest(AuditCase):
         return subprocess.run(argv, input=stdin.encode(), env=self.env, cwd=self.root, capture_output=True, timeout=60)
 
     def verdict(self, result):
-        """(denied, reason) of one hook: exit status 2 with the reason on stderr, or a deny decision on stdout."""
+        """(denied, reason) of one hook: exit status 2 with the reason on stderr, or a deny decision on stdout.
+
+        An output with updatedInput and no permissionDecision (the rewrite hook) is no deny.
+        """
         if result.returncode == 2:
             return True, result.stderr.decode()
         self.assertEqual(result.returncode, 0, result.stderr)
         if result.stdout:
             output = json.loads(result.stdout)["hookSpecificOutput"]
-            if output["permissionDecision"] == "deny":
+            if output.get("permissionDecision") == "deny":
                 return True, output["permissionDecisionReason"]
         return False, ""
 
@@ -125,7 +128,7 @@ class HookOrderTest(AuditCase):
 
     def assert_same_in_every_order(self, command, denied, prefix):
         groups = self.bash_groups()
-        self.assertGreaterEqual(len(groups), 3)  # the audit group, the aws guard and the Orca hook
+        self.assertGreaterEqual(len(groups), 4)  # the audit group, the aws guard, the Orca hook and the rewrite hook
         for order in itertools.permutations(groups):
             with self.subTest(order=[group.get("matcher") for group in order]):
                 got_denied, reasons = self.combined(order, command)
@@ -156,11 +159,17 @@ class HookOrderTest(AuditCase):
     def test_a_plain_command_is_allowed_in_every_order(self):
         self.assert_same_in_every_order("ls", False, "")
 
-    def test_the_hooks_that_the_order_test_runs_include_the_audit_gate_and_the_aws_guard(self):
+    def test_an_aws_credentials_export_is_denied_by_the_aws_guard_in_every_order(self):
+        self.assert_same_in_every_order("aws configure export" + "-credentials", True, "Blocked by ~/.claude/hooks/block-aws-credentials.py")
+
+    def test_a_heredoc_is_denied_by_the_rewrite_hook_in_every_order(self):
+        self.assert_same_in_every_order("cat <<EOF\nx\nEOF", True, "redact_pre.py: ")
+
+    def test_the_hooks_that_the_order_test_runs_include_the_audit_gate_the_aws_guard_and_the_rewrite_hook(self):
         scripts = sorted(os.path.basename(word)
                          for group in self.bash_groups() for entry in group["hooks"] if repo_argv(entry["command"])
                          for word in repo_argv(entry["command"]) if word.startswith(REPO))
-        self.assertEqual(scripts, ["audit", "block-aws-credentials.py"])
+        self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "redact_pre.py"])
 
 
 if __name__ == "__main__":
