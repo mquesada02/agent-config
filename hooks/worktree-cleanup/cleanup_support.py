@@ -10,6 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CLEANUP = os.path.join(HERE, "cleanup")
 HANDLE = "term_test"
 RUN_ID = "run_test"
+MISSING = object()
 
 # One stub for `orca` and `gh`. It logs "<name> <args>" to calls.log and answers from config.json,
 # keyed by "<name> <all args>", else by "<name> <first two args>". A list value is a sequence of answers,
@@ -137,10 +138,13 @@ class CleanupCase(unittest.TestCase):
         result = {"run": run} if run else {}
         self.stub("orca orchestration run-current", json.dumps({"ok": ok, "result": result}), rc=rc)
 
-    def worker_row(self, worktree=None, handle=None, via="resource", dispatch="ctx_one"):
-        """A worker-list row. `via` is where the worktree id sits: "resource", or "projection" with resource null."""
-        row = {"dispatchId": dispatch, "workerState": "succeeded", "terminalState": "retained",
+    def worker_row(self, worktree=None, handle=None, via="resource", dispatch="ctx_one", state="succeeded", terminal="retained"):
+        """A worker-list row. `via` is where the worktree id sits: "resource", or "projection" with resource null.
+        `state` is the workerState, and MISSING leaves it out; `terminal` is the terminalState."""
+        row = {"dispatchId": dispatch, "workerState": state, "terminalState": terminal,
                "agentTerminalHandle": handle, "resource": None, "projection": {"workspace": {}}}
+        if state is MISSING:
+            del row["workerState"]
         if worktree and via == "resource":
             row["resource"] = {"worktreeId": worktree}
         elif worktree:
@@ -154,6 +158,10 @@ class CleanupCase(unittest.TestCase):
     def stub_worker_pages(self, *pages):
         """The pages of `worker-list`, one per call, in order."""
         self.stub_sequence("orca orchestration worker-list", [{"stdout": json.dumps(page)} for page in pages])
+
+    def stub_worker_raw(self, *answers):
+        """The raw answers of `worker-list`, one {"stdout", "rc"} dict per call, in order (for pages that are not valid)."""
+        self.stub_sequence("orca orchestration worker-list", list(answers))
 
     def stub_gh_merged(self, prs=None, rc=0):
         if prs is None:

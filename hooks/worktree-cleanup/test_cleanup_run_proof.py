@@ -17,12 +17,18 @@ class RunProofCase(CleanupCase):
         super().setUp()
         self.stub_show()
         self.stub_run_current()
+        self.stub_worker_pages(self.worker_page([]))
 
     def worker_calls(self):
         return [call for call in self.calls() if call.startswith("orca orchestration worker-list")]
 
     def orchestration_calls(self):
         return [call for call in self.calls() if call.startswith("orca orchestration")]
+
+    def run_read_calls(self):
+        """The two calls that read the bound Run when its list has one page."""
+        return ["orca orchestration run-current --json",
+                f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json"]
 
     def own_row(self, **kwargs):
         return self.worker_row(worktree=self.wt_id, **kwargs)
@@ -129,24 +135,24 @@ class RunProofTest(RunProofCase):
         self.assert_no_proof(self.run_cleanup(self.wt))
         self.assertEqual(self.worker_calls(), [])
 
-    def test_an_empty_handle_gives_no_proof_and_makes_no_run_call(self):
+    def test_an_empty_handle_gives_no_proof_but_still_reads_the_bound_run(self):
         self.stub_worker_pages(self.worker_page([self.own_row()]))
         self.assert_no_proof(self.run_cleanup(self.wt, handle=""))
-        self.assertEqual(self.orchestration_calls(), [])
+        self.assertEqual(self.orchestration_calls(), self.run_read_calls())
 
     def test_a_149_proof_passes_when_run_current_fails(self):
         self.stub_show(parent=self.anchor_id)
         self.stub_run_current(rc=1)
         self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
 
-    def test_a_149_proof_makes_no_run_call(self):
+    def test_a_149_proof_still_reads_the_bound_run(self):
         self.stub_show(parent=self.anchor_id)
         self.assertEqual(self.run_cleanup(self.wt).returncode, 0)
-        self.assertEqual(self.orchestration_calls(), [])
+        self.assertEqual(self.orchestration_calls(), self.run_read_calls())
 
-    def test_skip_ownership_makes_no_run_call(self):
+    def test_skip_ownership_still_reads_the_bound_run(self):
         self.assertEqual(self.run_cleanup("--skip-ownership", self.wt).returncode, 0)
-        self.assertEqual(self.orchestration_calls(), [])
+        self.assertEqual(self.orchestration_calls(), self.run_read_calls())
 
     def test_worker_list_is_always_scoped_to_the_bound_run(self):
         self.stub_worker_pages(self.worker_page([self.worker_row(worktree="other-id")], next_cursor="cur1"),
