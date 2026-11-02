@@ -24,15 +24,20 @@ def bash_event(stdout, stderr=""):
     }
 
 
-def run_post(stdin, sleep=None):
-    """Run the PostToolUse hook; stdin is a dict (sent as JSON) or a raw string."""
+def run_hook(script, stdin, switch=None):
+    """Run a hook script; stdin is a dict (sent as JSON) or a raw string. switch sets REDACT_SECRETS_TEST_SLEEP."""
     env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
-    if sleep is not None:
-        env["REDACT_SECRETS_TEST_SLEEP"] = sleep
+    if switch is not None:
+        env["REDACT_SECRETS_TEST_SLEEP"] = switch
     data = stdin if isinstance(stdin, str) else json.dumps(stdin)
     return subprocess.run(
-        [sys.executable, "-I", POST], input=data, capture_output=True, text=True, env=env, timeout=30
+        [sys.executable, "-I", script], input=data, capture_output=True, text=True, env=env, timeout=30
     )
+
+
+def run_post(stdin, sleep=None):
+    """Run the PostToolUse hook."""
+    return run_hook(POST, stdin, sleep)
 
 
 def updated_output(result):
@@ -63,11 +68,5 @@ def bash_pre_event(command, **extra):
 
 
 def run_pre(stdin, switch=None):
-    """Run the PreToolUse rewrite hook; stdin is a dict (sent as JSON) or a raw string."""
-    env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
-    if switch is not None:
-        env["REDACT_SECRETS_TEST_SLEEP"] = switch
-    data = stdin if isinstance(stdin, str) else json.dumps(stdin)
-    return subprocess.run(
-        [sys.executable, "-I", PRE], input=data, capture_output=True, text=True, env=env, timeout=30
-    )
+    """Run the PreToolUse rewrite hook."""
+    return run_hook(PRE, stdin, switch)
