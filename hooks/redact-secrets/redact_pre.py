@@ -1,4 +1,4 @@
-"""PreToolUse rewrite hook: make a failed Bash command reach the PostToolUse redaction hook.
+"""PreToolUse rewrite hook: make a failed Bash command reach the PostToolUse redaction hook, and filter Monitor.
 
 A Bash command that exits non-zero goes to PostToolUseFailure, where the output is not redacted. This hook
 appends ` || echo command-failed` to the command, so the call always exits 0. The suffix holds no quotes, no
@@ -7,9 +7,16 @@ rewritten command. The hook strips trailing whitespace first, so the suffix land
 It denies a command whose last line is not safe to append to (a heredoc anywhere, a last line that ends with
 `;`, `&`, `\\`, `|`, `||` or `&&`, or a comment), with a reason that names the cause. It returns `updatedInput`
 with every other input field unchanged and never sets `permissionDecision: "allow"`, so permission prompts
-and rules still apply. An empty command, a non-Bash tool and a Bash call with no string command pass
-unchanged (the Monitor pipe is not part of this hook yet). It is registered with `"onFailure": "block"`, so a
-failure of the hook (an unreadable event, an error) blocks the tool call.
+and rules still apply. An empty command, a call with no string command and a tool other than Bash and
+Monitor pass unchanged.
+
+For a Monitor call it appends ` 2>&1 | python3 -I -u ~/.claude/hooks/redact-secrets/redact_filter.py` instead
+(the line filter redact_filter.py redacts each line of the watched output), after the same trailing-whitespace
+strip and the same unsafe-last-line check, and with every other input field unchanged. The pipe covers only
+the last pipeline of the Monitor command.
+
+The hook is registered with `"onFailure": "block"`, so a failure of the hook (an unreadable event, an error)
+blocks the tool call.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the hook exits 1. Any other value has no
 effect (the PostToolUse hook alone reads a number from this variable).
@@ -19,7 +26,10 @@ import os
 import re
 import sys
 
-SUFFIX = " || echo command-failed"
+SUFFIXES = {
+    "Bash": " || echo command-failed",
+    "Monitor": " 2>&1 | python3 -I -u ~/.claude/hooks/redact-secrets/redact_filter.py",
+}
 REASON_PREFIX = "redact_pre.py: "
 # `<<` with no `<` directly before or after it: a heredoc. A here-string (`<<<`) is safe.
 HEREDOC = re.compile(r"(?<!<)<<(?!<)")
@@ -61,7 +71,9 @@ def deny(cause, advice):
 
 def decide(event):
     """The hook output for one event, or None when the call passes unchanged."""
-    if event.get("tool_name") != "Bash":
+    tool_name = event.get("tool_name")
+    suffix = SUFFIXES.get(tool_name) if isinstance(tool_name, str) else None
+    if suffix is None:
         return None
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
@@ -73,7 +85,7 @@ def decide(event):
     if unsafe is not None:
         return deny(*unsafe)
     updated = dict(tool_input)
-    updated["command"] = command + SUFFIX
+    updated["command"] = command + suffix
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
 
 

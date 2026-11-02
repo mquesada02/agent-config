@@ -18,6 +18,15 @@ Residual risks (the later tickets add theirs to this comment):
 - A numeric-only secret under a matched key passes the value guard.
 - For an event that cannot be read at all, the notice is in the Bash shape. For a Read or Grep call,
   Claude Code ignores a notice of the wrong shape and shows the original output.
+- The Monitor pipe (redact_pre.py and redact_filter.py) covers only the last pipeline of the Monitor command:
+  in `a; b` the output of `a` is not filtered, and in `a | b` the stderr of `a` is not redirected into the filter.
+- Monitor commands are not checked by the audit gate or by block-aws-credentials.py, whose matchers do not
+  include Monitor.
+- In the Monitor filter, a PEM block with no END line and an unclosed JSON object or array under a matched key
+  hide the rest of the stream (the fail-closed choice; they never leak it).
+- In the Monitor filter, a false positive of a state (for example `echo "see <key>: |"`) can hide following lines.
+- A multi-line secret in a form that no filter state covers leaks line by line: a YAML sequence under a matched
+  key, a JSON value on the line after its key, a YAML block scalar with a tag, an anchor or a quoted key.
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it
