@@ -27,16 +27,16 @@ CAP = 200
 # New constants: redact_rules has only the combined PEM_BLOCK pattern.
 BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
-LINE_ENDING = re.compile(r"\r?\n\Z")
 MASK_LINE = redact_rules.MASK + "\n"
 
 
 def split_ending(line):
     """(body, ending) of a line: the ending is `\\r\\n`, `\\n` or empty."""
-    match = LINE_ENDING.search(line)
-    if match is None:
-        return line, ""
-    return line[: match.start()], match.group()
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
 
 
 def scan_brackets(text, depth, start=0):
@@ -93,48 +93,41 @@ def yaml_block_indent(body):
 
 
 class LineFilter:
-    NORMAL, PEM_HOLD, PEM_DROP, JSON_DROP, YAML_DROP = range(5)
-
     def __init__(self):
-        self.state = self.NORMAL
+        self.handler = self.normal_line  # the method for the current state
         self.held = []
         self.depth = 0
         self.key_indent = 0
 
     def feed(self, line):
         """The text to write for one input line (may be empty)."""
-        handler = {
-            self.NORMAL: self.normal_line,
-            self.PEM_HOLD: self.pem_hold,
-            self.PEM_DROP: self.pem_drop,
-            self.JSON_DROP: self.json_drop,
-            self.YAML_DROP: self.yaml_drop,
-        }[self.state]
-        return handler(line)
+        return self.handler(line)
 
     def normal_line(self, line):
         body, ending = split_ending(line)
-        begins = list(BEGIN.finditer(body))
+        begins = list(BEGIN.finditer(body)) if "-----BEGIN" in body else []
         if begins and END.search(body, begins[-1].end()) is None:
-            self.state = self.PEM_HOLD
+            self.handler = self.pem_hold
             self.held = [line]
             return ""
-        depth = unclosed_json_depth(body)
+        depth = unclosed_json_depth(body) if "{" in body or "[" in body else 0
         if depth > 0:
-            self.state = self.JSON_DROP
+            self.handler = self.json_drop
             self.depth = depth
-            return redact_rules.redact(body) + ending
-        indent = yaml_block_indent(body)
-        if indent is not None:
-            self.state = self.YAML_DROP
-            self.key_indent = indent
-            return redact_rules.redact(body) + ending
+        else:
+            indent = yaml_block_indent(body) if "|" in body or ">" in body else None
+            if indent is not None:
+                self.handler = self.yaml_drop
+                self.key_indent = indent
         return redact_rules.redact(body) + ending
 
-    def rest_after(self, rest_line, empty_writes_ending):
-        """Handle the text that follows the end of a state on the same line as a normal line."""
-        body, ending = split_ending(rest_line)
-        if body.strip() == "" and not empty_writes_ending:
+    def rest_after_drop(self, rest_line):
+        """Handle the text that follows the end of a dropped state on the same line as a normal line.
+
+        An empty rest writes nothing. (After a PEM END line the rest is a normal line even when it is empty,
+        because the held block was written without a line ending.)
+        """
+        if split_ending(rest_line)[0].strip() == "":
             return ""
         return self.normal_line(rest_line)
 
@@ -142,12 +135,10 @@ class LineFilter:
         end = END.search(line)
         if end is not None:
             head = "".join(self.held) + line[: end.end()]
-            self.held = []
-            self.state = self.NORMAL
-            return redact_rules.redact(head) + self.rest_after(line[end.end():], True)
+            self.handler = self.normal_line
+            return redact_rules.redact(head) + self.normal_line(line[end.end():])
         if len(self.held) + 1 >= CAP:
-            self.held = []
-            self.state = self.PEM_DROP
+            self.handler = self.pem_drop
             return MASK_LINE
         self.held.append(line)
         return ""
@@ -156,23 +147,23 @@ class LineFilter:
         end = END.search(line)
         if end is None:
             return ""
-        self.state = self.NORMAL
-        return self.rest_after(line[end.end():], False)
+        self.handler = self.normal_line
+        return self.rest_after_drop(line[end.end():])
 
     def json_drop(self, line):
         body, ending = split_ending(line)
         self.depth, closed = scan_brackets(body, self.depth)
         if closed < 0:
             return ""
-        self.state = self.NORMAL
-        return self.rest_after(body[closed:] + ending, False)
+        self.handler = self.normal_line
+        return self.rest_after_drop(body[closed:] + ending)
 
     def yaml_drop(self, line):
         body, _ = split_ending(line)
         indent = len(body) - len(body.lstrip(" \t"))
         if body.strip() == "" or indent > self.key_indent:
             return ""
-        self.state = self.NORMAL
+        self.handler = self.normal_line
         return self.normal_line(line)
 
 
@@ -193,7 +184,9 @@ def run():
         main()
     except BrokenPipeError:
         # the reader closed stdout: send any further flush to /dev/null so Python does not print a traceback
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
         sys.exit(1)
     except Exception as error:
         # the class name only: an error message could hold a part of the input

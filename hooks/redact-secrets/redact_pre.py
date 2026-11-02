@@ -72,6 +72,7 @@ def deny(cause, advice):
 def decide(event):
     """The hook output for one event, or None when the call passes unchanged."""
     tool_name = event.get("tool_name")
+    # a tool_name that is not a string (unhashable) must pass unchanged, not raise in the dict lookup
     suffix = SUFFIXES.get(tool_name) if isinstance(tool_name, str) else None
     if suffix is None:
         return None

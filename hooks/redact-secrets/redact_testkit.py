@@ -25,11 +25,17 @@ def bash_event(stdout, stderr=""):
     }
 
 
-def run_hook(script, stdin, switch=None):
-    """Run a hook script; stdin is a dict (sent as JSON) or a raw string. switch sets REDACT_SECRETS_TEST_SLEEP."""
+def filter_env(switch=None):
+    """The environment of a hook run: the real one without REDACT_SECRETS_TEST_SLEEP, then switch if given."""
     env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
     if switch is not None:
         env["REDACT_SECRETS_TEST_SLEEP"] = switch
+    return env
+
+
+def run_hook(script, stdin, switch=None):
+    """Run a hook script; stdin is a dict (sent as JSON) or a raw string. switch sets REDACT_SECRETS_TEST_SLEEP."""
+    env = filter_env(switch)
     data = stdin if isinstance(stdin, str) else json.dumps(stdin)
     return subprocess.run(
         [sys.executable, "-I", script], input=data, capture_output=True, text=True, env=env, timeout=30
@@ -80,13 +86,6 @@ def monitor_pre_event(command, **extra):
         "tool_name": "Monitor",
         "tool_input": {"command": command, **extra},
     }
-
-
-def filter_env(switch=None):
-    env = {key: value for key, value in os.environ.items() if key != "REDACT_SECRETS_TEST_SLEEP"}
-    if switch is not None:
-        env["REDACT_SECRETS_TEST_SLEEP"] = switch
-    return env
 
 
 def run_filter(data, switch=None):

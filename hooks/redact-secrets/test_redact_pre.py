@@ -165,7 +165,9 @@ class MonitorRewriteTest(unittest.TestCase):
 
     def test_the_rewritten_command_filters_a_secret_end_to_end(self):
         # the pipe names ~/.claude/hooks/...; point it at this repo, which is the ~/.claude repo
-        command = self.command_after("printf '%s\\n' '" + "TOKEN" + "=abc123' plain").replace("~/.claude", ROOT)
+        command = self.command_after("printf '%s\\n' '" + "TOKEN" + "=abc123' plain")
+        self.assertTrue(command.endswith(PIPE), command)
+        command = command.replace("~/.claude", ROOT)
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.stdout, "TOKEN=***\nplain\n")
 
