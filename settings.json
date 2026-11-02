@@ -241,6 +241,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/redact-secrets/redact_post.py",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
