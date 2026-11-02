@@ -2,6 +2,7 @@
 
 Pure module, no I/O. Rules (spec #277, ticket spec #281):
 1. A PEM private-key block is replaced as a whole (first, so no later rule leaves its body lines).
+   A BEGIN line with no END line makes everything from it to the end of the text one ***.
 2. Keyed formats, tried in this order on each occurrence: JSON, env, YAML. The key name must contain
    ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY or CREDENTIAL, ignoring case, _ and -.
    Only the value becomes ***; a number, true/false, null or empty value stays (value guard).
@@ -13,8 +14,9 @@ KEY_WORDS = ("accesskey", "secret", "token", "password", "passwd", "privatekey",
 KEY_CHARS = r"[A-Za-z0-9_.\-]"
 MASK = "***"
 
-PEM_BLOCK = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)
-PEM_OPEN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*", re.DOTALL)
+# A BEGIN line up to its END line, or to the end of the text when there is no END line.
+PEM_BLOCK = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL)
+ESCAPED_QUOTE = re.compile(r'(?<!\\)\\"')
 
 # One scan finds the earliest key occurrence. At the same key the JSON branch starts first (at its quote).
 KEY_OCCURRENCE = re.compile(
@@ -66,7 +68,7 @@ def find_plain_quote(text, start, limit):
 
 def find_escaped_quote(text, start, limit):
     """Index of the backslash of the first lone backslash-quote at or after `start`, or -1."""
-    match = re.compile(r'(?<!\\)\\"').search(text, start, limit)
+    match = ESCAPED_QUOTE.search(text, start, limit)
     return match.start() if match else -1
 
 
@@ -165,9 +167,9 @@ def redact_keyed(text):
             key, start, kind = match.group("ekey"), match.end(), "env"
         else:
             key, start, kind = match.group("ykey"), match.end(), "yaml"
+        out.append(text[pos:start])
+        pos = start
         if not is_secret_key(key):
-            out.append(text[pos:start])
-            pos = start
             continue
         if kind == "json":
             quote = match.group("jq")
@@ -178,16 +180,13 @@ def redact_keyed(text):
             key_indent = match.start() - line_start
             end, replacement = drop_block_scalar(text, header_end, key_indent), MASK
             if end > header_end and text[header_end : header_end + 1] == "\n":
-                replacement = MASK + "\n"
+                replacement = MASK + "\n"  # the dropped lines took the newline of the key line
         elif start < len(text) and text[start] in "\"'":
             end, replacement = quoted_line_value(text, start)
         else:
             end, replacement = plain_line_value(text, start)
         if replacement is None:
-            out.append(text[pos:start])
-            pos = start
             continue
-        out.append(text[pos:start])
         out.append(replacement)
         pos = end
     out.append(text[pos:])
@@ -196,7 +195,6 @@ def redact_keyed(text):
 
 def redact(text):
     text = PEM_BLOCK.sub(MASK, text)
-    text = PEM_OPEN.sub(MASK, text)
     text = redact_keyed(text)
     for pattern, replacement in SHAPES:
         text = pattern.sub(replacement, text)

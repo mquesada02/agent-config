@@ -1,7 +1,9 @@
+import subprocess
+import sys
 import time
 import unittest
 
-from redact_testkit import bash_event, run_post, updated_output
+from redact_testkit import POST, bash_event, run_post, updated_output
 
 NOTICE = "[output hidden: redaction hook failed: {}]"
 BASH_SHAPE = {"stderr": "", "interrupted": False, "isImage": False, "noOutputExpected": False}
@@ -99,10 +101,6 @@ class FailClosedTest(unittest.TestCase):
         self.assertEqual(updated_output(result)["stdout"], "PASSWORD=***")
 
     def test_input_that_is_not_utf8_fails_closed(self):
-        import subprocess
-        import sys
-        from redact_testkit import POST
-
         result = subprocess.run([sys.executable, "-I", POST], input=b"\xff\xfe{}", capture_output=True)
         self.assertEqual(result.returncode, 0)
         self.assertIn(b"UnicodeDecodeError", result.stdout)

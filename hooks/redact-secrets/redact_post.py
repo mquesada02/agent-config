@@ -27,7 +27,6 @@ import redact_rules  # noqa: E402
 
 WATCHDOG_SECONDS = 5
 NOTICE = "[output hidden: redaction hook failed: {}]"
-GREP_MODES = ("content", "files_with_matches", "count")
 
 
 class Timeout(Exception):
