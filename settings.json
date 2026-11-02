@@ -135,6 +135,17 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/redact-secrets/redact_pre.py",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "SubagentStart": [
