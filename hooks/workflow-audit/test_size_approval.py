@@ -87,7 +87,7 @@ class LimitTextTest(unittest.TestCase):
         for phrase in ("under about 150 changed lines, tests included", "`size-approval`", "`lines`"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, l5)
-        self.assertNotIn("50 changed lines (", l5)
+        self.assertNotRegex(l5, r"\b50 changed lines")
         self.assertIn('"The diff is under about 150 lines, as estimated."', full)
 
     def test_the_brief_says_size_approval_lines_are_data_that_s5_verifies(self):
