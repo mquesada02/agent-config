@@ -43,6 +43,7 @@ EVENT_KEYS = {
     "verdict": ("finding", "verifier", "result"),
     "status": ("finding", "status"),
     "extension": ("loop", "phase", "rounds", "quote"),
+    "size-approval": ("lines", "quote"),
     "phase-commit": ("sha",),
     "link": ("source", "ticket"),
 }
@@ -60,6 +61,7 @@ REASON_LIMIT = 500
 QUOTE_LIMIT = 500
 MIN_QUOTE = 8
 MAX_EXTENSION_ROUNDS = 5
+MAX_APPROVED_LINES = 100000
 MAX_LEDGER_LINE_BYTES = 4096
 SYNTHETIC_MODEL = "<synthetic>"
 AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
@@ -863,6 +865,7 @@ VALID_VALUE = {
     "result": lambda value: value in LEDGER_RESULTS,
     "status": lambda value: value in LEDGER_STATUSES,
     "rounds": lambda value: type(value) is int and 1 <= value <= MAX_EXTENSION_ROUNDS,
+    "lines": lambda value: type(value) is int and 1 <= value <= MAX_APPROVED_LINES,
     "quote": _plain_text(QUOTE_LIMIT, MIN_QUOTE),
     "raised": lambda value: value is True,
     "sha": _matches(SHA),
@@ -966,6 +969,9 @@ class Ledger:
             if self.rounds.get(key, 0) < cap:
                 raise LedgerError(f"round {cap} of {key[0]} {key[1]} is not recorded: the cap is not reached")
             self.extra_rounds[key] = self.extra_rounds.get(key, 0) + event["rounds"]
+        elif kind == "size-approval":
+            if len(_normalise(event["quote"])) < MIN_QUOTE:
+                raise LedgerError(f"the quote is under {MIN_QUOTE} characters after normalising")
         elif kind == "link":
             if self.link is not None:
                 raise LedgerError("a ledger holds at most one link event")
@@ -1022,6 +1028,8 @@ events and their flags (every flag is required for its event and refused for the
   status        --finding <id> --status
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
                 loop phase reached its cap, which is the base cap plus the rounds of its extensions)
+  size-approval --lines <1 to %d> --quote <8 to 500 characters> (the owner approved a small-task diff of about this many changed
+                lines; S5 finds the quote in real user input at or before the event; the auditor's L5 reads the latest one)
   phase-commit  --sha <40 hex>
   link          --from-branch <source branch, 1 to 255 characters> --ticket <1 to 64 characters> (this branch continues the ticket of the
                 source branch; at most one link in a ledger)
@@ -1033,7 +1041,7 @@ origin URL and is valid; (3) it holds a plan-review-5.3 round; (4) it holds no l
 for the source branch in the GitHub repository of the origin URL (one `gh` call, 20 seconds, never under the ledger lock).
 `audit ledger show --worktree <path>` prints every event of the ledger, one compact JSON line each, and writes nothing.
 A finding line or finding-amend line holds its "quote" key when it has one; "raised":true marks a finding or amendment that the loop session raised to Blocking.
-""" % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
+""" % (MAX_APPROVED_LINES, ", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
 
 
 def _ledger_event(argv):
@@ -1063,6 +1071,7 @@ def _ledger_event(argv):
     parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
     parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
     parser.add_argument("--rounds", type=int, action=Once)
+    parser.add_argument("--lines", type=int, action=Once)
     parser.add_argument("--quote", action=Once)
     parser.add_argument("--raised", action="store_const", const=True, default=None, help="a Blocking finding that the loop session raised")
     parser.add_argument("--sha", action=Once)
@@ -1503,16 +1512,27 @@ def _unbacked_extensions(ledger, extensions, audited):
     return failures
 
 
+def _unbacked_size_approvals(approvals, audited):
+    """The S5 evidence lines of the size-approval events whose quote is not found in real user input at or before the event."""
+    units, failures = _real_input(audited), []
+    for number, event in enumerate(approvals, 1):
+        high, quote = _instant(event["time"], "the ledger"), _normalise(event["quote"])
+        if not any(moment is not None and moment <= high and quote in text for moment, text in units):
+            failures.append(f"size-approval {number} ({event['lines']} lines): quote not found in real user input")
+    return failures
+
+
 def check_s5(ledger, audited, problem):
     """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`; they are needed
-    only when the ledger holds an extension."""
+    only when the ledger holds an extension or a size-approval."""
     failures = [f"{loop} {phase}: round {number} is past the cap of {ledger.effective_cap(loop, phase)}"
                 for (loop, phase), number in ledger.rounds.items() if number > ledger.effective_cap(loop, phase)]
     extensions = [event for event in ledger.events if event["kind"] == "extension"]
-    if extensions:
+    approvals = [event for event in ledger.events if event["kind"] == "size-approval"]
+    if extensions or approvals:
         if audited is None:
             return False, problem
-        failures += _unbacked_extensions(ledger, extensions, audited)
+        failures += _unbacked_extensions(ledger, extensions, audited) + _unbacked_size_approvals(approvals, audited)
     if failures:
         return False, _truncate_lines(failures)
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"

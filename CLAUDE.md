@@ -101,6 +101,7 @@ Ledger: the loop session keeps one findings ledger per task. It writes the ledge
 - `status`: a finding becomes fixed, deferred or rejected. A finding is open until a `status` event closes it.
 - `phase-commit`: the SHA of the commit made at the start of the quality phase.
 - `extension`: the owner's approval of extra rounds of one loop phase, with the loop, the phase, the rounds (1 to 5) and the owner's own words as the quote.
+- `size-approval`: the owner's approval of a larger diff on the small-task path (section 7 Exception), with the approved size as `--lines` and the user's own words as `--quote`. S5 checks that the quote is real user input.
 At a cap, the session that asked the user and got the approval writes the `extension` event (for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) and the owner's own words as the quote.
 The loop session also keeps a copy of the entries in the scratchpad, and gives that copy to every reviewer. A finding that matches a ledger entry is not new. Reviewers do not report rejected or deferred entries again, unless they add new evidence.
 
@@ -119,7 +120,7 @@ The loop session also keeps a copy of the entries in the scratchpad, and gives t
 
 **Note**: _grilling_ refers to the /mattpocock-skills:grilling skill, already included in the /mattpocock-skills:wayfinder skill.
 
-**Exception:** for small tasks (estimated under ~50 changed lines), skip steps 1–5: implement directly, then run the section 6 review loop. Judge this once, for the whole task, before step 1. Once tickets exist, every ticket runs steps 5.1 to 5.5 in full, even a small one.
+**Exception:** for small tasks (estimated under ~150 changed lines, tests included), skip steps 1–5: implement directly, then run the section 6 review loop. Judge this once, for the whole task, before step 1. When the user approves a larger task for this path, the session that asked writes a `size-approval` event (section 6) with the approved size and the user's own words. Once tickets exist, every ticket runs steps 5.1 to 5.5 in full, even a small one.
 
 **Specs and tickets:** publish them to the issue tracker that /mattpocock-skills:setup-matt-pocock-skills configured for the repository. If none is configured, ask the user.
 
