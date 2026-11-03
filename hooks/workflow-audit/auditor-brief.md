@@ -79,7 +79,7 @@ The main section 7 session starts you before its first dispatch (and again after
 Inputs, from the session that starts you:
 
 1. The worktree path, called `<worktree>`.
-2. The map issue number, called `<issue>`.
+2. The map issue number or key, called `<issue>`: a GitHub issue number (for example `309`) or a Linear key (for example `ENG-42`), as the session gives it.
 3. The path where you write the verdict file, called `<verdict file>`.
 4. The PR target: the base branch of the PR, called `<PR target>`.
 

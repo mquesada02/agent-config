@@ -68,7 +68,8 @@ UNCHECKED_REASON = "unchecked command form: run %s as a plain command"
 UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
 PRE_DISPATCH_LOOPS = ("plan-review-3", "plan-review-4.1")  # the loops that a pre-dispatch audit reads
 PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
-MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
+MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")  # a GitHub issue number
+MAP_LINEAR_KEY = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")  # a Linear key: team prefix, dash, number
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
 CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
 USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger link --worktree <path> --from-branch <branch> --ticket <id> | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> --base <branch> | audit record --worktree <path> --base <branch> --llm <file>"
@@ -1908,9 +1909,13 @@ def _pre_dispatch_arguments(argv):
         if flag not in ("--worktree", "--map", "--llm") or flag in values:
             raise Refusal(USAGE)
         values[flag] = rest[index + 1]
-    if not MAP_ISSUE.fullmatch(values["--map"]):
-        raise Refusal("bad --map: need an issue number (1 to 9 digits, no leading zero)")
-    return values["--worktree"], int(values["--map"]), values["--llm"]
+    map_key = values["--map"]
+    if MAP_ISSUE.fullmatch(map_key):
+        map_key = int(map_key)
+    elif not MAP_LINEAR_KEY.fullmatch(map_key):
+        raise Refusal("bad --map: need a GitHub issue number (1 to 9 digits, no leading zero) "
+                      "or a Linear key (1 to 10 capital letters or digits starting with a letter, a dash, then such a number)")
+    return values["--worktree"], map_key, values["--llm"]
 
 
 def _plan_review_view(ledger):
