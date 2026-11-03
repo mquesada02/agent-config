@@ -3,7 +3,7 @@ import json
 import os
 import unittest
 
-from audit_support import EARLY, VERSION, AuditCase, finding_event, round_event, stamp, subagent_rows
+from audit_support import EARLY, VERSION, finding_event, owner_row, round_event, stamp, subagent_rows
 from test_ledger import LedgerCase
 
 PLAN = "plan-review-5.3"
@@ -26,10 +26,6 @@ def result_text_row(text, seconds=0):
             "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"c{seconds}", "content": text}]}}
 
 
-def user_text_row(text, seconds=0):
-    return {"type": "user", "timestamp": stamp(seconds), "version": VERSION, "message": {"role": "user", "content": text}}
-
-
 def reviewed(*rows):
     return [*subagent_rows()[:1], *rows]
 
@@ -50,9 +46,6 @@ class QuoteCase(LedgerCase):
 
     def reviewer(self, *rows, name="rev1", session="default-session"):
         return self.add_subagent(session, name, reviewed(*rows))
-
-    def finding(self, **kwargs):
-        return flags(**kwargs)
 
 
 class RequiredQuoteTest(QuoteCase):
@@ -134,7 +127,7 @@ class ReviewerTextTest(QuoteCase):
         self.assertIn("quote not in reviewer text", self.refuses(tool_row("SubagentHandback", {"note": QUOTE})))
 
     def test_a_quote_only_in_a_user_row_is_refused(self):
-        self.assertIn("quote not in reviewer text", self.refuses(user_text_row(f"please check {QUOTE}")))
+        self.assertIn("quote not in reviewer text", self.refuses(owner_row(f"please check {QUOTE}", 0)))
 
     def test_a_quote_in_a_reviewer_of_another_round_is_refused(self):
         self.reviewer(text_row("nothing useful"), name="rev1")
@@ -244,6 +237,44 @@ class RegistryWideLookupTest(QuoteCase):
         self.register_session("second", [], subagents={"revB": reviewed(text_row(QUOTE))})
         self.write_ledger("feature", [round_event(1, PLAN, "correctness", ("revB",))])
         self.ok("finding", *flags())
+
+
+class LookupEdgeTest(QuoteCase):
+    def test_a_bad_registry_line_makes_every_reviewer_unreadable(self):
+        self.reviewer(text_row(QUOTE))
+        self.round()
+        with open(os.path.join(self.runtime, "sessions.jsonl"), "a") as handle:
+            handle.write("not json\n")
+        self.assertIn("evidence unavailable", self.refused("finding", *flags()))
+
+    def test_a_reviewer_that_is_not_a_regular_file_is_unreadable(self):
+        self.reviewer(text_row(QUOTE))
+        self.round()
+        path = os.path.join(self.root, "projects", "default-session", "subagents", "agent-rev1.jsonl")
+        os.unlink(path)
+        os.mkfifo(path)  # opens without blocking and reads as empty: only the regular-file check makes it unreadable
+        self.assertIn("evidence unavailable", self.refused("finding", *flags()))
+
+    def test_a_symlink_in_place_of_the_reviewer_transcript_is_unreadable(self):
+        self.reviewer(text_row(QUOTE))
+        self.round()
+        path = os.path.join(self.root, "projects", "default-session", "subagents", "agent-rev1.jsonl")
+        os.rename(path, path + ".real")
+        os.symlink(path + ".real", path)
+        self.assertIn("evidence unavailable", self.refused("finding", *flags()))
+
+    def test_the_first_readable_file_is_used_even_when_a_later_one_holds_the_quote(self):
+        self.register_session("first", [], subagents={"revB": reviewed(text_row("nothing here"))})
+        self.register_session("second", [], subagents={"revB": reviewed(text_row(QUOTE))})
+        self.write_ledger("feature", [round_event(1, PLAN, "correctness", ("revB",))])
+        self.assertIn("quote not in reviewer text", self.refused("finding", *flags()))
+
+
+class KeyOrderTest(QuoteCase):
+    def test_a_finding_is_written_with_the_required_keys_then_quote_then_raised(self):
+        self.round()
+        self.ok("finding", *flags(raised=True))
+        self.assertEqual(list(self.written()[-1]), ["kind", "time", "id", "loop", "phase", "round", "loc", "type", "reason", "quote", "raised"])
 
 
 class RaisedTest(QuoteCase):

@@ -855,6 +855,11 @@ VALID_VALUE = {
 KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT)}
 
 
+def _event_keys(kind):
+    """The required keys of an event kind, then its optional keys, in the order they are written."""
+    return (*EVENT_KEYS[kind], *OPTIONAL_KEYS.get(kind, ()))
+
+
 def _check_event_shape(event):
     if not isinstance(event, dict):
         raise LedgerError("an event must be a JSON object")
@@ -870,7 +875,9 @@ def _check_event_shape(event):
         _instant(event["time"], "the ledger")
     except Unavailable:
         raise LedgerError("bad time")
-    for key in (*required, *(key for key in optional if key in event)):
+    for key in _event_keys(kind):
+        if key not in event:
+            continue
         if not KIND_VALUE.get((kind, key), VALID_VALUE[key])(event[key]):
             raise LedgerError(f"bad {key} in a {kind} event")
 
@@ -1030,13 +1037,13 @@ def _ledger_event(argv):
     given = {key for key in VALID_VALUE if getattr(args, key, None) is not None}
     if not expected <= given or not given <= expected | optional:
         flag = lambda key: FLAG_NAMES.get(key, f"--{key}")
-        flags = lambda keys: ", ".join(flag(key) for key in (*EVENT_KEYS[args.event], *OPTIONAL_KEYS.get(args.event, ())) if key in keys)
+        flags = lambda keys: ", ".join(flag(key) for key in _event_keys(args.event) if key in keys)
         parser.error(f"a {args.event} event needs exactly {flags(expected)}"
                      + (f", and may have {flags(optional)}" if optional else "")
                      + (f" (missing {flags(expected - given)})" if expected - given else "")
                      + (f" (not allowed: {', '.join(sorted(flag(key) for key in given - expected - optional))})" if given - expected - optional else ""))
     event = {"kind": args.event, "time": _now("milliseconds")}
-    event.update({key: getattr(args, key) for key in (*EVENT_KEYS[args.event], *(key for key in OPTIONAL_KEYS.get(args.event, ()) if key in given))})
+    event.update({key: getattr(args, key) for key in _event_keys(args.event) if key in given})
     return args.worktree, event
 
 
@@ -1110,7 +1117,8 @@ def _reviewer_texts(dir_fd, reviewers):
             try:
                 if not stat.S_ISREG(os.lstat(path).st_mode):
                     continue
-                with open(path, "rb") as handle:
+                file_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+                with os.fdopen(file_fd, "rb") as handle:
                     parsed = _read_transcript(path, handle.read().decode("utf-8", "replace"))
             except (OSError, Unavailable, ValueError, RecursionError):
                 continue
