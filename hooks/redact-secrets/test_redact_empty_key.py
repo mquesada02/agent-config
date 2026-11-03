@@ -147,6 +147,11 @@ class EmptyKeyCases:
         text = "%s: abc %s:\n  keep\n" % (K, K)
         self.assertEqual(self.seam(text), "%s: ***\n  keep\n" % K)
 
+    def test_318_a_swallowed_key_hides_nothing_even_when_a_line_is_deeper_than_it(self):
+        # redact masks the whole key line, so the second key is no key; the deeper line stays
+        text = "%s: abc %s:\n%skeep\nnext: 1\n" % (K, K, " " * 20)
+        self.assertEqual(self.seam(text), "%s: ***\n%skeep\nnext: 1\n" % (K, " " * 20))
+
     # line endings
     def test_318_crlf_endings_are_kept_on_the_key_line(self):
         self.check("%s:\r\n  %s\r\nnext: 1\r\n" % (K, V), "%s: ***\r\nnext: 1\r\n" % K)
