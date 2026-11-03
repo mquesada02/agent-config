@@ -1,7 +1,7 @@
 """Monitor line filter: read lines on stdin, write each line with its secret values replaced by ***.
 
 The PreToolUse rewrite hook (redact_pre.py) pipes every Monitor command through this script. Each line goes
-through redact_rules.redact and is flushed at once. Four multi-line secrets keep state:
+through redact_rules.redact and is flushed at once. Five multi-line secrets keep state:
 - A PEM private-key block is held from its BEGIN line to its END line and written as one *** (the text
   before BEGIN and after END is kept). At 200 held lines with no END, the held lines are dropped, one ***
   line is written, and every further line up to and including the END line is dropped.
@@ -19,9 +19,17 @@ through redact_rules.redact and is flushed at once. Four multi-line secrets keep
   up to its END line, then the state goes on. The key indent is measured on the text after the PEM rule. For a
   key on the rest of a line after a dropped state it is measured on the rest only, so the filter can hide
   more lines than redact_rules does there (fail-closed).
+- A plain double-quoted matched key with an empty value (`"key":`), the pending JSON value state: the key line
+  is held with the blank lines after it, up to the first non-blank line. If that line starts a JSON value (see
+  redact_rules), the key line, the blank lines and the value line are written, the value masked as the
+  same-line rule masks it (a string `"***"` unless the value guard keeps it, `{}` and `[]` and a token stay)
+  and the rest of the line is a normal line; an object or array that does not close on the line enters the
+  JSON drop state. Otherwise the empty-key rule above applies from the key line, with each held blank line
+  hidden (a line with a BEGIN line and no END line is never a JSON value). At the end of the input the key
+  line is written as `"key": ***` when a blank line was held, else unchanged; held blank lines are not written.
 The text that follows the end of a state on the same line is handled as a normal line, so it can start a new
 state. Held or dropped lines at the end of the input are never written, except a held key line of the
-empty-key state (see above). The filter fails closed: on any error it writes nothing more and exits
+empty-key and pending JSON value states (see above). The filter fails closed: on any error it writes nothing more and exits
 non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or
@@ -125,10 +133,16 @@ class LineFilter:
         return self.handler(line)
 
     def finish(self):
-        """The text to write at the end of the input: a held key line is written as a normal line."""
-        if self.handler != self.empty_key_hold:
+        """The text to write at the end of the input: a held key line is written as redact(text) writes it.
+
+        That is `"key": ***` when a blank line was held by the pending JSON value state (the empty-key rule
+        hides blank lines), and the key line as a normal line otherwise. Held blank lines are never written.
+        """
+        if self.handler not in (self.empty_key_hold, self.json_pending):
             return ""
         body, ending = split_ending(self.held[0])
+        if len(self.held) > 1:
+            return redact_rules.redact(body + "\n ").split("\n", 1)[0] + ending
         return redact_rules.redact(body) + ending
 
     def normal_line(self, line):
@@ -149,7 +163,8 @@ class LineFilter:
             else:
                 found = redact_rules.empty_key(body) if ":" in body else None
                 if found is not None:
-                    self.handler = self.empty_key_hold
+                    # a plain double-quoted key may be followed by a JSON value on a later line
+                    self.handler = self.json_pending if found[2] else self.empty_key_hold
                     self.held = [line]
                     self.key_indent = found[0]
                     return ""
@@ -221,6 +236,56 @@ class LineFilter:
                 return first + key_ending
         self.handler = self.normal_line
         return redact_rules.redact(key_body) + key_ending + self.normal_line(line)
+
+    def json_pending(self, line):
+        """A plain double-quoted empty secret key is held with the blank lines after it. The first non-blank line
+        decides: a JSON value is masked as one value, anything else takes the empty-key rule from the key line."""
+        body, ending = split_ending(line)
+        if body.strip() == "":
+            self.held.append(line)
+            return ""
+        key_body, key_ending = split_ending(self.held[0])
+        blanks = self.held[1:]
+        # a complete PEM block is masked before the rules look at the line; an unclosed one is no JSON value
+        shown = body if has_unclosed_begin(body) or "-----BEGIN" not in body else redact_rules.PEM_BLOCK.sub(
+            redact_rules.MASK, body
+        )
+        indent = len(shown) - len(shown.lstrip(" \t"))
+        live_key = redact_rules.redact(key_body + '\n"x"').endswith('\n"***"')
+        if not has_unclosed_begin(body) and live_key and redact_rules.starts_json_value(shown, indent):
+            self.handler = self.normal_line
+            return (
+                redact_rules.redact(key_body) + key_ending + "".join(blanks)
+                + self.json_value_line(shown, ending, indent)
+            )
+        if blanks or redact_rules.hidden_by_empty_key(body, self.key_indent):
+            # a held blank line is a hidden line: it becomes one space, so that redact sees a following line
+            probe = " " if blanks else body
+            first = redact_rules.redact(key_body + "\n" + probe).split("\n", 1)[0]
+            if first != redact_rules.redact(key_body):
+                if redact_rules.hidden_by_empty_key(body, self.key_indent):
+                    return first + key_ending + self.hide_line(body)
+                self.handler = self.normal_line
+                return first + key_ending + self.normal_line(line)
+        self.handler = self.normal_line
+        return redact_rules.redact(key_body) + key_ending + "".join(blanks) + self.normal_line(line)
+
+    def json_value_line(self, shown, ending, start):
+        """A JSON value at `start` of a line after its key, redacted as the same-line rule does it.
+
+        The rest of the line is handled as a normal line. An object or array that does not close on the line
+        writes the masked line and enters the JSON drop state.
+        """
+        if shown[start] in "{[":
+            depth, closed = scan_brackets(shown, 0, start)
+            if closed < 0:
+                self.handler = self.json_drop
+                self.depth = depth
+                return shown[:start] + '"' + redact_rules.MASK + '"' + ending
+        end, replacement = redact_rules.json_value_end(shown, start, '"')
+        if replacement is None:
+            return self.normal_line(shown + ending)
+        return self.normal_line(shown[:start] + replacement + shown[end:] + ending)
 
     def empty_key_drop(self, line):
         body, _ = split_ending(line)
