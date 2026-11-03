@@ -26,7 +26,7 @@ Residual risks (the later tickets add theirs to this comment):
   hide the rest of the stream (the fail-closed choice; they never leak it).
 - In the Monitor filter, a false positive of a state (for example `echo "see <key>: |"`) can hide following lines.
 - A multi-line secret in a form that no filter state covers leaks line by line: a YAML sequence under a matched
-  key, a JSON value on the line after its key, a YAML block scalar with a tag, an anchor or a quoted key.
+  key, a JSON value on the line after its key.
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it

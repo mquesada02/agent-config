@@ -6,6 +6,14 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
 2. Keyed formats, tried in this order on each occurrence: JSON, env, YAML. The key name must contain
    ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY or CREDENTIAL, ignoring case, _ and -.
    Only the value becomes ***; a number, true/false, null or empty value stays (value guard).
+   - A single-quoted key (`'key': value`) is a YAML key with every same-line YAML value form.
+   - A block scalar header (`|` or `>`) may have node properties before it: at most one tag (`!x`, `!!x`,
+     `!<x>`) and one anchor (`&x`), at least one, in either order. The header, and the lines that are blank or
+     indented deeper than the key, become one *** (`key: ***`, quotes kept for a quoted key). A plain
+     double-quoted key and a single-quoted key open a block too; an env pair never does.
+   - Two tags or two anchors are no properties: the value is masked to the end of the line.
+   - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
+     is masked to the end of the line. One word keeps the JSON mask.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
 """
 import re
@@ -22,8 +30,16 @@ ESCAPED_QUOTE = re.compile(r'(?<!\\)\\"')
 KEY_OCCURRENCE = re.compile(
     r'(?P<jq>\\?")(?P<jkey>' + KEY_CHARS + r'+)\\?"[ \t]*:[ \t]*'
     r"|(?<!" + KEY_CHARS + r")(?P<ekey>" + KEY_CHARS + r"+)="
-    r"|(?<!" + KEY_CHARS + r")(?P<ykey>" + KEY_CHARS + r"+):(?=[ \t\r\n]|\Z)[ \t]*",
+    r"|(?<!" + KEY_CHARS + r")(?P<ykey>" + KEY_CHARS + r"+):(?=[ \t\r\n]|\Z)[ \t]*"
+    r"|'(?P<skey>" + KEY_CHARS + r"+)'[ \t]*:(?=[ \t\r\n]|\Z)[ \t]*",
     re.MULTILINE,
+)
+# YAML node properties: at most one tag and one anchor, at least one, in either order.
+TAG = r"!(?:<[^>\s]*>|[^\s,\[\]{}]*)"
+ANCHOR = r"&[^\s,\[\]{}]+"
+# Where a block scalar header starts: optional node properties, then `|` or `>`. The filter uses it too.
+BLOCK_HEADER = re.compile(
+    r"(?:(?:" + TAG + r"(?:[ \t]+" + ANCHOR + r")?|" + ANCHOR + r"(?:[ \t]+" + TAG + r")?)[ \t]+)?[|>]"
 )
 NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 BAREWORD = re.compile(r"[^,}\]\s]*")
@@ -35,6 +51,18 @@ SHAPES = (
     (re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(?=@)"), r"\g<head>" + MASK),
     (re.compile(r"(?:ghp_|gho_|ghs_|github_pat_|sk-ant-|xox[abprs]-)[A-Za-z0-9_\-]+"), MASK),
 )
+
+
+def block_key(match):
+    """The key name of a key occurrence that may open a block scalar, or None.
+
+    That is a YAML key, a single-quoted key or a plain double-quoted key. An env pair and a JSON key written
+    with escaped quotes never open a block. The rules and the Monitor filter both call this.
+    """
+    key = match.group("ykey") or match.group("skey")
+    if key is None and match.group("jq") == '"':
+        key = match.group("jkey")
+    return key
 
 
 def is_secret_key(key):
@@ -120,6 +148,19 @@ def json_value_end(text, start, quote):
     return end, quote + MASK + quote
 
 
+def json_dq_key_value_end(text, start):
+    """Like json_value_end for a plain double-quoted key, but an unquoted value of more than one word is
+    masked to the end of the line (a YAML plain value)."""
+    if text[start : start + 1] not in ('"', "{", "["):
+        word_end = BAREWORD.match(text, start).end()
+        after = word_end
+        while after < len(text) and text[after] in " \t":
+            after += 1
+        if after < len(text) and text[after] not in ",}]\r\n":
+            return line_end(text, start), MASK
+    return json_value_end(text, start, '"')
+
+
 def quoted_line_value(text, start):
     """Env and YAML quoted value at `start`: return (end, replacement) or (start, None) when it stays."""
     char = text[start]
@@ -166,21 +207,22 @@ def redact_keyed(text):
         elif match.group("ekey") is not None:
             key, start, kind = match.group("ekey"), match.end(), "env"
         else:
-            key, start, kind = match.group("ykey"), match.end(), "yaml"
+            key, start, kind = match.group("ykey") or match.group("skey"), match.end(), "yaml"
         out.append(text[pos:start])
         pos = start
         if not is_secret_key(key):
             continue
-        if kind == "json":
-            quote = match.group("jq")
-            end, replacement = json_value_end(text, start, quote)
-        elif start < len(text) and text[start] in "|>" and kind == "yaml":
+        if kind == "json" and match.group("jq") != '"':
+            end, replacement = json_value_end(text, start, match.group("jq"))
+        elif block_key(match) is not None and BLOCK_HEADER.match(text, start):
             header_end = line_end(text, start)
             line_start = text.rfind("\n", 0, match.start()) + 1
             key_indent = match.start() - line_start
             end, replacement = drop_block_scalar(text, header_end, key_indent), MASK
             if end > header_end and text[header_end : header_end + 1] == "\n":
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
+        elif kind == "json":
+            end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":
             end, replacement = quoted_line_value(text, start)
         else:

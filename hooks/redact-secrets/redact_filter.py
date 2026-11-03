@@ -8,7 +8,9 @@ through redact_rules.redact and is flushed at once. Three multi-line secrets kee
 - A JSON object or array under a matched key that does not close on its line: the redacted line is written,
   and every following line is dropped until the brackets balance.
 - A YAML block scalar under a matched key (`key: |` or `key: >`): `key: ***` is written, and every following
-  line that is empty or indented more than the key is dropped.
+  line that is empty or indented more than the key is dropped. The key can be quoted (`'key': |`,
+  `"key": |`) and the header can have node properties (`key: !!str |`, `key: &a |`). The key indent is the
+  column of the key's first character (its opening quote for a quoted key).
 The text that follows the end of a state on the same line is handled as a normal line, so it can start a new
 state. Held or dropped lines at the end of the input are never written. The filter fails closed: on any
 error it writes nothing more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
@@ -81,13 +83,16 @@ def unclosed_json_depth(body):
 
 
 def yaml_block_indent(body):
-    """The key column of the first matched `key: |` or `key: >` in the line, or None."""
+    """The key column of the first matched key with a block scalar header in the line, or None.
+
+    The key is a YAML key, a single-quoted key or a plain double-quoted key. The header is the one of
+    redact_rules.BLOCK_HEADER: optional node properties, then `|` or `>`.
+    """
     for match in redact_rules.KEY_OCCURRENCE.finditer(body):
-        key = match.group("ykey")
+        key = redact_rules.block_key(match)
         if key is None or not redact_rules.is_secret_key(key):
             continue
-        start = match.end()
-        if start < len(body) and body[start] in "|>":
+        if redact_rules.BLOCK_HEADER.match(body, match.end()):
             return match.start()
     return None
 
