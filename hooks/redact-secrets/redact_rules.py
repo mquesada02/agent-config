@@ -12,6 +12,13 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      indented deeper than the key, become one *** (`key: ***`, quotes kept for a quoted key). A plain
      double-quoted key and a single-quoted key open a block too; an env pair never does.
    - Two tags or two anchors are no properties: the value is masked to the end of the line.
+   - A YAML key, a single-quoted key or a plain double-quoted key with an empty value (nothing after the colon
+     but spaces, tabs and node properties) is fail-closed (spec 311, ticket 313). The lines after it that are
+     blank, indented deeper than the key, or at exactly the key indent and starting with `- ` are hidden,
+     up to the first other line at the key indent or less. When at least one line is hidden, the key line
+     becomes `key: ***` (quotes kept for a quoted key; its properties are hidden too) and the hidden lines are
+     removed. When no line is hidden, the text stays unchanged. The key indent is the column of the key in
+     the text after the PEM rule. A nested map under the key is hidden too (accepted cost).
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
@@ -37,10 +44,11 @@ KEY_OCCURRENCE = re.compile(
 # YAML node properties: at most one tag and one anchor, at least one, in either order.
 TAG = r"!(?:<[^>\s]*>|[^\s,\[\]{}]*)"
 ANCHOR = r"&[^\s,\[\]{}]+"
+PROPERTIES = r"(?:" + TAG + r"(?:[ \t]+" + ANCHOR + r")?|" + ANCHOR + r"(?:[ \t]+" + TAG + r")?)"
 # Where a block scalar header starts: optional node properties, then `|` or `>`. The filter uses it too.
-BLOCK_HEADER = re.compile(
-    r"(?:(?:" + TAG + r"(?:[ \t]+" + ANCHOR + r")?|" + ANCHOR + r"(?:[ \t]+" + TAG + r")?)[ \t]+)?[|>]"
-)
+BLOCK_HEADER = re.compile(r"(?:" + PROPERTIES + r"[ \t]+)?[|>]")
+# An empty value: nothing but node properties, spaces and tabs up to the line end. The filter uses it too.
+EMPTY_VALUE = re.compile(r"(?:" + PROPERTIES + r"[ \t]*)?(?=\r?\n|\Z)")
 NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
@@ -195,6 +203,53 @@ def drop_block_scalar(text, header_end, key_indent):
     return min(index, len(text))
 
 
+def hidden_by_empty_key(line, key_indent):
+    """Whether the empty-key rule hides a line (given without its line ending) that follows an empty secret key.
+
+    The line is blank, indented deeper than the key, or at exactly the key indent and starting with `- `.
+    The filter uses it too.
+    """
+    if line.strip() == "":
+        return True
+    indent = len(line) - len(line.lstrip(" \t"))
+    return indent > key_indent or (indent == key_indent and line.startswith("- ", indent))
+
+
+def empty_key_end(text, header_end, key_indent):
+    """Index after the lines that the empty-key rule hides below the key line ending at `header_end`, or -1."""
+    newline = text.find("\n", header_end)
+    if newline < 0:
+        return -1
+    first = index = newline + 1
+    while index < len(text):
+        newline = text.find("\n", index)
+        line_stop = len(text) if newline < 0 else newline
+        if not hidden_by_empty_key(text[index:line_stop], key_indent):
+            break
+        index = line_stop + 1
+    index = min(index, len(text))
+    return index if index > first else -1
+
+
+def empty_key(body):
+    """(key indent, index of the value) of the last secret key in a line with an empty value, or None.
+
+    The line is given without its line ending. The key indent is measured on the line after the PEM rule,
+    as redact_keyed measures it. The filter uses this to find an empty secret key.
+    """
+    # an empty value ends the line with a colon or with node properties (`!` or `&`)
+    if not (body.rstrip(" \t").endswith(":") or "!" in body or "&" in body):
+        return None
+    masked = PEM_BLOCK.sub(MASK, body) if "-----BEGIN" in body else body
+    found = None
+    for match in KEY_OCCURRENCE.finditer(masked):
+        if EMPTY_VALUE.match(masked, match.end()):
+            key = block_key(match)
+            if key is not None and is_secret_key(key):
+                found = (match.start(), match.end())
+    return found
+
+
 def redact_keyed(text):
     out = []
     pos = 0
@@ -221,6 +276,14 @@ def redact_keyed(text):
             end, replacement = drop_block_scalar(text, header_end, key_indent), MASK
             if end > header_end and text[header_end : header_end + 1] == "\n":
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
+        elif block_key(match) is not None and EMPTY_VALUE.match(text, start):
+            header_end = line_end(text, start)
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            end = empty_key_end(text, header_end, match.start() - line_start)
+            if end < 0:
+                continue  # no line is hidden: the text stays unchanged
+            space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
+            replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":

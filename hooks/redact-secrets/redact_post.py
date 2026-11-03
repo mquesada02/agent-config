@@ -25,8 +25,11 @@ Residual risks (the later tickets add theirs to this comment):
 - In the Monitor filter, a PEM block with no END line and an unclosed JSON object or array under a matched key
   hide the rest of the stream (the fail-closed choice; they never leak it).
 - In the Monitor filter, a false positive of a state (for example `echo "see <key>: |"`) can hide following lines.
-- A multi-line secret in a form that no filter state covers leaks line by line: a YAML sequence under a matched
-  key, a JSON value on the line after its key.
+- A multi-line secret in a form that no filter state covers leaks line by line: a JSON value on the line after
+  its key.
+- In the Monitor filter, an empty matched key on the rest of a line after a dropped PEM or JSON state uses the
+  column of the rest only, so it can hide more lines than the shared rules do. One input leaks: a BEGIN line
+  inside a dropped JSON object, on the line that closes the object, with the END line in the rest.
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it
