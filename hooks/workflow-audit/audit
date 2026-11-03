@@ -61,7 +61,7 @@ REASON_LIMIT = 500
 QUOTE_LIMIT = 500
 MIN_QUOTE = 8
 MAX_EXTENSION_ROUNDS = 5
-MAX_APPROVED_LINES = 100000
+MAX_APPROVED_LINES = 100000  # a sanity bound on the --lines of a size-approval, far above any real small task
 MAX_LEDGER_LINE_BYTES = 4096
 SYNTHETIC_MODEL = "<synthetic>"
 AGENT_TRANSCRIPT = re.compile(r"agent-(.+)\.jsonl")
@@ -1493,10 +1493,10 @@ def _real_input(audited):
     return units
 
 
-def _unbacked_extensions(ledger, extensions, audited):
-    """The S5 evidence lines of the extensions whose quote is not found in real user input. Each extension takes the earliest unused
-    block that is after the round at the cap in force before it and not after the extension."""
-    units, used, caps, failures = _real_input(audited), set(), {}, []
+def _unbacked_extensions(ledger, extensions, units):
+    """The S5 evidence lines of the extensions whose quote is not found in real user input (`units`, from `_real_input`). Each extension
+    takes the earliest unused block that is after the round at the cap in force before it and not after the extension."""
+    used, caps, failures = set(), {}, []
     for number, event in enumerate(extensions, 1):
         key = (event["loop"], event["phase"])
         cap = caps.get(key, PHASE_CAPS[event["phase"]])
@@ -1512,9 +1512,9 @@ def _unbacked_extensions(ledger, extensions, audited):
     return failures
 
 
-def _unbacked_size_approvals(approvals, audited):
-    """The S5 evidence lines of the size-approval events whose quote is not found in real user input at or before the event."""
-    units, failures = _real_input(audited), []
+def _unbacked_size_approvals(approvals, units):
+    """The S5 evidence lines of the size-approval events whose quote is not found in real user input (`units`) at or before the event."""
+    failures = []
     for number, event in enumerate(approvals, 1):
         high, quote = _instant(event["time"], "the ledger"), _normalise(event["quote"])
         if not any(moment is not None and moment <= high and quote in text for moment, text in units):
@@ -1532,7 +1532,8 @@ def check_s5(ledger, audited, problem):
     if extensions or approvals:
         if audited is None:
             return False, problem
-        failures += _unbacked_extensions(ledger, extensions, audited) + _unbacked_size_approvals(approvals, audited)
+        units = _real_input(audited)
+        failures += _unbacked_extensions(ledger, extensions, units) + _unbacked_size_approvals(approvals, units)
     if failures:
         return False, _truncate_lines(failures)
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
