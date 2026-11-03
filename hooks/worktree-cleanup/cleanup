@@ -4,6 +4,7 @@
 # Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 4 (Submodules pushed), 5 (Merged), 6 (Pushed), 7 (Main checkout) and 8 (Docker),
 # then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
 # Check 5 also passes, with no merged PR, a tip that is on origin/<base> after a fetch (#300); <base> is --base or the default branch.
+# A merged PR at the tip takes precedence: its base is used and --base is ignored.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import json
 import os
@@ -249,18 +250,25 @@ def check_merged(target, branch, tip, named_base):
         return ["Merged: could not read the default branch from GitHub"], None, None, None
     if bases:
         return [], bases.pop(), default, sorted(pr["number"] for pr in matching if isinstance(pr.get("number"), int))
-    # No merged PR: the branch holds nothing the base lacks when its tip is on the fetched base (#300).
     base = named_base or default
-    no_pr = f"Merged: no merged PR has the local tip {tip[:12]} as its head"
-    fetch = git(target, "fetch", REMOTE, base)
+    problem = tip_off_base(target, tip, base)
+    if problem:
+        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head, and {problem}"], None, None, None
+    return [], base, default, []
+
+
+def tip_off_base(target, tip, base):
+    """None when the tip is on origin/<base> after a fetch, so the branch holds nothing the base lacks (#300); else why not."""
+    # an explicit refspec, so the tracking ref is updated whatever fetch refspec the clone has
+    fetch = git(target, "fetch", REMOTE, f"+refs/heads/{base}:refs/remotes/{REMOTE}/{base}")
     if fetch.returncode != 0:
-        return [f"{no_pr}, and {REMOTE}/{base} could not be fetched: {failure_text(fetch)}"], None, None, None
+        return f"{REMOTE}/{base} could not be fetched: {failure_text(fetch)}"
     ancestor = git(target, "merge-base", "--is-ancestor", tip, f"refs/remotes/{REMOTE}/{base}")
     if ancestor.returncode == 1:
-        return [f"{no_pr}, and it is not on {REMOTE}/{base}"], None, None, None
+        return f"it is not on {REMOTE}/{base}"
     if ancestor.returncode != 0:
-        return [f"{no_pr}, and git merge-base failed: {failure_text(ancestor)}"], None, None, None
-    return [], base, default, []
+        return f"git merge-base failed: {failure_text(ancestor)}"
+    return None
 
 
 def remote_ref_sha(target, ref):
