@@ -50,9 +50,18 @@ class SectionSixTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 6)
 
-    def test_the_ledger_is_written_through_audit_ledger_with_six_event_kinds(self):
+    def test_the_ledger_is_written_through_audit_ledger_with_seven_event_kinds(self):
         self.assert_in(self.text, "~/.claude/hooks/workflow-audit/audit ledger <event> --worktree <path>", "`audit ledger`",
-                       "- `round`:", "- `finding`:", "- `verdict`:", "- `status`:", "- `extension`:", "- `phase-commit`:")
+                       "- `round`:", "- `finding`:", "- `finding-amend`:", "- `verdict`:", "- `status`:", "- `extension`:",
+                       "- `phase-commit`:")
+
+    def test_the_finding_amend_bullet_names_the_repair_the_quote_rule_and_the_unchanged_fields(self):
+        bullet = re.search(r"^- `finding-amend`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "`--id`", "`--reason`", "`--quote`", "`--raised`", "repairs the reason of an existing finding",
+                       "the same quote rule as `finding`", "The latest amendment is in force",
+                       "type, loop, phase, round, location and status never change")
+        self.assertGreater(self.text.index("- `finding-amend`:"), self.text.index("- `finding`:"))
+        self.assertLess(self.text.index("- `finding-amend`:"), self.text.index("- `verdict`:"))
 
     def test_the_round_bullet_says_reviewer_ids_are_subagents_of_the_loop_session_and_a_round_is_written_after_its_reviewers_ran(self):
         bullet = re.search(r"^- `round`:.*$", self.text, re.MULTILINE).group(0)
@@ -112,6 +121,9 @@ class SectionSevenTest(RuleTextCase):
 
     def test_the_plan_review_loop_names_quote_and_raised(self):
         self.assert_in(self.text, "`--quote` (required for a plan-review Blocking finding)", "`--raised`")
+
+    def test_the_plan_review_loop_names_finding_amend_as_the_repair_of_a_missing_quote(self):
+        self.assert_in(self.text, "repairs a finding whose reason lacks its quote with `finding-amend`")
 
     def test_the_manual_evidence_checks_are_gone(self):
         self.assert_not_in(self.text, "checks evidence for each step", "checks the following evidence for the step 4.1 review",
