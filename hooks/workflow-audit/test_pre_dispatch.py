@@ -15,6 +15,11 @@ NOT_FOUND ="extension 1 (plan-review-3 final +1): quote not found in real user i
 L1_ONLY = {"L1": PASSING_LLM["L1"]}
 
 
+def raised_finding(finding_id, loop, n=1):
+    """A Blocking finding that the loop session raised: it holds its quote in its reason and needs no reviewer transcript, so S10 passes it."""
+    return {**finding_event(finding_id, loop=loop, n=n), "reason": 'rests on "a quoted line"', "quote": "a quoted line", "raised": True}
+
+
 def at(second):
     """A ledger time before every subagent start (EARLY), so that a later round of a loop is not blocked by the cross-check."""
     return "1990-01-01T00:00:%02d.000Z" % second
@@ -55,7 +60,7 @@ class RecordTest(PreDispatchCase):
     def test_a_passing_audit_writes_the_record_without_a_push(self):
         result = self.pre_dispatch()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.decode().split("\n"), ["S3 pass", "S5 pass", "S7 pass", "XC pass", "L1 pass", "result pass", ""])
+        self.assertEqual(result.stdout.decode().split("\n"), ["S3 pass", "S5 pass", "S7 pass", "XC pass", "S10 pass", "L1 pass", "result pass", ""])
         self.assertEqual(self.record_files(), [f"pre-dispatch-{SID}.json"])
         record = self.read_pre_dispatch()
         self.assertEqual(set(record), {"session_id", "map", "remote_url", "branch", "time", "items", "result"})
@@ -63,7 +68,7 @@ class RecordTest(PreDispatchCase):
         self.assertEqual(record["remote_url"], self.origin)
         self.assertRegex(record["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00$")
         self.assertEqual([(item["id"], item["kind"], item["result"]) for item in record["items"]],
-                         [("S3", "S", "pass"), ("S5", "S", "pass"), ("S7", "S", "pass"), ("XC", "S", "pass"), ("L1", "L", "pass")])
+                         [("S3", "S", "pass"), ("S5", "S", "pass"), ("S7", "S", "pass"), ("XC", "S", "pass"), ("S10", "S", "pass"), ("L1", "L", "pass")])
         for item in record["items"]:
             self.assertEqual(set(item), {"id", "kind", "result", "evidence"})
 
@@ -75,10 +80,10 @@ class RecordTest(PreDispatchCase):
         self.assertEqual(self.read_pre_dispatch()["result"], "fail")
 
     def test_a_second_run_of_the_same_session_replaces_the_record(self):
-        self.write_ledger("feature", self.plan_events(finding_event("P1", loop=LOOP_3, kind="Blocking")))
+        self.write_ledger("feature", self.plan_events(raised_finding("P1", LOOP_3)))
         self.assertEqual(self.pre_dispatch().returncode, 1)
         self.assertEqual(self.read_pre_dispatch()["result"], "fail")
-        self.write_ledger("feature", self.plan_events(finding_event("P1", loop=LOOP_3, kind="Blocking"), status_event("P1")))
+        self.write_ledger("feature", self.plan_events(raised_finding("P1", LOOP_3), status_event("P1")))
         self.assertEqual(self.pre_dispatch().returncode, 0)
         self.assertEqual(self.read_pre_dispatch()["result"], "pass")
         self.assertEqual(self.record_files(), [f"pre-dispatch-{SID}.json"])
@@ -128,12 +133,12 @@ class LedgerViewTest(PreDispatchCase):
                 self.assertIn("P1", self.pd_item("S3")["evidence"])
 
     def test_a_closed_plan_review_finding_passes(self):
-        self.write_ledger("feature", self.plan_events(finding_event("P1", loop=LOOP_3), status_event("P1", "deferred")))
+        self.write_ledger("feature", self.plan_events(raised_finding("P1", LOOP_3), status_event("P1", "deferred")))
         self.assertEqual(self.pre_dispatch().returncode, 0)
 
     def test_a_loop_stopped_at_its_cap_may_leave_findings_open(self):
         rounds = [round_event(n, loop=LOOP_3, time=at(n)) for n in range(1, 6)]
-        self.write_ledger("feature", [*rounds, finding_event("P1", loop=LOOP_3, n=5), round_event(loop=LOOP_41)])
+        self.write_ledger("feature", [*rounds, raised_finding("P1", LOOP_3, n=5), round_event(loop=LOOP_41)])
         result = self.pre_dispatch()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("stopped at cap: 1 open findings", self.pd_item("S3")["evidence"])
