@@ -89,9 +89,7 @@ def yaml_block_indent(body):
     redact_rules.BLOCK_HEADER: optional node properties, then `|` or `>`.
     """
     for match in redact_rules.KEY_OCCURRENCE.finditer(body):
-        key = match.group("ykey") or match.group("skey")
-        if key is None and match.group("jq") == '"':
-            key = match.group("jkey")
+        key = redact_rules.block_key(match)
         if key is None or not redact_rules.is_secret_key(key):
             continue
         if redact_rules.BLOCK_HEADER.match(body, match.end()):

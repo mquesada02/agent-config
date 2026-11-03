@@ -53,6 +53,18 @@ SHAPES = (
 )
 
 
+def block_key(match):
+    """The key name of a key occurrence that may open a block scalar, or None.
+
+    That is a YAML key, a single-quoted key or a plain double-quoted key. An env pair and a JSON key written
+    with escaped quotes never open a block. The rules and the Monitor filter both call this.
+    """
+    key = match.group("ykey") or match.group("skey")
+    if key is None and match.group("jq") == '"':
+        key = match.group("jkey")
+    return key
+
+
 def is_secret_key(key):
     normal = key.lower().replace("_", "").replace("-", "")
     return any(word in normal for word in KEY_WORDS)
@@ -136,7 +148,7 @@ def json_value_end(text, start, quote):
     return end, quote + MASK + quote
 
 
-def json_key_value_end(text, start):
+def json_dq_key_value_end(text, start):
     """Like json_value_end for a plain double-quoted key, but an unquoted value of more than one word is
     masked to the end of the line (a YAML plain value)."""
     if text[start : start + 1] not in ('"', "{", "["):
@@ -202,7 +214,7 @@ def redact_keyed(text):
             continue
         if kind == "json" and match.group("jq") != '"':
             end, replacement = json_value_end(text, start, match.group("jq"))
-        elif kind != "env" and BLOCK_HEADER.match(text, start):
+        elif block_key(match) is not None and BLOCK_HEADER.match(text, start):
             header_end = line_end(text, start)
             line_start = text.rfind("\n", 0, match.start()) + 1
             key_indent = match.start() - line_start
@@ -210,7 +222,7 @@ def redact_keyed(text):
             if end > header_end and text[header_end : header_end + 1] == "\n":
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
         elif kind == "json":
-            end, replacement = json_key_value_end(text, start)
+            end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":
             end, replacement = quoted_line_value(text, start)
         else:
