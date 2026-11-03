@@ -26,6 +26,12 @@ class DispatchGateCase(GateTestCase):
 
 
 class AllowTest(DispatchGateCase):
+    def test_a_passing_record_with_a_linear_map_key_allows_the_dispatch(self):
+        self.pd_record(map="ENG-42")
+        result = self.gate(WS)
+        self.assert_allowed(result)
+        self.assertEqual(result.stderr, b"")
+
     def test_a_passing_record_of_the_session_allows_every_orca_name(self):
         self.pd_record()
         for command in (

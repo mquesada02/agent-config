@@ -70,7 +70,8 @@ UNCHECKED_REASON = "unchecked command form: run %s as a plain command"
 UNFOLLOWED_REASON = "no branch to check: gh pr create inside a command substitution cannot be followed"
 PRE_DISPATCH_LOOPS = ("plan-review-3", "plan-review-4.1")  # the loops that a pre-dispatch audit reads
 PRE_DISPATCH_NAME = "pre-dispatch-%s.json"
-MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")
+MAP_ISSUE = re.compile(r"[1-9][0-9]{0,8}")  # a GitHub issue number
+MAP_LINEAR_KEY = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")  # a Linear key: team prefix, dash, number
 ORCA_COMMANDS = frozenset(("orca", "orca-ide", "orca-dev"))
 CLEANUP_COMMAND = "~/.claude/hooks/worktree-cleanup/cleanup"
 USAGE = ("usage: audit ledger <event> --worktree <path> ... | audit ledger link --worktree <path> --from-branch <branch> --ticket <id> | audit ledger show --worktree <path> | audit sessions show --worktree <path> | audit check --worktree <path> --base <branch> | audit record --worktree <path> --base <branch> --llm <file>"
@@ -1919,7 +1920,8 @@ def _record(argv):
 
 
 def _pre_dispatch_arguments(argv):
-    """(worktree, map issue, llm path) of `record --pre-dispatch`: the bare flag once, and each of the three flags once, in any order."""
+    """(worktree, map key, llm path) of `record --pre-dispatch`: the bare flag once, and each of the three flags once, in any order.
+    The map key is an int for a GitHub issue number and a str for a Linear key."""
     rest = [word for word in argv if word != "--pre-dispatch"]
     if len(argv) - len(rest) != 1 or len(rest) != 6:
         raise Refusal(USAGE)
@@ -1929,9 +1931,13 @@ def _pre_dispatch_arguments(argv):
         if flag not in ("--worktree", "--map", "--llm") or flag in values:
             raise Refusal(USAGE)
         values[flag] = rest[index + 1]
-    if not MAP_ISSUE.fullmatch(values["--map"]):
-        raise Refusal("bad --map: need an issue number (1 to 9 digits, no leading zero)")
-    return values["--worktree"], int(values["--map"]), values["--llm"]
+    given = values["--map"]
+    if MAP_ISSUE.fullmatch(given):
+        return values["--worktree"], int(given), values["--llm"]
+    if MAP_LINEAR_KEY.fullmatch(given):
+        return values["--worktree"], given, values["--llm"]
+    raise Refusal("bad --map: need a GitHub issue number (1 to 9 digits, no leading zero) "
+                  "or a Linear key (1 to 10 capital letters or digits starting with a letter, a dash, then such a number)")
 
 
 def _plan_review_view(ledger):
@@ -1976,7 +1982,7 @@ def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
 
 
 def _pre_dispatch(argv):
-    worktree, map_issue, llm_path = _pre_dispatch_arguments(argv)
+    worktree, map_key, llm_path = _pre_dispatch_arguments(argv)
     l_items = _load_llm(llm_path, ("L1",))
     runtime_dir = _runtime()
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -1995,7 +2001,7 @@ def _pre_dispatch(argv):
         items = _pre_dispatch_items(worktree, dir_fd, branch, remote_url) + l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
-            "session_id": session_id, "map": map_issue, "remote_url": remote_url, "branch": branch,
+            "session_id": session_id, "map": map_key, "remote_url": remote_url, "branch": branch,
             "time": _now(), "items": items, "result": result,
         })
         if len(text) > runtime_dir.MAX_READ_BYTES:
