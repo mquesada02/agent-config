@@ -1899,7 +1899,8 @@ def _record(argv):
 
 
 def _pre_dispatch_arguments(argv):
-    """(worktree, map issue, llm path) of `record --pre-dispatch`: the bare flag once, and each of the three flags once, in any order."""
+    """(worktree, map key, llm path) of `record --pre-dispatch`: the bare flag once, and each of the three flags once, in any order.
+    The map key is an int for a GitHub issue number and a str for a Linear key."""
     rest = [word for word in argv if word != "--pre-dispatch"]
     if len(argv) - len(rest) != 1 or len(rest) != 6:
         raise Refusal(USAGE)
@@ -1909,13 +1910,13 @@ def _pre_dispatch_arguments(argv):
         if flag not in ("--worktree", "--map", "--llm") or flag in values:
             raise Refusal(USAGE)
         values[flag] = rest[index + 1]
-    map_key = values["--map"]
-    if MAP_ISSUE.fullmatch(map_key):
-        map_key = int(map_key)
-    elif not MAP_LINEAR_KEY.fullmatch(map_key):
-        raise Refusal("bad --map: need a GitHub issue number (1 to 9 digits, no leading zero) "
-                      "or a Linear key (1 to 10 capital letters or digits starting with a letter, a dash, then such a number)")
-    return values["--worktree"], map_key, values["--llm"]
+    given = values["--map"]
+    if MAP_ISSUE.fullmatch(given):
+        return values["--worktree"], int(given), values["--llm"]
+    if MAP_LINEAR_KEY.fullmatch(given):
+        return values["--worktree"], given, values["--llm"]
+    raise Refusal("bad --map: need a GitHub issue number (1 to 9 digits, no leading zero) "
+                  "or a Linear key (1 to 10 capital letters or digits starting with a letter, a dash, then such a number)")
 
 
 def _plan_review_view(ledger):
@@ -1960,7 +1961,7 @@ def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
 
 
 def _pre_dispatch(argv):
-    worktree, map_issue, llm_path = _pre_dispatch_arguments(argv)
+    worktree, map_key, llm_path = _pre_dispatch_arguments(argv)
     l_items = _load_llm(llm_path, ("L1",))
     runtime_dir = _runtime()
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -1979,7 +1980,7 @@ def _pre_dispatch(argv):
         items = _pre_dispatch_items(worktree, dir_fd, branch, remote_url) + l_items
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
-            "session_id": session_id, "map": map_issue, "remote_url": remote_url, "branch": branch,
+            "session_id": session_id, "map": map_key, "remote_url": remote_url, "branch": branch,
             "time": _now(), "items": items, "result": result,
         })
         if len(text) > runtime_dir.MAX_READ_BYTES:
