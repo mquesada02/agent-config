@@ -1,4 +1,5 @@
 # Ticket 297: `audit ledger finding-amend`, driven through the command line (one unit test calls `Ledger.in_force` on a replayed ledger).
+import functools
 import importlib.machinery
 import importlib.util
 import json
@@ -6,7 +7,7 @@ import os
 import sys
 import unittest
 
-from audit_support import finding_event, link_event, round_event, status_event
+from audit_support import event, finding_event, link_event, round_event, status_event
 from test_ledger import LinkCase
 from test_ledger_quote import PLAN, QUOTE, REASON, QuoteCase, flags, reviewed, text_row, tool_row
 from test_pre_dispatch import LOOP_3, LOOP_41, PreDispatchCase  # LOOP_3 and LOOP_41 are the two pre-dispatch loop names
@@ -18,6 +19,7 @@ REVIEWER = f"I found {QUOTE} and also {QUOTE2} in the spec"
 LOOPS = ("code-review", "plan-review-3", "plan-review-4.1", PLAN)
 
 
+@functools.cache
 def load_audit():
     previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
@@ -135,7 +137,7 @@ class QuoteRuleTest(AmendCase):
         self.assertIn("quote not in reason", self.refused("finding-amend", *aflags(quote="not in the reason", raised=True)))
 
     def test_the_raised_mark_is_never_inherited_so_the_reviewer_text_is_matched(self):
-        self.finding(raised=True, finding_id="R1", quote="a map line no reviewer wrote", )
+        self.finding(raised=True, finding_id="R1", quote="a map line no reviewer wrote")
         message = self.refused("finding-amend", *aflags("R1", quote="a map line no reviewer wrote", reason="a map line no reviewer wrote"))
         self.assertIn("quote not in reviewer text", message)
 
@@ -196,7 +198,7 @@ class InForceTest(AmendCase):
         self.assertEqual(load_audit()._replay(self.raw()).in_force("P1"), {"reason": "a plain reason", "quote": None, "raised": False})
 
     def test_the_raised_mark_in_force_is_the_amendments_own(self):
-        self.finding(raised=True, quote="a map line", )
+        self.finding(raised=True, quote="a map line")
         self.ok("finding-amend", *aflags(quote=QUOTE2))
         self.assertIs(load_audit()._replay(self.raw()).in_force("P1")["raised"], False)
         self.ok("finding-amend", *aflags(quote="a map line", reason="the map says a map line", raised=True))
@@ -211,8 +213,7 @@ class InForceTest(AmendCase):
 class ReplayTest(AmendCase):
     def test_a_ledger_with_amendments_replays_and_reads_no_transcript(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness", ("ghost",)), {**finding_event("P1", PLAN, quote=QUOTE), "reason": REASON},
-                                      {"kind": "finding-amend", "time": "2026-10-15T12:00:00.000+00:00", "id": "P1", "reason": REASON2,
-                                       "quote": QUOTE2}])
+                                      event("finding-amend", id="P1", reason=REASON2, quote=QUOTE2)])
         os.unlink(os.path.join(self.runtime, "sessions.jsonl"))
         self.ok("status", "--finding", "P1", "--status", "fixed")
         self.assertEqual(self.audit("ledger", "show", "--worktree", self.repo).returncode, 0)
@@ -222,7 +223,7 @@ class ReplayTest(AmendCase):
         return self.refused("status", "--finding", "P1", "--status", "fixed")
 
     def amend_line(self, **extra):
-        return {"kind": "finding-amend", "time": "2026-10-15T12:00:00.000+00:00", "id": "P1", "reason": "r", **extra}
+        return event("finding-amend", **{"id": "P1", "reason": "r", **extra})
 
     def test_an_amend_line_of_an_unknown_id_is_a_ledger_error(self):
         self.assertIn("no finding ghost", self.bad(self.amend_line(id="ghost")))
@@ -263,20 +264,20 @@ class PreDispatchViewTest(PreDispatchCase):
     def test_the_view_holds_the_amendments_of_its_findings_only(self):
         events = self.plan_events(round_event(loop="code-review"), finding_event("P1", loop=LOOP_3, kind="Minor"),
                                   finding_event("C1"), status_event("P1", "deferred"))
-        amend = {"kind": "finding-amend", "time": "2026-10-15T12:00:00.000+00:00", "reason": "r"}
+        amend = event("finding-amend", reason="r")
         self.write_ledger("feature", [*events, {**amend, "id": "P1"}, {**amend, "id": "C1"}, {**amend, "id": "P1"}])
         self.assertEqual(self.pre_dispatch().returncode, 0)
         self.assertIn("6 events, 1 findings", self.pd_item("S3")["evidence"])
 
     def test_a_finding_amend_line_does_not_count_as_a_phase_commit(self):
-        amend = {"kind": "finding-amend", "time": "2026-10-15T12:00:00.000+00:00", "reason": "r", "id": "P1"}
+        amend = event("finding-amend", id="P1", reason="r")
         self.write_ledger("feature", self.plan_events(finding_event("P1", loop=LOOP_41, kind="Minor"), status_event("P1", "fixed"), amend))
         self.assertEqual(self.pre_dispatch().returncode, 0)
 
 
 class LinkedBlockTest(LinkCase):
     def test_the_linked_block_holds_the_amendments_of_its_linked_findings_only(self):
-        amend = {"kind": "finding-amend", "time": "2026-10-15T12:00:00.000+00:00", "reason": "the amended reason"}
+        amend = event("finding-amend", reason="the amended reason")
         self.source([round_event(loop=PLAN), finding_event("P1", loop=PLAN), round_event(), finding_event("C1"),
                      {**amend, "id": "P1"}, {**amend, "id": "C1"}, status_event("P1")])
         self.write_ledger("feature", [round_event(), link_event()], url=self.url)
