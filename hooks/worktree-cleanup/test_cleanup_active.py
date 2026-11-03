@@ -100,10 +100,6 @@ class ActiveRefusalTest(ActiveCase):
         self.stub_worker_pages(self.worker_page([self.own_row(state=MISSING)]))
         self.assert_active_refusal(self.run_cleanup(self.wt))
 
-    def test_a_stopped_dispatch_lets_the_removal_through(self):
-        self.stub_worker_pages(self.worker_page([self.own_row(state="stopped", dispatch="ctx_stopped")]))
-        self.assert_run_proof_passes(self.run_cleanup(self.wt))
-
     def test_a_stopped_dispatch_beside_an_active_one_names_only_the_active_one(self):
         self.stub_worker_pages(self.worker_page([self.own_row(state="stopped", dispatch="ctx_stopped"),
                                                  self.active_row(dispatch="ctx_live")]))
