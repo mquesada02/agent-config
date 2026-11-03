@@ -111,6 +111,9 @@ EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
 LAUNCH_FIELDS = {"Agent": ("description", "subagent_type", "model"), "Skill": ("skill",)}  # the input keys that the digest shows
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
+# The suffix that hooks/redact-secrets/redact_pre.py appends to a foreground Bash call, and the line it prints on failure (#295).
+FAILED_SUFFIX = " || echo command-failed"
+FAILED_LINE = "command-failed"
 TEST_COMMAND_HEADING = "### Test command"
 MAX_LINK_HOPS = 40  # the links S2 follows to reach a declaration file, as the kernel limits a path lookup
 # S7: a worker session is a session whose main transcript has a user text row that holds both phrases of the Orca dispatch preamble.
@@ -347,6 +350,7 @@ class Transcript:
         self.name = name
         self.calls = []      # dicts: index, tool, id, time, path or command, background, cwd
         self.results = {}    # tool_use_id -> list of is_error booleans
+        self.stdouts = {}    # tool_use_id -> list of toolUseResult.stdout texts, None when the row has none or more than one result
         self.notices = []    # texts that hold a task notification
         self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
@@ -468,6 +472,9 @@ def _read_row(transcript, index, row):
             transcript.calls.append(call)
     if answered:
         result = row.get("toolUseResult")
+        stdout = result.get("stdout") if isinstance(result, dict) and len(answered) == 1 else None
+        for call_id in answered:
+            transcript.stdouts.setdefault(call_id, []).append(stdout if isinstance(stdout, str) else None)
         transcript.answered.append({"index": index, "time": row.get("timestamp"), "ids": answered,
                                     "answers": result.get("answers", ABSENT) if isinstance(result, dict) else ABSENT})
 
@@ -774,7 +781,17 @@ def check_s2(worktree, audited):
                 target = os.path.join(call["cwd"], target)  # a relative path means the row's cwd, not the audit's
             if os.path.isabs(target) and os.path.realpath(target) == root:
                 command = command[prefix.end():].strip()
+        # a foreground call that the model resent with the redact_pre suffix; a background call never gets it
+        if not call["background"] and command.endswith(FAILED_SUFFIX):
+            command = command[:-len(FAILED_SUFFIX)].strip()
         return command
+
+    def foreground_passed(call_id, transcript):
+        """True when the call has results, none is an error, and no stdout ends with the redact_pre failure line."""
+        results, stdouts = transcript.results.get(call_id), transcript.stdouts.get(call_id, [])
+        if not results or any(results) or not stdouts or None in stdouts:
+            return None
+        return not any(stdout.rstrip().split("\n")[-1] == FAILED_LINE for stdout in stdouts)
 
     edits, runs = [], []
     for transcripts in audited:
@@ -793,8 +810,7 @@ def check_s2(worktree, audited):
             texts = list(transcript.notices) + ([] if transcript is main else list(main.notices))
             outcome = _notification_exit(texts, run["id"])
         else:
-            results = transcript.results.get(run["id"])
-            outcome = None if not results else not any(results)
+            outcome = foreground_passed(run["id"], transcript)
         if outcome:
             return True, f"declared command ran after the last of {len(edits)} edits"
     if not runs:
