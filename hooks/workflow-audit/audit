@@ -1015,7 +1015,7 @@ A review round is recorded with its `round` event before the findings of that ro
 origin URL and is valid; (3) it holds a plan-review-5.3 round; (4) it holds no link; (5) this ledger holds no link; (6) `gh` shows a merged PR
 for the source branch in the GitHub repository of the origin URL (one `gh` call, 20 seconds, never under the ledger lock).
 `audit ledger show --worktree <path>` prints every event of the ledger, one compact JSON line each, and writes nothing.
-A finding line holds its "quote" key when it has one; "raised":true marks a finding that the loop session raised to Blocking.
+A finding line or finding-amend line holds its "quote" key when it has one; "raised":true marks a finding or amendment that the loop session raised to Blocking.
 """ % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
 
 
@@ -1168,8 +1168,8 @@ def _quote_problem(loop, kind, reason, quote, raised, reviewer_texts):
 
 
 def _check_finding_quote(dir_fd, name, event):
-    """Refuse (nothing is written) a finding or finding-amend event whose quote breaks the quote rule. It runs before the ledger lock and outside the replay:
-    the replay rules run again under the lock."""
+    """Refuse (nothing is written) a finding or finding-amend event whose quote breaks the quote rule. It runs before the ledger lock
+    and outside the replay: the replay rules run again under the lock."""
     try:
         _check_event_shape(event)
     except LedgerError as problem:
