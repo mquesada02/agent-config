@@ -21,8 +21,8 @@ through redact_rules.redact and is flushed at once. Four multi-line secrets keep
   more lines than redact_rules does there (fail-closed).
 The text that follows the end of a state on the same line is handled as a normal line, so it can start a new
 state. Held or dropped lines at the end of the input are never written, except a held key line of the
-empty-key state (see above). The filter fails closed: on any
-error it writes nothing more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
+empty-key state (see above). The filter fails closed: on any error it writes nothing more and exits
+non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or
 writes anything. Any other value has no effect.
@@ -77,6 +77,12 @@ def scan_brackets(text, depth, start=0):
     return depth, -1
 
 
+def has_unclosed_begin(body):
+    """Whether the last BEGIN line of the line has no END line after it."""
+    begins = list(BEGIN.finditer(body)) if "-----BEGIN" in body else []
+    return bool(begins) and END.search(body, begins[-1].end()) is None
+
+
 def unclosed_json_depth(body):
     """The open depth of the first matched plain JSON key whose value bracket does not close on the line, or 0."""
     for match in redact_rules.KEY_OCCURRENCE.finditer(body):
@@ -122,14 +128,12 @@ class LineFilter:
         """The text to write at the end of the input: a held key line is written as a normal line."""
         if self.handler != self.empty_key_hold:
             return ""
-        self.handler = self.normal_line
         body, ending = split_ending(self.held[0])
         return redact_rules.redact(body) + ending
 
     def normal_line(self, line):
         body, ending = split_ending(line)
-        begins = list(BEGIN.finditer(body)) if "-----BEGIN" in body else []
-        if begins and END.search(body, begins[-1].end()) is None:
+        if has_unclosed_begin(body):
             self.handler = self.pem_hold
             self.held = [line]
             return ""
@@ -194,8 +198,7 @@ class LineFilter:
 
     def hide_line(self, body):
         """Drop a line that the empty-key rule hides. A BEGIN line with no END line drops up to its END line."""
-        begins = list(BEGIN.finditer(body)) if "-----BEGIN" in body else []
-        if begins and END.search(body, begins[-1].end()) is None:
+        if has_unclosed_begin(body):
             self.pem_resume = self.empty_key_drop
             self.handler = self.pem_drop
         else:
@@ -207,7 +210,10 @@ class LineFilter:
         key_body, key_ending = split_ending(self.held[0])
         body, _ = split_ending(line)
         if redact_rules.hidden_by_empty_key(body, self.key_indent):
-            # redact masks the key line only when the key is empty for it (an earlier value can swallow it)
+            # The key line and the next line go through redact together. The first output line is never changed
+            # by the second line, so it differs from redact(key line) only when redact masked the key (an earlier
+            # value on the same line can swallow it). A blank line becomes one space, so that text follows the
+            # line break and redact sees a following line.
             probe = body if body.strip() != "" else " "
             first = redact_rules.redact(key_body + "\n" + probe).split("\n", 1)[0]
             if first != redact_rules.redact(key_body):

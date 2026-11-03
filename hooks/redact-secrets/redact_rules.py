@@ -237,12 +237,16 @@ def empty_key(body):
     The line is given without its line ending. The key indent is measured on the line after the PEM rule,
     as redact_keyed measures it. The filter uses this to find an empty secret key.
     """
-    masked = PEM_BLOCK.sub(MASK, body)
+    # an empty value ends the line with a colon or with node properties (`!` or `&`)
+    if not (body.rstrip(" \t").endswith(":") or "!" in body or "&" in body):
+        return None
+    masked = PEM_BLOCK.sub(MASK, body) if "-----BEGIN" in body else body
     found = None
     for match in KEY_OCCURRENCE.finditer(masked):
-        key = block_key(match)
-        if key is not None and is_secret_key(key) and EMPTY_VALUE.match(masked, match.end()):
-            found = (match.start(), match.end())
+        if EMPTY_VALUE.match(masked, match.end()):
+            key = block_key(match)
+            if key is not None and is_secret_key(key):
+                found = (match.start(), match.end())
     return found
 
 

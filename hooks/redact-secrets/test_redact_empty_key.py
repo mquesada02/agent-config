@@ -193,6 +193,10 @@ class RulesSeamTest(EmptyKeyCases, unittest.TestCase):
         text = "%s\nbody\n%s %s:\n  keep\n" % (BEGIN, END, K)
         self.assertEqual(redact(text), "*** %s:\n  keep\n" % K)
 
+    def test_318_rest_line_after_a_json_close_uses_the_column_of_the_whole_line(self):
+        text = '{"%s": {\n"a": 1\n} %s:\n  keep\nnext: 1\n' % (K, K)
+        self.assertEqual(redact(text), '{"%s": "***" %s:\n  keep\nnext: 1\n' % (K, K))
+
 
 class FilterSeamTest(EmptyKeyCases, unittest.TestCase):
     def seam(self, text):
