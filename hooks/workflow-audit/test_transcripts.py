@@ -458,15 +458,26 @@ class S2Test(TranscriptCase):
     def test_the_declared_command_after_the_last_edit_passes(self):
         self.assert_item(self.run_rows(bash_row("make test", "b1", 20), result_row("b1", 21)), "S2", "pass")
 
-    def test_an_edit_whose_input_names_path_counts_as_an_edit(self):
+    def aliased_edit(self, tool):
+        """An edit call whose input names `path`, and its result with the harness note."""
+        call = call_row(tool, {"path": os.path.join(self.wt, "b.txt"), "content": "x"}, "e2", 30)
+        result = result_row("e2", 31)
+        result["message"]["content"][0]["content"] = f"Note: {tool}'s parameters are named `file_path`. `path` was read as `file_path`."
+        return [call, result]
+
+    def test_a_run_before_an_edit_whose_input_names_path_fails(self):
         for tool in ("Write", "Edit"):
             with self.subTest(tool=tool):
                 self.setUp()
-                aliased = call_row(tool, {"path": os.path.join(self.wt, "b.txt"), "content": "x"}, "e2", 30)
-                before = [bash_row("make test", "b0", 20), result_row("b0", 21), aliased, result_row("e2", 31)]
-                self.assert_item(self.run_rows(*before), "S2", "fail", "only before the last edit")
+                rows = [bash_row("make test", "b0", 20), result_row("b0", 21), *self.aliased_edit(tool)]
+                self.assert_item(self.run_rows(*rows), "S2", "fail", "only before the last edit")
+
+    def test_a_run_after_an_edit_whose_input_names_path_passes(self):
+        for tool in ("Write", "Edit"):
+            with self.subTest(tool=tool):
                 self.setUp()
-                self.assert_item(self.run_rows(aliased, result_row("e2", 31), bash_row("make test", "b1", 40), result_row("b1", 41)), "S2", "pass")
+                rows = [*self.aliased_edit(tool), bash_row("make test", "b1", 40), result_row("b1", 41)]
+                self.assert_item(self.run_rows(*rows), "S2", "pass")
 
     def test_no_run_fails(self):
         self.assert_item(self.run_rows(), "S2", "fail", "did not run")
