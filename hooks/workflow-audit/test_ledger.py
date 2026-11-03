@@ -226,7 +226,8 @@ class ReplayRuleTest(LedgerCase):
         self.ok("round", "--loop", "plan-review-3", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
         self.ok("finding", *finding_flags("I1", kind="Minor"))
         self.refused("verdict", *VERDICT)  # a Minor finding
-        self.ok("finding", *finding_flags("P1", loop="plan-review-3"))
+        # a plan-review Blocking finding needs a quote; a raised one skips the reviewer-text match
+        self.ok("finding", *finding_flags("P1", loop="plan-review-3")[:-1], "a long reason line", "--quote", "a long reason line", "--raised")
         self.refused("verdict", "--finding", "P1", "--verifier", "ver1", "--result", "confirmed")  # a plan-review finding
         self.ok("finding", *finding_flags("I2"))
         self.ok("verdict", "--finding", "I2", "--verifier", "ver1", "--result", "confirmed")
