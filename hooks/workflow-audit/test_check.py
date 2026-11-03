@@ -8,7 +8,17 @@ from audit_support import (EARLY, VERSION, AuditCase, bash_row, call_row, edit_r
 
 PLAN = "plan-review-5.3"
 DIGEST_MARKER = "--- digest ---"
-S_LINE = re.compile(r"(S[1-9]|XC) (pass|fail)")
+S_LINE = re.compile(r"(S10|S[1-9]|XC) (pass|fail)")
+
+
+def without_s10(lines):
+    """The lines of an item list with the S10 item, its evidence lines and the result line left out: S10 judges the linked block, the other items do not."""
+    kept, skipping = [], False
+    for line in lines:
+        skipping = line.startswith("S10 ") or (skipping and line.startswith("  "))
+        if not skipping and not line.startswith("result "):  # the result line follows S10, so it is left out too
+            kept.append(line)
+    return kept
 OLD_SESSIONS_BUDGET = 30720  # the digest budget before the sessions moved to `audit sessions show`
 LIMIT = 28672  # 28 KB, written out here on purpose: the test checks the number in the spec, not the code's own constant
 
@@ -46,7 +56,7 @@ class OutputTest(CheckCase):
         self.start_branch("feature", "feat: a")
         lines, _, _ = self.parts(self.check())
         ids = [S_LINE.fullmatch(line).group(1) for line in lines if S_LINE.fullmatch(line)]
-        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9"])
+        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10"])
         self.assertTrue(all(S_LINE.fullmatch(line).group(2) == "pass" for line in lines if S_LINE.fullmatch(line)))
         self.assertEqual(lines[-1], "result pass")
 
@@ -393,22 +403,23 @@ class LinkedDigestTest(SessionCase):
     def test_open_blocking_findings_and_a_cap_in_the_linked_block_change_no_own_check(self):
         self.own()
         self.write_ledger("src", [round_event(loop=PLAN)])
-        clean = self.parts(self.check())[0]
+        clean = without_s10(self.parts(self.check())[0])
         events = [round_event(loop=PLAN), round_event(2, loop=PLAN), finding_event("P1", loop=PLAN), round_event(loop=PLAN, phase="final"),
                   round_event(), round_event(1, phase="final"), finding_event("C1"), finding_event("C2", loop=PLAN, n=2)]
         self.write_ledger("src", events)
-        self.assertEqual(self.parts(self.check())[0], clean)
+        self.assertEqual(without_s10(self.parts(self.check())[0]), clean)
 
     def test_record_gives_the_same_items_with_and_without_a_blocking_linked_finding(self):
         self.own()
         self.write_ledger("src", [round_event(loop=PLAN)])
         tip = self.git("rev-parse", "HEAD")
         first = self.record()
-        before = self.read_record(tip)["items"]
+        before = [item for item in self.read_record(tip)["items"] if item["id"] != "S10"]
         self.write_ledger("src", [round_event(loop=PLAN), finding_event("P1", loop=PLAN)])
         second = self.record()
-        self.assertEqual((second.returncode, second.stdout), (first.returncode, first.stdout))
-        self.assertEqual(self.read_record(tip)["items"], before)
+        self.assertEqual(second.returncode, 1)  # S10 fails the linked Blocking finding that has no quote
+        self.assertEqual(without_s10(second.stdout.decode().splitlines()), without_s10(first.stdout.decode().splitlines()))
+        self.assertEqual([item for item in self.read_record(tip)["items"] if item["id"] != "S10"], before)
 
 
 class SessionsShowTest(SessionCase):

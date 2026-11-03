@@ -599,10 +599,10 @@ class RecordTest(SafetyCase):
         tip, result = self.run_record()
         record = self.read_record(tip)
         self.assertEqual([item["id"] for item in record["items"]],
-                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "L1", "L2", "L3", "L4", "L5", "L6"])
+                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "L1", "L2", "L3", "L4", "L5", "L6"])
         self.assertEqual(result.stdout.decode().splitlines()[7:10], ["S7 pass", "S8 pass", "S9 fail"])
         self.assertEqual((record["result"], result.returncode), ("fail", 1))
-        self.assertEqual([item["id"] for item in record["items"] if item["result"] == "fail"], ["S3", "S4", "S5", "S6", "XC", "S9"])
+        self.assertEqual([item["id"] for item in record["items"] if item["result"] == "fail"], ["S3", "S4", "S5", "S6", "XC", "S9", "S10"])
 
 
 if __name__ == "__main__":

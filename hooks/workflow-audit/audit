@@ -4,8 +4,8 @@
 #   audit ledger link --worktree <path> --from-branch <branch> --ticket <id>   append a link to the ledger of an earlier branch of the ticket, after six checks
 #   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
 #   audit sessions show --worktree <path>         print every block of the audited sessions, with no size cap; writes no file
-#   audit check --worktree <path> --base <branch>  print S1-S9, XC and a transcript digest of at most 28 KB; writes no file
-#   audit record --worktree <path> --base <branch> --llm <file>   re-run S1-S9 and XC, read L1-L6, write <sha>.json for the pushed tip
+#   audit check --worktree <path> --base <branch>  print S1-S10, XC and a transcript digest of at most 28 KB; writes no file
+#   audit record --worktree <path> --base <branch> --llm <file>   re-run S1-S10 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   (--base is the PR target: S8 and the digest commits are the commits since the merge base of HEAD and origin/<branch>)
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
@@ -1184,6 +1184,12 @@ def _quote_problem(loop, kind, reason, quote, raised, reviewer_texts):
     return "evidence unavailable" if any(text is None for text in texts) else "quote not in reviewer text"
 
 
+def _round_reviewers(ledger, finding):
+    """The reviewer ids of the `round` event of the loop, phase and round of a finding event, or None when the ledger holds none."""
+    return next((entry["reviewers"] for _, entry in ledger.round_events
+                 if (entry["loop"], entry["phase"], entry["round"]) == (finding["loop"], finding["phase"], finding["round"])), None)
+
+
 def _check_finding_quote(dir_fd, name, event):
     """Refuse (nothing is written) a finding or finding-amend event whose quote breaks the quote rule. It runs before the ledger lock
     and outside the replay: the replay rules run again under the lock."""
@@ -1199,8 +1205,7 @@ def _check_finding_quote(dir_fd, name, event):
         original = ledger.findings[event["id"]]["event"]
         if "raised" in event and original["type"] != "Blocking":
             raise Refusal(f"malformed event: finding {event['id']} is raised but not Blocking: only a Blocking finding is raised")
-    reviewers = next((entry["reviewers"] for _, entry in ledger.round_events
-                      if (entry["loop"], entry["phase"], entry["round"]) == (original["loop"], original["phase"], original["round"])), None)
+    reviewers = _round_reviewers(ledger, original)
     if reviewers is None:
         raise Refusal(f"malformed event: no round event for round {original['round']} of {original['loop']} {original['phase']}")
     cause = _quote_problem(original["loop"], original["type"], event["reason"], event.get("quote"), "raised" in event,
@@ -1576,6 +1581,45 @@ def check_xc(ledger, agents, problem):
     return True, f"{len(checks)} reviewers and verifiers checked"
 
 
+def check_s10(dir_fd, ledger, remote_url):
+    """Returns (passed, evidence): the quote rule of `_quote_problem` on the values in force of every finding of the ledger, and of the
+    plan-review-5.3 findings of the source ledger when the ledger holds a link. A transcript is read only for a finding that needs one."""
+    texts = {}
+
+    def reviewer_texts(reviewers):
+        key = tuple(reviewers)
+        if key not in texts:
+            texts[key] = _reviewer_texts(dir_fd, reviewers)
+        return texts[key]
+
+    sources, unavailable = [(ledger, "", None)], None
+    if ledger.link is not None:
+        linked, unavailable = _linked_ledger(dir_fd, remote_url, ledger.link)
+        if linked is not None:
+            sources.append((linked, " (linked)", LINKED_LOOP))
+    failures, judged, checked = [], 0, 0
+    for source, label, only_loop in sources:
+        for finding_id, entry in source.findings.items():
+            finding = entry["event"]
+            if only_loop is not None and finding["loop"] != only_loop:
+                continue
+            values = source.in_force(finding_id)
+            reviewers = _round_reviewers(source, finding)
+            cause = _quote_problem(finding["loop"], finding["type"], values["reason"], values["quote"], values["raised"],
+                                   lambda: reviewer_texts(reviewers))
+            judged += 1
+            checked += values["quote"] is not None
+            if cause == "evidence unavailable":
+                failures.append(f"{finding_id}{label}: evidence unavailable: a reviewer transcript of the round cannot be read")
+            elif cause:
+                failures.append(f"{finding_id}{label}: {cause}")
+    if unavailable is not None:
+        failures.append(f"evidence unavailable: linked ledger unavailable ({unavailable})")
+    if failures:
+        return False, _truncate_lines(failures)
+    return True, f"{judged} findings judged, {checked} with a quote checked"
+
+
 def _s_item(name, passed, evidence, note=""):
     return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note}
 
@@ -1589,14 +1633,15 @@ def _check_item(name, check, *args, note=""):
 
 
 def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
-    """S3 to S6 and XC. `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
+    """(S3 to S6 and XC, the ledger or None when it cannot be used, the S3 evidence). `audited` is None when the transcripts cannot be read,
+    with the reason in `problem`."""
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
     if ledger is None:
-        return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")]
+        return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")], None, s3_evidence
     agents = None if audited is None else _agents(audited)
     text = str(problem)
     return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text),
-            _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)]
+            _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
 
 
 # ---- S7 and S9: models and safety, from the transcripts ----
@@ -1804,14 +1849,16 @@ def _transcript_items(worktree, dir_fd):
 
 
 def _run_items(worktree, dir_fd, branch, remote_url, base_result):
-    """(the items S1 to S9 and XC in record order, the audited transcripts, the reason they cannot be read).
+    """(the items S1 to S10 and XC in record order, the audited transcripts, the reason they cannot be read).
     The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
     items, audited, problem = _transcript_items(worktree, dir_fd)
-    items += _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
+    ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
+    items += ledger_items
     items.append(_check_item("S7", check_s7, audited, str(problem)))
     passed, evidence = check_s8(worktree, base_result)
     items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
     items.append(_check_item("S9", check_s9, audited, str(problem)))
+    items.append(_s_item("S10", False, s3_evidence) if ledger is None else _check_item("S10", check_s10, dir_fd, ledger, remote_url))
     return items, audited, problem
 
 
@@ -1891,7 +1938,7 @@ def check_s3_pre_dispatch(view):
 
 
 def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
-    """S3, S5, S7 and XC in record order."""
+    """S3, S5, S7, XC and S10 in record order."""
     try:
         audited, problem = _audited_transcripts(worktree, dir_fd), None
     except Unavailable as unavailable:
@@ -1900,10 +1947,12 @@ def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
     s7 = _check_item("S7", check_s7, audited, text)
     if ledger is None:
-        return [_s_item("S3", False, s3_evidence), _s_item("S5", False, other_evidence), s7, _s_item("XC", False, other_evidence)]
+        return [_s_item("S3", False, s3_evidence), _s_item("S5", False, other_evidence), s7, _s_item("XC", False, other_evidence),
+                _s_item("S10", False, s3_evidence)]
     view = _plan_review_view(ledger)
     agents = None if audited is None else _agents(audited)
-    return [_check_item("S3", check_s3_pre_dispatch, view), _check_item("S5", check_s5, view, audited, text), s7, _check_item("XC", check_xc, view, agents, text)]
+    return [_check_item("S3", check_s3_pre_dispatch, view), _check_item("S5", check_s5, view, audited, text), s7, _check_item("XC", check_xc, view, agents, text),
+            _check_item("S10", check_s10, dir_fd, view, remote_url)]
 
 
 def _pre_dispatch(argv):
@@ -2000,20 +2049,27 @@ def _ledger_lines(dir_fd, branch, remote_url):
     return ["ledger"] + [_event_line(event) for event in ledger.events], len(ledger.events), ledger
 
 
+def _linked_ledger(dir_fd, remote_url, link):
+    """(the source ledger of `link`, None), or (None, why it cannot be used). The source ledger is read live."""
+    source = link["source"]
+    ledger, failure, problem = _read_ledger(dir_fd, source, remote_url)
+    if failure == "missing":
+        return None, f"no ledger for {source}"
+    if failure:
+        return None, f"ledger of {source} is invalid ({problem})"
+    if not any(event["loop"] == LINKED_LOOP for _, event in ledger.round_events):
+        return None, f"no {LINKED_LOOP} round in {source}"
+    if ledger.link is not None:
+        return None, f"{source} holds a link"
+    return ledger, None
+
+
 def _linked_block(dir_fd, remote_url, link):
     """(the header line, the plan-review-5.3 events of the source ledger of `link`), or
     (the `linked ledger unavailable` line, None). The source ledger is read live; the events are not copied."""
     source = link["source"]
-    ledger, failure, problem = _read_ledger(dir_fd, source, remote_url)
-    if failure == "missing":
-        why = f"no ledger for {source}"
-    elif failure:
-        why = f"ledger of {source} is invalid ({problem})"
-    elif not any(event["loop"] == LINKED_LOOP for _, event in ledger.round_events):
-        why = f"no {LINKED_LOOP} round in {source}"
-    elif ledger.link is not None:
-        why = f"{source} holds a link"
-    else:
+    ledger, why = _linked_ledger(dir_fd, remote_url, link)
+    if ledger is not None:
         ids = {event["id"] for event in ledger.events if event["kind"] == "finding" and event["loop"] == LINKED_LOOP}
         events = [event for event in ledger.events
                   if (event["kind"] in ("round", "finding") and event["loop"] == LINKED_LOOP)

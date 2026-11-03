@@ -264,7 +264,10 @@ class LinkIsolationTest(LedgerChecksCase):
         code_without = self.returncode
         with_link = self.items(events + [link_event()])
         self.assertEqual(self.returncode, code_without)
-        self.assertEqual({name: item["result"] for name, item in with_link.items()}, {name: item["result"] for name, item in without.items()})
+        results = lambda items: {name: item["result"] for name, item in items.items() if name != "S10"}
+        self.assertEqual(results(with_link), results(without))
+        self.assertEqual((without["S10"]["result"], with_link["S10"]["result"]), ("pass", "fail"))  # S10 also judges the linked block: this link has no source ledger
+        self.assertIn("evidence unavailable: linked ledger unavailable", with_link["S10"]["evidence"])
         self.assertEqual(without["S3"]["evidence"], "3 events, 0 findings, none open")
         self.assertEqual(with_link["S3"]["evidence"], "4 events, 0 findings, none open")
         for name in ("S4", "S5", "S6", "XC"):
@@ -340,8 +343,8 @@ class RecordItemsTest(LedgerChecksCase):
         result = self.record_with([round_event()])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([item["id"] for item in self.read_record(self.tip)["items"]],
-                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "L1", "L2", "L3", "L4", "L5", "L6"])
-        self.assertEqual(result.stdout.decode().splitlines()[:10], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S7 pass", "S8 pass", "S9 pass"])
+                         ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "L1", "L2", "L3", "L4", "L5", "L6"])
+        self.assertEqual(result.stdout.decode().splitlines()[:11], ["S1 pass", "S2 pass", "S3 pass", "S4 pass", "S5 pass", "S6 pass", "XC pass", "S7 pass", "S8 pass", "S9 pass", "S10 pass"])
 
     def test_a_failed_ledger_item_fails_the_record(self):
         result = self.record_with([round_event(n) for n in range(1, 7)])
