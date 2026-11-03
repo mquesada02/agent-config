@@ -258,9 +258,10 @@ def _attribution_line(message):
     return None
 
 
-def _commit_problem(message):
+def _commit_problem(message, merge=False):
+    """A merge commit (2+ parents) skips the header rule: PRs squash-merge, so its header never reaches the base (#287)."""
     header = message.split("\n", 1)[0]
-    if not HEADER.match(header):
+    if not merge and not HEADER.match(header):
         return f"header is not conventional: {header[:60]!r}"
     line = _attribution_line(message)
     if line is not None:
@@ -294,14 +295,15 @@ def check_s8(worktree, base_result):
     base, why = base_result
     if base is None:
         return False, why
-    log = _git(worktree, "log", "-z", "--format=%H%n%B", f"{base}..HEAD")
+    log = _git(worktree, "log", "-z", "--format=%H %P%n%B", f"{base}..HEAD")
     if log.returncode != 0:
         return False, f"evidence unavailable: git log failed: {log.stderr.strip()}"
     commits = [entry for entry in log.stdout.split("\0") if entry.strip()]
     problems = []
     for entry in commits:
-        sha, _, message = entry.strip("\n").partition("\n")
-        problem = _commit_problem(message)
+        hashes, _, message = entry.strip("\n").partition("\n")
+        sha, *parents = hashes.split()
+        problem = _commit_problem(message, merge=len(parents) > 1)
         if problem:
             problems.append(f"{sha[:7]}: {problem}")
     if not problems:
@@ -453,7 +455,8 @@ def _read_row(transcript, index, row):
                 call["command"] = tool_input["command"]
                 call["background"] = tool_input.get("run_in_background") is True
             else:
-                keys = ("file_path", "notebook_path") if name == "NotebookEdit" else ("file_path",)
+                # The harness reads `path` as `file_path` when `file_path` is absent (#287).
+                keys = ("file_path", "notebook_path") if name == "NotebookEdit" else ("file_path", "path")
                 path = next((tool_input[key] for key in keys if isinstance(tool_input.get(key), str) and tool_input[key]), None)
                 if path is None:
                     raise Unavailable(f"missing {keys[0]} in {where}")
