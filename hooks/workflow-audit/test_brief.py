@@ -29,6 +29,21 @@ class BriefTextTest(unittest.TestCase):
     def l6_item(self):
         return self.full.split("- **L6.**", 1)[1].split("## Reading the ledger", 1)[0]
 
+    def test_l1_judges_the_reason_in_force_and_s10_results_are_s_results(self):
+        l1 = self.full.split("- **L1.**", 1)[1].split("- **L2.**", 1)[0]
+        for phrase in ("reason in force", "latest amendment", "A raised finding (`\"raised\":true`) is judged as before","its quote"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, l1)
+        self.assertIn("S10 results are S results, which you never write", self.full)
+        self.assertIn("reason in force", self.variant.split("**L1, pre-dispatch.**", 1)[1])
+
+    def test_the_brief_names_s10_in_its_item_lists(self):
+        for phrase in ("the results of S1 to S10 and XC", "`record` re-runs S1 to S10 itself", "It runs S3, S5, S7, S10 and the cross-check itself",
+                       "the `round`, `finding`, `finding-amend` and `status` events"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+        self.assertNotIn("S1 to S9", self.text)
+
     def test_defines_the_six_items(self):
         for name in ("L1", "L2", "L3", "L4", "L5", "L6"):
             with self.subTest(name):
