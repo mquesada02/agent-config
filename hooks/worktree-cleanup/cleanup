@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # Safe worktree cleanup (spec #156, ticket spec #172). Standard library only.
-#   cleanup [--skip-ownership] <worktree path>
+#   cleanup [--skip-ownership] [--base <branch>] <worktree path>
 # Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 4 (Submodules pushed), 5 (Merged), 6 (Pushed), 7 (Main checkout) and 8 (Docker),
 # then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
+# Check 5 also passes, with no merged PR, a tip that is on origin/<base> after a fetch (#300); <base> is --base or the default branch.
+# A merged PR at the tip takes precedence: its base is used and --base is ignored.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import json
 import os
@@ -11,7 +13,7 @@ import subprocess
 import sys
 import time
 
-USAGE = "Usage: cleanup [--skip-ownership] <worktree path>"
+USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
 REMOTE = "origin"
 PROTECTED = ("develop", "main")
@@ -67,17 +69,23 @@ def seconds(name, default):
 
 def parse(argv):
     skip = False
+    base = None
     paths = []
-    for arg in argv:
+    args = iter(argv)
+    for arg in args:
         if arg == "--skip-ownership":
             skip = True
+        elif arg == "--base" and base is None:
+            base = next(args, "")
+            if not base or base.startswith("-"):
+                return None
         elif arg.startswith("-"):
             return None
         else:
             paths.append(arg)
     if len(paths) != 1:
         return None
-    return skip, paths[0]
+    return skip, base, paths[0]
 
 
 def worktree_paths(repo):
@@ -222,16 +230,15 @@ def check_submodules(target):
     return reasons
 
 
-def check_merged(target, branch, tip):
-    """Return (reasons, base, default, numbers). Numbers are those of the merged PRs at the tip; None when the check fails."""
+def check_merged(target, branch, tip, named_base):
+    """Return (reasons, base, default, numbers). Numbers are those of the merged PRs at the tip, [] when the tip is on
+    origin/<base> with no merged PR, None when the check fails."""
     prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "merged",
                         "--json", "number,headRefOid,baseRefName", cwd=target))
     if not isinstance(prs, list):
         return ["Merged: could not read the merged PRs from GitHub"], None, None, None
     matching = [pr for pr in prs if isinstance(pr, dict) and pr.get("headRefOid") == tip]
     bases = {pr.get("baseRefName") for pr in matching}
-    if not bases:
-        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head"], None, None, None
     if len(bases) > 1:
         return ["Merged: matching PRs have different base branches, the base cannot be chosen"], None, None, None
     repo = read_json(run("gh", "repo", "view", "--json", "defaultBranchRef", cwd=target))
@@ -241,7 +248,27 @@ def check_merged(target, branch, tip):
         default = None
     if not default:
         return ["Merged: could not read the default branch from GitHub"], None, None, None
-    return [], bases.pop(), default, sorted(pr["number"] for pr in matching if isinstance(pr.get("number"), int))
+    if bases:
+        return [], bases.pop(), default, sorted(pr["number"] for pr in matching if isinstance(pr.get("number"), int))
+    base = named_base or default
+    problem = tip_off_base(target, tip, base)
+    if problem:
+        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head, and {problem}"], None, None, None
+    return [], base, default, []
+
+
+def tip_off_base(target, tip, base):
+    """None when the tip is on origin/<base> after a fetch, so the branch holds nothing the base lacks (#300); else why not."""
+    # an explicit refspec, so the tracking ref is updated whatever fetch refspec the clone has
+    fetch = git(target, "fetch", REMOTE, f"+refs/heads/{base}:refs/remotes/{REMOTE}/{base}")
+    if fetch.returncode != 0:
+        return f"{REMOTE}/{base} could not be fetched: {failure_text(fetch)}"
+    ancestor = git(target, "merge-base", "--is-ancestor", tip, f"refs/remotes/{REMOTE}/{base}")
+    if ancestor.returncode == 1:
+        return f"it is not on {REMOTE}/{base}"
+    if ancestor.returncode != 0:
+        return f"git merge-base failed: {failure_text(ancestor)}"
+    return None
 
 
 def remote_ref_sha(target, ref):
@@ -265,8 +292,10 @@ def check_pushed(target, branch, tip, numbers):
         return [], False
     if sha:
         return [f"Pushed: {REMOTE} has {branch} at {sha[:12]}, not the local tip {tip[:12]}"], False
-    if not numbers:
+    if numbers is None:
         return [f"Pushed: {branch} is absent on {REMOTE} and check 5 failed, so no merged PR gives a pull ref to compare"], True
+    if not numbers:
+        return [], True  # the tip is on the fetched base, so no pull ref is needed (#300)
     problem = None
     for number in numbers:
         pull, error = remote_ref_sha(target, f"refs/pull/{number}/head")
@@ -407,7 +436,7 @@ def main(argv):
     if parsed is None or interval is None or limit is None:
         say(USAGE)
         return 1
-    skip, path = parsed
+    skip, named_base, path = parsed
     target = os.path.realpath(path)
     reasons, facts = check_target(target)
     if reasons:
@@ -428,7 +457,7 @@ def main(argv):
     reasons += check_clean(target)
     reasons += check_submodules(target)
     tip = git(target, "rev-parse", "HEAD").stdout.strip()
-    merged, base, default, numbers = check_merged(target, facts["branch"], tip)
+    merged, base, default, numbers = check_merged(target, facts["branch"], tip, named_base)
     reasons += merged
     pushed, ref_absent = check_pushed(target, facts["branch"], tip, numbers)
     reasons += pushed
