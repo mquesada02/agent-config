@@ -17,7 +17,7 @@ USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
 REMOTE = "origin"
 PROTECTED = ("develop", "main")
-SETTLED_STATES = ("succeeded", "failed", "abandoned")
+SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 DEFAULT_WAIT_INTERVAL = 1.0
 DEFAULT_WAIT_LIMIT = 60.0
 
