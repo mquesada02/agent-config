@@ -39,6 +39,7 @@ LEDGER_STATUSES = ("fixed", "deferred", "rejected")
 EVENT_KEYS = {
     "round": ("loop", "phase", "round", "reviewers"),
     "finding": ("id", "loop", "phase", "round", "loc", "type", "reason"),
+    "finding-amend": ("id", "reason"),
     "verdict": ("finding", "verifier", "result"),
     "status": ("finding", "status"),
     "extension": ("loop", "phase", "rounds", "quote"),
@@ -46,7 +47,7 @@ EVENT_KEYS = {
     "link": ("source", "ticket"),
 }
 # The keys that an event may hold besides its required ones, in the order they are written. An absent key means the default.
-OPTIONAL_KEYS = {"finding": ("quote", "raised")}
+OPTIONAL_KEYS = {"finding": ("quote", "raised"), "finding-amend": ("quote", "raised")}
 FLAG_NAMES = {"reviewers": "--reviewer", "source": "--from-branch"}  # the keys whose command flag is not --<key>
 MAX_SOURCE = 255
 MAX_TICKET = 64
@@ -869,7 +870,7 @@ VALID_VALUE = {
     "ticket": _plain_text(MAX_TICKET),
 }
 # A finding quote has no raw minimum: the quote rule judges the normalised length, so that a short quote is `quote too short`.
-KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT)}
+KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT), ("finding-amend", "quote"): _plain_text(QUOTE_LIMIT)}
 
 
 def _event_keys(kind):
@@ -906,7 +907,7 @@ class Ledger:
         self.events = []
         self.rounds = {}        # (loop, phase) -> highest round number
         self.round_events = []  # (position, event) in file order
-        self.findings = {}      # id -> {"event": the finding event, "status": latest status or None}
+        self.findings = {}      # id -> {"event": the finding event, "status": latest status or None, "amendments": the finding-amend events in order}
         self.verdicts = []
         self.commits = []       # (position, event)
         self.extra_rounds = {}  # (loop, phase) -> the rounds that the extension events add to the cap
@@ -914,6 +915,13 @@ class Ledger:
 
     def effective_cap(self, loop, phase):
         return PHASE_CAPS[phase] + self.extra_rounds.get((loop, phase), 0)
+
+    def in_force(self, finding_id):
+        """The reason, quote (None when absent) and raised mark of a finding: those of its latest amendment, else of the finding event.
+        An amendment states its own values: nothing is inherited from the finding or from an earlier amendment."""
+        entry = self.findings[finding_id]
+        source = entry["amendments"][-1] if entry["amendments"] else entry["event"]
+        return {"reason": source["reason"], "quote": source.get("quote"), "raised": "raised" in source}
 
     def apply(self, event):
         _check_event_shape(event)
@@ -931,7 +939,14 @@ class Ledger:
                 raise LedgerError(f"no round event for round {event['round']} of {event['loop']} {event['phase']}")
             if "raised" in event and event["type"] != "Blocking":
                 raise LedgerError(f"finding {event['id']} is raised but not Blocking: only a Blocking finding is raised")
-            self.findings[event["id"]] = {"event": event, "status": None}
+            self.findings[event["id"]] = {"event": event, "status": None, "amendments": []}
+        elif kind == "finding-amend":
+            finding = self.findings.get(event["id"])
+            if finding is None:
+                raise LedgerError(f"no finding {event['id']}")
+            if "raised" in event and finding["event"]["type"] != "Blocking":
+                raise LedgerError(f"finding {event['id']} is raised but not Blocking: only a Blocking finding is raised")
+            finding["amendments"].append(event)
         elif kind == "verdict":
             finding = self.findings.get(event["finding"])
             if finding is None:
@@ -998,6 +1013,11 @@ events and their flags (every flag is required for its event and refused for the
                 subagent of any registered session; a quote that cannot be proven is refused and nothing is written
                 --raised (a bare flag, only on a Blocking finding) marks a finding that the loop session raised to Blocking itself; it
                 needs --quote, which skips the reviewer-text match
+  finding-amend --id --reason [--quote <1 to 500 characters>] [--raised]
+                repairs the reason of the existing finding --id (an unknown id is refused); the quote rule is the one of finding, with the
+                loop, phase, round and type of that finding; --quote is required when that finding is a Blocking finding of a plan-review
+                loop or the amendment is raised; --raised is refused on a Minor finding and is never inherited; the latest amendment is in
+                force; type, loop, phase, round, location and status never change
   verdict       --finding <id> --verifier <agent id> --result
   status        --finding <id> --status
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
@@ -1012,7 +1032,7 @@ A review round is recorded with its `round` event before the findings of that ro
 origin URL and is valid; (3) it holds a plan-review-5.3 round; (4) it holds no link; (5) this ledger holds no link; (6) `gh` shows a merged PR
 for the source branch in the GitHub repository of the origin URL (one `gh` call, 20 seconds, never under the ledger lock).
 `audit ledger show --worktree <path>` prints every event of the ledger, one compact JSON line each, and writes nothing.
-A finding line holds its "quote" key when it has one; "raised":true marks a finding that the loop session raised to Blocking.
+A finding line or finding-amend line holds its "quote" key when it has one; "raised":true marks a finding or amendment that the loop session raised to Blocking.
 """ % (", ".join(LEDGER_LOOPS), ", ".join(PHASE_CAPS), ", ".join(f"{name} {cap}" for name, cap in PHASE_CAPS.items()))
 
 
@@ -1165,17 +1185,25 @@ def _quote_problem(loop, kind, reason, quote, raised, reviewer_texts):
 
 
 def _check_finding_quote(dir_fd, name, event):
-    """Refuse (nothing is written) a finding whose quote breaks the quote rule. It runs before the ledger lock and outside the replay:
-    the replay rules run again under the lock."""
+    """Refuse (nothing is written) a finding or finding-amend event whose quote breaks the quote rule. It runs before the ledger lock
+    and outside the replay: the replay rules run again under the lock."""
     try:
         _check_event_shape(event)
     except LedgerError as problem:
         raise Refusal(f"malformed event: {problem}")
-    reviewers = next((entry["reviewers"] for _, entry in _own_ledger(dir_fd, name).round_events
-                      if (entry["loop"], entry["phase"], entry["round"]) == (event["loop"], event["phase"], event["round"])), None)
+    ledger = _own_ledger(dir_fd, name)
+    original = event
+    if event["kind"] == "finding-amend":  # the amendment is judged with the loop, phase, round and type of the finding it repairs
+        if event["id"] not in ledger.findings:
+            raise Refusal(f"malformed event: no finding {event['id']}")
+        original = ledger.findings[event["id"]]["event"]
+        if "raised" in event and original["type"] != "Blocking":
+            raise Refusal(f"malformed event: finding {event['id']} is raised but not Blocking: only a Blocking finding is raised")
+    reviewers = next((entry["reviewers"] for _, entry in ledger.round_events
+                      if (entry["loop"], entry["phase"], entry["round"]) == (original["loop"], original["phase"], original["round"])), None)
     if reviewers is None:
-        raise Refusal(f"malformed event: no round event for round {event['round']} of {event['loop']} {event['phase']}")
-    cause = _quote_problem(event["loop"], event["type"], event["reason"], event.get("quote"), "raised" in event,
+        raise Refusal(f"malformed event: no round event for round {original['round']} of {original['loop']} {original['phase']}")
+    cause = _quote_problem(original["loop"], original["type"], event["reason"], event.get("quote"), "raised" in event,
                            lambda: _reviewer_texts(dir_fd, reviewers))
     if cause:
         raise Refusal(f"finding {event['id']}: {cause}")
@@ -1269,7 +1297,7 @@ def _ledger(argv):
             _check_round_reviewers(dir_fd, event["reviewers"])
         if event["kind"] == "link":
             _check_link(worktree, dir_fd, branch, remote_url, name, event)
-        if event["kind"] == "finding":
+        if event["kind"] in ("finding", "finding-amend"):
             _check_finding_quote(dir_fd, name, event)
         try:
             lock_fd = runtime_dir.lock_file(dir_fd, name + ".lock")
@@ -1840,7 +1868,7 @@ def _pre_dispatch_arguments(argv):
 
 
 def _plan_review_view(ledger):
-    """A new Ledger with the round, finding and extension events of the pre-dispatch loops and the status events of those findings."""
+    """A new Ledger with the round, finding and extension events of the pre-dispatch loops and the status and finding-amend events of those findings."""
     view, findings = Ledger(), set()
     for event in ledger.events:
         if event["kind"] in ("round", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
@@ -1848,6 +1876,8 @@ def _plan_review_view(ledger):
                 findings.add(event["id"])
             view.apply(event)
         elif event["kind"] == "status" and event["finding"] in findings:
+            view.apply(event)
+        elif event["kind"] == "finding-amend" and event["id"] in findings:
             view.apply(event)
     return view
 
@@ -1987,7 +2017,8 @@ def _linked_block(dir_fd, remote_url, link):
         ids = {event["id"] for event in ledger.events if event["kind"] == "finding" and event["loop"] == LINKED_LOOP}
         events = [event for event in ledger.events
                   if (event["kind"] in ("round", "finding") and event["loop"] == LINKED_LOOP)
-                  or (event["kind"] == "status" and event["finding"] in ids)]
+                  or (event["kind"] == "status" and event["finding"] in ids)
+                  or (event["kind"] == "finding-amend" and event["id"] in ids)]
         return f"linked from {source} ticket {link['ticket']}", events
     return f"linked ledger unavailable: {why}", None
 
