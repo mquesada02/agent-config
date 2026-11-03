@@ -51,11 +51,15 @@ def bash_row(command, call_id, seconds, background=False, **extra):
     return call_row("Bash", tool_input, call_id, seconds, **extra)
 
 
-def result_row(call_id, seconds, is_error=None, version=VERSION):
-    block = {"type": "tool_result", "tool_use_id": call_id, "content": "output"}
+def result_row(call_id, seconds, is_error=None, version=VERSION, stdout="output"):
+    """A tool result row; `stdout` becomes toolUseResult.stdout, and None leaves toolUseResult out."""
+    block = {"type": "tool_result", "tool_use_id": call_id, "content": "output" if stdout is None else stdout}
     if is_error is not None:
         block["is_error"] = is_error
-    return {"type": "user", "timestamp": stamp(seconds), "version": version, "message": {"role": "user", "content": [block]}}
+    row = {"type": "user", "timestamp": stamp(seconds), "version": version, "message": {"role": "user", "content": [block]}}
+    if stdout is not None:
+        row["toolUseResult"] = {"stdout": stdout, "stderr": "", "interrupted": False, "isImage": False, "noOutputExpected": False}
+    return row
 
 
 def notification_text(call_id, status="completed", code=0):

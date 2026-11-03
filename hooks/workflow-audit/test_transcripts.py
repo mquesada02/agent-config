@@ -1,7 +1,10 @@
 # S1 and S2: the transcript reader, through `audit record` with synthetic transcripts.
+import importlib.machinery
+import importlib.util
 import json
 import os
 import re
+import sys
 import unittest
 
 from audit_support import (HERE, VERSION, AuditCase, bash_row, call_row, declaration, edit_row, notification_attachment_row,
@@ -508,6 +511,55 @@ class S2Test(TranscriptCase):
 
     def test_a_run_with_is_error_fails(self):
         self.assert_item(self.run_rows(bash_row("make test", "b1", 20), result_row("b1", 21, is_error=True)), "S2", "fail", "failed")
+
+    def test_a_run_whose_stdout_ends_with_the_redact_pre_failure_line_fails(self):
+        # the redact_pre suffix makes a failed call exit 0, so only the printed line shows the failure (#295)
+        for command in ("make test", "make test || echo command-failed"):
+            for stdout in ("FAILED (failures=1)\ncommand-failed", "x\ncommand-failed\n\n"):
+                with self.subTest(command=command, stdout=stdout):
+                    self.setUp()
+                    rows = [bash_row(command, "b1", 20), result_row("b1", 21, stdout=stdout)]
+                    self.assert_item(self.run_rows(*rows), "S2", "fail", "failed")
+
+    def test_the_command_resent_with_the_redact_pre_suffix_passes_when_its_stdout_is_clean(self):
+        for template in ("make test || echo command-failed", "cd {wt} && make test || echo command-failed"):
+            with self.subTest(command=template):
+                self.setUp()
+                rows = [bash_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21, stdout="OK")]
+                self.assert_item(self.run_rows(*rows), "S2", "pass")
+
+    def test_a_failure_line_before_the_last_line_is_not_a_failure(self):
+        rows = [bash_row("make test", "b1", 20), result_row("b1", 21, stdout="command-failed\nOK")]
+        self.assert_item(self.run_rows(*rows), "S2", "pass")
+
+    def test_a_foreground_result_without_stdout_fails(self):
+        rows = [bash_row("make test", "b1", 20), result_row("b1", 21, stdout=None)]
+        self.assert_item(self.run_rows(*rows), "S2", "fail", "failed or did not finish")
+
+    def test_a_result_row_with_two_results_has_no_stdout_for_either(self):
+        row = result_row("b1", 21)
+        row["message"]["content"].append({"type": "tool_result", "tool_use_id": "b2", "content": "x"})
+        self.assert_item(self.run_rows(bash_row("make test", "b1", 20), row), "S2", "fail", "failed or did not finish")
+
+    def test_a_background_run_with_the_redact_pre_suffix_is_not_the_declared_command(self):
+        # the suffix would make its notification report exit code 0 whatever the tests did
+        rows = [bash_row("make test || echo command-failed", "b1", 20, background=True), result_row("b1", 21), notification_user_row("b1")]
+        self.assert_item(self.run_rows(*rows), "S2", "fail", "did not run")
+
+    def test_the_failure_suffix_is_the_one_that_redact_pre_appends(self):
+        # S2 reads the redact_pre contract; this pins the two copies together (#295)
+        def load(name, path):
+            loader = importlib.machinery.SourceFileLoader(name, path)
+            module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+            loader.exec_module(module)
+            return module
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            audit = load("audit_for_s2_suffix", os.path.join(HERE, "audit"))
+            redact_pre = load("redact_pre_for_s2_suffix", os.path.join(os.path.dirname(HERE), "redact-secrets", "redact_pre.py"))
+        finally:
+            sys.dont_write_bytecode = previous
+        self.assertEqual(audit.FAILED_SUFFIX, redact_pre.SUFFIXES["Bash"])
 
     def test_a_call_with_no_result_did_not_finish(self):
         self.assert_item(self.run_rows(bash_row("make test", "b1", 20)), "S2", "fail")
