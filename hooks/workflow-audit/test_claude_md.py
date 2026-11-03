@@ -59,6 +59,10 @@ class SectionSixTest(RuleTextCase):
         self.assert_in(bullet, "reviewer agent ids", "is a subagent of the loop session", "`audit ledger` refuses another id",
                        "(exit 2, nothing written)", "write the `round` event only after its reviewers ran")
 
+    def test_the_finding_bullet_names_quote_and_raised(self):
+        bullet = re.search(r"^- `finding`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "`--quote`", "`--raised`", "A Blocking finding of a plan-review loop needs `--quote`")
+
     def test_the_extension_bullet_follows_the_phase_commit_bullet(self):
         self.assertGreater(self.text.index("- `extension`:"), self.text.index("- `phase-commit`:"))
 
@@ -105,6 +109,9 @@ class SectionSevenTest(RuleTextCase):
 
     def test_the_plan_review_loops_use_their_loop_names_in_the_ledger(self):
         self.assert_in(self.text, "`plan-review-3`, `plan-review-4.1` or `plan-review-5.3`")
+
+    def test_the_plan_review_loop_names_quote_and_raised(self):
+        self.assert_in(self.text, "`--quote` (required for a plan-review Blocking finding)", "`--raised`")
 
     def test_the_manual_evidence_checks_are_gone(self):
         self.assert_not_in(self.text, "checks evidence for each step", "checks the following evidence for the step 4.1 review",
