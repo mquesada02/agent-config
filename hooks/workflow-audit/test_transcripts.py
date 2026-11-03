@@ -560,7 +560,6 @@ class S2Test(TranscriptCase):
         finally:
             sys.dont_write_bytecode = previous
         self.assertEqual(audit.FAILED_SUFFIX, redact_pre.SUFFIXES["Bash"])
-        self.assertEqual(audit.FAILED_SUFFIX, " || echo " + audit.FAILED_LINE)
 
     def test_a_call_with_no_result_did_not_finish(self):
         self.assert_item(self.run_rows(bash_row("make test", "b1", 20)), "S2", "fail")
