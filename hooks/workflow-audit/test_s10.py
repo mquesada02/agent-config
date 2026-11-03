@@ -166,6 +166,10 @@ class S10LinkedTest(S10Case):
         self.linked(round_event(loop=PLAN, reviewers=("rev7",)), fe("P1"), amend())
         self.assertEqual(self.passes(), "1 findings judged, 1 with a quote checked")
 
+    def test_only_the_plan_review_5_3_findings_of_the_source_ledger_are_judged(self):
+        self.linked(round_event(loop=PLAN, reviewers=("rev7",)), round_event(loop="code-review"), fe("I1", loop="code-review", raised=True))
+        self.assertEqual(self.passes(), "0 findings judged, 0 with a quote checked")
+
     def test_a_quote_deleted_in_the_source_ledger_fails(self):
         self.linked(round_event(loop=PLAN, reviewers=("rev7",)), fe("P1"))
         self.assertEqual(self.fails(), "P1 (linked): no quote")

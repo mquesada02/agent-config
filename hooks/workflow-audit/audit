@@ -1587,10 +1587,9 @@ def check_s10(dir_fd, ledger, remote_url):
     texts = {}
 
     def reviewer_texts(reviewers):
-        key = tuple(reviewers)
-        if key not in texts:
-            texts[key] = _reviewer_texts(dir_fd, reviewers)
-        return texts[key]
+        unread = [reviewer for reviewer in reviewers if reviewer not in texts]
+        texts.update(zip(unread, _reviewer_texts(dir_fd, unread)))
+        return [texts[reviewer] for reviewer in reviewers]
 
     sources, unavailable = [(ledger, "", None)], None
     if ledger.link is not None:
