@@ -8,7 +8,8 @@ It denies a command whose last line is not safe to append to (a heredoc anywhere
 `;`, `&`, `\\`, `|`, `||` or `&&`, or a comment), with a reason that names the cause. It returns `updatedInput`
 with every other input field unchanged and never sets `permissionDecision: "allow"`, so permission prompts
 and rules still apply. An empty command, a call with no string command and a tool other than Bash and
-Monitor pass unchanged.
+Monitor pass unchanged. A Bash call with `run_in_background: true` passes unchanged too: its tool result
+holds no command output, and its task notification must keep the real exit code (#295).
 
 For a Monitor call it appends ` 2>&1 | python3 -I -u ~/.claude/hooks/redact-secrets/redact_filter.py` instead
 (the line filter redact_filter.py redacts each line of the watched output), after the same trailing-whitespace
@@ -78,6 +79,8 @@ def decide(event):
         return None
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
+        return None
+    if tool_name == "Bash" and tool_input.get("run_in_background") is True:
         return None
     command = tool_input["command"].rstrip(TRAILING)
     if command == "":

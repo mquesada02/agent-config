@@ -52,11 +52,17 @@ class RewriteTest(unittest.TestCase):
         self.assertEqual(self.command_after("ls\r\n"), "ls" + SUFFIX)
 
     def test_every_other_input_field_is_unchanged(self):
-        extra = {"description": "d", "timeout": 5000, "run_in_background": True, "other": {"a": [1, None]}}
+        extra = {"description": "d", "timeout": 5000, "run_in_background": False, "other": {"a": [1, None]}}
         updated = rewritten(run_pre(bash_pre_event("ls", **extra)))
         self.assertEqual(updated, {"command": "ls" + SUFFIX, **extra})
         self.assertIs(type(updated["timeout"]), int)
-        self.assertIs(updated["run_in_background"], True)
+        self.assertIs(updated["run_in_background"], False)
+
+    def test_a_run_in_background_value_other_than_true_still_gets_the_suffix(self):
+        for value in ("true", 1, None):
+            with self.subTest(value=value):
+                updated = rewritten(run_pre(bash_pre_event("ls", run_in_background=value)))
+                self.assertEqual(updated["command"], "ls" + SUFFIX)
 
     def test_a_rewrite_never_sets_a_permission_decision(self):
         result = run_pre(bash_pre_event("ls"))
@@ -219,6 +225,12 @@ class PassThroughTest(unittest.TestCase):
     def test_a_non_string_monitor_command_passes_unchanged(self):
         self.assert_silent({"tool_name": "Monitor", "tool_input": {"command": 5}})
         self.assert_silent({"tool_name": "Monitor", "tool_input": {}})
+
+    def test_a_background_bash_call_passes_unchanged(self):
+        # its tool result holds no command output, and the task notification must keep the real exit code (#295)
+        for command in ("ls", "cat <<EOF\nx\nEOF", "ls ;", "ls # note"):
+            with self.subTest(command=command):
+                self.assert_silent(bash_pre_event(command, run_in_background=True))
 
     def test_an_unknown_tool_passes_unchanged(self):
         self.assert_silent({"tool_name": "Read", "tool_input": {"command": "ls"}})
