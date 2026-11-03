@@ -1,7 +1,7 @@
 """Monitor line filter: read lines on stdin, write each line with its secret values replaced by ***.
 
 The PreToolUse rewrite hook (redact_pre.py) pipes every Monitor command through this script. Each line goes
-through redact_rules.redact and is flushed at once. Three multi-line secrets keep state:
+through redact_rules.redact and is flushed at once. Four multi-line secrets keep state:
 - A PEM private-key block is held from its BEGIN line to its END line and written as one *** (the text
   before BEGIN and after END is kept). At 200 held lines with no END, the held lines are dropped, one ***
   line is written, and every further line up to and including the END line is dropped.
@@ -11,8 +11,17 @@ through redact_rules.redact and is flushed at once. Three multi-line secrets kee
   line that is empty or indented more than the key is dropped. The key can be quoted (`'key': |`,
   `"key": |`) and the header can have node properties (`key: !!str |`, `key: &a |`). The key indent is the
   column of the key's first character (its opening quote for a quoted key).
+- A matched key with an empty value (`key:` and nothing after it but node properties): the key line is held
+  for one line. If the next line is hidden by the empty-key rule of redact_rules (blank, indented deeper than
+  the key, or at the key indent and starting with `- `), the key line is written as `key: ***` and every
+  following hidden line is dropped, up to the first other line. Otherwise the key line is written as a normal
+  line, so is a held key line at the end of the input. A hidden line with a BEGIN line and no END line drops
+  up to its END line, then the state goes on. The key indent is measured on the text after the PEM rule. For a
+  key on the rest of a line after a dropped state it is measured on the rest only, so the filter can hide
+  more lines than redact_rules does there (fail-closed).
 The text that follows the end of a state on the same line is handled as a normal line, so it can start a new
-state. Held or dropped lines at the end of the input are never written. The filter fails closed: on any
+state. Held or dropped lines at the end of the input are never written, except a held key line of the
+empty-key state (see above). The filter fails closed: on any
 error it writes nothing more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or
@@ -103,10 +112,19 @@ class LineFilter:
         self.held = []
         self.depth = 0
         self.key_indent = 0
+        self.pem_resume = None  # the state to resume after the END line of a PEM block in a hidden line
 
     def feed(self, line):
         """The text to write for one input line (may be empty)."""
         return self.handler(line)
+
+    def finish(self):
+        """The text to write at the end of the input: a held key line is written as a normal line."""
+        if self.handler != self.empty_key_hold:
+            return ""
+        self.handler = self.normal_line
+        body, ending = split_ending(self.held[0])
+        return redact_rules.redact(body) + ending
 
     def normal_line(self, line):
         body, ending = split_ending(line)
@@ -124,6 +142,13 @@ class LineFilter:
             if indent is not None:
                 self.handler = self.yaml_drop
                 self.key_indent = indent
+            else:
+                found = redact_rules.empty_key(body) if ":" in body else None
+                if found is not None:
+                    self.handler = self.empty_key_hold
+                    self.held = [line]
+                    self.key_indent = found[0]
+                    return ""
         return redact_rules.redact(body) + ending
 
     def rest_after_drop(self, rest_line):
@@ -152,6 +177,10 @@ class LineFilter:
         end = END.search(line)
         if end is None:
             return ""
+        if self.pem_resume is not None:
+            # the block was in a line hidden by the empty-key rule: the rest of the END line is hidden too
+            self.handler, self.pem_resume = self.pem_resume, None
+            return ""
         self.handler = self.normal_line
         return self.rest_after_drop(line[end.end():])
 
@@ -162,6 +191,37 @@ class LineFilter:
             return ""
         self.handler = self.normal_line
         return self.rest_after_drop(body[closed:] + ending)
+
+    def hide_line(self, body):
+        """Drop a line that the empty-key rule hides. A BEGIN line with no END line drops up to its END line."""
+        begins = list(BEGIN.finditer(body)) if "-----BEGIN" in body else []
+        if begins and END.search(body, begins[-1].end()) is None:
+            self.pem_resume = self.empty_key_drop
+            self.handler = self.pem_drop
+        else:
+            self.handler = self.empty_key_drop
+        return ""
+
+    def empty_key_hold(self, line):
+        """The line after an empty secret key decides: hidden (the key line is masked) or shown (normal lines)."""
+        key_body, key_ending = split_ending(self.held[0])
+        body, _ = split_ending(line)
+        if redact_rules.hidden_by_empty_key(body, self.key_indent):
+            # redact masks the key line only when the key is empty for it (an earlier value can swallow it)
+            probe = body if body.strip() != "" else " "
+            first = redact_rules.redact(key_body + "\n" + probe).split("\n", 1)[0]
+            if first != redact_rules.redact(key_body):
+                self.hide_line(body)
+                return first + key_ending
+        self.handler = self.normal_line
+        return redact_rules.redact(key_body) + key_ending + self.normal_line(line)
+
+    def empty_key_drop(self, line):
+        body, _ = split_ending(line)
+        if redact_rules.hidden_by_empty_key(body, self.key_indent):
+            return self.hide_line(body)
+        self.handler = self.normal_line
+        return self.normal_line(line)
 
     def yaml_drop(self, line):
         body, _ = split_ending(line)
@@ -182,6 +242,10 @@ def main():
         if text:
             stdout.write(text.encode("utf-8", "surrogateescape"))
             stdout.flush()
+    text = line_filter.finish()
+    if text:
+        stdout.write(text.encode("utf-8", "surrogateescape"))
+        stdout.flush()
 
 
 def run():
