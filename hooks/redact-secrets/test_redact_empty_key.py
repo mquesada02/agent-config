@@ -237,7 +237,7 @@ class DocsTest(unittest.TestCase):
         with open(os.path.join(HERE, "redact_post.py"), encoding="utf-8") as handle:
             text = handle.read()
         self.assertNotIn("a YAML sequence under a matched", text)
-        self.assertIn("a JSON value on the line after", text)  # the form of ticket 314 stays listed
+        self.assertNotIn("a JSON value on the line after", text)  # ticket 314 closed this form
 
 
 class SeamAgreementTest(unittest.TestCase):

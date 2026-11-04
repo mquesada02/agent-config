@@ -19,6 +19,14 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      becomes `key: ***` (quotes kept for a quoted key; its properties are hidden too) and the hidden lines are
      removed. When no line is hidden, the text stays unchanged. The key indent is the column of the key in
      the text after the PEM rule. A nested map under the key is hidden too (accepted cost).
+   - A next-line JSON value (spec 311, ticket 314): a plain double-quoted key with an empty value looks at the
+     first non-blank line after it. When that line starts a JSON value (a JSON string that closes on the line
+     and that no `:` follows, `{`, `[`, or a JSON token that ends at `,`, `}` or `]` or at the line end), the
+     value is masked as the same-line JSON rule masks it, with the value guard: a string becomes `"***"`
+     unless kept, an empty `{}` or `[]` stays, another object or array is masked, a token stays. The line
+     breaks, blank lines and indent between the key and the value are kept. Otherwise the empty-key rule above
+     applies from the key line, so `"key":` then `  "a": value` is hidden. A single-quoted key and an unquoted
+     YAML key take only the empty-key rule.
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
@@ -50,6 +58,9 @@ BLOCK_HEADER = re.compile(r"(?:" + PROPERTIES + r"[ \t]+)?[|>]")
 # An empty value: nothing but node properties, spaces and tabs up to the line end. The filter uses it too.
 EMPTY_VALUE = re.compile(r"(?:" + PROPERTIES + r"[ \t]*)?(?=\r?\n|\Z)")
 NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
+# A JSON token (number, true, false, null as the value guard reads them) and where it must end.
+JSON_TOKEN = re.compile(r"(?:" + NUMBER.pattern + r"|true|false|null)", re.IGNORECASE)
+JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
 
@@ -156,6 +167,41 @@ def json_value_end(text, start, quote):
     return end, quote + MASK + quote
 
 
+def starts_json_value(text, start):
+    """Whether the text at `start` (the first character after the indent of a line) starts a JSON value.
+
+    That is a JSON string that closes on the line and that no `:` follows (a key is no value), `{` or `[`, or a
+    JSON token that ends at `,`, `}` or `]` (after spaces or tabs) or at the line end. The filter uses it too.
+    """
+    char = text[start : start + 1]
+    if char in ("{", "["):
+        return True
+    if char == '"':
+        close = find_plain_quote(text, start + 1, line_end(text, start))
+        if close < 0:
+            return False
+        after = close + 1
+        while text[after : after + 1] in (" ", "\t"):
+            after += 1
+        return text[after : after + 1] != ":"
+    token = JSON_TOKEN.match(text, start)
+    return token is not None and JSON_TOKEN_END.match(text, token.end()) is not None
+
+
+def next_json_value(text, header_end):
+    """Index of the JSON value on the first non-blank line after the key line ending at `header_end`, or -1."""
+    index = text.find("\n", header_end)
+    while 0 <= index < len(text):
+        index += 1
+        stop = line_end(text, index)
+        line = text[index:stop]
+        if line.strip() != "":
+            start = index + len(line) - len(line.lstrip(" \t"))
+            return start if starts_json_value(text, start) else -1
+        index = text.find("\n", stop)
+    return -1
+
+
 def json_dq_key_value_end(text, start):
     """Like json_value_end for a plain double-quoted key, but an unquoted value of more than one word is
     masked to the end of the line (a YAML plain value)."""
@@ -232,7 +278,8 @@ def empty_key_end(text, header_end, key_indent):
 
 
 def empty_key(body):
-    """(key indent, index of the value) of the last secret key in a line with an empty value, or None.
+    """(key indent, index of the value, whether the key is a plain double-quoted key) of the last secret key in a
+    line with an empty value, or None.
 
     The line is given without its line ending. The key indent is measured on the line after the PEM rule,
     as redact_keyed measures it. The filter uses this to find an empty secret key.
@@ -246,7 +293,7 @@ def empty_key(body):
         if EMPTY_VALUE.match(masked, match.end()):
             key = block_key(match)
             if key is not None and is_secret_key(key):
-                found = (match.start(), match.end())
+                found = (match.start(), match.end(), match.group("jq") == '"')
     return found
 
 
@@ -278,12 +325,19 @@ def redact_keyed(text):
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
         elif block_key(match) is not None and EMPTY_VALUE.match(text, start):
             header_end = line_end(text, start)
-            line_start = text.rfind("\n", 0, match.start()) + 1
-            end = empty_key_end(text, header_end, match.start() - line_start)
-            if end < 0:
-                continue  # no line is hidden: the text stays unchanged
-            space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
-            replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
+            value = next_json_value(text, header_end) if match.group("jq") == '"' else -1
+            if value >= 0:
+                # a JSON value on a later line: masked as one value, the text between stays
+                out.append(text[start:value])
+                pos = value
+                end, replacement = json_value_end(text, value, '"')
+            else:
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                end = empty_key_end(text, header_end, match.start() - line_start)
+                if end < 0:
+                    continue  # no line is hidden: the text stays unchanged
+                space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
+                replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":
