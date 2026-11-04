@@ -157,7 +157,7 @@ class FilterSeamTest(PemJsonCases, unittest.TestCase):
         self.assertEqual(filt(text), lines("***", "after: 1"))
 
     def test_329_story_3_past_the_cap_text_after_the_closing_bracket_is_a_normal_line(self):
-        # ticket 347: a key after `}` and a space is prose; a key after a comma in the open `{` of the line prefix counts
+        # ticket 347: a key after `}` and a space is prose; after a comma, with a `{` in the line prefix, it counts
         text = lines('{"%s": {"k": "%s' % (K, BEGIN), *body_lines(250), END + '"}, %s: %s' % (K, V), "after: 1")
         self.assertEqual(filt(text), lines("***", ", %s: ***" % K, "after: 1"))
 

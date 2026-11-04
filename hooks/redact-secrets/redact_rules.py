@@ -405,7 +405,7 @@ def redact_keyed(text, prefix=""):
                 space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
                 replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
         elif match.group("ykey") is not None and not key_counts(text, match.start(), prefix):
-            continue  # prose: the text after the key stays (this check follows the block scalar and empty-key branches)
+            continue  # prose: its text stays; this check must follow the block scalar and empty-key branches
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":

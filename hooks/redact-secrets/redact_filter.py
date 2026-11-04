@@ -47,8 +47,9 @@ PEM END line is the prefix of the BEGIN line, the text before the BEGIN marker (
 ***) and ***; after the closing bracket of a dropped JSON object it is the prefix of the closing line and the
 text of that line before the rest; after the value of a next-line JSON value it is the original text of the
 value line before the rest. A rest is never at a line start position, so a prose key in it stays. The filter
-keeps the prefix of a held rest line and of a PEM block past the held-line cap. Held or dropped lines at the end of the input are never written, except a held key line of the
-empty-key and pending JSON value states (see above). The filter fails closed: on any error it writes nothing
+keeps the prefix of a held rest line and of a PEM block past the held-line cap. Held or dropped lines at the
+end of the input are never written, except a held key line of the empty-key and pending JSON value states
+(see above). The filter fails closed: on any error it writes nothing
 more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or

@@ -6,7 +6,8 @@ by a rules-seam class and a filter-seam class. Story numbers refer to the genera
 is a matched key name, `@TK` a second one, `@NK` a prose name that holds a key word, `@V` a secret value and `@P`
 a prose value; `@B` and `@E` are the PEM markers. The names are joined from parts, so this file holds no
 secret-shaped text of its own. The docs checks read the hook files as text: they are the one exception to
-"tests do not call helpers".
+"tests do not call helpers". No input of this file depends on the key column of the empty-key rule or the block
+scalar rule in a rest (the one divergence of story 21), so the seams-agree test skips none.
 """
 import os
 import unittest
@@ -288,6 +289,13 @@ class ProseCases:
     def test_347_story_20_two_pem_blocks_keep_the_prefix_of_the_first(self):
         text = lines("{a: 1, c: @B", "MIIE", "@E mid @B", "MIIE", "@E, @K: @V}")
         self.exact(text, lines("{a: 1, c: *** mid ***, @K: ***"))
+
+    def test_347_story_20_two_pem_blocks_past_the_held_line_cap_keep_the_prefix_of_the_first(self):
+        text = lines("{a: 1, c: @B", *body_lines(250), "@E mid @B", *body_lines(250), "@E, @K: @V}")
+        self.assertNotIn(V, self.seam(T(text)))
+
+    def test_347_story_23_grep_context_line_is_no_line_start(self):
+        self.prose("config.yml-3-  @K: @P")
 
     def test_347_story_20_pem_rest_in_a_flow_mapping_past_the_held_line_cap(self):
         out = self.seam(T(lines("{a: 1, c: @B", *body_lines(250), "@E, @K: @V}")))
