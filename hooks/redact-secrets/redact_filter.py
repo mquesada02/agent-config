@@ -29,8 +29,8 @@ through redact_rules.redact and is flushed at once. Five multi-line secrets keep
   line is written as `"key": ***` when a blank line was held, else unchanged; held blank lines are not written.
 The text that follows the end of a state on the same line is handled as a normal line, so it can start a new
 state. Held or dropped lines at the end of the input are never written, except a held key line of the
-empty-key and pending JSON value states (see above). The filter fails closed: on any error it writes nothing more and exits
-non-zero, so the pipe ends and no unfiltered text reaches the model.
+empty-key and pending JSON value states (see above). The filter fails closed: on any error it writes nothing
+more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or
 writes anything. Any other value has no effect.
@@ -103,6 +103,14 @@ def unclosed_json_depth(body):
             if closed < 0:
                 return depth
     return 0
+
+
+def key_is_live(key_body):
+    """Whether the empty secret key at the end of the line is a key for redact, not swallowed by an earlier value.
+
+    A live key masks a JSON string on the next line, so the probe line is masked; a swallowed key leaves it.
+    """
+    return redact_rules.redact(key_body + '\n"x"').endswith('\n"***"')
 
 
 def yaml_block_indent(body):
@@ -247,28 +255,23 @@ class LineFilter:
         key_body, key_ending = split_ending(self.held[0])
         blanks = self.held[1:]
         # a complete PEM block is masked before the rules look at the line; an unclosed one is no JSON value
-        shown = body if has_unclosed_begin(body) or "-----BEGIN" not in body else redact_rules.PEM_BLOCK.sub(
-            redact_rules.MASK, body
-        )
+        unclosed = has_unclosed_begin(body)
+        shown = body if unclosed else redact_rules.PEM_BLOCK.sub(redact_rules.MASK, body)
         indent = len(shown) - len(shown.lstrip(" \t"))
-        live_key = redact_rules.redact(key_body + '\n"x"').endswith('\n"***"')
-        if not has_unclosed_begin(body) and live_key and redact_rules.starts_json_value(shown, indent):
-            self.handler = self.normal_line
-            return (
-                redact_rules.redact(key_body) + key_ending + "".join(blanks)
-                + self.json_value_line(shown, ending, indent)
-            )
-        if blanks or redact_rules.hidden_by_empty_key(body, self.key_indent):
+        plain_key = redact_rules.redact(key_body)
+        self.handler = self.normal_line
+        if not unclosed and key_is_live(key_body) and redact_rules.starts_json_value(shown, indent):
+            return plain_key + key_ending + "".join(blanks) + self.json_value_line(shown, ending, indent)
+        hidden = redact_rules.hidden_by_empty_key(body, self.key_indent)
+        if blanks or hidden:
             # a held blank line is a hidden line: it becomes one space, so that redact sees a following line
             probe = " " if blanks else body
             first = redact_rules.redact(key_body + "\n" + probe).split("\n", 1)[0]
-            if first != redact_rules.redact(key_body):
-                if redact_rules.hidden_by_empty_key(body, self.key_indent):
+            if first != plain_key:
+                if hidden:
                     return first + key_ending + self.hide_line(body)
-                self.handler = self.normal_line
                 return first + key_ending + self.normal_line(line)
-        self.handler = self.normal_line
-        return redact_rules.redact(key_body) + key_ending + "".join(blanks) + self.normal_line(line)
+        return plain_key + key_ending + "".join(blanks) + self.normal_line(line)
 
     def json_value_line(self, shown, ending, start):
         """A JSON value at `start` of a line after its key, redacted as the same-line rule does it.

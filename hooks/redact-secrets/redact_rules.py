@@ -59,7 +59,7 @@ BLOCK_HEADER = re.compile(r"(?:" + PROPERTIES + r"[ \t]+)?[|>]")
 EMPTY_VALUE = re.compile(r"(?:" + PROPERTIES + r"[ \t]*)?(?=\r?\n|\Z)")
 NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 # A JSON token (number, true, false, null as the value guard reads them) and where it must end.
-JSON_TOKEN = re.compile(r"(?:[+-]?[0-9]+(?:\.[0-9]+)?|true|false|null)", re.IGNORECASE)
+JSON_TOKEN = re.compile(r"(?:" + NUMBER.pattern + r"|true|false|null)", re.IGNORECASE)
 JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
