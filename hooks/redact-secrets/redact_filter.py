@@ -262,7 +262,8 @@ class LineFilter:
         self.handler = self.normal_line
         if not unclosed and key_is_live(key_body) and redact_rules.starts_json_value(shown, indent):
             return plain_key + key_ending + "".join(blanks) + self.json_value_line(shown, ending, indent)
-        hidden = redact_rules.hidden_by_empty_key(body, self.key_indent)
+        # a line with an unclosed BEGIN line is hidden even at the key indent: its value must not be written
+        hidden = unclosed or redact_rules.hidden_by_empty_key(body, self.key_indent)
         if blanks or hidden:
             # a held blank line is a hidden line: it becomes one space, so that redact sees a following line.
             # A line with an unclosed BEGIN line is no JSON value, but redact would read it as one after the PEM

@@ -200,6 +200,15 @@ class FilterSeamTest(NextLineJsonCases, unittest.TestCase):
         self.assertEqual(out, '"%s": ***\nnext: 1\n' % K)
         self.assertNotIn("MIIEbody", out)
 
+    def test_325_story_8_a_value_at_the_key_indent_with_a_begin_line_after_it_is_hidden(self):
+        # the line is at the key indent and no blank line is held, yet its value must not be written
+        for value in ('{"a": "%s"}' % V, '"%s"' % V):
+            text = '"%s":\n%s %s\nMIIEbody\n%s\nafter\n' % (K, value, BEGIN, END)
+            with self.subTest(value=value):
+                out = filt(text)
+                self.assertEqual(out, '"%s": ***\nafter\n' % K)
+                self.assertNotIn(V, out)
+
     def test_325_story_8_a_begin_line_with_no_end_line_hides_the_rest(self):
         text = '"%s":\n  %s\nMIIEbody\nnext: 1\n' % (K, BEGIN)
         self.assertEqual(filt(text), '"%s": ***\n' % K)
