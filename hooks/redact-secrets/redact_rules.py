@@ -6,6 +6,22 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
 2. Keyed formats, tried in this order on each occurrence: JSON, env, YAML. The key name must contain
    ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY or CREDENTIAL, ignoring case, _ and -.
    Only the value becomes ***; a number, true/false, null or empty value stays (value guard).
+   - The position rule (spec 334, ticket 347): the same-line masking of an unquoted YAML key (`key: value`, not
+     in quotes) applies only where the key counts, at a line start position or at a flow-mapping position. A
+     key that does not count is prose: its text stays and the scan goes on after it. The empty-key rule and the
+     block scalar rule still fire on any unquoted YAML key (they follow the position rule in ticket 348). JSON
+     keys, env pairs, single-quoted keys and double-quoted keys are not judged by position.
+     The prefix grammar: a key is at a line start position when the text from the start of its line to the key
+     is, in this order: at most one grep prefix (`path:` or `path:N:`, no space, tab or `:` in the path), at
+     most one line-number prefix (spaces, digits, one tab), at most one diff marker (`+`, `-` or a space),
+     indent (spaces; at the true line start, when no tool prefix comes before, tabs too), at most one `#` comment
+     marker with spaces (tabs too when no tool prefix comes before), and any number of `- ` list markers. When
+     the text can be read in more than one way, one reading that fits is enough (fail-closed).
+     The flow-mapping rule: a key is at a flow-mapping position when, with spaces or tabs between, it comes
+     directly after `{` (any `{`), or directly after `,` with a `{` outside a double-quoted string earlier on
+     the line. A double-quoted string ends at the next `"` that no backslash escapes; `}` and `'` do not count.
+     `redact(text, prefix)` judges the first line as the rest of a line when the line prefix is given: the
+     rest is never at a line start position, and the flow-mapping rule reads the prefix and the text.
    - A single-quoted key (`'key': value`) is a YAML key with every same-line YAML value form.
    - A block scalar header (`|` or `>`) may have node properties before it: at most one tag (`!x`, `!!x`,
      `!<x>`) and one anchor (`&x`), at least one, in either order. The header, and the lines that are blank or
@@ -70,6 +86,56 @@ SHAPES = (
     (re.compile(r"(?P<head>[A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(?=@)"), r"\g<head>" + MASK),
     (re.compile(r"(?:ghp_|gho_|ghs_|github_pat_|sk-ant-|xox[abprs]-)[A-Za-z0-9_\-]+"), MASK),
 )
+
+
+# The text before an unquoted YAML key, from the start of its line, in the order of the prefix grammar. At the true
+# line start tabs count as indent (and after `#`); after a tool prefix (grep prefix, line-number prefix, diff
+# marker) only spaces do. A fullmatch tries every reading (fail-closed): one that fits is enough.
+GREP_PREFIX = r"[^ \t:]+:(?:[0-9]+:)?"
+LINE_NUMBER_PREFIX = r" *[0-9]+\t"
+LINE_START = re.compile(
+    r"[ \t]*(?:#[ \t]*)?(?:-[ ]+)*"
+    r"|(?:" + GREP_PREFIX + r")?(?:" + LINE_NUMBER_PREFIX + r")?[+\- ]? *(?:# *)?(?:-[ ]+)*"
+)
+
+
+def in_flow_mapping(before):
+    """Whether a key right after `before` is at a flow-mapping position.
+
+    The key comes directly after `{` (any `{`), or directly after `,` with a `{` outside a double-quoted
+    string earlier on the line. Spaces and tabs between are free. A backslash escapes the next character in a
+    string, `'` is a plain character and `}` is not counted.
+    """
+    head = before.rstrip(" \t")
+    if head.endswith("{"):
+        return True
+    if not head.endswith(","):
+        return False
+    in_string = False
+    index = 0
+    while index < len(head) - 1:
+        char = head[index]
+        if in_string:
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "{":
+            return True
+        index += 1
+    return False
+
+
+def key_counts(text, key_start, prefix=""):
+    """Whether the unquoted YAML key that starts at `key_start` counts: it is at a line start position or at a
+    flow-mapping position. `prefix` is the line prefix of a text that is the rest of a line (see redact)."""
+    line_start = text.rfind("\n", 0, key_start) + 1
+    before = text[line_start:key_start]
+    if line_start == 0 and prefix:
+        return in_flow_mapping(prefix + before)
+    return LINE_START.fullmatch(before) is not None or in_flow_mapping(before)
 
 
 def block_key(match):
@@ -297,7 +363,7 @@ def empty_key(body):
     return found
 
 
-def redact_keyed(text):
+def redact_keyed(text, prefix=""):
     out = []
     pos = 0
     while True:
@@ -338,6 +404,8 @@ def redact_keyed(text):
                     continue  # no line is hidden: the text stays unchanged
                 space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
                 replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
+        elif match.group("ykey") is not None and not key_counts(text, match.start(), prefix):
+            continue  # prose: the text after the key stays (this check follows the block scalar and empty-key branches)
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":
@@ -352,9 +420,12 @@ def redact_keyed(text):
     return "".join(out)
 
 
-def redact(text):
+def redact(text, prefix=""):
+    """Redact `text`. `prefix` is the line prefix when `text` is the rest of a line (the Monitor filter): the text
+    before it on its line, as redact(whole text) sees that line. It only decides where a key in the first line
+    counts and is not part of the output."""
     text = PEM_BLOCK.sub(MASK, text)
-    text = redact_keyed(text)
+    text = redact_keyed(text, prefix)
     for pattern, replacement in SHAPES:
         text = pattern.sub(replacement, text)
     return text
