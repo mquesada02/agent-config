@@ -114,6 +114,12 @@ def masked_pairs(body):
     return COMPLETE_PEM.sub(redact_rules.MASK, body) if "-----BEGIN" in body else body
 
 
+def before_first_begin(body):
+    """The text before the first BEGIN line that has no END line after it on the line (pairs masked first)."""
+    shown = masked_pairs(body)
+    return shown[: BEGIN.search(shown).start()]
+
+
 def unclosed_json_depth(body):
     """(open depth, in-string state) of the first matched plain JSON key whose value bracket does not close
     on the line, or (0, False). A bracket inside a complete BEGIN to END pair is not counted."""
@@ -184,8 +190,7 @@ class LineFilter:
     def normal_line(self, line):
         body, ending = split_ending(line)
         if has_unclosed_begin(body):
-            shown = masked_pairs(body)
-            self.pem_depth, self.pem_in_string = unclosed_json_depth(shown[: BEGIN.search(shown).start()])
+            self.pem_depth, self.pem_in_string = unclosed_json_depth(before_first_begin(body))
             self.handler = self.pem_hold
             self.held = [line]
             return ""
@@ -255,7 +260,7 @@ class LineFilter:
         """
         body, ending = split_ending(line)
         shown = masked_pairs(body)
-        begin = BEGIN.search(shown)
+        begin = BEGIN.search(shown) if "-----BEGIN" in shown else None
         limit = len(shown) if begin is None else begin.start()
         # a string that a PEM block left open stays open on the next line, as redact_rules reads it
         carried, self.string_open = in_string, False
@@ -331,10 +336,10 @@ class LineFilter:
         plain_key = redact_rules.redact(key_body)
         if unclosed and key_is_live(key_body):
             # an object or array that is still open at its BEGIN line is one value: redact masks it to its close
-            pairs = masked_pairs(body)
-            before = pairs[: BEGIN.search(pairs).start()]
-            if before[indent : indent + 1] in ("{", "[") and scan_brackets(before, 0, indent)[1] < 0:
-                self.pem_depth, _, self.pem_in_string = scan_brackets(before, 0, indent)
+            before = before_first_begin(body)
+            depth, closed, in_string = scan_brackets(before, 0, indent)
+            if before[indent : indent + 1] in ("{", "[") and closed < 0:
+                self.pem_depth, self.pem_in_string = depth, in_string
                 self.handler = self.pem_drop
                 return plain_key + key_ending + "".join(blanks) + before[:indent] + '"' + redact_rules.MASK + '"' + ending
         self.handler = self.normal_line
