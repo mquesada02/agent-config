@@ -100,6 +100,10 @@ class PemJsonCases:
         text = lines('"%s": {' % TK, '"x": 1 %s } ' % BEGIN, "MIIE", END, '"n": "%s"' % V, "}", "after: 1")
         self.check(text, lines('"%s": "***"' % TK, "after: 1"))
 
+    def test_329_rule_r5_brackets_in_the_pem_body_do_not_close_a_dropped_object(self):
+        text = lines('"%s": {' % TK, '"x": 1 %s' % BEGIN, "}", "]", END, '"n": "%s"' % V, "}", "after: 1")
+        self.check(text, lines('"%s": "***"' % TK, "after: 1"))
+
     def test_329_rule_r5_two_begin_lines_in_a_dropped_object(self):
         text = lines('"%s": {' % TK, '"x": 1 %s } %s' % (BEGIN, BEGIN), "MIIE", END + ', "n": "%s"' % V, "}", "after: 1")
         self.check(text, lines('"%s": "***"' % TK, "after: 1"))
