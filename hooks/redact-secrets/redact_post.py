@@ -23,11 +23,16 @@ Residual risks (the later tickets add theirs to this comment):
 - Monitor commands are not checked by the audit gate or by block-aws-credentials.py, whose matchers do not
   include Monitor.
 - In the Monitor filter, a PEM block with no END line and an unclosed JSON object or array under a matched key
-  hide the rest of the stream (the fail-closed choice; they never leak it).
+  hide the rest of the stream (the fail-closed choice; they never leak it). When the PEM block began inside the
+  object or array, the JSON state goes on after a PEM block's END line, so the lines of the object after it are
+  not written.
 - In the Monitor filter, a false positive of a state (for example `echo "see <key>: |"`) can hide following lines.
 - In the Monitor filter, an empty matched key on the rest of a line after a dropped PEM or JSON state uses the
-  column of the rest only, so it can hide more lines than the shared rules do. One input leaks: a BEGIN line
-  inside a dropped JSON object, on the line that closes the object, with the END line in the rest.
+  column of the rest only, so it can hide more lines than the shared rules do.
+- In the Monitor filter, a PEM block that began in a value other than an object or array under a matched key (a
+  JSON string, an env value, a YAML plain value) is not tracked past its END line: a secret in the text after
+  the END line can be written. A BEGIN line inside a YAML block scalar with an unindented PEM body leaks too.
+  A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it
