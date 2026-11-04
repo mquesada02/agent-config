@@ -216,6 +216,9 @@ class ProseCases:
     def test_347_story_10_escaped_backslash_closes_the_string_at_the_next_quote(self):
         self.masked('x "\\\\" {a: 1, @K: @V}')
 
+    def test_347_story_10_escaped_quote_does_not_close_the_string(self):
+        self.masked('x "\\"" {a: 1, @K: @V}')
+
     def test_347_story_10_only_open_brace_is_in_a_string_is_prose(self):
         self.prose('msg: "{", @NK: @P')
 
@@ -325,6 +328,34 @@ class ProseCases:
     def test_347_story_20_held_empty_key_line_in_a_rest_keeps_the_line_prefix(self):
         text = lines("@B", "MIIE", '@E  @TK: "@P" @K:', " " * 40 + "deep")  # deeper than the key in the full line
         self.exact(text, lines('***  @TK: "@P" @K: ***'))
+
+    def test_347_story_20_begin_line_that_is_a_rest_keeps_its_line_prefix(self):
+        text = lines("{a: 1, c: @B", "MIIE", "@E, @K: @V @B", "MIIE", "@E")
+        self.exact(text, lines("{a: 1, c: ***, @K: ***"))
+
+    def test_347_story_20_pem_inside_a_dropped_json_object_keeps_the_line_prefix(self):
+        out = self.seam(T(lines('"@K": {', '{"z": 1 @B', "MIIE", "@E }}, @K: @V")))
+        self.assertNotIn(V, out)
+
+    def test_347_story_20_json_object_open_at_a_begin_line_keeps_the_line_prefix_held(self):
+        out = self.seam(T(lines('{"@K": {"k": "@B', "MIIE", '@E"}, @K: @V}')))
+        self.assertNotIn(V, out)
+
+    def test_347_story_20_json_object_open_at_a_begin_line_keeps_the_line_prefix_past_the_cap(self):
+        out = self.seam(T(lines('{"@K": {"k": "@B', *body_lines(250), '@E"}, @K: @V}')))
+        self.assertNotIn(V, out)
+
+    def test_347_story_20_next_line_json_value_with_a_begin_line_keeps_the_line_prefix(self):
+        out = self.seam(T(lines('"@K":', '{"a": 1 @B', "MIIE", "@E}, @K: @V")))
+        self.assertNotIn(V, out)
+
+    def test_347_story_20_held_empty_key_line_that_is_not_hidden_keeps_the_line_prefix(self):
+        text = lines("@B", "MIIE", '@E  @TK: "@P" @K:', "plain")
+        self.exact(text, lines('***  @TK: "@P" @K:', "plain"))
+
+    def test_347_story_20_pending_json_key_that_is_live_only_with_the_line_prefix(self):
+        text = lines("@B", "MIIE", '@E  @TK: x "@K":', '"y"')
+        self.exact(text, lines('***  @TK: x "@K":', '"***"'))
 
     def test_347_story_20_held_empty_key_line_at_the_end_of_the_input_keeps_the_line_prefix(self):
         text = lines("@B", "MIIE", '@E  @TK: "@P" @K:')
