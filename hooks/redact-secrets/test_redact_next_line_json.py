@@ -124,6 +124,9 @@ class NextLineJsonCases:
     def test_325_story_8_a_blank_line_then_a_bare_word_takes_the_empty_key_rule(self):
         self.check('"%s":\n\n  %s\nnext: 1\n' % (K, V), '"%s": ***\nnext: 1\n' % K)
 
+    def test_325_story_8_a_blank_line_then_a_line_at_the_key_indent_hides_the_blank_line(self):
+        self.check('"%s":\n\nnext: 1\n' % K, '"%s": ***\nnext: 1\n' % K)
+
     def test_325_story_8_a_line_back_at_the_key_indent_is_shown(self):
         text = '"%s":\nnext: 1\n' % K
         self.assertEqual(self.seam(text), text)
@@ -189,6 +192,13 @@ class FilterSeamTest(NextLineJsonCases, unittest.TestCase):
     def test_325_story_8_a_value_line_with_a_begin_line_and_no_end_line_takes_the_empty_key_rule(self):
         text = '"%s":\n  %s\nMIIEbody\n%s\nnext: 1\n' % (K, BEGIN, END)
         self.assertEqual(filt(text), '"%s": ***\nnext: 1\n' % K)
+
+    def test_325_story_8_a_value_with_a_begin_line_after_it_takes_the_empty_key_rule(self):
+        # without the rule the object is masked on its line and the PEM body lines after it are written
+        text = '"%s":\n  {"a": "x"} %s\nMIIEbody\n%s\nnext: 1\n' % (K, BEGIN, END)
+        out = filt(text)
+        self.assertEqual(out, '"%s": ***\nnext: 1\n' % K)
+        self.assertNotIn("MIIEbody", out)
 
     def test_325_story_8_a_begin_line_with_no_end_line_hides_the_rest(self):
         text = '"%s":\n  %s\nMIIEbody\nnext: 1\n' % (K, BEGIN)
