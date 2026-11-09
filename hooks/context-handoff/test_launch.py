@@ -1131,6 +1131,11 @@ class WorkerSuccessTest(WorkerTestCase):
         self.assertEqual(self.option(self.call("orchestration worker-show"), "--dispatch"), DISPATCH)
         self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
 
+    def test_worker_show_asks_for_the_full_record(self):
+        # Orca 1.4.255 prints the dispatch record (id, taskId, assigneeHandle) only in the full view; the concise view has none.
+        self.worker_launch()
+        self.assertIn("--full", self.call("orchestration worker-show")["argv"])
+
     def test_the_worker_prompt_does_not_depend_on_the_title_lookup(self):
         self.scenario["terminal show"] = failure("no title")
         self.assertEqual(self.worker_launch()[0], "ok")

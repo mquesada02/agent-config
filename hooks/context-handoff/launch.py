@@ -306,8 +306,10 @@ class Launch:
         return successor_title(title if isinstance(title, str) else "claude")
 
     def check_dispatch(self, worktree):
-        """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. Writes the worker manual file. Returns the failure or None."""
-        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch])
+        """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. Writes the worker manual file. Returns the failure or None.
+
+        `--full` is needed: Orca 1.4.255 prints the dispatch record only in the full view, and its concise view has no `dispatch` key."""
+        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch, "--full"])
         if not shown.ok:
             return self.early_failed(shown.error)
         if (shown.get("result", "dispatch", "id"), shown.get("result", "dispatch", "taskId"), shown.get("result", "dispatch", "assigneeHandle")) != (
