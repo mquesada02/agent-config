@@ -5,8 +5,8 @@ END marker after it drops every line up to and including its END line, and the t
 another unclosed BEGIN marker in that text goes on to the next END line; then the state goes on.
 
 Seam 1 is `redact(text)` through the test kit. Seam 2 is the Monitor filter script on stdin. One cases class is run by
-a rules-seam class and a filter-seam class. `redact(text)` did not change in this ticket, so every expected text here
-is also the literal output of main 63fe835 for its input. Fixtures are built from parts, so this file holds no
+a rules-seam class and a filter-seam class. `redact(text)` does not change in this ticket, so the rules-seam class
+pins the literal output of `redact(text)` as the reference for the filter. Fixtures are built from parts, so this file holds no
 secret-shaped text of its own. The docs checks read the hook files as text: they are the one exception to "tests go
 through a public seam". Test names carry the rule they prove: R1 the block scalar state drops a line with an unclosed
 BEGIN marker up to its END line; R2 the block scalar state goes on after that END line; R3 the text after the END
@@ -147,17 +147,17 @@ class DocsChecks(unittest.TestCase):
                 return normalized(item)
         self.fail("no bullet starts with " + first_words)
 
-    def test_379_r6_block_scalar_bullet_names_the_pem_rule_of_the_drop_states(self):
-        bullet = self.bullet("A YAML block scalar under a matched key")
+    def check_pem_rule(self, first_words):
+        bullet = self.bullet(first_words)
         self.assertIn("the PEM rule of the drop states", bullet)
         self.assertIn("drops up to its END line and the text after it", bullet)
         self.assertIn("goes on to the next END line", bullet)
 
+    def test_379_r6_block_scalar_bullet_names_the_pem_rule_of_the_drop_states(self):
+        self.check_pem_rule("A YAML block scalar under a matched key")
+
     def test_379_r6_empty_key_bullet_names_the_pem_rule_of_the_drop_states(self):
-        bullet = self.bullet("A matched key with an empty value")
-        self.assertIn("the PEM rule of the drop states", bullet)
-        self.assertIn("drops up to its END line and the text after it", bullet)
-        self.assertIn("goes on to the next END line", bullet)
+        self.check_pem_rule("A matched key with an empty value")
 
     def test_379_r6_residual_risk_list_no_longer_names_the_block_scalar_leak(self):
         text = normalized(self.read("redact_post.py"))
