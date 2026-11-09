@@ -11,6 +11,8 @@ Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 import argparse
 import sys
 
+FLAG = "⚑"
+
 
 def read_report(path):
     if path == "-":
@@ -29,7 +31,7 @@ def rule_tokens(text):
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         if len(cells) < 2 or cells[0] == "#" or set(cells[0]) <= set("-: "):
             continue
-        tokens.add(cells[1].replace("⚑", "").strip())
+        tokens.add(cells[1].replace(FLAG, "").strip())
     return tokens
 
 

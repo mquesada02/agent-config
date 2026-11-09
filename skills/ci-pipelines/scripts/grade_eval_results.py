@@ -60,9 +60,8 @@ def review_runs(result_path):
         if REVIEW_MARKER not in [g.get("name") for g in graders]:
             continue
         arms = case.get("arms", {})
-        require(isinstance(arms, dict) and isinstance(arms.get("with", []), list),
-                f"{case['name']}: `arms.with` is not a list")
-        runs = arms.get("with", [])
+        runs = arms.get("with", []) if isinstance(arms, dict) else None
+        require(isinstance(runs, list), f"{case['name']}: `arms.with` is not a list")
         require(all(isinstance(run, dict) and isinstance(run.get("tracePath", ""), str) for run in runs),
                 f"{case['name']}: a with-arm run is not an object with a `tracePath` string")
         found.append((case["name"], [run.get("tracePath", "") for run in runs]))
@@ -101,7 +100,7 @@ def main(argv):
     except (OSError, ValueError) as error:
         print(f"cannot read the result: {error}", file=sys.stderr)
         return 2
-    out, failed = [], False
+    out = []
     for name, traces in cases:
         try:
             lists = load_lists(args.evals, name)
@@ -111,7 +110,7 @@ def main(argv):
         for number, trace in enumerate(traces, start=1):
             failures = grade_run(name, number, trace, lists)
             out += failures + [f"{name}#{number}: {'FAIL' if failures else 'PASS'}"]
-            failed = failed or bool(failures)
+    failed = any(line.startswith("FAIL ") for line in out)
     print("\n".join(out + ["FAIL" if failed else "PASS"]))
     return 1 if failed else 0
 
