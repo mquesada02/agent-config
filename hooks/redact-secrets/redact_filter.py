@@ -23,8 +23,8 @@ through redact_rules.redact and is flushed at once. Five multi-line secrets keep
   line ending of the END line when the brackets stay open.
 - A JSON object or array under a matched key that does not close on its line: the redacted line is written,
   and every following line is dropped until the brackets balance. The key can be a plain double-quoted key or a
-  key written with escaped quotes (`{\\"key\\": {`), and a swallowed key of either form. In this state a bracket
-  inside a PEM block does not count: a complete BEGIN to END pair on the line becomes *** before the scan, as in redact_rules, and the first BEGIN
+  key written with escaped quotes (`{\\"key\\": {`), and a swallowed key of either form. In this state
+  a bracket inside a PEM block does not count: a complete BEGIN to END pair on the line becomes *** before the scan, as in redact_rules, and the first BEGIN
   line with no END line on the line stops the scan, keeps the depth and drops the lines up to its END line;
   then the JSON state goes on after the END line. A string that the BEGIN line left open at the end of the
   END line stays open on the next lines (as redact_rules reads it), up to the line that holds its closing quote.
