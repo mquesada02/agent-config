@@ -46,6 +46,9 @@ class SwallowedCases:
     def test_381_r1_t1_an_env_first_key_swallows_a_key_whose_next_line_string_is_masked(self):
         self.check('%s=abc "%s":\n"%s"\n' % (K, K, V), '%s=***\n"***"\n' % K)
 
+    def test_381_r1_t1_node_properties_after_the_swallowed_key_are_hidden_with_the_key_line(self):
+        self.check('"%s": abc "%s": !!str\n"%s"\n' % (K, K, V), '"%s": ***\n"***"\n' % K)
+
     # T2: a next-line object or array
     def test_381_r1_t2_a_next_line_object_is_masked_as_one_value(self):
         self.check('"%s": abc "%s":\n  {"a": "%s"}\nnext: 1\n' % (K, K, V), '"%s": ***\n  "***"\nnext: 1\n' % K)
@@ -101,9 +104,17 @@ class SwallowedCases:
         text = "%s: abc %s:\n    keep\n" % (K, K)
         self.assertEqual(self.seam(text), "%s: ***\n    keep\n" % K)
 
+    def test_381_r4_t6_an_unquoted_yaml_key_in_a_masked_value_hides_no_deeper_line(self):
+        text = "%s: abc %s:\n%skeep\n" % (K, K, " " * 20)
+        self.assertEqual(self.seam(text), "%s: ***\n%skeep\n" % (K, " " * 20))
+
     def test_381_r4_t6_an_env_key_in_a_masked_value_opens_no_state(self):
         text = "%s: abc %s=\n  keep\n" % (K, K)
         self.assertEqual(self.seam(text), "%s: ***\n  keep\n" % K)
+
+    def test_381_r5_t6_an_env_key_in_a_masked_value_hides_no_deeper_line(self):
+        text = "%s: abc %s=\n%skeep\n" % (K, K, " " * 20)
+        self.assertEqual(self.seam(text), "%s: ***\n%skeep\n" % (K, " " * 20))
 
     def test_381_r4_t6_a_value_masked_to_the_line_end_that_holds_no_secret_key_opens_no_state(self):
         text = '"%s": abc "%s": x "n":\n  keep\n' % (K, K)
@@ -213,8 +224,10 @@ class SourceAndDocsTest(unittest.TestCase):
         self.assertTrue("redact_rules.later_line_state(" in self.read("redact_filter.py"))
 
     def test_381_r11_the_rules_docstring_names_the_rescan_rule(self):
-        text = self.read("redact_rules.py")
-        self.assertTrue("rescan rule" in text.split('"""')[1])
+        doc = " ".join(self.read("redact_rules.py").split('"""')[1].split())
+        self.assertTrue("The rescan rule (spec 367, ticket 381)" in doc)
+        self.assertTrue("value swallows (see the rescan rule below) takes this rule too" in doc)
+        self.assertTrue("takes this rule too (the rescan rule below)" in doc)
 
     def test_381_r11_the_filter_docstring_bullets_name_the_swallowed_key(self):
         doc = self.read("redact_filter.py").split('"""')[1]
