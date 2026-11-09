@@ -14,8 +14,8 @@ through redact_rules.redact and is flushed at once. Five multi-line secrets keep
   word as the start or a part of the value of a secret key. If it does, the text after END is dropped up to the
   next BEGIN marker on that line, and from that marker on the line is a normal line. If it does not, the text
   after END is a normal line. The exception is a block scalar header line that holds the BEGIN marker (see the
-  YAML block scalar bullet): its block state has priority over both. A PEM block with no END line before the end of the input writes nothing of its
-  held lines.
+  YAML block scalar bullet): its block state has priority over both. A PEM block with no END line before the end
+  of the input writes nothing of its held lines.
   A block whose BEGIN line also opens a JSON object or array under a matched key (`{"key": {"k": "` and the
   BEGIN line) keeps another path: the filter keeps the bracket depth and whether the BEGIN line is inside a JSON
   string. The text after the END line is scanned from that depth, so the JSON state goes on after the END line
@@ -199,7 +199,7 @@ class LineFilter:
         self.pem_in_value = False  # past the held-line cap: the BEGIN marker stands in a masked keyed value
         # the key column of the block scalar header line that holds the BEGIN marker of the held block (None: no
         # block state), kept to the END line of the last block, where the block state starts
-        self.pem_block = None
+        self.pem_block_column = None
 
     def feed(self, line):
         """The text to write for one input line (may be empty)."""
@@ -241,11 +241,11 @@ class LineFilter:
             self.pem_depth, self.pem_in_string = unclosed_json_depth(before_first_begin(body))
             self.begin_prefix = prefix
             self.pem_in_value = False  # set at the held-line cap of this block
-            if self.pem_block is None:  # a carried block state (a second BEGIN marker after END) stays
+            if self.pem_block_column is None:  # a carried block state (a second BEGIN marker after END) stays
                 # the one decision of redact_rules: only a block state of the text before BEGIN goes on after END
                 state = redact_rules.later_line_state(before_first_begin(body), rest_prefix)
                 if state is not None and state.rule == "block":
-                    self.pem_block = state.column
+                    self.pem_block_column = state.column
             self.pem_prefix = rest_prefix + before_first_begin(body) + redact_rules.MASK
             self.handler = self.pem_hold
             self.held = [head + line]
@@ -285,16 +285,16 @@ class LineFilter:
             block = "".join(self.held) + line[: end.end()]
             self.handler = self.normal_line
             if self.pem_depth > 0:
-                self.pem_block = None  # the JSON path has priority
+                self.pem_block_column = None  # the JSON path has priority
                 return redact_rules.redact(block, self.begin_prefix) + self.json_after_pem(line[end.end():], True)
             # the joined line: the text before the BEGIN marker and *** (the head), then the rest after the END marker
             head = redact_rules.PEM_BLOCK.sub(redact_rules.MASK, block)
             rest = line[end.end():]
-            if self.pem_block is not None and not has_unclosed_begin(rest):
+            if self.pem_block_column is not None and not has_unclosed_begin(rest):
                 # a block scalar header line that holds the BEGIN marker: the block state has priority over a state
                 # that the rest opens, so the rest is only part of the joined line, and the lines after it go to the
                 # block state
-                self.key_indent, self.pem_block = self.pem_block, None
+                self.key_indent, self.pem_block_column = self.pem_block_column, None
                 self.handler = self.yaml_drop
                 body, ending = split_ending(rest)
                 return redact_rules.redact(head + body, self.begin_prefix) + ending
@@ -318,13 +318,13 @@ class LineFilter:
                 self.handler, self.pem_resume = self.pem_resume, None
             return ""
         if self.pem_depth > 0:
-            self.pem_block = None  # the JSON path has priority
+            self.pem_block_column = None  # the JSON path has priority
             return self.json_after_pem(line[end.end():], False)
-        if self.pem_block is not None:
+        if self.pem_block_column is not None:
             # a block scalar header line that holds the BEGIN marker (fail closed past the cap): the rest of the END
             # line is part of the header, so it is dropped like a hidden line of the block state, and the block state
             # goes on after it. The block state has priority over the keyed value rule below.
-            self.key_indent, self.pem_block = self.pem_block, None
+            self.key_indent, self.pem_block_column = self.pem_block_column, None
             return self.hide_line(split_ending(line[end.end():])[0], self.yaml_drop)
         self.handler = self.normal_line
         rest = line[end.end():]

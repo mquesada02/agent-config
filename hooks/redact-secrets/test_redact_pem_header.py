@@ -100,7 +100,7 @@ class HeaderCases:
     # story 8: a key that is not a secret key opens no state
     def test_416_r5_story_8_a_key_that_is_not_a_secret_key_keeps_the_text_after_end(self):
         text = lines("name: | " + BEGIN, "  MIIE", "  " + END, "  text", "keep: 1")
-        out = self.seam(text)
+        out = self.seam(text)  # not `check`: this story hides no V, and `  text` stays
         self.assertEqual(out, lines("name: | ***", "  text", "keep: 1"))
 
     # stories 9, 9a, 9b: the held-line cap (the BEGIN line is line 1)
@@ -108,7 +108,7 @@ class HeaderCases:
         text = lines(HEADER, *["  MIIE"] * 250, "  " + END, "  " + V, "keep: 1")
         self.check_own(text, lines(K + ": ***", "keep: 1"), lines("***", "keep: 1"))
 
-    def test_416_r6_story_9_past_the_cap_the_text_after_end_on_the_end_line_is_dropped(self):
+    def test_416_r6_story_9_text_on_the_end_line_past_the_cap_is_dropped(self):
         text = lines(HEADER, *["  MIIE"] * 250, "  " + END + " " + V, "  " + V, "keep: 1")
         self.check_own(text, lines(K + ": ***", "keep: 1"), lines("***", "keep: 1"))
 
@@ -140,7 +140,7 @@ class HeaderCases:
         text = lines(HEADER, "  MIIE", "  " + END + " x " + BEGIN, *["  MIIE"] * 250, "  " + END, "  " + V, "keep: 1")
         self.check_own(text, lines(K + ": ***", "keep: 1"), lines("***", "keep: 1"))
 
-    def test_416_r10_story_10c_a_second_hold_that_stays_under_its_own_cap_is_held(self):
+    def test_416_r10_story_10c_variant_a_second_hold_under_its_own_cap_is_held(self):
         # 150 lines in the first block and 100 in the second: 250 in all, but each count stays under the cap
         text = lines(
             HEADER, *["  MIIE"] * 150, "  " + END + " x " + BEGIN, *["  MIIE"] * 100, "  " + END, "  " + V, "keep: 1"
