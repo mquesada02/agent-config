@@ -44,6 +44,16 @@ It prints one JSON object with the keys `found`, `settings`, `missing_sections`,
 5. Each id in `unknown_ids` is ignored. Name it once.
 6. A disabled id with a reason is not checked. List the disabled rules once in the report.
 
+## Source module
+
+When you are pointed at a file to find its SQL (format, optimize, or a read of the SQL in a file), pick the source module by the file form. The extension is case-insensitive, as it is for `scripts/extract.py`.
+
+- A file that ends in `.sql`: load [sources/sql-files.md](sources/sql-files.md).
+- A file that ends in `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` or `.tsx`: load [sources/postgres-js.md](sources/postgres-js.md).
+- Any other file form is not supported. Say so, and do not run the extractor on it.
+
+The model-invoked path (you write SQL yourself) does not change.
+
 ## Layers
 
 A mode picks one source module and one dialect module. A later dialect or source form is one new module that this list names.
