@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: extract-tag-not-sql
+description: Seam 4 extractor case. Claude reviews the SQL of a file whose postgres.js templates use tags that are not sql, and names each template with its line range and tag.
+tags: [extractor, source-module]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    I want to review and tidy the PostgreSQL in the file `billing-store.ts` (it is in the current folder). List every postgres.js template in that file, one per line, as `<first line>-<last line> <tag>`. Do not change any file.
