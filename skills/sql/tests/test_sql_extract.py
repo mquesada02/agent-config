@@ -206,6 +206,15 @@ class DetectionTest(ExtractTestCase):
         src = "class A extends B<{ a: 1 }> {\n  z = postgres(u);\n}\n"
         self.assertEqual(self.detected(src), ["this.z"])
 
+    def test_nested_type_arguments_and_arrow_types_in_a_class_header(self):
+        for header in (
+            "class A extends B<C<D>> {",
+            "class A extends B<() => void> {",
+            "class A extends B<{ f: (x: number) => { y: 1 } }> {",
+        ):
+            with self.subTest(header=header):
+                self.assertEqual(self.detected(header + "\n  sql = postgres(u);\n}\n"), ["this.sql"])
+
     def test_the_word_class_that_is_not_a_class_keyword_opens_no_class_body(self):
         body = "function f() {\n  z = postgres(u);\n}\n"
         for head in (
@@ -378,6 +387,13 @@ class TokenizerTest(ExtractTestCase):
                 self.assertEqual(self.detected(src), [name])
         data = self.extract("const sq² = postgres(u);\nsq²`select 1`;\n")
         self.assertEqual(data["detected_tags"], [])
+
+    def test_the_js_scanner_and_the_tag_check_agree_on_what_a_name_is(self):
+        for text in ("é", "a1", "$x", "a·b", "1a", "a²", "śql", "Ⅷ"):
+            with self.subTest(text=text):
+                src = "const %s = postgres(u);\n%s`select 1`;\n" % (text, text)
+                is_name = text.replace("$", "_").isidentifier()
+                self.assertEqual(self.detected(src), [text] if is_name else [])
 
     def test_an_escaped_quote_in_a_string(self):
         data = self.extract("const a = 'it\\'s'; sql`yes`;\n", tags="sql")

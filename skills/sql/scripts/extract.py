@@ -42,11 +42,10 @@ CLAUSE_START_WORDS = frozenset(
         "UNION RETURNING"
     ).split()
 )
-NOT_NAME_WORDS = VALUE_WORDS | CLAUSE_START_WORDS | {"BY", "CONFLICT", "ON"}
+NOT_NAME_WORDS = VALUE_WORDS | CLAUSE_START_WORDS | {"CONFLICT"}
 
 NUMBER = re.compile(r"(?:\d|\.\d)[\w.]*")
 TEMPLATE_SPECIAL = re.compile(r"[\\`$]")
-SQL_NUMBER = re.compile(r"(?:\d|\.\d)[\w.]*")
 DOLLAR_QUOTE = re.compile(r"\$(?:[^\W\d]\w*)?\$")
 PARAMETER = re.compile(r"\$\d+")
 SQL_OPERATOR_CHARS = frozenset("+-*/<>=~!@#%^&|?:\\")
@@ -147,7 +146,7 @@ class SqlLexer:
                 self.tokens.append(("param", m.group(0), i, m.end()))
                 i = m.end()
             elif c.isdecimal() or (c == "." and text[i + 1 : i + 2].isdecimal()):
-                m = SQL_NUMBER.match(text, i)
+                m = NUMBER.match(text, i)
                 self.tokens.append(("num", m.group(0), i, m.end()))
                 i = m.end()
             elif c.isidentifier() or (c == "$" and text[i + 1 : i + 2] != "{"):
@@ -369,14 +368,15 @@ def extract_sql_file(source):
     if current:
         groups.append(current)
     statements = []
+    # The lexer appends interpolations in source order, so each statement owns one slice.
+    starts = [interpolation["start"] for interpolation in interpolations]
     for group in groups:
         start, end = group[0][2], group[-1][3]
         assign_positions(group, interpolations)
-        own = []
-        for interpolation in interpolations:
-            if start <= interpolation["start"] < end:
-                position = interpolation.get("position", "keyword") if not interpolation["literal"] else "keyword"
-                own.append(interpolation_record(source, interpolation, position))
+        own = [
+            interpolation_record(source, interpolation, interpolation.get("position", "keyword"))
+            for interpolation in interpolations[bisect.bisect_left(starts, start) : bisect.bisect_left(starts, end)]
+        ]
         statements.append(
             {
                 "tag": None,
@@ -390,9 +390,9 @@ def extract_sql_file(source):
     return statements
 
 
-def interpolation_record(source, interpolation, position, base=0):
-    start = interpolation["start"] + base
-    end = interpolation["end"] + base
+def interpolation_record(source, interpolation, position):
+    start = interpolation["start"]
+    end = interpolation["end"]
     return {
         "line": source.line(start),
         "column": source.column(start),
@@ -485,8 +485,7 @@ def tokenize_js(source):
             i += 1
         elif c == "/" and slash_starts_regex(tokens):
             i = scan_regex(text, i, tokens)
-        elif name_end(text, i) > i:
-            end = name_end(text, i)
+        elif (end := name_end(text, i)) > i:
             tokens.append(("name", text[i:end], i, end))
             i = end
         elif c.isdecimal() or (c == "." and text[i + 1 : i + 2].isdecimal()):
@@ -662,7 +661,7 @@ class Detector:
     def find_import(self, i):
         t = self.tokens
         j = i + 1
-        if name_is(t[j], "type") if j < len(t) else False:
+        if name_is(self.at(j), "type"):
             nxt = self.at(j + 1)
             if nxt[0] == "name" and nxt[1] != "from":
                 return
@@ -685,7 +684,6 @@ class Detector:
                 self.factory_names.setdefault(segment[m + 2][1], segment[m + 2][2])
 
     def find_require(self, i):
-        t = self.tokens
         window = [self.at(i + d) for d in range(8)]
         if not (
             window[1][0] == "name"
@@ -791,7 +789,6 @@ class Detector:
                 return
 
     def callback_parameter(self, j):
-        t = self.tokens
         if self.at(j)[0] == "str" and punct(self.at(j + 1), ","):
             j += 2
         if name_is(self.at(j), "async"):
@@ -853,14 +850,10 @@ def template_statement(source, template, parent):
     spans = {item["start"] - base: item["end"] - base for item in template.interpolations}
     tokens, found = SqlLexer(body, lambda i: spans.get(i)).run()
     assign_positions(tokens, found)
-    positions = {item["start"]: ("keyword" if item["literal"] else item.get("position", "keyword")) for item in found}
+    positions = {item["start"]: item.get("position", "keyword") for item in found}
     interpolations = [
-        interpolation_record(
-            source,
-            {"start": start, "end": end},
-            positions.get(start - base, "keyword"),
-        )
-        for start, end in ((item["start"], item["end"]) for item in template.interpolations)
+        interpolation_record(source, item, positions.get(item["start"] - base, "keyword"))
+        for item in template.interpolations
     ]
     return {
         "tag": template.tag,
@@ -937,7 +930,7 @@ def main(argv):
     except (OSError, UnicodeDecodeError) as error:
         output = result(file_argument, form, {"message": "cannot read the file: " + str(error), "line": None})
         return emit(output, 1)
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     source = Source(text)
     try:
