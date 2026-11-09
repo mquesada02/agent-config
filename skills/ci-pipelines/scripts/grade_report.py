@@ -174,9 +174,9 @@ def grade(text):
         block = []
         for line in lines[index["tools"] + 1:]:
             if not line.strip():
-                if block:
-                    break
                 continue
+            if not line.strip().startswith("- "):
+                break
             block.append(line.strip())
         for tool in TOOLS:
             bullet = next((b for b in block if b.startswith(f"- {tool}:")), None)

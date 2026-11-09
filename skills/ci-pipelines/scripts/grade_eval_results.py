@@ -87,6 +87,10 @@ def grade_run(case, number, trace_path, lists):
     message = final_message(trace_path)
     if message is None:
         return [f"FAIL {label} trace: no final message in {trace_path} (run the eval with --keep-temp)"]
+    try:
+        message.encode("utf-8")
+    except UnicodeEncodeError:
+        return [f"FAIL {label} trace: the final message in {trace_path} is not valid UTF-8 text"]
     lines = run_grader("grade_report.py", ["-"], message)
     lines += run_grader("grade_rule_ids.py", ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]], message)
     return [f"FAIL {label} {line[len('FAIL '):]}" for line in lines]

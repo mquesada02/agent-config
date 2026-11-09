@@ -161,6 +161,13 @@ class GradeReport(unittest.TestCase):
     def test_a_tool_bullet_that_says_nothing_about_path_fails(self):
         self.assertFailsCheck(self.full(tools=[TOOLS_OK[0], "- zizmor: ran."]), "tools")
 
+    def test_a_blank_line_between_the_tool_bullets_passes(self):
+        self.assertPasses(self.full(tools=[TOOLS_OK[0], "", TOOLS_OK[1]]))
+
+    def test_the_tools_block_ends_at_a_line_that_is_not_a_bullet(self):
+        # The zizmor bullet is after a paragraph, so it is not part of the Tools block.
+        self.assertFailsCheck(self.full(tools=[TOOLS_OK[0], "", "Some text.", TOOLS_OK[1]]), "tools")
+
     def test_blank_lines_between_tools_and_its_bullets_pass(self):
         self.assertPasses(self.full().replace("Tools:\n", "Tools:\n\n"))
 

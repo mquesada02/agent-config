@@ -173,6 +173,19 @@ class GradeEvalResults(unittest.TestCase):
         self.assertIn("name-04-x#1: FAIL", out)
         self.assertEqual(out.strip().splitlines()[-1], "FAIL")
 
+    def test_a_final_message_that_cannot_be_written_to_a_child_is_a_failed_run(self):
+        # json.loads accepts a lone surrogate, but it cannot be encoded as UTF-8 for the child grader.
+        good = make_report(required=[row("NAME-04")])
+        self.add_case("name-04-x", ["NAME-04"], [], ["placeholder", good])
+        trace = self.cases[0]["arms"]["with"][0]["tracePath"]
+        with open(trace, "w", encoding="utf-8") as handle:
+            handle.write('{"type": "result", "result": "\\ud800"}\n')
+        code, out, err = self.grade()
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("FAIL name-04-x#1 trace:", out)
+        self.assertIn("name-04-x#2: PASS", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL")
+
     def test_a_result_with_no_review_case_has_nothing_to_grade(self):
         self.add_case("trigger-x", [], [], ["not a report"], review=False)
         for cases in ([], self.cases):
