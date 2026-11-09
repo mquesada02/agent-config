@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: graph-02-needless-needs
+context:
+  scaffold_script: scaffold.sh

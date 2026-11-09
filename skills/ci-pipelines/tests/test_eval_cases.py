@@ -76,14 +76,31 @@ class ReviewCases(unittest.TestCase):
         (name,) = [n for n in review_cases() if n.startswith("name-09-")]
         self.assertEqual(expect_lists(name), (["NAME-04", "NAME-09"], []))
 
-    def test_the_multi_rule_cases_expect_their_naming_ids(self):
-        self.assertEqual(expect_lists("fx-sequential-quality"), (["NAME-04", "NAME-06"], []))
-        self.assertEqual(expect_lists("fx-suite-list"), (["NAME-07"], []))
+    def test_there_is_one_bad_case_for_each_job_graph_and_maintainability_rule(self):
+        for prefix, count in (("graph", 7), ("maint", 3)):
+            for number in range(1, count + 1):
+                matches = [n for n in review_cases() if n.startswith(f"{prefix}-{number:02d}-")]
+                self.assertEqual(len(matches), 1, f"{prefix}-{number:02d}")
+                (name,) = matches
+                rule = f"{prefix.upper()}-{number:02d}"
+                self.assertEqual(expect_lists(name), (([], [rule]) if rule == "GRAPH-05" else ([rule], [])), name)
+
+    def test_the_new_multi_rule_candidates_expect_their_ids(self):
+        self.assertEqual(expect_lists("fx-duplicate-build"), (["GRAPH-06"], []))
+        self.assertEqual(expect_lists("fx-inline-tests"), (["MAINT-01"], []))
+
+    def test_the_multi_rule_cases_expect_their_ids(self):
+        self.assertEqual(expect_lists("fx-sequential-quality"), (["GRAPH-01", "NAME-04", "NAME-06"], []))
+        self.assertEqual(expect_lists("fx-suite-list"), (["GRAPH-07", "NAME-07"], []))
 
     def test_each_rule_id_is_expected_by_a_review_case(self):
         expected = {rule for name in review_cases() for rule in expect_lists(name)[0]}
-        for _, rule_id, _ in all_rules():
-            self.assertIn(rule_id, expected, f"no review case expects {rule_id}")
+        forbidden = {rule for name in review_cases() for rule in expect_lists(name)[1]}
+        for _, rule_id, fields in all_rules():
+            if "measured" in fields["Severity"]:
+                self.assertIn(rule_id, forbidden, f"no review case forbids the measured rule {rule_id}")
+            else:
+                self.assertIn(rule_id, expected, f"no review case expects {rule_id}")
 
     def test_the_clean_case_forbids_every_critical_and_required_id(self):
         expect, forbid = expect_lists("clean")
@@ -135,7 +152,46 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
             self.assertNotIn("ci-pipelines", prompt)
-            self.assertIsNone(re.search(r"\bname-\d\d", prompt), "the prompt names a NAME rule")
+            self.assertIsNone(re.search(r"\b(name|graph|maint)-\d\d", prompt), "the prompt names a rule")
+
+    def test_the_copied_workflow_prompt_names_two_copies(self):
+        (name,) = [n for n in review_cases() if n.startswith("maint-03-")]
+        prompt = read(os.path.join(case_dir(name), "prompt.md"))
+        self.assertIn("example-api", prompt)
+        self.assertIn("example-worker", prompt)
+
+
+class NewFixtures(unittest.TestCase):
+    """Fixtures of the job graph and maintainability cases keep private names out."""
+
+    def new_cases(self):
+        return [n for n in case_names()
+                if n.startswith(("graph-", "maint-")) or n in ("fx-duplicate-build", "fx-inline-tests")]
+
+    def fixture_files(self, name):
+        base = os.path.join(case_dir(name), "repo")
+        return [p for p in glob.glob(os.path.join(base, "**", "*"), recursive=True) if os.path.isfile(p)]
+
+    def test_the_new_cases_exist(self):
+        self.assertEqual(len(self.new_cases()), 12)
+
+    def test_no_new_fixture_holds_a_url(self):
+        for name in self.new_cases():
+            for path in self.fixture_files(name):
+                self.assertNotRegex(read(path), r"https?://", path)
+
+    def test_every_uses_owner_is_actions_or_pnpm(self):
+        for name in self.new_cases():
+            for path in self.fixture_files(name):
+                for owner in re.findall(r"uses:\s*([^/\s@]+)/", read(path)):
+                    self.assertIn(owner, ("actions", "pnpm"), path)
+
+    def test_every_package_name_starts_with_example(self):
+        for name in self.new_cases():
+            for path in self.fixture_files(name):
+                if os.path.basename(path) == "package.json":
+                    with open(path, encoding="utf-8") as handle:
+                        self.assertTrue(json.load(handle)["name"].startswith("example-"), path)
 
 
 class TriggerCase(unittest.TestCase):
