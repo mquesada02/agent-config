@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update the Orca skills (computer-use, orca-cli, orchestration) in
+# Update the Orca skills (orca-computer-use, orca-cli, orchestration) in
 # ~/.claude/skills to one stablyai/orca commit. Run it by hand: nothing
 # downloads automatically. It does not commit; review `git diff HEAD`, then commit.
 #
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ORCA_URL=https://github.com/stablyai/orca.git
-SKILLS=(computer-use orca-cli orchestration)
+SKILLS=(orca-computer-use orca-cli orchestration)
 REPO="$HOME/.claude"
 
 die() { echo "error: $*" >&2; exit 1; }

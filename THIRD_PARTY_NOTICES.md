@@ -38,7 +38,7 @@ SOFTWARE.
 
 ## stablyai/orca
 
-- Files: `skills/computer-use/SKILL.md`, `skills/orca-cli/SKILL.md`,
+- Files: `skills/orca-computer-use/SKILL.md`, `skills/orca-cli/SKILL.md`,
   `skills/orchestration/SKILL.md`
 - Source: https://github.com/stablyai/orca
 - License: MIT
