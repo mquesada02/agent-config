@@ -95,8 +95,8 @@ def grade(text):
     for name in ALWAYS:
         if index[name] is None:
             fail("sections", f"missing section: {name}")
-    present = [(index[name], name) for name, _ in MARKERS if index[name] is not None]
-    if [i for i, _ in present] != sorted(i for i, _ in present):
+    present = [index[name] for name, _ in MARKERS if index[name] is not None]
+    if present != sorted(present):
         fail("sections", "sections are not in the contract order")
     if index["job graph"] is not None:
         block = []

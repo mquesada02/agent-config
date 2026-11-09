@@ -4,8 +4,8 @@ import subprocess
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SKILL = os.path.dirname(HERE)
+from skill_files import SKILL
+
 SCRIPTS = os.path.join(SKILL, "scripts")
 
 FENCE = "`" * 3

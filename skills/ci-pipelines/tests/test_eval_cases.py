@@ -48,8 +48,9 @@ class EveryCase(unittest.TestCase):
             base = case_dir(name)
             for part in ("prompt.md", "case.yaml", "expect.json", "scaffold.sh", "repo", "graders"):
                 self.assertTrue(os.path.exists(os.path.join(base, part)), f"{name} has no {part}")
-            self.assertRegex(read(os.path.join(base, "case.yaml")), r"(?m)^\s*scaffold_script:\s*scaffold\.sh\s*$")
-            self.assertRegex(read(os.path.join(base, "case.yaml")), rf"(?m)^name:\s*{re.escape(name)}\s*$")
+            case_yaml = read(os.path.join(base, "case.yaml"))
+            self.assertRegex(case_yaml, r"(?m)^\s*scaffold_script:\s*scaffold\.sh\s*$")
+            self.assertRegex(case_yaml, rf"(?m)^name:\s*{re.escape(name)}\s*$")
 
     def test_no_fixture_holds_a_test_file(self):
         for name in case_names():
