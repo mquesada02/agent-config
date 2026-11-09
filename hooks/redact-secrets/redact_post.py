@@ -41,6 +41,10 @@ Residual risks (the later tickets add theirs to this comment):
   The grep context lines (`path-N-`), `? ` complex keys and flow sequences are no line start.
   A word, a colon and a space before a key looks like a grep prefix, so a prose name after `Note: ` at the
   line start stays masked.
+- A secret key that an earlier value swallows (the rescan rule of spec 367) opens its later-line rules only where
+  it would count if it were not swallowed. By the position rule, an unquoted YAML key in a masked value that is not
+  at a line start position or a flow-mapping position opens no state, so its next lines stay visible. The key
+  column of a swallowed key is its column in its line, so a line that is not deeper than that column is shown.
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it
