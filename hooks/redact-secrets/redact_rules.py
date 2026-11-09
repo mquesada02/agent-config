@@ -158,9 +158,8 @@ def block_key(match, prefix=""):
 
     That is a YAML key that counts (see key_counts; `prefix` is the line prefix when the text of the match is the
     rest of a line), a single-quoted key or a plain double-quoted key. An unquoted YAML key that does not count is
-    prose and opens nothing. An env pair and a JSON key written with escaped quotes never open a block or an empty-key
-    state: a JSON key written with escaped quotes opens the JSON open-object state but never a block or an empty-key
-    state (see key_step). The rules call this (key_step).
+    prose and opens nothing. An env pair never opens a block. A JSON key written with escaped quotes opens the JSON
+    open-object state but never a block or an empty-key state (see key_step). The rules call this (key_step).
     """
     key = match.group("ykey") or match.group("skey")
     if match.group("ykey") is not None and not key_counts(match.string, match.start(), prefix):
