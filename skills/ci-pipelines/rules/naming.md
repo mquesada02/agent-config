@@ -27,7 +27,7 @@ Names for workflow files, workflows, jobs, steps and matrix legs. This file is t
 ### NAME-04
 - **Severity:** required
 - **Rule:** A job `name:` is the job's purpose in short words. A name that lists several tasks ("Typecheck, lint, unit") is a finding, and the report says to split the job (the job graph rules come in a later version of this skill).
-- **Check:** heuristic (mechanical): a comma, " and ", "&" or "/" between verbs. Then judgement removes false positives.
+- **Check:** heuristic: a comma, " and ", "&" or "/" between verbs. Then judgement removes false positives.
 - **Fix:** Name the job for its one purpose, and split a job that does several tasks into one job for each task.
 
 ### NAME-05
@@ -38,7 +38,7 @@ Names for workflow files, workflows, jobs, steps and matrix legs. This file is t
 
 ### NAME-06
 - **Severity:** required
-- **Rule:** Each `run:` step has a `name:`. A `uses:` step can omit it.
+- **Rule:** Each `run:` step has a `name:`. A `uses:` step can omit it, because the UI shows the action name.
 - **Check:** mechanical
 - **Fix:** Add a `name:` with a short imperative phrase to the step.
 
@@ -58,4 +58,4 @@ Names for workflow files, workflows, jobs, steps and matrix legs. This file is t
 - **Severity:** suggestion
 - **Rule:** Before a rename or a split, read the required checks from classic branch protection and from repository rulesets (rules of type `required_status_checks`), read-only. When a change touches a required check, mark the finding ⚑ and give the exact new check name, normally `CI passed`. Never edit branch protection. When `gh` cannot read the settings, say so, and treat every current job name as possibly required. A NAME-09 row is raised only when the settings cannot be read and the review proposes a rename or a split.
 - **Check:** procedure (the read-only `gh api` GET calls of `review.md`)
-- **Fix:** Tell the user which required checks to remove and which to add after the merge, in the ⚑ section. The skill never writes them.
+- **Fix:** Tell the user in the ⚑ section which required checks to remove and which to add after the merge, and never write them yourself.
