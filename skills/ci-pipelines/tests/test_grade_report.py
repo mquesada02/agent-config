@@ -102,6 +102,14 @@ class GradeReport(unittest.TestCase):
         for digit in ("٣", "³"):
             self.assertFailsCheck(self.full().replace("| 3 | NAME-06 |", f"| {digit} | NAME-06 |"), "numbering")
 
+    def test_a_huge_number_cell_fails_without_a_crash(self):
+        text = self.full().replace("| 3 | NAME-06 |", f"| {'9' * 5000} | NAME-06 |")
+        self.assertFailsCheck(text, "numbering")
+
+    def test_a_huge_summary_count_fails_without_a_crash(self):
+        text = self.full(summary=f"**Result: 1 critical, {'9' * 5000} required, 1 suggestions.**")
+        self.assertFailsCheck(text, "summary")
+
     def test_numbers_that_do_not_follow_severity_order_fail(self):
         text = self.full().replace("| 1 | SEC-04 |", "| 4 | SEC-04 |").replace("| 4 | NAME-09 |", "| 1 | NAME-09 |")
         self.assertFailsCheck(text, "numbering")

@@ -13,7 +13,7 @@ import re
 import sys
 
 TITLE = re.compile(r"^# ci-pipelines review: \S")
-SUMMARY = re.compile(r"^\*\*Result: (\d+) critical, (\d+) required, (\d+) suggestions?\.\*\*$")
+SUMMARY = re.compile(r"^\*\*Result: ([0-9]{1,9}) critical, ([0-9]{1,9}) required, ([0-9]{1,9}) suggestions?\.\*\*$")
 COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 HEADINGS = {"critical": "## Critical", "required": "## Required", "suggestion": "## Suggestions"}
 SEVERITIES = list(HEADINGS)
@@ -129,7 +129,7 @@ def grade(text):
     numbers = []
     for severity in SEVERITIES:
         for cells in rows[severity]:
-            numbers.append(int(cells[0]) if re.fullmatch("[0-9]+", cells[0]) else None)
+            numbers.append(int(cells[0]) if re.fullmatch("[0-9]{1,9}", cells[0]) else None)
     if numbers != list(range(1, len(numbers) + 1)):
         fail("numbering", f"the numbers are {numbers}, not 1..{len(numbers)} in severity order")
 
