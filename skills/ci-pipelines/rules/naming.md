@@ -51,7 +51,7 @@ Names for workflow files, workflows, jobs, steps and matrix legs. This file is t
 ### NAME-08
 - **Severity:** required (⚑ when a rename is needed)
 - **Rule:** Each CI workflow has one gate job, `ci-passed` with `name: CI passed`. It has `needs:` on all the other jobs and `if: always()`, and it fails unless every `needs.*.result` is `success` (or `skipped` where a skip is intended). The gate is the only required status check.
-- **Check:** mechanical (the `needs:` list, `if: always()` and the `success` test); judgement (the `skipped` clause).
+- **Check:** mechanical
 - **Fix:** Add a `ci-passed` job with `name: CI passed`, `needs:` on all other jobs and `if: always()`, and make `CI passed` the only required check (a repo admin does this by hand, so the finding gets ⚑).
 
 ### NAME-09
