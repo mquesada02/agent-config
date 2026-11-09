@@ -169,8 +169,9 @@ class TriggerCaseTest(unittest.TestCase):
 
 class RepoFilesTest(unittest.TestCase):
     def setUp(self):
-        self.root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.root)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
         shutil.copy(GITIGNORE, os.path.join(self.root, ".gitignore"))
         env = {"PATH": os.environ["PATH"], "HOME": self.root}
         subprocess.run(["git", "init", "-q", self.root], check=True, env=env)

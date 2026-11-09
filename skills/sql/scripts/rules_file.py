@@ -7,6 +7,7 @@ Reads docs/agents/sql.md of the repo. Needs Python 3.11 or newer (tomllib).
 Exit code: 0 when the file was read (or does not exist), 1 when "error" is
 set (the JSON is still printed), 2 for a usage error.
 """
+import collections
 import json
 import os
 import re
@@ -20,7 +21,6 @@ CATALOG = (
     + [f"PLAN-{n:02d}" for n in range(1, 6)]
 )
 RULES_FILE = os.path.join("docs", "agents", "sql.md")
-FENCE = "```"
 TOML_OPEN = re.compile(r"^```toml(?:\s.*)?$")
 POSITION = re.compile(r"\s*\(at (?:line \d+, column \d+|end of document)\)$")
 FENCE_CLOSE = re.compile(r"^```\s*$")
@@ -45,8 +45,12 @@ def failure(message, line):
     return result(True, error={"message": message, "line": line})
 
 
+Block = collections.namedtuple("Block", "opening content closed")
+
+
 def toml_blocks(lines):
-    """Each `toml` fenced block as (opening fence line number, content lines, closed)."""
+    """Each `toml` fenced block: the 1-based line of its opening fence, its content lines
+    and whether it is closed."""
     blocks = []
     index = 0
     while index < len(lines):
@@ -57,7 +61,7 @@ def toml_blocks(lines):
             while index < len(lines) and not FENCE_CLOSE.match(lines[index]):
                 content.append(lines[index])
                 index += 1
-            blocks.append((start + 1, content, index < len(lines), index))
+            blocks.append(Block(start + 1, content, index < len(lines)))
         index += 1
     return blocks
 
@@ -81,11 +85,10 @@ def disabled_entries(settings):
     if not isinstance(rules, dict) or "disabled" not in rules:
         return [], []
     value = rules["disabled"]
-    entries = value if isinstance(value, list) else None
-    if entries is None:
+    if not isinstance(value, list):
         return [], [json.dumps(value, default=str)]
     candidates, unknown = [], []
-    for entry in entries:
+    for entry in value:
         if isinstance(entry, str) and entry in CATALOG:
             candidates.append(entry)
         else:
@@ -112,16 +115,16 @@ def read_rules(repo):
     blocks = toml_blocks(lines)
     if not blocks:
         return result(True)
-    opening, content, closed, closing = blocks[0]
-    if not closed:
-        return failure("a toml block has no closing fence", opening)
+    block = blocks[0]
+    if not block.closed:
+        return failure("a toml block has no closing fence", block.opening)
     try:
-        parsed = tomllib.loads("\n".join(content) + "\n")
+        parsed = tomllib.loads("\n".join(block.content) + "\n")
     except tomllib.TOMLDecodeError as error:
         message = POSITION.sub("", str(error))
-        return failure(f"toml parse error: {message}", opening + parse_error_line(error, content))
+        return failure(f"toml parse error: {message}", block.opening + parse_error_line(error, block.content))
     if len(blocks) > 1:
-        return failure("more than one toml block", blocks[1][0])
+        return failure("more than one toml block", blocks[1].opening)
 
     missing = []
     settings = dict(parsed)
@@ -129,7 +132,8 @@ def read_rules(repo):
         if not isinstance(settings.get(name), dict):
             settings.pop(name, None)
             missing.append(name)
-    prose = lines[: opening - 1] + lines[closing + 1:]
+    after_block = block.opening + len(block.content) + 1
+    prose = lines[: block.opening - 1] + lines[after_block:]
     candidates, unknown = disabled_entries(settings)
     without_reason = [rule_id for rule_id in candidates if not has_reason(rule_id, prose)]
     return result(True, settings, missing, without_reason, unknown)

@@ -37,6 +37,7 @@ def doc(block, prose_before="", prose_after=""):
     return f"# SQL rules\n\n{prose_before}{FENCE}toml\n{block}{FENCE}\n\n{prose_after}"
 
 
+@unittest.skipUnless(sys.version_info >= (3, 11), "the reader needs tomllib (Python 3.11 or newer)")
 class RulesFileReaderTest(unittest.TestCase):
     """The rules file reader, run as a command on a temp repo folder."""
 
@@ -48,8 +49,13 @@ class RulesFileReaderTest(unittest.TestCase):
     def write(self, text, raw=False):
         folder = os.path.join(self.repo, "docs", "agents")
         os.makedirs(folder, exist_ok=True)
-        with open(os.path.join(folder, "sql.md"), "wb" if raw else "w", **({} if raw else {"encoding": "utf-8"})) as handle:
-            handle.write(text)
+        path = os.path.join(folder, "sql.md")
+        if raw:
+            with open(path, "wb") as handle:
+                handle.write(text)
+        else:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
 
     def run_reader(self, *args):
         args = args or (self.repo,)
@@ -200,20 +206,15 @@ class RulesFileReaderTest(unittest.TestCase):
         self.assertEqual(out["settings"], {"rules": {"disabled": ["PG-10"]}})
         self.assertEqual(out["disabled_without_reason"], ["PG-10"])
 
-    def test_a_fence_with_an_info_string_counts_as_a_second_block(self):
-        self.write(doc(FULL_BLOCK) + f'{FENCE}toml title="y"\n[style]\n{FENCE}\n')
-        second = [i for i, line in enumerate(self.text().splitlines(), 1) if line.startswith(FENCE + "toml")][1]
-        code, out = self.read()
-        self.assertEqual(code, 1)
-        self.assert_error_case(out, second)
-
     def test_a_second_toml_block_reports_the_line_of_its_opening_fence(self):
-        self.write(doc(FULL_BLOCK) + f"{FENCE}toml\n[style]\n{FENCE}\n")
-        lines = self.text().splitlines()
-        second = [i for i, line in enumerate(lines, 1) if line.startswith(FENCE + "toml")][1]
-        code, out = self.read()
-        self.assertEqual(code, 1)
-        self.assert_error_case(out, second)
+        first = doc(FULL_BLOCK)
+        second_line = first.count("\n") + 1
+        for fence in (FENCE + "toml", FENCE + 'toml title="y"'):
+            with self.subTest(fence=fence):
+                self.write(first + f"{fence}\n[style]\n{FENCE}\n")
+                code, out = self.read()
+                self.assertEqual(code, 1)
+                self.assert_error_case(out, second_line)
 
     def test_an_unclosed_block_reports_the_line_of_its_opening_fence(self):
         self.write("# SQL rules\n\n" + FENCE + 'toml\n[style]\nkeyword_case = "upper"\n')
@@ -242,10 +243,6 @@ class RulesFileReaderTest(unittest.TestCase):
         code, out = self.read()
         self.assertEqual(code, 1)
         self.assert_error_case(out, None)
-
-    def text(self):
-        with open(os.path.join(self.repo, "docs", "agents", "sql.md"), encoding="utf-8") as handle:
-            return handle.read()
 
     # --- usage errors --------------------------------------------------
 
