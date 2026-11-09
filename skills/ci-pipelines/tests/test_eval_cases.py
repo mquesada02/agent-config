@@ -134,7 +134,7 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
             self.assertNotIn("ci-pipelines", prompt)
-            self.assertNotIn("name-", prompt)
+            self.assertIsNone(re.search(r"\bname-\d\d", prompt), "the prompt names a NAME rule")
 
 
 class TriggerCase(unittest.TestCase):

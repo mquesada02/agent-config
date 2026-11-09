@@ -98,7 +98,7 @@ class ReviewSteps(unittest.TestCase):
 
     def test_it_makes_no_edit(self):
         self.assertIn("edits nothing", self.text)
-        self.assertIn("stop", self.text)
+        self.assertIn("make no edit", self.text)
 
 
 class EvalReadme(unittest.TestCase):
