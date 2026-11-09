@@ -36,7 +36,7 @@ Residual risks (the later tickets add theirs to this comment):
   and the key is not hidden.
 - In the Monitor filter, a PEM block that began in a value other than an object or array under a matched key (a
   JSON string, an env value, a YAML plain value) is not tracked past its END line: a secret in the text after
-  the END line can be written. A BEGIN line inside a YAML block scalar with an unindented PEM body leaks too.
+  the END line can be written.
   A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).
 - An unquoted YAML key counts only at a line start position or a flow-mapping position (spec 334). A secret
   after an unquoted YAML key in mid-line prose is not masked by the keyed rules (the shape rules still apply).
