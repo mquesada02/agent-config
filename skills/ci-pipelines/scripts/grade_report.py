@@ -129,7 +129,7 @@ def grade(text):
     numbers = []
     for severity in SEVERITIES:
         for cells in rows[severity]:
-            numbers.append(int(cells[0]) if cells[0].isdigit() else None)
+            numbers.append(int(cells[0]) if re.fullmatch("[0-9]+", cells[0]) else None)
     if numbers != list(range(1, len(numbers) + 1)):
         fail("numbering", f"the numbers are {numbers}, not 1..{len(numbers)} in severity order")
 
@@ -174,7 +174,9 @@ def grade(text):
         block = []
         for line in lines[index["tools"] + 1:]:
             if not line.strip():
-                break
+                if block:
+                    break
+                continue
             block.append(line.strip())
         for tool in TOOLS:
             bullet = next((b for b in block if b.startswith(f"- {tool}:")), None)

@@ -97,6 +97,11 @@ class GradeReport(unittest.TestCase):
         text = self.full().replace("| 3 | NAME-06 |", "| 4 | NAME-06 |")
         self.assertFailsCheck(text, "numbering")
 
+    def test_a_non_ascii_digit_in_the_number_cell_fails_without_a_crash(self):
+        # An Arabic-Indic digit is read by int() as 3. A superscript three passes isdigit() but int() rejects it.
+        for digit in ("٣", "³"):
+            self.assertFailsCheck(self.full().replace("| 3 | NAME-06 |", f"| {digit} | NAME-06 |"), "numbering")
+
     def test_numbers_that_do_not_follow_severity_order_fail(self):
         text = self.full().replace("| 1 | SEC-04 |", "| 4 | SEC-04 |").replace("| 4 | NAME-09 |", "| 1 | NAME-09 |")
         self.assertFailsCheck(text, "numbering")
@@ -155,6 +160,9 @@ class GradeReport(unittest.TestCase):
 
     def test_a_tool_bullet_that_says_nothing_about_path_fails(self):
         self.assertFailsCheck(self.full(tools=[TOOLS_OK[0], "- zizmor: ran."]), "tools")
+
+    def test_blank_lines_between_tools_and_its_bullets_pass(self):
+        self.assertPasses(self.full().replace("Tools:\n", "Tools:\n\n"))
 
     # ----- command line
     def test_an_unreadable_report_is_a_usage_error(self):

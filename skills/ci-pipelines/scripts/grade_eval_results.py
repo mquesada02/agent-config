@@ -36,6 +36,8 @@ def final_message(trace_path):
 def run_grader(script, args, text):
     proc = subprocess.run([sys.executable, "-I", os.path.join(HERE, script), *args],
                           input=text, capture_output=True, text=True)
+    if proc.returncode == 2:
+        return [f"FAIL grader: {script} exited 2 ({proc.stderr.strip() or 'no message'})"]
     return [line for line in proc.stdout.splitlines() if line.startswith("FAIL ") and line != "FAIL"]
 
 
@@ -99,6 +101,9 @@ def main(argv):
         cases = review_runs(args.result)
     except (OSError, ValueError) as error:
         print(f"cannot read the result: {error}", file=sys.stderr)
+        return 2
+    if not any(traces for _, traces in cases):
+        print("cannot read the result: nothing to grade (no with-arm run of a review case)", file=sys.stderr)
         return 2
     out = []
     for name, traces in cases:

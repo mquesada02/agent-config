@@ -164,6 +164,31 @@ class GradeEvalResults(unittest.TestCase):
             self.assertIn(f"case-{number}#1: FAIL", out)
         self.assertEqual(out.strip().splitlines()[-1], "FAIL")
 
+    def test_a_child_grader_that_exits_2_is_a_failed_run(self):
+        # An expect id that argparse reads as an option makes grade_rule_ids.py exit 2 (usage error).
+        self.add_case("name-04-x", ["--bogus"], [], [make_report(required=[row("NAME-04")])])
+        code, out, _ = self.grade()
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL name-04-x#1 grader:", out)
+        self.assertIn("name-04-x#1: FAIL", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL")
+
+    def test_a_result_with_no_review_case_has_nothing_to_grade(self):
+        self.add_case("trigger-x", [], [], ["not a report"], review=False)
+        for cases in ([], self.cases):
+            self.cases = cases
+            code, out, err = self.grade()
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("PASS", out)
+            self.assertIn("nothing to grade", err)
+
+    def test_a_review_case_with_no_with_arm_run_has_nothing_to_grade(self):
+        self.add_case("name-04-x", ["NAME-04"], [], [], without=["no report at all"])
+        code, out, err = self.grade()
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("PASS", out)
+        self.assertIn("nothing to grade", err)
+
     def test_an_unreadable_result_is_a_usage_error(self):
         code, _, err = run_script(SCRIPT, [os.path.join(self.tmp.name, "missing.json")])
         self.assertEqual(code, 2)
