@@ -19,13 +19,18 @@ through redact_rules.redact and is flushed at once. Five multi-line secrets keep
 - A YAML block scalar under a matched key (`key: |` or `key: >`): `key: ***` is written, and every following
   line that is empty or indented more than the key is dropped. The key can be quoted (`'key': |`,
   `"key": |`) and the header can have node properties (`key: !!str |`, `key: &a |`). The key indent is the
-  column of the key's first character (its opening quote for a quoted key).
+  column of the key's first character (its opening quote for a quoted key). By the PEM rule of the drop states, a
+  dropped line with a BEGIN line and no END line drops up to its END line and the text after it (a complete
+  BEGIN to END pair on the line becomes *** first, so only a BEGIN line left over starts the drop); another
+  BEGIN line with no END line in that text goes on to the next END line, or to the end of the input, then the
+  block state goes on. The PEM body and the END line need no indent.
 - A matched key with an empty value (`key:` and nothing after it but node properties): the key line is held
   for one line. If the next line is hidden by the empty-key rule of redact_rules (blank, indented deeper than
   the key, or at the key indent and starting with `- `), the key line is written as `key: ***` and every
   following hidden line is dropped, up to the first other line. Otherwise the key line is written as a normal
-  line, so is a held key line at the end of the input. A hidden line with a BEGIN line and no END line drops
-  up to its END line, then the state goes on. The key indent is measured on the text after the PEM rule. For a
+  line, so is a held key line at the end of the input. This state has the PEM rule of the drop states too: a
+  hidden line with a BEGIN line and no END line drops up to its END line and the text after it, and another
+  BEGIN line with no END line in that text goes on to the next END line, then the state goes on. The key indent is measured on the text after the PEM rule. For a
   key on the rest of a line after a dropped state it is measured on the rest only, so the filter can hide
   more lines than redact_rules does there (fail-closed).
 - A plain double-quoted matched key with an empty value (`"key":`), the pending JSON value state: the key line
@@ -260,8 +265,10 @@ class LineFilter:
         if end is None:
             return ""
         if self.pem_resume is not None:
-            # the block was in a line hidden by the empty-key rule: the rest of the END line is hidden too
-            self.handler, self.pem_resume = self.pem_resume, None
+            # the block was in a hidden line of a drop state: the rest of the END line is hidden too, and another
+            # unclosed BEGIN line in it goes on to the next END line before the drop state goes on
+            if not has_unclosed_begin(line[end.end():]):
+                self.handler, self.pem_resume = self.pem_resume, None
             return ""
         if self.pem_depth > 0:
             return self.json_after_pem(line[end.end():], False)
@@ -315,14 +322,16 @@ class LineFilter:
             text += split_ending(rest)[1]
         return text
 
-    def hide_line(self, body):
-        """Drop a line that the empty-key rule hides. A BEGIN line with no END line drops up to its END line."""
+    def hide_line(self, body, state=None):
+        """Drop a line that a drop state hides (the empty-key state, or `state`). The PEM rule of the drop states:
+        a BEGIN line with no END line drops up to its END line, then the drop state goes on."""
+        state = state or self.empty_key_drop
         self.pem_depth = 0
         if has_unclosed_begin(body):
-            self.pem_resume = self.empty_key_drop
+            self.pem_resume = state
             self.handler = self.pem_drop
         else:
-            self.handler = self.empty_key_drop
+            self.handler = state
         return ""
 
     def empty_key_hold(self, line):
@@ -412,7 +421,7 @@ class LineFilter:
         body, _ = split_ending(line)
         indent = len(body) - len(body.lstrip(" \t"))
         if body.strip() == "" or indent > self.key_indent:
-            return ""
+            return self.hide_line(body, self.yaml_drop)
         self.handler = self.normal_line
         return self.normal_line(line)
 
