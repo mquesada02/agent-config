@@ -77,21 +77,20 @@ class ReviewCases(unittest.TestCase):
         self.assertEqual(expect_lists(name), (["NAME-04", "NAME-09"], []))
 
     def test_there_is_one_bad_case_for_each_job_graph_and_maintainability_rule(self):
+        measured = {rule_id for _, rule_id, fields in all_rules() if "measured" in fields["Severity"]}
         for prefix, count in (("graph", 7), ("maint", 3)):
             for number in range(1, count + 1):
                 matches = [n for n in review_cases() if n.startswith(f"{prefix}-{number:02d}-")]
                 self.assertEqual(len(matches), 1, f"{prefix}-{number:02d}")
                 (name,) = matches
                 rule = f"{prefix.upper()}-{number:02d}"
-                self.assertEqual(expect_lists(name), (([], [rule]) if rule == "GRAPH-05" else ([rule], [])), name)
-
-    def test_the_new_multi_rule_candidates_expect_their_ids(self):
-        self.assertEqual(expect_lists("fx-duplicate-build"), (["GRAPH-06"], []))
-        self.assertEqual(expect_lists("fx-inline-tests"), (["MAINT-01"], []))
+                self.assertEqual(expect_lists(name), (([], [rule]) if rule in measured else ([rule], [])), name)
 
     def test_the_multi_rule_cases_expect_their_ids(self):
         self.assertEqual(expect_lists("fx-sequential-quality"), (["GRAPH-01", "NAME-04", "NAME-06"], []))
         self.assertEqual(expect_lists("fx-suite-list"), (["GRAPH-07", "NAME-07"], []))
+        self.assertEqual(expect_lists("fx-duplicate-build"), (["GRAPH-06"], []))
+        self.assertEqual(expect_lists("fx-inline-tests"), (["MAINT-01"], []))
 
     def test_each_rule_id_is_expected_by_a_review_case(self):
         expected = {rule for name in review_cases() for rule in expect_lists(name)[0]}
@@ -164,34 +163,33 @@ class ReviewCases(unittest.TestCase):
 class NewFixtures(unittest.TestCase):
     """Fixtures of the job graph and maintainability cases keep private names out."""
 
-    def new_cases(self):
-        return [n for n in case_names()
-                if n.startswith(("graph-", "maint-")) or n in ("fx-duplicate-build", "fx-inline-tests")]
-
-    def fixture_files(self, name):
-        base = os.path.join(case_dir(name), "repo")
-        return [p for p in glob.glob(os.path.join(base, "**", "*"), recursive=True) if os.path.isfile(p)]
+    @classmethod
+    def setUpClass(cls):
+        cls.cases = [n for n in case_names()
+                     if n.startswith(("graph-", "maint-")) or n in ("fx-duplicate-build", "fx-inline-tests")]
+        cls.texts = {}
+        for name in cls.cases:
+            base = os.path.join(case_dir(name), "repo")
+            for path in glob.glob(os.path.join(base, "**", "*"), recursive=True):
+                if os.path.isfile(path):
+                    cls.texts[path] = read(path)
 
     def test_the_new_cases_exist(self):
-        self.assertEqual(len(self.new_cases()), 12)
+        self.assertEqual(len(self.cases), 12)
 
     def test_no_new_fixture_holds_a_url(self):
-        for name in self.new_cases():
-            for path in self.fixture_files(name):
-                self.assertNotRegex(read(path), r"https?://", path)
+        for path, text in self.texts.items():
+            self.assertNotRegex(text, r"https?://", path)
 
     def test_every_uses_owner_is_actions_or_pnpm(self):
-        for name in self.new_cases():
-            for path in self.fixture_files(name):
-                for owner in re.findall(r"uses:\s*([^/\s@]+)/", read(path)):
-                    self.assertIn(owner, ("actions", "pnpm"), path)
+        for path, text in self.texts.items():
+            for owner in re.findall(r"uses:\s*([^/\s@]+)/", text):
+                self.assertIn(owner, ("actions", "pnpm"), path)
 
     def test_every_package_name_starts_with_example(self):
-        for name in self.new_cases():
-            for path in self.fixture_files(name):
-                if os.path.basename(path) == "package.json":
-                    with open(path, encoding="utf-8") as handle:
-                        self.assertTrue(json.load(handle)["name"].startswith("example-"), path)
+        for path, text in self.texts.items():
+            if os.path.basename(path) == "package.json":
+                self.assertTrue(json.loads(text)["name"].startswith("example-"), path)
 
 
 class TriggerCase(unittest.TestCase):
