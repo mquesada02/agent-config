@@ -387,16 +387,17 @@ def redact_keyed(text, prefix=""):
         pos = start
         if not is_secret_key(key):
             continue
+        state_key = block_key(match, prefix)
         if kind == "json" and match.group("jq") != '"':
             end, replacement = json_value_end(text, start, match.group("jq"))
-        elif block_key(match, prefix) is not None and BLOCK_HEADER.match(text, start):
+        elif state_key is not None and BLOCK_HEADER.match(text, start):
             header_end = line_end(text, start)
             line_start = text.rfind("\n", 0, match.start()) + 1
             key_indent = match.start() - line_start
             end, replacement = drop_block_scalar(text, header_end, key_indent), MASK
             if end > header_end and text[header_end : header_end + 1] == "\n":
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
-        elif block_key(match, prefix) is not None and EMPTY_VALUE.match(text, start):
+        elif state_key is not None and EMPTY_VALUE.match(text, start):
             header_end = line_end(text, start)
             value = next_json_value(text, header_end) if match.group("jq") == '"' else -1
             if value >= 0:
@@ -411,8 +412,8 @@ def redact_keyed(text, prefix=""):
                     continue  # no line is hidden: the text stays unchanged
                 space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
                 replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
-        elif match.group("ykey") is not None and not key_counts(text, match.start(), prefix):
-            continue  # prose: its text stays (block_key already skips it for the block scalar and empty-key rules)
+        elif state_key is None and match.group("ykey") is not None:
+            continue  # prose: an unquoted YAML key that does not count; its text stays
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":

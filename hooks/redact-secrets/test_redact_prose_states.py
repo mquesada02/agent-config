@@ -239,7 +239,7 @@ class SeamsAgree(unittest.TestCase):
         for text in map(T, AGREE):
             rules, filtered = redact(text), filt(text)
             self.assertEqual((V in rules, P in rules), (V in filtered, P in filtered), text)
-            self.assertEqual(V in rules, False, text)
+            self.assertNotIn(V, rules, text)
 
     def test_348_story_21_both_seams_agree_after_each_prefix(self):
         for prefix in PREFIXES:
