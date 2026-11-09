@@ -76,6 +76,20 @@ class Router(unittest.TestCase):
         if not os.path.exists(os.path.join(SKILL, "create.md")):
             self.assertIn("not built yet", self.text)
 
+    def test_the_router_runs_the_intake_script_before_it_picks_the_branch(self):
+        self.assertIn("scripts/intake.py", self.text)
+        self.assertIn("## Intake", self.text)
+        self.assertIn("## Pick the branch", self.text)
+        self.assertLess(self.text.index("## Intake"), self.text.index("## Pick the branch"))
+        intake = self.text[self.text.index("## Intake"):self.text.index("## Pick the branch")]
+        self.assertIn("before you pick a branch", intake.lower())
+        self.assertIn("scripts/node-support-offline.json", self.text)
+
+    def test_the_naming_rule_09_reads_the_intake_fact_not_gh_calls(self):
+        fields = dict(rule_entries(rule_files()["naming"]))["NAME-09"]
+        self.assertIn("required_checks", fields["Check"])
+        self.assertNotIn("gh api", " ".join(fields.values()))
+
     def test_the_router_does_not_link_a_module_that_is_missing(self):
         for target in re.findall(r"\]\(([^)#]+)\)", self.text):
             self.assertTrue(os.path.exists(os.path.join(SKILL, target)), f"SKILL.md links {target}")
@@ -93,8 +107,21 @@ class ReviewSteps(unittest.TestCase):
 
     def test_it_puts_the_version_of_a_tool_on_path_in_its_bullet(self):
         self.assertIn("on path (", self.text)
-        self.assertIn("actionlint -version", self.text)
-        self.assertIn("zizmor --version", self.text)
+
+    def test_it_takes_its_facts_from_the_intake_and_runs_no_gh_or_tool_calls(self):
+        for fact in ("required_checks", "installed_tools", "runner_labels"):
+            self.assertIn(fact, self.text)
+        for gone in ("gh api", "command -v", "actionlint -version", "zizmor --version", "interim"):
+            self.assertNotIn(gone, self.text)
+
+    def test_section_2_names_defaults_and_unknown_facts(self):
+        self.assertIn("`default`", self.text)
+        self.assertIn("`unknown`", self.text)
+        self.assertIn("offline", self.text)
+
+    def test_it_keeps_the_name_09_row_and_the_flag_mark(self):
+        self.assertIn("name-09 row", self.text)
+        self.assertIn("⚑", self.text)
 
     def test_it_makes_no_edit(self):
         self.assertIn("edits nothing", self.text)
@@ -107,6 +134,11 @@ class EvalReadme(unittest.TestCase):
         for flag in ("claude plugin eval", "--no-publish", "-j 2", "--runs 3", "--threshold 1.0",
                      "--scaffold", "--ablation with-without"):
             self.assertIn(flag, text)
+
+    def test_the_allowed_tools_are_the_intake_call_and_no_gh_api(self):
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)"', text)
+        self.assertNotIn("Bash(gh api", text)
 
 
 if __name__ == "__main__":
