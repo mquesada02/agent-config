@@ -307,7 +307,7 @@ class Launch:
 
     def check_dispatch(self, worktree):
         """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. Writes the worker manual file. Returns the failure or None."""
-        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch])
+        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch, "--full"])  # only the full view has the dispatch record
         if not shown.ok:
             return self.early_failed(shown.error)
         if (shown.get("result", "dispatch", "id"), shown.get("result", "dispatch", "taskId"), shown.get("result", "dispatch", "assigneeHandle")) != (
