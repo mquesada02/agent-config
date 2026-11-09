@@ -208,10 +208,14 @@ class LineFilter:
         self.string_open = False  # the JSON drop state goes on inside a string that a PEM block left open
         self.begin_prefix = ""  # the line prefix of the BEGIN line of the held PEM block
         self.pem_prefix = ""  # the line prefix of the rest after the END line of a PEM block (held or dropped)
-        self.held_prefix = ""  # the line prefix of the held key line (the rest of the joined line)
         self.held_head = ""  # the joined line before the held key line: a PEM block that ended before it
         self.held_origin = ""  # the line prefix of the joined line (held_head and the held key line)
         self.pem_in_value = False  # past the held-line cap: the BEGIN marker stands in a masked keyed value
+
+    @property
+    def held_prefix(self):
+        """The line prefix of the held key line: the line prefix of the joined line and the head before it."""
+        return self.held_origin + self.held_head
 
     def feed(self, line):
         """The text to write for one input line (may be empty)."""
@@ -272,7 +276,6 @@ class LineFilter:
                     # a plain double-quoted key may be followed by a JSON value on a later line
                     self.handler = self.json_pending if found[2] else self.empty_key_hold
                     self.held = [line]
-                    self.held_prefix = rest_prefix
                     self.held_head = head
                     self.held_origin = prefix
                     self.key_indent = found[0]
