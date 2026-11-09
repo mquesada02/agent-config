@@ -137,8 +137,8 @@ def workspace_globs(repo, root):
     in_packages = False
     for line in text.splitlines():
         clean = strip_comment(line)
-        if flow := re.match(r"^packages:\s*\[(.*)\]\s*$", clean):
-            globs += [unquote(item) for item in flow.group(1).split(",") if item.strip()]
+        if flow := re.match(r"^packages:\s*(\[.*\])\s*$", clean):
+            globs += inline_labels(flow.group(1))
         elif re.match(r"^packages:\s*$", clean):
             in_packages = True
         elif in_packages and (item := re.match(r"^\s*-\s*(.+?)\s*$", clean)):
@@ -153,11 +153,13 @@ def workspace_globs(repo, root):
 
 
 def find_packages(repo):
-    """A sorted list of (relative path, parsed package.json or None when it is not a JSON object)."""
+    """(packages, root): a sorted list of (relative path, parsed package.json or None when it is not a
+    JSON object), and the root package.json object (empty when it is missing or invalid)."""
     paths = []
     if os.path.exists(os.path.join(repo, "package.json")):
         paths.append(".")
-    root = read_json(os.path.join(repo, "package.json")) or {}
+    root_data = read_json(os.path.join(repo, "package.json"))
+    root = root_data or {}
 
     def folders(patterns):
         found = set()
@@ -173,7 +175,9 @@ def find_packages(repo):
     included = folders([g for g in globs if not g.startswith("!")])
     excluded = folders([g[1:] for g in globs if g.startswith("!")])
     paths += sorted((included - excluded) - {"."})
-    return [(path, read_json(os.path.join(repo, path, "package.json"))) for path in paths]
+    packages = [(path, root_data if path == "." else read_json(os.path.join(repo, path, "package.json")))
+                for path in paths]
+    return packages, root
 
 
 def aggregate(entries, empty_status):
@@ -362,13 +366,10 @@ def runner_labels(repo, workflows, visibility_value):
             if label in seen:
                 continue
             seen.add(label)
-            if label in STANDARD:
-                vcpus = 3 if label.startswith("macos-") else 4 if visibility_value == "public" else 2
-                entries.append({"label": label, "kind": "standard", "vcpus": vcpus, "status": "detected",
-                                "source": workflow})
-            else:
-                entries.append({"label": label, "kind": "custom", "vcpus": None, "status": "unknown",
-                                "source": workflow})
+            standard = label in STANDARD
+            vcpus = (3 if label.startswith("macos-") else 4 if visibility_value == "public" else 2) if standard else None
+            entries.append({"label": label, "kind": "standard" if standard else "custom", "vcpus": vcpus,
+                            "status": "detected" if standard else "unknown", "source": workflow})
     return fact(entries, aggregate(entries, "detected"), ".github/workflows runs-on values")
 
 
@@ -459,8 +460,7 @@ def collect(repo):
     info_path = f"repos/{identity[0]}/{identity[1]}" if identity else None
     info = gh_api(info_path)[1] if identity else None
     info = info if isinstance(info, dict) else None
-    packages = find_packages(repo)
-    root = read_json(os.path.join(repo, "package.json")) or {}
+    packages, root = find_packages(repo)
     node = node_schedule()
     newest_lts = node["value"]["newest_lts"]
     branch = default_branch(repo, info, info_path)

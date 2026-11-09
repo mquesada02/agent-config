@@ -4,6 +4,7 @@ import os
 import unittest
 
 from fake_gh import Sandbox
+from skill_files import SKILL, read
 
 KEYS = [
     "default_branch", "package_manager", "node_version_app", "engines", "package_kind", "os_claims",
@@ -433,6 +434,12 @@ class RunHistory(IntakeCase):
 
 
 class NodeSchedule(IntakeCase):
+    def write_schedule(self, schedule):
+        path = os.path.join(self.box.root, "schedule.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(schedule, handle)
+        return path
+
     def majors(self, **kwargs):
         return self.facts({"package.json": {}}, **kwargs)["supported_node_majors"]
 
@@ -443,17 +450,13 @@ class NodeSchedule(IntakeCase):
         self.assertIn("2026-11-09", fact["source"])
 
     def test_a_local_schedule_keeps_started_and_unexpired_majors(self):
-        path = os.path.join(self.box.root, "schedule.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(SCHEDULE, handle)
+        path = self.write_schedule(SCHEDULE)
         fact = self.majors(schedule=path)
         self.assertFact(fact, {"majors": [22, 23, 24], "newest_lts": 24}, "detected")
         self.assertIn(path, fact["source"])
 
     def test_the_local_schedule_wins_when_offline_is_also_set(self):
-        path = os.path.join(self.box.root, "schedule.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(SCHEDULE, handle)
+        path = self.write_schedule(SCHEDULE)
         self.assertEqual(self.majors(schedule=path, offline=True)["status"], "detected")
 
     def test_an_unreadable_schedule_falls_back_to_the_offline_list(self):
@@ -462,15 +465,11 @@ class NodeSchedule(IntakeCase):
         self.assertIn("scripts/node-support-offline.json", fact["source"])
 
     def test_a_schedule_with_no_lts_uses_the_highest_major(self):
-        path = os.path.join(self.box.root, "schedule.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump({"v23": SCHEDULE["v23"]}, handle)
+        path = self.write_schedule({"v23": SCHEDULE["v23"]})
         self.assertFact(self.majors(schedule=path), {"majors": [23], "newest_lts": 23}, "detected")
 
     def test_the_offline_list_file_has_its_three_fields(self):
-        from skill_files import SKILL
-        with open(os.path.join(SKILL, "scripts", "node-support-offline.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
+        data = json.loads(read(os.path.join(SKILL, "scripts", "node-support-offline.json")))
         self.assertEqual(sorted(data), ["date", "majors", "newest_lts"])
         self.assertIn(data["newest_lts"], data["majors"])
 
