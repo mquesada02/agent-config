@@ -41,6 +41,11 @@ The `.gitignore` file ignores everything and then allows these files:
 | `.claude/CLAUDE.md`, `docs/agents/*.md` | Settings for the skills in this repository: where issues live, the triage labels, and the domain docs |
 | `scripts/update-orca-skills.sh` | Updates the Orca skills to a pinned commit, on request |
 | `skills/*/SKILL.md` | My skills (see [Third-party content](#third-party-content)) |
+| `skills/sql/*.md`, `skills/sql/dialects/*`, `skills/sql/sources/*` | The `sql` skill: the router (`SKILL.md`) and its Markdown modules |
+| `skills/sql/scripts/*` | The `sql` skill scripts (Python 3.11 or newer, for `tomllib`) |
+| `skills/sql/graders/*` | The `sql` skill grader commands, which score the eval output |
+| `skills/sql/tests/*` | The `sql` skill unit tests and their fixtures. The declared test command runs them |
+| `skills/sql/evals/**` | The `sql` skill eval cases, their fixture repos and the run procedure. The evals run by hand, outside the test command. The `results/` folder is ignored |
 | `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` | This file and the license texts |
 
 Everything else stays local. This includes session logs, credentials, caches,

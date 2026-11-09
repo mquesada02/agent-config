@@ -17,6 +17,7 @@
 !skills/
 !skills/**
 skills/synced/
+skills/sql/evals/results/
 __pycache__/
 !settings.json
 !README.md
