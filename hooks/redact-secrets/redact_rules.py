@@ -158,8 +158,9 @@ def block_key(match, prefix=""):
 
     That is a YAML key that counts (see key_counts; `prefix` is the line prefix when the text of the match is the
     rest of a line), a single-quoted key or a plain double-quoted key. An unquoted YAML key that does not count is
-    prose and opens nothing. An env pair and a JSON key written with escaped quotes never open a block. The rules
-    call this (key_step).
+    prose and opens nothing. An env pair and a JSON key written with escaped quotes never open a block or an empty-key
+    state: a JSON key written with escaped quotes opens the JSON open-object state but never a block or an empty-key
+    state (see key_step). The rules call this (key_step).
     """
     key = match.group("ykey") or match.group("skey")
     if match.group("ykey") is not None and not key_counts(match.string, match.start(), prefix):
@@ -394,8 +395,9 @@ def key_step(text, match, prefix=""):
     replaced by `replacement` up to `end`; `to_line_end` says that it is masked to the line end, so a later key in it
     is swallowed), or a later-line state: `block` (a block scalar header), `empty_json` (a plain double-quoted key with
     an empty value), `empty` (another key with an empty value), `json_open` (an object or array that does not close on
-    its line, for a plain double-quoted key; it is masked like a `value`). `prefix` is the line prefix when the text
-    is the rest of a line.
+    its line, for a JSON key written with plain or escaped quotes; it is masked like a `value`). A JSON key written
+    with escaped quotes opens the JSON open-object state but never a block or an empty-key state. `prefix` is the
+    line prefix when the text is the rest of a line.
     """
     if match.group("jkey") is not None:
         key, kind = match.group("jkey"), "json"
@@ -426,9 +428,9 @@ def key_step(text, match, prefix=""):
         return skip
     stop = line_end(text, start)
     if kind == "json" and text[start : start + 1] in ("{", "["):
-        # a JSON key written with escaped quotes opens no state, as the filter always read it
-        open_here = match.group("jq") == '"' and matching_bracket(text, start, stop) < 0
-        rule = "json_open" if open_here else "value"
+        # a JSON key written with escaped quotes opens the JSON open-object state but never a block or an empty-key
+        # state, as a plain double-quoted key does (matching_bracket skips a backslash and the next character)
+        rule = "json_open" if matching_bracket(text, start, stop) < 0 else "value"
         return Step(rule, end, replacement, False)
     return Step("value", end, replacement, end == stop and runs_to_line_end(text, start, stop, kind, replacement))
 
@@ -487,7 +489,8 @@ def state_effect(text, state, swallowed):
             replacement += "\n"  # the dropped lines took the newline of the key line
         return "", end, replacement
     if state.rule == "json_open":
-        # only a swallowed key gets here: a key that is not swallowed masks its open object as a value (key_step)
+        # only a swallowed key gets here: a key that is not swallowed masks its open object as a value (key_step); a
+        # JSON key written with escaped quotes opens the JSON open-object state but never a block or an empty-key state
         end = matching_bracket(text, start)
         return "", len(text) if end < 0 else end, ""
     value = next_json_value(text, header_end) if state.rule == "empty_json" else -1

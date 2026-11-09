@@ -193,10 +193,9 @@ class JsonStateTest(unittest.TestCase):
         self.assertNotIn(SECRET, out)
         self.assertTrue(out.endswith("after\n"), out)
 
-    def test_an_escaped_key_starts_no_state(self):
-        text = '{\\"%s\\": {\nkept line\n' % TOK
-        out = filt(text)
-        self.assertTrue(out.endswith("kept line\n"), out)
+    def test_an_escaped_key_starts_the_state(self):
+        text = '{\\"%s\\": {\nhidden line\n' % TOK
+        self.assertEqual(filt(text), '{\\"%s\\": \\"***\\"\n' % TOK)
 
     def test_a_closing_line_that_opens_a_new_matched_object_starts_a_new_state(self):
         text = '"%s": {\n"a": "S1"\n}, "%s": {\n"b": "S2"\n}\nafter\n' % (TOK, KEY)
