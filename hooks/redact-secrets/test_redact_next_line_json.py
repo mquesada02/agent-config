@@ -153,9 +153,9 @@ class NextLineJsonCases:
     def test_325_scope_node_properties_after_the_key_keep_the_key_line(self):
         self.check('"%s": !!str\n  "%s"\nnext: 1\n' % (K, V), '"%s": !!str\n  "***"\nnext: 1\n' % K)
 
-    # a key that an earlier value swallows
-    def test_325_a_swallowed_key_leaves_the_next_line_string_as_redact_does(self):
-        self.assertEqual(self.seam('"%s": abc "%s":\n"%s"\n' % (K, K, V)), '"%s": ***\n"%s"\n' % (K, V))
+    # a key that an earlier value swallows (the rescan rule of spec 367, ticket 381)
+    def test_381_a_swallowed_key_masks_the_next_line_string_as_a_key_that_is_not_swallowed_does(self):
+        self.assertEqual(self.seam('"%s": abc "%s":\n"%s"\n' % (K, K, V)), '"%s": ***\n"***"\n' % K)
 
     # line endings
     def test_325_crlf_endings_are_kept(self):
@@ -183,7 +183,7 @@ class FilterSeamTest(NextLineJsonCases, unittest.TestCase):
         self.assertEqual(out, '"%s":\n  "***"\nnext: 1\n' % K)
 
     def test_311_story_18_held_blank_lines_are_never_written_at_the_end_of_the_input(self):
-        # the key is swallowed by an earlier value, so only the held blank line decides: it is not written
+        # the swallowed key opens the pending JSON value state (ticket 381); the held blank line is not written
         self.assertEqual(filt('"%s": abc "%s":\n\n' % (K, K)), '"%s": ***\n' % K)
 
     def test_311_story_18_a_key_line_with_no_line_ending_is_written_with_none(self):

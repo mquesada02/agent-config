@@ -143,15 +143,16 @@ class EmptyKeyCases:
     def test_318_a_value_on_the_key_line_keeps_the_old_rules(self):
         self.check("%s: %s\n  keep\n" % (K, V), "%s: ***\n  keep\n" % K)
 
-    def test_318_a_key_swallowed_by_an_earlier_value_hides_nothing(self):
-        # the second key is at a flow-mapping position, so it counts (ticket 348) and the first value swallows it
+    def test_318_a_key_swallowed_by_an_earlier_value_hides_nothing_when_the_line_is_not_deeper(self):
+        # the second key is at a flow-mapping position, so it counts (ticket 348) and the first value swallows it;
+        # it opens the empty-key rule (ticket 381) with its own column, and the line is not deeper than that column
         text = "%s: abc {a: 1, %s:\n  keep\n" % (K, K)
         self.assertEqual(self.seam(text), "%s: ***\n  keep\n" % K)
 
-    def test_318_a_swallowed_key_hides_nothing_even_when_a_line_is_deeper_than_it(self):
-        # redact masks the whole key line, so the second key is no key; the deeper line stays
-        text = "%s: abc {a: 1, %s:\n%skeep\nnext: 1\n" % (K, K, " " * 20)
-        self.assertEqual(self.seam(text), "%s: ***\n%skeep\nnext: 1\n" % (K, " " * 20))
+    def test_381_a_swallowed_key_hides_a_line_that_is_deeper_than_it(self):
+        # redact masks the key line, and the swallowed key opens the empty-key rule with its own column (21)
+        text = "%s: abc {a: 1, %s:\n%skeep\nnext: 1\n" % (K, K, " " * 30)
+        self.assertEqual(self.seam(text), "%s: ***\nnext: 1\n" % K)
 
     # line endings
     def test_318_crlf_endings_are_kept_on_the_key_line(self):
