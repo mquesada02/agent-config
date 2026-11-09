@@ -105,7 +105,7 @@ license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | File | Source | License |
 |---|---|---|
 | `CLAUDE.md`, sections 1 to 4 | [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | MIT (stated in its README) |
-| `skills/computer-use` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
+| `skills/orca-computer-use` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
 | `skills/orca-cli` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
 | `skills/orchestration` | [stablyai/orca](https://github.com/stablyai/orca) | MIT |
 | `skills/codebase-memory` | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | MIT |
