@@ -34,10 +34,7 @@ Residual risks (the later tickets add theirs to this comment):
 - Under a tool prefix (a grep prefix, a line number, a diff marker), the empty-key and block scalar rules
   measure the key column with the prefix, as they always did, so a value line that is not deeper than the prefix
   and the key is not hidden.
-- In the Monitor filter, a PEM block that began in a value other than an object or array under a matched key (a
-  JSON string, an env value, a YAML plain value) is not tracked past its END line: a secret in the text after
-  the END line can be written.
-  A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).
+- A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).
 - An unquoted YAML key counts only at a line start position or a flow-mapping position (spec 334). A secret
   after an unquoted YAML key in mid-line prose is not masked by the keyed rules (the shape rules still apply).
   A key after a tab after a tool prefix is prose. A grep path with a space is no grep prefix.

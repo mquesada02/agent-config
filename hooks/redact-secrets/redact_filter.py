@@ -2,14 +2,24 @@
 
 The PreToolUse rewrite hook (redact_pre.py) pipes every Monitor command through this script. Each line goes
 through redact_rules.redact and is flushed at once. Five multi-line secrets keep state:
-- A PEM private-key block is held from its BEGIN line to its END line and written as one *** (the text
-  before BEGIN and after END is kept). At 200 held lines with no END, the held lines are dropped, one ***
-  line is written, and every further line up to and including the END line is dropped. When the BEGIN line
-  also opens a JSON object or array under a matched key (`{"key": {"k": "` and the BEGIN line), the filter
-  keeps the bracket depth and whether the BEGIN line is inside a JSON string. The text after the END line is
-  scanned from that depth, so the JSON state goes on after the END line until the brackets balance. This holds
-  for a held block and for a block past the cap. A held block writes the line ending of the END line when the
-  brackets stay open.
+- A PEM private-key block is held from its BEGIN line to its END line. When it ends, the filter writes the
+  joined line as redact_rules writes it: the text of the BEGIN line before BEGIN, ***, and the text of the END
+  line after END, judged with the line prefix of the BEGIN line. So a keyed value that holds the block is masked
+  as one value, with the text after END. A state that the text after END opens (a BEGIN line, an empty key, a
+  block scalar header, an open JSON object or array) works as on a normal line; a held key line is the joined
+  line, and its key column is measured on the text after END only. At 200 held lines with no END (the held-line
+  cap), the held lines are dropped, one *** line is written, and every further line up to and including the
+  END line is dropped. The filter keeps the line prefix and the text before BEGIN of the BEGIN line, and judges
+  whether BEGIN stands in a masked keyed value: the keyed rules, run on that text followed by a word, read the
+  word as the start or a part of the value of a secret key. If it does, the text after END is dropped up to the
+  next BEGIN marker on that line, and from that marker on the line is a normal line. If it does not, the text
+  after END is a normal line. A PEM block with no END line before the end of the input writes nothing of its
+  held lines.
+  A block whose BEGIN line also opens a JSON object or array under a matched key (`{"key": {"k": "` and the
+  BEGIN line) keeps another path: the filter keeps the bracket depth and whether the BEGIN line is inside a JSON
+  string. The text after the END line is scanned from that depth, so the JSON state goes on after the END line
+  until the brackets balance. This holds for a held block and for a block past the cap. A held block writes the
+  line ending of the END line when the brackets stay open.
 - A JSON object or array under a matched key that does not close on its line: the redacted line is written,
   and every following line is dropped until the brackets balance. In this state a bracket inside a PEM block does not count:
   a complete BEGIN to END pair on the line becomes *** before the scan, as in redact_rules, and the first BEGIN
@@ -149,6 +159,17 @@ def unclosed_json_depth(body):
     return 0, False
 
 
+def begin_in_masked_value(before, prefix):
+    """Whether a BEGIN marker after the text `before` stands in a masked keyed value.
+
+    That is the case when the keyed rules of redact_rules, run on `before` (with its line prefix) followed by a
+    value that the value guard never keeps, read that value as the start or a part of the value of a secret key.
+    The value is a word, so a probe that is gone from the result stood in a masked value.
+    """
+    probe = "pemprobe"
+    return probe not in redact_rules.redact(before + probe, prefix)
+
+
 def key_is_live(key_body, prefix=""):
     """Whether the empty secret key at the end of the line is a key for redact, not swallowed by an earlier value.
 
@@ -187,7 +208,14 @@ class LineFilter:
         self.string_open = False  # the JSON drop state goes on inside a string that a PEM block left open
         self.begin_prefix = ""  # the line prefix of the BEGIN line of the held PEM block
         self.pem_prefix = ""  # the line prefix of the rest after the END line of a PEM block (held or dropped)
-        self.held_prefix = ""  # the line prefix of the held key line
+        self.held_head = ""  # the joined line before the held key line: a PEM block that ended before it
+        self.held_origin = ""  # the line prefix of the joined line (held_head and the held key line)
+        self.pem_in_value = False  # past the held-line cap: the BEGIN marker stands in a masked keyed value
+
+    @property
+    def held_prefix(self):
+        """The line prefix of the held key line: the line prefix of the joined line and the head before it."""
+        return self.held_origin + self.held_head
 
     def feed(self, line):
         """The text to write for one input line (may be empty)."""
@@ -203,38 +231,56 @@ class LineFilter:
             return ""
         body, ending = split_ending(self.held[0])
         if len(self.held) > 1:
-            return redact_rules.redact(body + "\n ", self.held_prefix).split("\n", 1)[0] + ending
-        return redact_rules.redact(body, self.held_prefix) + ending
+            return self.key_line(body, " ") + ending
+        return self.key_line(body) + ending
 
-    def normal_line(self, line, prefix=""):
-        """A normal line. `prefix` is its line prefix when it is the rest of a line (empty for a whole line)."""
+    def key_line(self, key_body, probe=None):
+        """The held key line as redact_rules writes it: joined with `held_head`. With `probe` (a line after it) the
+        first line of the result is written. The probe is shifted by the length of the head, so that the empty-key
+        rule reads its indent against the key column of the joined line, which is the key column of the rest
+        (the column that the filter measured) plus the length of the head."""
+        if probe is None:
+            return redact_rules.redact(self.held_head + key_body, self.held_origin)
+        text = self.held_head + key_body + "\n" + " " * len(self.held_head) + probe
+        return redact_rules.redact(text, self.held_origin).split("\n", 1)[0]
+
+    def normal_line(self, line, prefix="", head=""):
+        """A normal line. `prefix` is the line prefix of `head + line`: empty for a whole line.
+
+        `head` is the text of the joined line before `line`, when `line` is the rest after the END line of a PEM
+        block (see pem_hold). The line is judged as the rest, with the line prefix `prefix + head`, so a state that
+        it opens measures its key column on the rest only. The text that is written is the joined line.
+        """
         body, ending = split_ending(line)
+        rest_prefix = prefix + head
         if has_unclosed_begin(body):
             self.pem_depth, self.pem_in_string = unclosed_json_depth(before_first_begin(body))
             self.begin_prefix = prefix
-            self.pem_prefix = prefix + before_first_begin(body) + redact_rules.MASK
+            self.pem_in_value = False  # set at the held-line cap of this block
+            self.pem_prefix = rest_prefix + before_first_begin(body) + redact_rules.MASK
             self.handler = self.pem_hold
-            self.held = [line]
+            self.held = [head + line]
             return ""
         depth = unclosed_json_depth(body)[0] if "{" in body or "[" in body else 0
         if depth > 0:
             self.handler = self.json_drop
             self.depth = depth
         else:
-            indent = yaml_block_indent(body, prefix) if "|" in body or ">" in body else None
+            indent = yaml_block_indent(body, rest_prefix) if "|" in body or ">" in body else None
             if indent is not None:
                 self.handler = self.yaml_drop
                 self.key_indent = indent
             else:
-                found = redact_rules.empty_key(body, prefix) if ":" in body else None
+                found = redact_rules.empty_key(body, rest_prefix) if ":" in body else None
                 if found is not None:
                     # a plain double-quoted key may be followed by a JSON value on a later line
                     self.handler = self.json_pending if found[2] else self.empty_key_hold
                     self.held = [line]
-                    self.held_prefix = prefix
+                    self.held_head = head
+                    self.held_origin = prefix
                     self.key_indent = found[0]
                     return ""
-        return redact_rules.redact(body, prefix) + ending
+        return redact_rules.redact(head + body, prefix) + ending
 
     def rest_after_drop(self, rest_line, prefix=""):
         """Handle the text that follows the end of a dropped state on the same line as a normal line.
@@ -249,13 +295,17 @@ class LineFilter:
     def pem_hold(self, line):
         end = END.search(line)
         if end is not None:
-            head = "".join(self.held) + line[: end.end()]
+            block = "".join(self.held) + line[: end.end()]
             self.handler = self.normal_line
             if self.pem_depth > 0:
-                return redact_rules.redact(head, self.begin_prefix) + self.json_after_pem(line[end.end():], True)
-            return redact_rules.redact(head, self.begin_prefix) + self.normal_line(line[end.end():], self.pem_prefix)
+                return redact_rules.redact(block, self.begin_prefix) + self.json_after_pem(line[end.end():], True)
+            # the joined line: the text before the BEGIN marker and *** (the head), then the rest after the END marker
+            head = redact_rules.PEM_BLOCK.sub(redact_rules.MASK, block)
+            return self.normal_line(line[end.end():], self.begin_prefix, head)
         if len(self.held) + 1 >= CAP:
             self.handler = self.pem_drop
+            before = before_first_begin(split_ending(self.held[0])[0])
+            self.pem_in_value = begin_in_masked_value(before, self.begin_prefix)
             return MASK_LINE
         self.held.append(line)
         return ""
@@ -273,7 +323,12 @@ class LineFilter:
         if self.pem_depth > 0:
             return self.json_after_pem(line[end.end():], False)
         self.handler = self.normal_line
-        return self.rest_after_drop(line[end.end():], self.pem_prefix)
+        rest = line[end.end():]
+        if self.pem_in_value:
+            # the BEGIN marker stood in a masked keyed value: the rest is part of it, up to the next BEGIN marker
+            begin = BEGIN.search(rest)
+            return "" if begin is None else self.normal_line(rest[begin.start():], self.pem_prefix)
+        return self.rest_after_drop(rest, self.pem_prefix)
 
     def json_scan(self, line, in_string, after, prefix=""):
         """The scan of the JSON drop state on a line. Return (text to write, whether the brackets closed).
@@ -346,9 +401,9 @@ class LineFilter:
             first = redact_rules.redact(key_body + "\n" + probe, self.held_prefix).split("\n", 1)[0]
             if first != redact_rules.redact(key_body, self.held_prefix):
                 self.hide_line(body, self.empty_key_drop)
-                return first + key_ending
+                return self.key_line(key_body, probe) + key_ending
         self.handler = self.normal_line
-        return redact_rules.redact(key_body, self.held_prefix) + key_ending + self.normal_line(line)
+        return self.key_line(key_body) + key_ending + self.normal_line(line)
 
     def json_pending(self, line):
         """A plain double-quoted empty secret key is held with the blank lines after it. The first non-blank line
@@ -364,7 +419,8 @@ class LineFilter:
         shown = body if unclosed else redact_rules.PEM_BLOCK.sub(redact_rules.MASK, body)
         indent = len(shown) - len(shown.lstrip(" \t"))
         prefix = self.held_prefix
-        plain_key = redact_rules.redact(key_body, prefix)
+        plain_key = redact_rules.redact(key_body, prefix)  # the decisions read the rest of the joined line only
+        written_key = self.key_line(key_body)  # the text that is written is the joined line
         if unclosed and key_is_live(key_body, prefix):
             # an object or array that is still open at its BEGIN line is one value: redact masks it to its close
             before = before_first_begin(body)
@@ -373,10 +429,11 @@ class LineFilter:
                 self.pem_depth, self.pem_in_string = depth, in_string
                 self.pem_prefix = before + redact_rules.MASK  # the value line is a full line: its prefix is empty
                 self.handler = self.pem_drop
-                return plain_key + key_ending + "".join(blanks) + before[:indent] + '"' + redact_rules.MASK + '"' + ending
+                masked_value = before[:indent] + '"' + redact_rules.MASK + '"' + ending
+                return written_key + key_ending + "".join(blanks) + masked_value
         self.handler = self.normal_line
         if not unclosed and key_is_live(key_body, prefix) and redact_rules.starts_json_value(shown, indent):
-            return plain_key + key_ending + "".join(blanks) + self.json_value_line(shown, ending, indent)
+            return written_key + key_ending + "".join(blanks) + self.json_value_line(shown, ending, indent)
         # a line with an unclosed BEGIN line is hidden even at the key indent: its value must not be written
         hidden = unclosed or redact_rules.hidden_by_empty_key(body, self.key_indent)
         if blanks or hidden:
@@ -386,10 +443,11 @@ class LineFilter:
             probe = " " if blanks or unclosed else body
             first = redact_rules.redact(key_body + "\n" + probe, prefix).split("\n", 1)[0]
             if first != plain_key:
+                written_first = self.key_line(key_body, probe) + key_ending
                 if hidden:
-                    return first + key_ending + self.hide_line(body, self.empty_key_drop)
-                return first + key_ending + self.normal_line(line)
-        return plain_key + key_ending + "".join(blanks) + self.normal_line(line)
+                    return written_first + self.hide_line(body, self.empty_key_drop)
+                return written_first + self.normal_line(line)
+        return written_key + key_ending + "".join(blanks) + self.normal_line(line)
 
     def json_value_line(self, shown, ending, start):
         """A JSON value at `start` of a line after its key, redacted as the same-line rule does it.
