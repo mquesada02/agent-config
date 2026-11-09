@@ -46,10 +46,11 @@ rest on its line, as redact_rules.redact sees that line (spec 334, decision 12).
 PEM END line is the prefix of the BEGIN line, the text before the BEGIN marker (earlier complete pairs shown as
 ***) and ***; after the closing bracket of a dropped JSON object it is the prefix of the closing line and the
 text of that line before the rest; after the value of a next-line JSON value it is the original text of the
-value line before the rest. A rest is never at a line start position, so a prose key in it stays. The filter
-keeps the prefix of a held rest line and of a PEM block past the held-line cap. Held or dropped lines at the
-end of the input are never written, except a held key line of the empty-key and pending JSON value states
-(see above). The filter fails closed: on any error it writes nothing
+value line before the rest. A rest is never at a line start position, so a prose key in it stays, and the
+empty-key and block scalar detection of a rest uses the same line prefix: a prose key in a rest opens neither
+state. The filter keeps the prefix of a held rest line and of a PEM block past the held-line cap. Held or
+dropped lines at the end of the input are never written, except a held key line of the empty-key and pending
+JSON value states (see above). The filter fails closed: on any error it writes nothing
 more and exits non-zero, so the pipe ends and no unfiltered text reaches the model.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP is exactly `fail`, the filter raises an error before it reads or
@@ -152,14 +153,16 @@ def key_is_live(key_body, prefix=""):
     return redact_rules.redact(key_body + '\n"x"', prefix).endswith('\n"***"')
 
 
-def yaml_block_indent(body):
+def yaml_block_indent(body, prefix=""):
     """The key column of the first matched key with a block scalar header in the line, or None.
 
-    The key is a YAML key, a single-quoted key or a plain double-quoted key. The header is the one of
-    redact_rules.BLOCK_HEADER: optional node properties, then `|` or `>`.
+    The key is a YAML key that counts, a single-quoted key or a plain double-quoted key. The header is the one of
+    redact_rules.BLOCK_HEADER: optional node properties, then `|` or `>`. The line is judged, and the column is
+    measured, after complete PEM pairs became ***, as redact_rules does. `prefix` is the line prefix of a rest.
     """
+    body = masked_pairs(body)
     for match in redact_rules.KEY_OCCURRENCE.finditer(body):
-        key = redact_rules.block_key(match)
+        key = redact_rules.block_key(match, prefix)
         if key is None or not redact_rules.is_secret_key(key):
             continue
         if redact_rules.BLOCK_HEADER.match(body, match.end()):
@@ -213,12 +216,12 @@ class LineFilter:
             self.handler = self.json_drop
             self.depth = depth
         else:
-            indent = yaml_block_indent(body) if "|" in body or ">" in body else None
+            indent = yaml_block_indent(body, prefix) if "|" in body or ">" in body else None
             if indent is not None:
                 self.handler = self.yaml_drop
                 self.key_indent = indent
             else:
-                found = redact_rules.empty_key(body) if ":" in body else None
+                found = redact_rules.empty_key(body, prefix) if ":" in body else None
                 if found is not None:
                     # a plain double-quoted key may be followed by a JSON value on a later line
                     self.handler = self.json_pending if found[2] else self.empty_key_hold

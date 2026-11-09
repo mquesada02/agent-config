@@ -144,12 +144,13 @@ class EmptyKeyCases:
         self.check("%s: %s\n  keep\n" % (K, V), "%s: ***\n  keep\n" % K)
 
     def test_318_a_key_swallowed_by_an_earlier_value_hides_nothing(self):
-        text = "%s: abc %s:\n  keep\n" % (K, K)
+        # the second key is at a flow-mapping position, so it counts (ticket 348) and the first value swallows it
+        text = "%s: abc {a: 1, %s:\n  keep\n" % (K, K)
         self.assertEqual(self.seam(text), "%s: ***\n  keep\n" % K)
 
     def test_318_a_swallowed_key_hides_nothing_even_when_a_line_is_deeper_than_it(self):
         # redact masks the whole key line, so the second key is no key; the deeper line stays
-        text = "%s: abc %s:\n%skeep\nnext: 1\n" % (K, K, " " * 20)
+        text = "%s: abc {a: 1, %s:\n%skeep\nnext: 1\n" % (K, K, " " * 20)
         self.assertEqual(self.seam(text), "%s: ***\n%skeep\nnext: 1\n" % (K, " " * 20))
 
     # line endings
@@ -166,11 +167,12 @@ class EmptyKeyCases:
     # another secret on the key line
     def test_318_another_secret_on_the_key_line_is_still_masked(self):
         # the key column is measured before the shape masks, so the value line is indented past it
-        text = "a: %s %s:\n%s%s\nb: 1\n" % (AWS, K, " " * 40, V)
-        self.assertEqual(self.seam(text), "a: *** %s: ***\nb: 1\n" % K)
+        # the key is at a flow-mapping position, so it counts (ticket 348)
+        text = "{a: %s, %s:\n%s%s\nb: 1\n" % (AWS, K, " " * 40, V)
+        self.assertEqual(self.seam(text), "{a: ***, %s: ***\nb: 1\n" % K)
 
     def test_318_another_secret_on_an_unhidden_key_line_is_still_masked(self):
-        self.assertEqual(self.seam("a: %s %s:\nb: 1\n" % (AWS, K)), "a: *** %s:\nb: 1\n" % K)
+        self.assertEqual(self.seam("{a: %s, %s:\nb: 1\n" % (AWS, K)), "{a: ***, %s:\nb: 1\n" % K)
 
     # PEM blocks around the rule
     def test_318_a_pem_block_under_the_key_is_hidden_with_its_unindented_body(self):
@@ -186,8 +188,9 @@ class EmptyKeyCases:
         self.assertEqual(self.seam(text), "%s: ***\nnext: 1\n" % K)
 
     def test_318_a_complete_pem_block_before_the_key_shortens_its_column(self):
-        text = "%s x %s %s:\n      keep\nnext: 1\n" % (BEGIN, END, K)
-        self.assertEqual(self.seam(text), "*** %s: ***\nnext: 1\n" % K)
+        # the key is at a flow-mapping position (ticket 348); its masked column is 7, its raw column is much larger
+        text = "{ %s x %s, %s:\n%skeep\nnext: 1\n" % (BEGIN, END, K, " " * 10)
+        self.assertEqual(self.seam(text), "{ ***, %s: ***\nnext: 1\n" % K)
 
 
 class RulesSeamTest(EmptyKeyCases, unittest.TestCase):
@@ -195,12 +198,13 @@ class RulesSeamTest(EmptyKeyCases, unittest.TestCase):
         return redact(text)
 
     def test_318_rest_line_after_an_end_line_uses_the_column_of_the_masked_text(self):
-        text = "%s\nbody\n%s %s:\n  keep\n" % (BEGIN, END, K)
-        self.assertEqual(redact(text), "*** %s:\n  keep\n" % K)
+        # the key is at a flow-mapping position (ticket 348): its column in the full line is 15
+        text = "{a: 1, c: %s\nbody\n%s, %s:\n     keep\n" % (BEGIN, END, K)
+        self.assertEqual(redact(text), "{a: 1, c: ***, %s:\n     keep\n" % K)
 
     def test_318_rest_line_after_a_json_close_uses_the_column_of_the_whole_line(self):
-        text = '{"%s": {\n"a": 1\n} %s:\n  keep\nnext: 1\n' % (K, K)
-        self.assertEqual(redact(text), '{"%s": "***" %s:\n  keep\nnext: 1\n' % (K, K))
+        text = '"%s": {\n"a": 1\n{"z": 1}}, %s:\n    keep\nnext: 1\n' % (K, K)
+        self.assertEqual(redact(text), '"%s": "***", %s:\n    keep\nnext: 1\n' % (K, K))
 
 
 class FilterSeamTest(EmptyKeyCases, unittest.TestCase):
@@ -209,11 +213,11 @@ class FilterSeamTest(EmptyKeyCases, unittest.TestCase):
 
     def test_318_rest_line_after_an_end_line_uses_the_column_of_the_rest_only(self):
         # fail-closed difference (spec 318): the filter hides a line that redact(text) shows
-        text = "%s\nbody\n%s %s:\n  keep\n" % (BEGIN, END, K)
-        self.assertEqual(filt(text), "*** %s: ***\n" % K)
+        text = "{a: 1, c: %s\nbody\n%s, %s:\n     keep\n" % (BEGIN, END, K)
+        self.assertEqual(filt(text), "{a: 1, c: ***, %s: ***\n" % K)
 
     def test_318_rest_line_after_a_json_close_uses_the_column_of_the_rest_only(self):
-        text = '{"%s": {\n"a": 1\n} %s:\n  keep\nnext: 1\n' % (K, K)
+        text = '"%s": {\n"a": 1\n{"z": 1}}, %s:\n    keep\nnext: 1\n' % (K, K)
         out = filt(text)
         self.assertIn("%s: ***\n" % K, out)
         self.assertNotIn("keep", out)

@@ -246,11 +246,11 @@ class ProseCases:
     def test_347_story_17_block_scalar_at_the_line_start_is_one_mask(self):
         self.exact(lines("@K: |", "  @V"), lines("@K: ***"))
 
-    def test_347_story_17_block_scalar_on_a_prose_position_key_still_fires_until_ticket_348(self):
-        self.exact(lines("see @NK: |", "      @V"), lines("see @NK: ***"))
+    def test_347_story_17_block_scalar_on_a_prose_position_key_opens_no_block_since_ticket_348(self):
+        self.exact(lines("see @NK: |", "      @P"), lines("see @NK: |", "      @P"))
 
-    def test_347_story_17_empty_key_on_a_prose_position_key_still_fires_until_ticket_348(self):
-        self.exact(lines("The @NK:", "      @V"), lines("The @NK: ***"))
+    def test_347_story_17_empty_key_on_a_prose_position_key_hides_nothing_since_ticket_348(self):
+        self.exact(lines("The @NK:", "      @P"), lines("The @NK:", "      @P"))
 
     # R1, story 18: the other key forms keep their behavior anywhere in a line
     def test_347_story_18_json_key_anywhere_in_a_line(self):
@@ -326,8 +326,8 @@ class ProseCases:
         self.exact(lines('"@K":', "5, @NK: @P"), lines('"@K":', "5, @NK: @P"))
 
     def test_347_story_20_held_empty_key_line_in_a_rest_keeps_the_line_prefix(self):
-        text = lines("@B", "MIIE", '@E  @TK: "@P" @K:', " " * 40 + "deep")  # deeper than the key in the full line
-        self.exact(text, lines('***  @TK: "@P" @K: ***'))
+        text = lines("{a: 1, c: @B", "MIIE", "@E, @K:", " " * 40 + "deep")  # deeper than the key in the full line
+        self.exact(text, lines("{a: 1, c: ***, @K: ***"))
 
     def test_347_story_20_begin_line_that_is_a_rest_keeps_its_line_prefix(self):
         text = lines("{a: 1, c: @B", "MIIE", "@E, @K: @V @B", "MIIE", "@E")
@@ -350,16 +350,16 @@ class ProseCases:
         self.assertNotIn(V, out)
 
     def test_347_story_20_held_empty_key_line_that_is_not_hidden_keeps_the_line_prefix(self):
-        text = lines("@B", "MIIE", '@E  @TK: "@P" @K:', "plain")
-        self.exact(text, lines('***  @TK: "@P" @K:', "plain"))
+        text = lines("{a: 1, c: @B", "MIIE", "@E, @K:", "plain")
+        self.exact(text, lines("{a: 1, c: ***, @K:", "plain"))
 
     def test_347_story_20_pending_json_key_that_is_live_only_with_the_line_prefix(self):
         text = lines("@B", "MIIE", '@E  @TK: x "@K":', '"y"')
         self.exact(text, lines('***  @TK: x "@K":', '"***"'))
 
     def test_347_story_20_held_empty_key_line_at_the_end_of_the_input_keeps_the_line_prefix(self):
-        text = lines("@B", "MIIE", '@E  @TK: "@P" @K:')
-        self.exact(text, lines('***  @TK: "@P" @K:'))
+        text = lines("{a: 1, c: @B", "MIIE", "@E, @K:")
+        self.exact(text, lines("{a: 1, c: ***, @K:"))
 
     def test_347_story_20_held_pending_json_key_line_in_a_rest_keeps_the_line_prefix(self):
         text = lines("@B", "MIIE", '@E  @TK: "@P" "@K":', '"x"')
