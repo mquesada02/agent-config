@@ -26,9 +26,14 @@ Residual risks (the later tickets add theirs to this comment):
   hide the rest of the stream (the fail-closed choice; they never leak it). When the PEM block began inside the
   object or array, the JSON state goes on after a PEM block's END line, so the lines of the object after it are
   not written.
-- In the Monitor filter, a false positive of a state (for example `echo "see <key>: |"`) can hide following lines.
-- In the Monitor filter, an empty matched key on the rest of a line after a dropped PEM or JSON state uses the
-  column of the rest only, so it can hide more lines than the shared rules do.
+- In the Monitor filter, a false positive of a state (for example a prose line that starts with `<key>: |`, a key
+  at a line start) can hide following lines.
+- In the Monitor filter, an empty matched key or a block scalar header on the rest of a line after a dropped PEM or
+  JSON state (the empty-key rule and the block scalar rule) uses the column of the rest only, so it can hide more
+  lines than the shared rules do.
+- Under a tool prefix (a grep prefix, a line number, a diff marker), the empty-key and block scalar rules
+  measure the key column with the prefix, as they always did, so a value line that is not deeper than the prefix
+  and the key is not hidden.
 - In the Monitor filter, a PEM block that began in a value other than an object or array under a matched key (a
   JSON string, an env value, a YAML plain value) is not tracked past its END line: a secret in the text after
   the END line can be written. A BEGIN line inside a YAML block scalar with an unindented PEM body leaks too.

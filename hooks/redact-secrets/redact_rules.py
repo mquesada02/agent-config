@@ -6,10 +6,10 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
 2. Keyed formats, tried in this order on each occurrence: JSON, env, YAML. The key name must contain
    ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY or CREDENTIAL, ignoring case, _ and -.
    Only the value becomes ***; a number, true/false, null or empty value stays (value guard).
-   - The position rule (spec 334, ticket 347): the same-line masking of an unquoted YAML key (`key: value`, not
-     in quotes) applies only where the key counts, at a line start position or at a flow-mapping position. A
+   - The position rule (spec 334, tickets 347 and 348): the same-line masking of an unquoted YAML key (`key: value`,
+     not in quotes) applies only where the key counts, at a line start position or at a flow-mapping position. A
      key that does not count is prose: its text stays and the scan goes on after it. The empty-key rule and the
-     block scalar rule still fire on any unquoted YAML key (they follow the position rule in ticket 348). JSON
+     block scalar rule follow the position rule too: an unquoted YAML key that does not count opens neither. JSON
      keys, env pairs, single-quoted keys and double-quoted keys are not judged by position.
      The prefix grammar: a key is at a line start position when the text from the start of its line to the key
      is, in this order: at most one grep prefix (`path:` or `path:N:`, no space, tab or `:` in the path), at
@@ -21,7 +21,9 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      directly after `{` (any `{`), or directly after `,` with a `{` outside a double-quoted string earlier on
      the line. A double-quoted string ends at the next `"` that no backslash escapes; `}` and `'` do not count.
      `redact(text, prefix)` judges the first line as the rest of a line when the line prefix is given: the
-     rest is never at a line start position, and the flow-mapping rule reads the prefix and the text.
+     rest is never at a line start position, and the flow-mapping rule reads the prefix and the text. The
+     block-key helper and the empty-key finder take the same optional prefix. The key indent of the two state
+     rules stays the column of the key in its line (a tool prefix included); the prefix only judges where a key counts.
    - A single-quoted key (`'key': value`) is a YAML key with every same-line YAML value form.
    - A block scalar header (`|` or `>`) may have node properties before it: at most one tag (`!x`, `!!x`,
      `!<x>`) and one anchor (`&x`), at least one, in either order. The header, and the lines that are blank or
@@ -138,13 +140,17 @@ def key_counts(text, key_start, prefix=""):
     return LINE_START.fullmatch(before) is not None or in_flow_mapping(before)
 
 
-def block_key(match):
-    """The key name of a key occurrence that may open a block scalar, or None.
+def block_key(match, prefix=""):
+    """The key name of a key occurrence that may open a block scalar or an empty-key state, or None.
 
-    That is a YAML key, a single-quoted key or a plain double-quoted key. An env pair and a JSON key written
-    with escaped quotes never open a block. The rules and the Monitor filter both call this.
+    That is a YAML key that counts (see key_counts; `prefix` is the line prefix when the text of the match is the
+    rest of a line), a single-quoted key or a plain double-quoted key. An unquoted YAML key that does not count is
+    prose and opens nothing. An env pair and a JSON key written with escaped quotes never open a block. The rules
+    and the Monitor filter both call this.
     """
     key = match.group("ykey") or match.group("skey")
+    if match.group("ykey") is not None and not key_counts(match.string, match.start(), prefix):
+        return None
     if key is None and match.group("jq") == '"':
         key = match.group("jkey")
     return key
@@ -343,12 +349,13 @@ def empty_key_end(text, header_end, key_indent):
     return index if index > first else -1
 
 
-def empty_key(body):
+def empty_key(body, prefix=""):
     """(key indent, index of the value, whether the key is a plain double-quoted key) of the last secret key in a
     line with an empty value, or None.
 
     The line is given without its line ending. The key indent is measured on the line after the PEM rule,
-    as redact_keyed measures it. The filter uses this to find an empty secret key.
+    as redact_keyed measures it. An unquoted YAML key counts only where block_key says so; `prefix` is the line
+    prefix when the line is the rest of a line. The filter uses this to find an empty secret key.
     """
     # an empty value ends the line with a colon or with node properties (`!` or `&`)
     if not (body.rstrip(" \t").endswith(":") or "!" in body or "&" in body):
@@ -357,7 +364,7 @@ def empty_key(body):
     found = None
     for match in KEY_OCCURRENCE.finditer(masked):
         if EMPTY_VALUE.match(masked, match.end()):
-            key = block_key(match)
+            key = block_key(match, prefix)
             if key is not None and is_secret_key(key):
                 found = (match.start(), match.end(), match.group("jq") == '"')
     return found
@@ -382,14 +389,14 @@ def redact_keyed(text, prefix=""):
             continue
         if kind == "json" and match.group("jq") != '"':
             end, replacement = json_value_end(text, start, match.group("jq"))
-        elif block_key(match) is not None and BLOCK_HEADER.match(text, start):
+        elif block_key(match, prefix) is not None and BLOCK_HEADER.match(text, start):
             header_end = line_end(text, start)
             line_start = text.rfind("\n", 0, match.start()) + 1
             key_indent = match.start() - line_start
             end, replacement = drop_block_scalar(text, header_end, key_indent), MASK
             if end > header_end and text[header_end : header_end + 1] == "\n":
                 replacement = MASK + "\n"  # the dropped lines took the newline of the key line
-        elif block_key(match) is not None and EMPTY_VALUE.match(text, start):
+        elif block_key(match, prefix) is not None and EMPTY_VALUE.match(text, start):
             header_end = line_end(text, start)
             value = next_json_value(text, header_end) if match.group("jq") == '"' else -1
             if value >= 0:
@@ -405,7 +412,7 @@ def redact_keyed(text, prefix=""):
                 space = "" if text[start - 1] in " \t" else " "  # `key:` has no space to keep
                 replacement = space + MASK + ("\r\n" if text.startswith("\r\n", header_end) else "\n")
         elif match.group("ykey") is not None and not key_counts(text, match.start(), prefix):
-            continue  # prose: its text stays; this check must follow the block scalar and empty-key branches
+            continue  # prose: its text stays (block_key already skips it for the block scalar and empty-key rules)
         elif kind == "json":
             end, replacement = json_dq_key_value_end(text, start)
         elif start < len(text) and text[start] in "\"'":
