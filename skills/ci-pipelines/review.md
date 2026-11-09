@@ -4,7 +4,7 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 
 ## Steps
 
-1. Load every rule file in `rules/`. Today that is [rules/naming.md](rules/naming.md). Load the monorepo rule file only when the repo is a monorepo (the file does not exist yet).
+1. Load every rule file in `rules/`. Today that is [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md) and [rules/maintainability.md](rules/maintainability.md). Load the monorepo rule file only when the repo is a monorepo (the file does not exist yet).
 2. Read the intake JSON (see [SKILL.md](SKILL.md)). It holds every repo fact: do not read `package.json`, the lockfile or the settings yourself, and run no other shell command. Use the Read, Glob and Grep tools for the workflow files. Name every default and every unknown fact in section 2 of the report (see "Intake facts" below).
 3. Take the required checks from the `required_checks` fact (see "Required checks" below). Do this before you propose a rename or a split.
 4. Take the tool status from the `installed_tools` fact (see "Tool status" below).
@@ -24,6 +24,13 @@ Section 2 of the report lists each fact with its value. A fact with the status `
 When `supported_node_majors` has the status `default`, the line says `Node support list from <date>, offline`, with the date of the offline list.
 
 A `runner_labels` entry with the status `unknown` (a self-hosted label, a larger runner label, a runner group, or an expression that may name one): ask the user for the vCPU size of that label before you write the report, and put the answer in the `Intake:` line. This is the only question that the intake asks.
+
+## Job graph facts
+
+The job graph rules read these facts from the intake JSON. Run no other command for them.
+
+- GRAPH-03 uses `package_kind` (published or app for each package), `engines` (the `engines.node` range of each package), `supported_node_majors`, `node_version_app` and `os_claims`. Only a test job has a matrix. Lint, typecheck and build run once.
+- GRAPH-05 uses `run_history`. With the status `unknown`, there is no GRAPH-05 row. With the status `detected`, compute `m` and `ceil(m / 8)` as the GRAPH-05 check says. A measured finding is a suggestion.
 
 ## Required checks
 

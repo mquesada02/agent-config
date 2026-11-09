@@ -26,7 +26,7 @@ Names for workflow files, workflows, jobs, steps and matrix legs. This file is t
 
 ### NAME-04
 - **Severity:** required
-- **Rule:** A job `name:` is the job's purpose in short words. A name that lists several tasks ("Typecheck, lint, unit") is a finding, and the report says to split the job (the job graph rules come in a later version of this skill).
+- **Rule:** A job `name:` is the job's purpose in short words. A name that lists several tasks ("Typecheck, lint, unit") is a finding, and the report says to split the job.
 - **Check:** heuristic: a comma, " and ", "&" or "/" between verbs. Then judgement removes false positives.
 - **Fix:** Name the job for its one purpose, and split a job that does several tasks into one job for each task.
 

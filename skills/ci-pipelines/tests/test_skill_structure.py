@@ -7,6 +7,8 @@ from skill_files import LEVELS, PREFIXES, SKILL, all_rules, frontmatter, level, 
 
 FIELDS = ("Severity", "Rule", "Check", "Fix")
 NAME_IDS = [f"NAME-{n:02d}" for n in range(1, 10)]
+GRAPH_IDS = [f"GRAPH-{n:02d}" for n in range(1, 8)]
+MAINT_IDS = [f"MAINT-{n:02d}" for n in range(1, 4)]
 
 
 def module_files():
@@ -47,6 +49,65 @@ class RuleFiles(unittest.TestCase):
     def test_name_08_carries_the_flag_mark(self):
         fields = dict(rule_entries(rule_files()["naming"]))["NAME-08"]
         self.assertIn("⚑", " ".join(fields.values()))
+
+    def test_the_naming_file_no_longer_says_the_job_graph_rules_are_coming(self):
+        self.assertNotIn("later version of this skill", read(rule_files()["naming"]))
+        rule = dict(rule_entries(rule_files()["naming"]))["NAME-04"]["Rule"]
+        self.assertTrue(rule.endswith("and the report says to split the job."), rule)
+
+
+class JobGraphAndMaintainabilityRules(unittest.TestCase):
+    def setUp(self):
+        self.graph = dict(rule_entries(rule_files()["job-graph"]))
+        self.maint = dict(rule_entries(rule_files()["maintainability"]))
+
+    def test_the_job_graph_file_holds_graph_01_to_graph_07_in_order(self):
+        ids = [rule_id for rule_id, _ in rule_entries(rule_files()["job-graph"])]
+        self.assertEqual(ids, GRAPH_IDS)
+
+    def test_the_maintainability_file_holds_maint_01_to_maint_03_in_order(self):
+        ids = [rule_id for rule_id, _ in rule_entries(rule_files()["maintainability"])]
+        self.assertEqual(ids, MAINT_IDS)
+
+    def test_the_severity_levels_follow_the_spec_table(self):
+        expected = {"GRAPH-01": "required", "GRAPH-02": "suggestion", "GRAPH-03": "required",
+                    "GRAPH-04": "required", "GRAPH-05": "suggestion", "GRAPH-06": "required",
+                    "GRAPH-07": "required", "MAINT-01": "required", "MAINT-02": "required",
+                    "MAINT-03": "suggestion"}
+        for rule_id, fields in list(self.graph.items()) + list(self.maint.items()):
+            self.assertEqual(level(fields), expected[rule_id], rule_id)
+
+    def test_graph_05_is_a_measured_suggestion_with_the_shard_formula(self):
+        fields = self.graph["GRAPH-05"]
+        self.assertTrue(fields["Severity"].startswith("suggestion (measured)"), fields["Severity"])
+        text = " ".join(fields.values())
+        self.assertIn("ceil(m / 8)", text)
+        self.assertIn("at most 8", text)
+        self.assertIn("`run_history`", text)
+        self.assertIn("`unknown`", fields["Check"])
+        self.assertNotIn("gh run", text)
+
+    def test_graph_04_holds_the_exact_fail_fast_expression(self):
+        self.assertIn("fail-fast: ${{ github.event_name == 'pull_request' }}", self.graph["GRAPH-04"]["Rule"])
+
+    def test_graph_03_names_the_intake_facts(self):
+        check = self.graph["GRAPH-03"]["Check"]
+        for fact in ("engines", "package_kind", "os_claims", "node_version_app", "supported_node_majors"):
+            self.assertIn(f"`{fact}`", check)
+
+    def test_the_thresholds_are_the_rule_table_numbers(self):
+        self.assertIn("more than 5 steps", self.graph["GRAPH-07"]["Rule"])
+        self.assertIn("more than 10 lines", self.maint["MAINT-01"]["Rule"])
+        self.assertIn("3 lines or less", self.maint["MAINT-02"]["Rule"])
+
+    def test_each_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No job graph rule is critical", read(rule_files()["job-graph"]))
+        self.assertIn("No maintainability rule is critical", read(rule_files()["maintainability"]))
+        self.assertIn("NAME-08", read(rule_files()["job-graph"]))
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in list(self.graph.items()) + list(self.maint.items()):
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
 
 
 class Router(unittest.TestCase):
@@ -90,6 +151,11 @@ class Router(unittest.TestCase):
         self.assertIn("required_checks", fields["Check"])
         self.assertNotIn("gh api", " ".join(fields.values()))
 
+    def test_another_edit_points_to_every_rule_file(self):
+        bullet = self.text[self.text.index("**Another edit**"):self.text.index("## Modules")]
+        for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/maintainability.md"):
+            self.assertIn(rule_file, bullet)
+
     def test_the_router_does_not_link_a_module_that_is_missing(self):
         for target in re.findall(r"\]\(([^)#]+)\)", self.text):
             self.assertTrue(os.path.exists(os.path.join(SKILL, target)), f"SKILL.md links {target}")
@@ -122,6 +188,21 @@ class ReviewSteps(unittest.TestCase):
     def test_it_keeps_the_name_09_row_and_the_flag_mark(self):
         self.assertIn("name-09 row", self.text)
         self.assertIn("⚑", self.text)
+
+    def test_it_loads_the_job_graph_and_maintainability_rule_files(self):
+        self.assertIn("rules/job-graph.md", self.text)
+        self.assertIn("rules/maintainability.md", self.text)
+
+    def test_the_job_graph_facts_section_names_the_facts_and_the_measured_rule(self):
+        start = self.text.index("## job graph facts")
+        section = self.text[start:self.text.index("\n## ", start + 1)]
+        for fact in ("package_kind", "engines", "os_claims", "node_version_app",
+                     "supported_node_majors", "run_history"):
+            self.assertIn(fact, section)
+        self.assertIn("only a test job has a matrix", section)
+        self.assertIn("measured finding is a suggestion", section)
+        for banned in ("gh api", "command -v", "interim"):
+            self.assertNotIn(banned, section)
 
     def test_it_makes_no_edit(self):
         self.assertIn("edits nothing", self.text)
