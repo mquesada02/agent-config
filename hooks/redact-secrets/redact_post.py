@@ -33,6 +33,12 @@ Residual risks (the later tickets add theirs to this comment):
   JSON string, an env value, a YAML plain value) is not tracked past its END line: a secret in the text after
   the END line can be written. A BEGIN line inside a YAML block scalar with an unindented PEM body leaks too.
   A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).
+- An unquoted YAML key counts only at a line start position or a flow-mapping position (spec 334). A secret
+  after an unquoted YAML key in mid-line prose is not masked by the keyed rules (the shape rules still apply).
+  A key after a tab after a tool prefix is prose. A grep path with a space is no grep prefix.
+  The grep context lines (`path-N-`), `? ` complex keys and flow sequences are no line start.
+  A word, a colon and a space before a key looks like a grep prefix, so a prose name after `Note: ` at the
+  line start stays masked.
 - MCP tools, WebFetch and subagent results are not redacted.
 
 Test switch: when REDACT_SECRETS_TEST_SLEEP holds a number of seconds, the hook sleeps that long before it
