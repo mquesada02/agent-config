@@ -251,6 +251,64 @@ class S6Test(LedgerChecksCase):
         self.check(self.items([round_event(1, loop="plan-review-3", **FINAL)]), "S6", "pass", "no section 6 final round")
 
 
+class S6RebaseTest(LedgerChecksCase):
+    """A rebase after the quality-phase commit rewrites the commit recorded before the first final round."""
+
+    def setUp(self):
+        super().setUp()
+        self.original = self.commit("feat: phase", name="phase.txt")
+        self.git("checkout", "-q", "main")
+        self.commit("chore: main moves", name="main.txt")
+        self.git("checkout", "-q", "feature")
+        self.git("rebase", "-q", "main")
+        self.rebased = self.git("rev-parse", "HEAD")
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.tip = self.rebased
+
+    def events(self, *after_final):
+        return [round_event(), phase_commit_event(self.original), round_event(1, **FINAL), *after_final]
+
+    def test_a_rebase_without_a_patch_change_passes_with_the_new_phase_commit(self):
+        items = self.items(self.events(phase_commit_event(self.rebased)))
+        self.check(items, "S6", "pass", f"rebased phase-commit {self.rebased[:7]} has the patch-id of phase-commit {self.original[:7]}")
+
+    def test_a_rebase_without_a_new_phase_commit_fails(self):
+        self.check(self.items(self.events()), "S6", "fail", f"phase-commit {self.original[:7]} is not an ancestor of HEAD")
+
+    def change_the_patch(self):
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write("resolved differently")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        self.tip = self.git("rev-parse", "HEAD")
+        self.git("push", "-q", "--force", "origin", "feature")
+
+    def test_a_changed_patch_with_a_final_round_after_the_new_phase_commit_passes(self):
+        self.change_the_patch()
+        items = self.items(self.events(phase_commit_event(self.tip), round_event(2, **FINAL)))
+        self.check(items, "S6", "pass", "a final round follows it")
+
+    def test_a_changed_patch_without_a_final_round_after_the_new_phase_commit_fails(self):
+        self.change_the_patch()
+        items = self.items(self.events(phase_commit_event(self.tip)))
+        self.check(items, "S6", "fail", f"rebased phase-commit {self.tip[:7]} has a different patch-id")
+        self.check(items, "S6", "fail", "no final round follows it")
+
+    def test_a_later_phase_commit_that_is_not_an_ancestor_of_head_fails(self):
+        self.git("checkout", "-q", "-b", "side")
+        side = self.commit("feat: side", name="side.txt")
+        self.git("checkout", "-q", "feature")
+        self.check(self.items(self.events(phase_commit_event(side))), "S6", "fail", f"rebased phase-commit {side[:7]} is not an ancestor of HEAD")
+
+    def test_a_later_phase_commit_with_a_final_round_after_it_still_needs_to_be_an_ancestor(self):
+        self.git("checkout", "-q", "-b", "side")
+        side = self.commit("feat: side", name="side.txt")
+        self.git("checkout", "-q", "feature")
+        self.check(self.items(self.events(phase_commit_event(side), round_event(2, **FINAL))), "S6", "fail", "is not an ancestor of HEAD")
+
+    def test_an_unknown_later_phase_commit_fails(self):
+        self.check(self.items(self.events(phase_commit_event("b" * 40))), "S6", "fail", "unknown commit bbbbbbb")
+
+
 class LinkIsolationTest(LedgerChecksCase):
     def test_a_link_between_the_phase_commit_and_the_final_round_does_not_replace_the_phase_commit(self):
         parent = self.git("rev-parse", "HEAD~1")

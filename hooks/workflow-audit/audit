@@ -1552,8 +1552,36 @@ def check_s5(ledger, audited, problem):
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
 
 
+def _is_known_commit(worktree, sha):
+    try:
+        return bool(_git_output(worktree, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}"))
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+
+
+def _is_ancestor_of_head(worktree, sha):
+    result = _git(worktree, "merge-base", "--is-ancestor", sha, "HEAD")
+    if result.returncode in (0, 1):
+        return result.returncode == 0
+    raise Unavailable(f"git merge-base exited with status {result.returncode}: {result.stderr.strip()}")
+
+
+def _patch_id(worktree, sha):
+    """The `git patch-id --stable` of one commit, or None for a commit without a patch (an empty commit, a merge commit)."""
+    import subprocess  # imported here: the hook's common path never runs git
+
+    shown = _git(worktree, "diff-tree", "-p", "--no-color", "--root", sha)
+    if shown.returncode != 0:
+        raise Unavailable(f"git diff-tree exited with status {shown.returncode}: {shown.stderr.strip()}")
+    result = subprocess.run(["git", "-C", worktree, "patch-id", "--stable"], input=shown.stdout, capture_output=True, text=True,
+                            errors="replace", timeout=GIT_TIMEOUT_SECONDS)
+    if result.returncode != 0:
+        raise Unavailable(f"git patch-id exited with status {result.returncode}: {result.stderr.strip()}")
+    return result.stdout.split()[0] if result.stdout.strip() else None
+
+
 def check_s6(worktree, ledger):
-    """Returns (passed, evidence)."""
+    """Returns (passed, evidence). After a rebase, the last later phase-commit must be an ancestor of HEAD with the original patch-id or a final round after it."""
     final = next((position for position, event in ledger.round_events if event["loop"] == CODE_REVIEW and event["phase"] == "final"), None)
     if final is None:
         return True, "no section 6 final round"
@@ -1561,18 +1589,24 @@ def check_s6(worktree, ledger):
     if not before:
         return False, "no phase-commit before the first final round of the section 6 loop"
     sha = before[-1]["sha"]
-    try:
-        known = _git_output(worktree, "rev-parse", "--verify", "-q", f"{sha}^{{commit}}")
-    except RuntimeError as problem:
-        raise Unavailable(str(problem))
-    if not known:
-        return False, f"unknown commit {sha[:7]}"
-    result = _git(worktree, "merge-base", "--is-ancestor", sha, "HEAD")
-    if result.returncode == 0:
+    known = _is_known_commit(worktree, sha)
+    if known and _is_ancestor_of_head(worktree, sha):
         return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
-    if result.returncode == 1:
-        return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD"
-    raise Unavailable(f"git merge-base exited with status {result.returncode}: {result.stderr.strip()}")
+    later = [(position, event["sha"]) for position, event in ledger.commits if position > final]
+    if not later:
+        return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD" if known else f"unknown commit {sha[:7]}"
+    rebased_position, rebased = later[-1]
+    if not _is_known_commit(worktree, rebased):
+        return False, f"unknown commit {rebased[:7]}"
+    if not _is_ancestor_of_head(worktree, rebased):
+        return False, f"rebased phase-commit {rebased[:7]} is not an ancestor of HEAD"
+    original_id = _patch_id(worktree, sha) if known else None
+    if original_id is not None and original_id == _patch_id(worktree, rebased):
+        return True, f"rebased phase-commit {rebased[:7]} has the patch-id of phase-commit {sha[:7]} and is an ancestor of HEAD"
+    if any(position > rebased_position and event["loop"] == CODE_REVIEW and event["phase"] == "final"
+           for position, event in ledger.round_events):
+        return True, f"rebased phase-commit {rebased[:7]} is an ancestor of HEAD and a final round follows it"
+    return False, f"rebased phase-commit {rebased[:7]} has a different patch-id than phase-commit {sha[:7]} and no final round follows it"
 
 
 def check_xc(ledger, agents, problem):
