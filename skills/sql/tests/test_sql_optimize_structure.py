@@ -162,10 +162,8 @@ class CatalogTest(unittest.TestCase):
         self.assertNotRegex(why, r"(?i)time zone of the process")
 
     def test_the_dialect_module_has_a_plan_reading_section_naming_the_ticket(self):
-        text = read(DIALECT)
-        self.assertRegex(text, r"(?m)^## .*[Pp]lan")
-        plan = re.split(r"(?m)^## ", text)
-        self.assertTrue(any("#395" in part and "lan" in part.split("\n", 1)[0] for part in plan))
+        plan = section(read(DIALECT), "Plan reading")
+        self.assertIn("#395", plan)
 
     def test_the_source_module_keeps_the_filled_module_rules(self):
         text = read(SOURCE)
@@ -220,15 +218,11 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertNotIn("Rewrite (unproven", text)
 
 
-class StubTicketsTest(unittest.TestCase):
-    def test_the_dialect_module_names_the_plan_ticket(self):
-        self.assertIn("#395", read(DIALECT))
-
-
 class CaseFilesTest(unittest.TestCase):
     def test_there_is_a_case_for_each_rule_and_the_special_cases(self):
         cases = case_folders()
-        self.assertGreaterEqual(len(cases), 14 + 2 + 1 + 1 + 1 + 1)
+        # one case for each rule, two negative fact cases, and the four special cases
+        self.assertGreaterEqual(len(cases), len(SEVERITIES) + 2 + 4)
         for name in ("opt-clean", "opt-disabled-rule", "opt-rewrite-unproven", "opt-no-rules-file"):
             self.assertIn(name, cases)
 
@@ -331,7 +325,7 @@ class CaseFilesTest(unittest.TestCase):
         self.assertFalse(os.path.exists(
             os.path.join(EVALS, "opt-no-rules-file", "repo", "docs", "agents", "sql.md")))
 
-    def test_no_fixture_names_the_private_repo_or_is_a_python_test_file(self):
+    def test_no_fixture_is_a_python_test_file(self):
         for base, _, names in os.walk(EVALS):
             for file_name in names:
                 self.assertFalse(re.fullmatch(r"test_.*\.py", file_name), file_name)

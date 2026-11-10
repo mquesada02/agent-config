@@ -4,7 +4,7 @@ The model evals of the `sql` skill run by hand with `claude plugin eval`. They c
 
 ## Layout
 
-- One folder per case: `evals/<case>/` with `prompt.md` (or `case.yaml`) and `graders/*.md`.
+- One folder per case: `evals/<case>/` with `prompt.md` (or `case.yaml` with an inline prompt) and `graders/*.md`.
 - Fixture repos live inside the case folder.
 - Results go to `evals/results/<timestamp>/`. The folder is ignored by git.
 - The target is the bare skill folder: `skills/sql`. No wrapper manifest and no `--eval-dir` are needed (answer to open question 1 on the general spec).

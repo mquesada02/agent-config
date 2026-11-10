@@ -42,7 +42,7 @@ Every table starts with its severity heading on its own line, and the table head
 - The Rule cell holds one rule id.
 - The Where cell holds one or more places separated by `, `. A place is `<path>:<line>` or `<path>:<line>-<line>`. The path has no space.
 - A cell holds no new line. Write rewritten SQL on one line. Write a literal `|` in a cell as `\|`.
-- A table row holds one finding. When the rule does not fire, it has no row, and the report does not mention it.
+- A table row holds one finding. When the rule does not fire, it has no row, and the report does not mention it (a disabled rule is named only on the `Disabled rules:` line).
 - Write each table line with a leading and a trailing `|`.
 - One numbering runs through all tables: it starts at 1 in the first table, and the first row of the next table continues from the last number of the previous one, with no gap.
 
