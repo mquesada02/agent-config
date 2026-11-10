@@ -10,24 +10,13 @@ they are the one exception to "tests do not call helpers".
 import os
 import unittest
 
-from redact_testkit import FILTER, HERE, redact, run_filter
+from redact_testkit import FILTER, filt, lines, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 TK = "to" + "ken"  # a second matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 def body_lines(count):
@@ -212,8 +201,7 @@ class FilterSeamTest(PemJsonCases, unittest.TestCase):
 
 class DocsTest(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def test_329_story_6_residual_risk_list_names_none_of_the_closed_forms(self):
         text = self.read("redact_post.py")

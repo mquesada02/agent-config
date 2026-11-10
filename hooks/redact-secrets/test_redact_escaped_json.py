@@ -14,11 +14,10 @@ the state; R8 the docstring phrase of the filter; R9 an escaped-quote key opens 
 docs of the shared decision. Placeholders in the comments: SK a secret key, V a secret value.
 """
 import ast
-import os
 import re
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
@@ -29,17 +28,6 @@ EK = "{" + Q + K + Q + ": "  # the head of an escaped-quote key line
 MASKED = EK + Q + "***" + Q  # an escaped-quote key whose value is masked
 PLAIN_MASKED = '{"' + K + '": "***"'
 PHRASE = "opens the JSON open-object state but never a block or an empty-key state"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 def member(name, value):
@@ -158,15 +146,14 @@ class SeamAgreementTest(unittest.TestCase):
                 self.assertEqual(filt(text), redact(text))
 
 
-def normalized(text):
+def normalized_without_comments(text):
     """The text with comment markers removed and white space collapsed."""
     return re.sub(r"\s+", " ", text.replace("#", " "))
 
 
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def between(self, source, start, stop):
         """The text of `source` from the line `start` up to the line `stop` (both must exist once)."""
@@ -177,12 +164,12 @@ class DocsChecks(unittest.TestCase):
     def function_docstring(self, name):
         for node in ast.parse(self.read("redact_rules.py")).body:
             if isinstance(node, ast.FunctionDef) and node.name == name:
-                return normalized(ast.get_docstring(node))
+                return normalized_without_comments(ast.get_docstring(node))
         self.fail(name)
 
     def test_417_r8_the_json_open_object_bullet_names_a_key_written_with_escaped_quotes(self):
         docstring = self.read("redact_filter.py").split('"""')[1]
-        bullets = [normalized(item) for item in docstring.split("\n- ")]
+        bullets = [normalized_without_comments(item) for item in docstring.split("\n- ")]
         bullet = [item for item in bullets if item.startswith("A JSON object or array under a matched key")]
         self.assertEqual(len(bullet), 1)
         self.assertIn("a key written with escaped quotes", bullet[0])
@@ -198,12 +185,12 @@ class DocsChecks(unittest.TestCase):
     def test_417_r10_the_state_effect_comment_names_the_json_open_object_state(self):
         source = self.read("redact_rules.py")
         comment = self.between(source, '    if state.rule == "json_open":', "end = matching_bracket(text, start)")
-        self.assertIn(PHRASE, normalized(comment))
+        self.assertIn(PHRASE, normalized_without_comments(comment))
 
     def test_417_r10_the_key_step_comment_names_the_json_open_object_state(self):
         source = self.read("redact_rules.py")
         comment = self.between(source, '    if kind == "json" and text[start : start + 1] in ("{", "["):', 'rule = "json_open"')
-        self.assertIn(PHRASE, normalized(comment))
+        self.assertIn(PHRASE, normalized_without_comments(comment))
 
 
 if __name__ == "__main__":

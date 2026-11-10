@@ -1,6 +1,7 @@
 """Shared helpers for the test_redact_*.py files. Tests drive redact_post.py as a subprocess, as Claude Code does."""
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -93,3 +94,26 @@ def run_filter(data, switch=None):
     return subprocess.run(
         [sys.executable, "-I", "-u", FILTER], input=data, capture_output=True, env=filter_env(switch), timeout=30
     )
+
+
+def filt(text, switch=None):
+    """The text that the Monitor filter writes for a text on stdin."""
+    result = run_filter(text.encode("utf-8", "surrogateescape"), switch)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.decode("utf-8", "surrogateescape")
+
+
+def lines(*parts):
+    """The parts joined as lines, each ending in a newline."""
+    return "\n".join(parts) + "\n"
+
+
+def normalized(text):
+    """The text with each run of white space collapsed to one space."""
+    return re.sub(r"\s+", " ", text)
+
+
+def read_module(name):
+    """The text of a file in the hook folder."""
+    with open(os.path.join(HERE, name), encoding="utf-8") as handle:
+        return handle.read()

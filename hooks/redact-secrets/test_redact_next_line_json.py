@@ -7,20 +7,13 @@ Seam 1 is `redact(text)` through the test kit. Seam 2 is the Monitor filter scri
 import json
 import unittest
 
-from redact_testkit import redact, run_filter
+from redact_testkit import filt, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 V2 = "tail2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
 
 
 class NextLineJsonCases:

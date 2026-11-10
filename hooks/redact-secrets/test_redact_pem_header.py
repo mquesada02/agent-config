@@ -15,28 +15,15 @@ secret key opens no state; R6 past the cap the block state goes on and the text 
 marker in the text after END keeps the state; R8 the docstring phrase; R9 the block state has priority over a state
 that the text after END opens; R10 the held-line count of a second hold starts again; R11 the cap boundary.
 """
-import os
-import re
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
 HEADER = K + ": | " + BEGIN
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 class HeaderCases:
@@ -184,14 +171,9 @@ class SeamAgreementTest(unittest.TestCase):
                 self.assertEqual(filt(text), redact(text))
 
 
-def normalized(text):
-    return re.sub(r"\s+", " ", text)
-
-
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def test_416_r8_the_yaml_block_scalar_bullet_names_the_block_scalar_header_line_with_a_begin_marker(self):
         docstring = self.read("redact_filter.py").split('"""')[1]
