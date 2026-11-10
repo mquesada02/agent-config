@@ -13,16 +13,12 @@ of the held lines; R8 the docs changes.
 """
 import unittest
 
-from redact_testkit import filt, lines, normalized, read_module, redact
+from redact_testkit import body_lines, filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def body_lines(count):
-    return ["MIIE%03d" % number for number in range(count)]
 
 
 class JoinedCases:
@@ -161,11 +157,8 @@ class FilterSeamTest(JoinedCases, unittest.TestCase):
 
 
 class DocsChecks(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def test_380_r8_the_pem_hold_bullet_describes_the_joined_line_and_the_cap_gate(self):
-        docstring = self.read("redact_filter.py").split('"""')[1]
+        docstring = read_module("redact_filter.py").split('"""')[1]
         bullets = [
             normalized(item) for item in docstring.split("\n- ") if item.startswith("A PEM private-key block is held")
         ]
@@ -176,12 +169,12 @@ class DocsChecks(unittest.TestCase):
         self.assertIn("a bracket inside a PEM block", normalized(docstring))
 
     def test_380_r8_residual_risk_list_no_longer_names_the_pem_then_text_leak(self):
-        text = normalized(self.read("redact_post.py"))
+        text = normalized(read_module("redact_post.py"))
         self.assertNotIn("is not tracked past its END line", text)
         self.assertNotIn("a secret in the text after the END line can be written", text)
 
     def test_380_r8_residual_risk_list_keeps_the_cr_m10_sentence_as_its_own_bullet(self):
-        text = self.read("redact_post.py")
+        text = read_module("redact_post.py")
         sentence = "A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed)."
         self.assertIn("\n- " + sentence, text)
         self.assertIn("uses the column of the rest only", normalized(text))

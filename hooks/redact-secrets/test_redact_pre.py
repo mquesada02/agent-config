@@ -4,7 +4,7 @@ import os
 import subprocess
 import unittest
 
-from redact_testkit import HERE, bash_pre_event, monitor_pre_event, run_pre
+from redact_testkit import HERE, bash_pre_event, monitor_pre_event, read_module, run_pre
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SUFFIX = " || echo command-failed"
@@ -274,8 +274,7 @@ class FailClosedTest(unittest.TestCase):
 
 class HeaderCommentTest(unittest.TestCase):
     def test_the_post_hook_header_lists_the_rewrite_hook_residual_risks(self):
-        with open(os.path.join(HERE, "redact_post.py"), encoding="utf-8") as handle:
-            header = handle.read().split('"""')[1]
+        header = read_module("redact_post.py").split('"""')[1]
         self.assertIn("exit N", header)
         self.assertIn("PostToolUseFailure", header)
         self.assertIn("command-failed", header)
@@ -283,15 +282,13 @@ class HeaderCommentTest(unittest.TestCase):
         self.assertIn("refused once", header)
 
     def test_the_post_hook_header_lists_the_monitor_residual_risks(self):
-        with open(os.path.join(HERE, "redact_post.py"), encoding="utf-8") as handle:
-            header = handle.read().split('"""')[1]
+        header = read_module("redact_post.py").split('"""')[1]
         for phrase in ("last pipeline", "Monitor commands are not checked", "hide the rest of the stream", "false positive"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, header)
 
     def test_the_pre_hook_header_describes_the_monitor_pipe(self):
-        with open(os.path.join(HERE, "redact_pre.py"), encoding="utf-8") as handle:
-            header = handle.read().split('"""')[1]
+        header = read_module("redact_pre.py").split('"""')[1]
         self.assertIn("redact_filter.py", header)
         self.assertNotIn("not part of this hook yet", header)
 

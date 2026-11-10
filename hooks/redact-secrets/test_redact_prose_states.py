@@ -11,7 +11,7 @@ the one exception to "tests go through a public seam".
 """
 import unittest
 
-from redact_testkit import filt, lines, normalized, read_module, redact
+from redact_testkit import body_lines, filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"
 NK = "redact-" + "sec" + "rets"
@@ -27,10 +27,6 @@ def T(text):
     for name, value in (("@NK", NK), ("@K", K), ("@V", V), ("@P", P), ("@B", BEGIN), ("@E", END)):
         text = text.replace(name, value)
     return text
-
-
-def body_lines(count):
-    return ["MIIE%03d" % number for number in range(count)]
 
 
 # Every prefix after which a key counts: tool prefixes, comment marker, list markers, flow-mapping positions and the

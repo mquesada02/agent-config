@@ -151,9 +151,6 @@ def uncommented_and_normalized(text):
 
 
 class DocsChecks(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def between(self, source, start, stop):
         """The text of `source` from the line `start` up to the line `stop` (both must exist once)."""
         self.assertEqual(source.count(start), 1, start)
@@ -161,13 +158,13 @@ class DocsChecks(unittest.TestCase):
         return source[begin : source.index(stop, begin)]
 
     def function_docstring(self, name):
-        for node in ast.parse(self.read("redact_rules.py")).body:
+        for node in ast.parse(read_module("redact_rules.py")).body:
             if isinstance(node, ast.FunctionDef) and node.name == name:
                 return uncommented_and_normalized(ast.get_docstring(node))
         self.fail(name)
 
     def test_417_r8_the_json_open_object_bullet_names_a_key_written_with_escaped_quotes(self):
-        docstring = self.read("redact_filter.py").split('"""')[1]
+        docstring = read_module("redact_filter.py").split('"""')[1]
         bullets = [uncommented_and_normalized(item) for item in docstring.split("\n- ")]
         bullet = [item for item in bullets if item.startswith("A JSON object or array under a matched key")]
         self.assertEqual(len(bullet), 1)
@@ -182,12 +179,12 @@ class DocsChecks(unittest.TestCase):
         self.assertNotIn("for a plain double-quoted key", docstring)
 
     def test_417_r10_the_state_effect_comment_names_the_json_open_object_state(self):
-        source = self.read("redact_rules.py")
+        source = read_module("redact_rules.py")
         comment = self.between(source, '    if state.rule == "json_open":', "end = matching_bracket(text, start)")
         self.assertIn(PHRASE, uncommented_and_normalized(comment))
 
     def test_417_r10_the_key_step_comment_names_the_json_open_object_state(self):
-        source = self.read("redact_rules.py")
+        source = read_module("redact_rules.py")
         comment = self.between(source, '    if kind == "json" and text[start : start + 1] in ("{", "["):', 'rule = "json_open"')
         self.assertIn(PHRASE, uncommented_and_normalized(comment))
 

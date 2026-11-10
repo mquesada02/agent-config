@@ -205,23 +205,20 @@ class SeamAgreementTest(unittest.TestCase):
 
 
 class SourceAndDocsTest(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def test_381_r10_the_filter_no_longer_defines_key_is_live(self):
-        self.assertTrue("key_is_live" not in self.read("redact_filter.py"))
+        self.assertTrue("key_is_live" not in read_module("redact_filter.py"))
 
     def test_381_r10_the_filter_calls_the_shared_rules_function(self):
-        self.assertTrue("redact_rules.later_line_state(" in self.read("redact_filter.py"))
+        self.assertTrue("redact_rules.later_line_state(" in read_module("redact_filter.py"))
 
     def test_381_r11_the_rules_docstring_names_the_rescan_rule(self):
-        doc = " ".join(self.read("redact_rules.py").split('"""')[1].split())
+        doc = " ".join(read_module("redact_rules.py").split('"""')[1].split())
         self.assertTrue("The rescan rule (spec 367, ticket 381)" in doc)
         self.assertTrue("value swallows (see the rescan rule below) takes this rule too" in doc)
         self.assertTrue("takes this rule too (the rescan rule below)" in doc)
 
     def test_381_r11_the_filter_docstring_bullets_name_the_swallowed_key(self):
-        doc = self.read("redact_filter.py").split('"""')[1]
+        doc = read_module("redact_filter.py").split('"""')[1]
         for bullet in ("- A YAML block scalar under a matched key", "- A matched key with an empty value",
                        "- A plain double-quoted matched key with an empty value"):
             start = doc.index(bullet)
@@ -229,13 +226,13 @@ class SourceAndDocsTest(unittest.TestCase):
             self.assertTrue("swallowed key" in doc[start : end if end >= 0 else len(doc)], bullet)
 
     def test_381_r11_the_residual_risk_list_has_the_bullet_of_the_accepted_costs(self):
-        text = self.read("redact_post.py")
+        text = read_module("redact_post.py")
         self.assertTrue("swallows (the rescan rule" in text)
         self.assertTrue("By the position rule, an unquoted YAML key in a masked value" in text)
         self.assertTrue("The key\n  column of a swallowed key is its column in its line" in text)
 
     def test_381_r11_the_new_residual_risk_bullet_does_not_repeat_the_rest_only_wording(self):
-        text = self.read("redact_post.py")
+        text = read_module("redact_post.py")
         self.assertEqual(text.count("column of the rest only"), 1)
 
 
