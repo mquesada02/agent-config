@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "SEC-01"
+  ],
+  "forbid": [
+    "unpinned-uses"
+  ]
+}

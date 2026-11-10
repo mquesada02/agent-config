@@ -9,6 +9,28 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      lockfile: ${{ steps.filter.outputs.lockfile }}
+    steps:
+      - name: Check out the repo
+        if: github.event_name == 'push'
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Detect lockfile changes
+        id: filter
+        uses: dorny/paths-filter@0123456789abcdef0123456789abcdef01234567 # v3.0.2
+        with:
+          filters: |
+            lockfile:
+              - 'pnpm-lock.yaml'
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -81,14 +103,33 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build the package
         run: pnpm build
+  audit:
+    name: Audit
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.lockfile == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0123456789abcdef0123456789abcdef01234567 # v4.1.0
+      - uses: actions/setup-node@0123456789abcdef0123456789abcdef01234567 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
   ci-passed:
     name: CI passed
     if: always()
-    needs: [lint, typecheck, test, build]
+    needs: [changes, lint, typecheck, test, build, audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
       RESULTS: ${{ toJSON(needs) }}
     steps:
       - name: Check job results
-        run: echo "$RESULTS" | jq -e 'all(.[]; .result == "success")'
+        run: echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
