@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: opt-no-rules-file
+description: Static optimize report for a repo with no rules file, where the report suggests setup.
+tags: [optimize, static]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/profile.ts` on the file `src/profile.ts` (it is in the current folder). Do not change any file.

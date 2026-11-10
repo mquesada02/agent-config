@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: opt-pg-08
+description: Static optimize report for SELECT * in a template.
+tags: [optimize, static]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/profile.ts` on the file `src/profile.ts` (it is in the current folder). Do not change any file.

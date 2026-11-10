@@ -1,0 +1,11 @@
+{
+  "expect": [
+    "PG-08"
+  ],
+  "forbid": [
+    "PG-10"
+  ],
+  "disabled": [
+    "PG-10"
+  ]
+}
