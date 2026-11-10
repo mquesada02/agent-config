@@ -31,7 +31,7 @@ MODULES = {
 
 
 # The modules that are still stubs: MODULES without the source modules that #390 filled
-# and the modules that #391, #392, #393, #394 and #398 filled. The "format.md" entry of MODULES keeps
+# and the modules that #391, #392, #393, #394, #395 and #398 filled. The "format.md" entry of MODULES keeps
 # #391 and #392 as an ownership mark that no test reads against the file text; the optimize
 # tickets are asserted by test_sql_optimize_structure.py; db-access.md keeps stub sections for
 # #396 and #397, asserted by test_sql_db_access.py (#400 filled its facts section).

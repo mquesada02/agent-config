@@ -156,6 +156,7 @@ def setup(state):
                 "run", "--rm", "-d", "--name", name, "-p", "127.0.0.1::5432",
                 "-e", f"POSTGRES_USER={canaries['user']}", "-e", f"POSTGRES_PASSWORD={canaries['password']}",
                 "-e", f"POSTGRES_DB={canaries['dbname']}", "-v", f"{SEED}:/docker-entrypoint-initdb.d/seed.sql:ro",
+                # A cache smaller than shop.events: a scan reads blocks from disk on every run (PLAN-05 cases).
                 f"postgres:{version}", "-c", "shared_buffers=2MB", timeout=START_SECONDS,
             )
             if started.returncode != 0:
