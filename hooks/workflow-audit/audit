@@ -1486,8 +1486,8 @@ def _origin_kind(value, field, where):
 
 
 def _real_input(audited):
-    """(moment or None, normalised text, question texts of the call or None for typed text) of every block of real user input, in the order of the audited sessions, then the rows, then
-    the blocks or values. Only the main transcript of a session that is not a worker session counts.
+    """(moment or None, normalised text, question texts of the call or None for typed text) of every block of real user input, in the
+    order of the audited sessions, then the rows, then the blocks or values. Only the main transcript of a session that is not a worker session counts.
     Raises Unavailable for a malformed origin, attachment.origin or answers in a row that is read."""
     units = []
     for transcripts in audited:

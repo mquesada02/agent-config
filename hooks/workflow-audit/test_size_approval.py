@@ -61,6 +61,7 @@ class SizeApprovalS5Test(ExtensionCase):
         self.passes(self.answer(), events=[size_approval()])
 
     def test_an_answer_at_the_event_time_passes(self):
+        # ask_rows stamps the answer row one second after the question row, so `at - 1` puts the answer at the event time.
         self.passes(self.answer(at=APPROVED_AT - 1), events=[size_approval()])
 
     def test_an_answer_after_the_event_fails(self):
