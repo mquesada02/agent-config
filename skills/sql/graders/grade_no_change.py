@@ -8,7 +8,9 @@ type `assistant` holds `message.content`, a list of items. A call is an item of 
 `name` and an `input`. The grader fails when a call changes a file: the tools Edit, Write and NotebookEdit,
 or a Bash command that changes a file (mv, cp, rm, patch, tee, sed with an in-place option, or a redirect
 that is not to /dev/null). Quotes are not parsed, so a quoted `>` counts (a false FAIL is safer than a
-false PASS for a no-change check).
+false PASS for a no-change check). The list of changing forms is exact, not exhaustive: other ways to change
+a file (touch, truncate, install, xargs rm, find -delete, git apply, perl -pi, a command substitution, bash -c)
+are not seen.
 Output: one line "FAIL change: <message>" for each change, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable trace (a line that is not JSON, or no `assistant`
 line). Exit 2 prints a message on stderr and no PASS or FAIL line.
@@ -63,7 +65,7 @@ def sed_in_place(words):
         if word == "--in-place" or word.startswith("--in-place="):
             return True
         match = SHORT_OPTION.match(word)
-        if match and not word.startswith("--") and "i" in match.group(1):
+        if match and "i" in match.group(1):
             return True
     return False
 

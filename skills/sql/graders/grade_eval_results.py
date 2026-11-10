@@ -82,21 +82,21 @@ def run_grader(script, args, stdin=None):
 def grade_run(case, number, trace_path, lists):
     """The failure lines of one run, each prefixed with the case and the run number."""
     label = f"{case}#{number}"
-    keep = f"FAIL {label} trace: no final message in {trace_path or '(no trace path)'} (run the eval with --keep-temp)"
+    no_message = f"FAIL {label} trace: no final message in {trace_path or '(no trace path)'} (run the eval with --keep-temp)"
     if not trace_path or not os.path.isfile(trace_path):
-        return [keep]
+        return [no_message]
     code, change_lines, error = run_grader("grade_no_change.py", [trace_path])
     if code == 2:
         return [f"FAIL {label} trace: {trace_path} is unreadable ({error})"]
     message = final_message(trace_path)
     if message is None:
-        return [keep]
-    lines = change_lines
+        return [no_message]
     disabled = lists.get("disabled")
-    lines += run_grader("grade_report.py", ["-", *(["--disabled", *disabled] if disabled is not None else [])],
-                        message)[1]
-    lines += run_grader("grade_rule_ids.py", ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]],
-                        message)[1]
+    lines = change_lines
+    lines = lines + run_grader("grade_report.py", ["-", *(["--disabled", *disabled] if disabled is not None else [])],
+                               message)[1]
+    lines = lines + run_grader("grade_rule_ids.py", ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]],
+                               message)[1]
     return [f"FAIL {label} {line[len('FAIL '):]}" for line in lines]
 
 

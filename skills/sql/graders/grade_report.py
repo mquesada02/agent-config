@@ -35,6 +35,10 @@ def read_report(path):
         return handle.read()
 
 
+def is_row(line):
+    return len(line) > 1 and line.startswith("|") and line.endswith("|")
+
+
 def split_row(line):
     return [cell.strip() for cell in UNESCAPED_PIPE.split(line.strip()[1:-1])]
 
@@ -122,11 +126,11 @@ def grade(text, disabled_flag):
                 break
             if line:
                 block.append(line)
-        is_row = [bool(line.startswith("|") and line.endswith("|") and len(line) > 1) for line in block[:2]]
-        if len(block) < 2 or not all(is_row) or split_row(block[0]) != COLUMNS or not set(block[1]) <= set("|-: "):
+        if (len(block) < 2 or not all(is_row(line) for line in block[:2])
+                or split_row(block[0]) != COLUMNS or not set(block[1]) <= set("|-: ")):
             fail("tables", f"the {severity} table has not the header {COLUMNS} and a separator row")
         for line in block[2:]:
-            if not (line.startswith("|") and line.endswith("|") and len(line) > 1):
+            if not is_row(line):
                 fail("rows", f"a line of the {severity} table is not a complete row: {line[:60]}")
                 continue
             cells = split_row(line)
@@ -176,7 +180,7 @@ def grade(text, disabled_flag):
                 fail("rewrite", f"{cells[1]}: the Fix cell does not name the missing `database diff`")
 
     # approve: the text of the contract
-    if approve_at is not None and headings and headings[-1][1] == APPROVE_HEADING:
+    if approve_at is not None and headings[-1][1] == APPROVE_HEADING:
         body = " ".join(line for line in lines[approve_at + 1:] if line)
         expected = APPROVE_FINDINGS if all_rows else APPROVE_ZERO
         if body != expected:
