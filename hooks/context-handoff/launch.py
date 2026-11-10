@@ -407,7 +407,9 @@ class Launch:
         """The claim: only one run per session gets past it. Returns None when this run holds it, else the failure.
 
         A claim that records a failed launch is replaced, so a rerun of the same command passes. The replacement runs under a lock,
-        so that two reruns cannot both replace it. Any other entry (started, done, or not a regular file) refuses and is left unchanged.
+        so that two reruns cannot both replace it. A lock that stays busy gives its own failure. The record is deleted only when it is
+        still the file that was read; a changed file (a fresh claim) refuses and is left unchanged. Any other entry (started, done, or not
+        a regular file) refuses and is left unchanged.
         """
         name = self.session + ".launch"
         try:
@@ -419,12 +421,23 @@ class Launch:
             return self.failed("cannot write the launch file")
         try:
             if records_failed_launch(runtime_dir.read_file(self.dir_fd, name)):  # a refusal of any other entry writes nothing, not even the lock file
-                lock_fd = runtime_dir.lock_file(self.dir_fd, name + ".lock")
                 try:
+                    lock_fd = runtime_dir.lock_file(self.dir_fd, name + ".lock")
+                except BlockingIOError:  # the wait for the lock ran out
+                    return self.failed("another launcher run holds the lock for this session; run the same command again")
+                try:
+                    before = os.lstat(name, dir_fd=self.dir_fd)
                     if records_failed_launch(runtime_dir.read_file(self.dir_fd, name)):  # read again: a run that held the lock may have replaced it
-                        os.unlink(name, dir_fd=self.dir_fd)
-                        runtime_dir.create_exclusive(self.dir_fd, name, "started\n")  # FileExistsError: another run took the claim first
-                        return None
+                        now = os.lstat(name, dir_fd=self.dir_fd)  # a file that is not the one that was read stays: it may be a fresh claim
+                        if (now.st_dev, now.st_ino) == (before.st_dev, before.st_ino):
+                            os.unlink(name, dir_fd=self.dir_fd)
+                            try:
+                                runtime_dir.create_exclusive(self.dir_fd, name, "started\n")
+                                return None
+                            except FileExistsError:
+                                pass  # another run took the claim first
+                            except OSError:
+                                return self.failed("cannot write the launch file again")  # the old file is already gone
                 finally:
                     os.close(lock_fd)
         except (OSError, ValueError):

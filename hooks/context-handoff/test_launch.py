@@ -1,3 +1,5 @@
+import fcntl
+import importlib.util
 import json
 import os
 import shlex
@@ -187,9 +189,10 @@ class LaunchTestCase(unittest.TestCase):
             " if no successor started, remove that file and run the launcher again"
         )
 
-    def launch_with_driver(self, mode, args=None):
+    def launch_with_driver(self, mode, args=None, keep_launch_file=False):
         """Run the launcher after the driver patched the runtime-folder module. The claim and the other checks stay in the script."""
-        self.clear_launch_file()
+        if not keep_launch_file:
+            self.clear_launch_file()
         return self.run_launcher([sys.executable, "-I", "-c", CLAIM_DRIVER, HERE, LAUNCH, mode], args)
 
     @property
@@ -812,6 +815,31 @@ elif mode == "claim":
     def create_exclusive(dir_fd, name, text):
         raise OSError(28, "No space left on device")
     runtime_dir.create_exclusive = create_exclusive
+elif mode == "recreate":  # the create after the delete of a rerun fails with an out-of-space error
+    real = runtime_dir.create_exclusive
+    calls = []
+    def create_exclusive(dir_fd, name, text):
+        calls.append(name)
+        if len(calls) > 1:
+            raise OSError(28, "No space left on device")
+        return real(dir_fd, name, text)  # the first call finds the failed record and raises FileExistsError
+    runtime_dir.create_exclusive = create_exclusive
+elif mode == "short-lock":  # the wait for the lock is short, so a lock that another descriptor holds times out fast
+    runtime_dir.LOCK_WAIT_SECONDS = 0.3
+elif mode == "swap":  # between the second read and the delete, a fresh claim replaces the failed record (a rename keeps the old inode in use)
+    import os
+    real = runtime_dir.read_file
+    reads = []
+    def read_file(dir_fd, name):
+        text = real(dir_fd, name)
+        reads.append(name)
+        if len(reads) == 2:
+            fd = os.open("fresh.tmp", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+            os.write(fd, b"started\\n")
+            os.close(fd)
+            os.rename("fresh.tmp", name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        return text
+    runtime_dir.read_file = read_file
 else:
     raise SystemExit("unknown mode " + mode)
 sys.argv = [launch] + sys.argv[4:]
@@ -914,6 +942,38 @@ class SecondLaunchGuardTest(LaunchTestCase):
         self.assertEqual(self.launch(keep_launch_file=True), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
         self.assertEqual(self.read("launch"), f"started\nok context handoff done: successor {NEW_HANDLE}\n")
         self.assertEqual(self.launch(keep_launch_file=True), ("failed", self.refusal()))  # the rerun succeeded: the next run is refused as before
+
+    def test_a_create_failure_after_the_delete_names_the_write_failure_not_a_finished_launch(self):
+        self.make_entry("failed")
+        status, text = self.launch_with_driver("recreate", keep_launch_file=True)
+        self.assertEqual((status, text), ("failed", "successor failed: cannot write the launch file again"))
+        self.assertNotIn("a launch already ran", text)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_busy_lock_names_the_lock_and_leaves_the_launch_file(self):
+        self.make_entry("failed")
+        before = entry_state(self.launch_path())
+        lock_fd = os.open(self.launch_path() + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock_fd)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        status, text = self.launch_with_driver("short-lock", keep_launch_file=True)
+        self.assertEqual((status, text), ("failed", "successor failed: another launcher run holds the lock for this session; run the same command again"))
+        self.assertEqual(entry_state(self.launch_path()), before)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_fresh_claim_that_replaces_the_failed_record_is_not_deleted(self):
+        self.make_entry("failed")
+        status, text = self.launch_with_driver("swap", keep_launch_file=True)
+        self.assertEqual((status, text), ("failed", self.refusal()))
+        self.assertEqual(self.read("launch"), "started\n")  # the fresh claim stays
+        self.assertEqual(self.calls(), [])
+
+    def test_the_retry_status_words_are_status_words_of_the_hook(self):
+        specs = {name: importlib.util.spec_from_file_location(name, os.path.join(HERE, name + ".py")) for name in ("hook", "launch")}
+        modules = {name: importlib.util.module_from_spec(spec) for name, spec in specs.items()}
+        for name, spec in specs.items():
+            spec.loader.exec_module(modules[name])
+        self.assertLessEqual(set(modules["launch"].RETRY_STATUS_WORDS), set(modules["hook"].STATUS_WORDS))
 
     def test_a_manual_file_that_exists_stays_as_it_is(self):
         self.make_entry("only started")
