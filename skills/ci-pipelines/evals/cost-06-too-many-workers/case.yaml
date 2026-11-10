@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: cost-06-too-many-workers
+context:
+  scaffold_script: scaffold.sh
