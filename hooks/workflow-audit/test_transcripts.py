@@ -234,13 +234,50 @@ class VersionTest(TranscriptCase):
                 self.register_session("s1", [self.own_edit(), {"type": kind, "message": {"content": "x"}}])
                 self.unavailable(self.items())
 
-    def test_an_untested_patch_passes_with_a_note_once_per_version(self):
+    WARNING = "warning: transcripts from untested Claude Code version 2.1.300"
+
+    def test_an_untested_patch_passes_with_one_warning_line_and_no_version_in_the_items(self):
         run = bash_row("make test", "b1", 20, version="2.1.300")
         self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"), run, result_row("b1", 21)])
-        items = self.items()
-        for name in ("S1", "S2"):
-            self.assert_item(items, name, "pass", "untested patch version 2.1.300")
-            self.assertEqual(items[name]["evidence"].count("untested patch version"), 1)
+        tip = self.branch()
+        result = self.record()
+        record = self.read_record(tip)
+        self.assertEqual(self.item(tip, "S1")["result"], "pass")
+        self.assertEqual(self.item(tip, "S2")["result"], "pass")
+        self.assertEqual(record["warning"], self.WARNING)
+        for item in record["items"]:
+            self.assertNotIn("untested", item["evidence"])
+        self.assertEqual(result.stdout.decode().splitlines().count(self.WARNING), 1)
+
+    def test_a_failed_s2_names_its_cause_and_the_untested_version_is_a_separate_warning(self):
+        self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"),
+                                     bash_row("make test | tail -5", "b1", 20, version="2.1.300"), result_row("b1", 21)])
+        tip = self.branch()
+        result = self.record()
+        self.assertEqual(result.returncode, 1)
+        record = self.read_record(tip)
+        self.assertEqual(self.item(tip, "S2")["result"], "fail")
+        self.assertNotIn("version", self.item(tip, "S2")["evidence"])
+        self.assertEqual(record["warning"], self.WARNING)
+        self.assertEqual(record["result"], "fail")
+        self.assertIn(self.WARNING, result.stdout.decode().splitlines())
+
+    def test_no_warning_when_every_version_is_tested(self):
+        run = bash_row("make test", "b1", 20)
+        self.register_session("s1", [self.with_row(), self.own_edit("e2", 11), run, result_row("b1", 21)])
+        tip = self.branch()
+        result = self.record()
+        self.assertNotIn("warning", self.read_record(tip))
+        self.assertNotIn(b"warning", result.stdout)
+
+    def test_check_prints_the_warning_once_before_the_result_line(self):
+        run = bash_row("make test", "b1", 20, version="2.1.300")
+        self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"), run, result_row("b1", 21)])
+        self.branch()
+        result = self.audit("check", "--worktree", self.repo, "--base", "main")
+        lines = result.stdout.decode().splitlines()
+        self.assertEqual(lines.count(self.WARNING), 1)
+        self.assertEqual(lines[lines.index(self.WARNING) + 1][:6], "result")
 
     def test_other_row_kinds_are_skipped_even_with_a_bad_version(self):
         rows = [self.own_edit(), {"type": "queue-operation", "version": "9.9.9", "content": "x"},
@@ -748,13 +785,6 @@ class RecordTest(TranscriptCase):
         self.assertEqual(self.record().returncode, 1)
         self.assertEqual(self.item(tip, "S2")["result"], "fail")
         self.assertEqual(self.read_record(tip)["result"], "fail")
-
-    def test_the_untested_patch_note_survives_a_long_evidence(self):
-        main_files = [edit_row(os.path.join(self.main, "x" * 260 + f"{n}.txt"), f"m{n}", 20 + n, version="2.1.300") for n in range(10)]
-        self.register_session("s1", [self.own_edit(version="2.1.300"), *main_files])
-        evidence = self.items()["S1"]["evidence"]
-        self.assertGreater(len(evidence), 2000)
-        self.assertTrue(evidence.endswith("...; untested patch version 2.1.300"), evidence[-80:])
 
     def test_evidence_never_holds_a_raw_row(self):
         secret = "SECRET-PROMPT-TEXT"
