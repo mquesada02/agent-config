@@ -11,7 +11,7 @@ PostgreSQL is the only dialect. The source forms are `.sql` files and postgres.j
 
 - `/sql setup`: load [setup.md](setup.md).
 - `/sql format`: load [format.md](format.md) and [style.md](style.md).
-- `/sql optimize`: load [optimize.md](optimize.md) and [db-access.md](db-access.md).
+- `/sql optimize`: load [optimize.md](optimize.md). Load [db-access.md](db-access.md) only when the run reaches the `## Database path` section of `optimize.md`.
 
 ## No mode
 

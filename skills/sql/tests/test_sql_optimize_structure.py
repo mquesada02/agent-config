@@ -199,7 +199,7 @@ class OptimizeModuleTest(unittest.TestCase):
 
     def test_it_names_a_stub_section_for_each_later_ticket(self):
         parts = re.split(r"(?m)^## ", self.text)
-        for ticket in ("#394", "#395", "#396", "#397", "#400"):
+        for ticket in ("#395", "#396", "#397", "#400"):
             with self.subTest(ticket=ticket):
                 self.assertTrue(
                     any(ticket in part and re.search(r"(?i)stub|later|not yet", part) for part in parts[1:]),
@@ -207,7 +207,10 @@ class OptimizeModuleTest(unittest.TestCase):
                 )
 
     def test_it_names_no_database_call(self):
-        self.assertNotRegex(self.text, r"\bpsql\b|\bpg_run\b")
+        self.assertNotRegex(self.text, r"\bpsql\b")
+        database_path = section(self.text, "Database path")
+        self.assertIn("pg_run", database_path)
+        self.assertNotRegex(self.text.replace(database_path, ""), r"\bpg_run\b")
 
     def test_it_never_connects(self):
         self.assertRegex(self.text, r"(?i)never connect|no connection|does not connect")
