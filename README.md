@@ -38,6 +38,7 @@ The `.gitignore` file ignores everything and then allows these files:
 | `hooks/force-model-invocation.sh` | Startup hook: keeps plugin and claude.ai skills model-invocable after updates |
 | `hooks/block-aws-credentials.py` | Tool-call hook: blocks the calls that could print AWS (Amazon Web Services) credentials into a session |
 | `hooks/forked-skills/*.py` | Tool-call hook: denies each built-in skill that runs forked (its subagent would run on the parent model and fail the audit check S7), and its tests |
+| `hooks/subagent-readonly/*.py` | Tool-call hook: denies a subagent's Bash commands that change remote state (`gh` writes, `git push`, `terraform apply` and similar, `aws` writes), and its tests. It reads commands with the reader of `hooks/workflow-audit/audit`. Known gap: a write hidden in a script that the subagent runs |
 | `hooks/context-handoff/*.py` | Context hook: before the context window is full, it blocks the session with an instruction to hand off to a new session. The folder also holds the launcher, the status-line wrapper, a shared module (`runtime_dir.py`), and the tests |
 | `.claude/CLAUDE.md`, `docs/agents/*.md` | Settings for the skills in this repository: where issues live, the triage labels, and the domain docs |
 | `scripts/update-orca-skills.sh` | Updates the Orca skills to a pinned commit, on request |
