@@ -157,7 +157,7 @@ class ModuleSurfaceTest(DriverTestCase):
         names = self.drive("print(json.dumps(sorted(n for n, v in vars(runtime_dir).items() if not n.startswith('_') and not hasattr(v, '__spec__'))))")  # modules have __spec__
         self.assertEqual(
             set(names),
-            {"FOLDER_NAME", "MAX_READ_BYTES", "LOCK_WAIT_SECONDS", "LOCK_RETRY_SECONDS", "runtime_dir_path", "valid_session_id", "open_runtime_dir", "write_atomic", "create_exclusive", "append_line", "read_file", "lock_file"},
+            {"FOLDER_NAME", "MAX_READ_BYTES", "LOCK_WAIT_SECONDS", "LOCK_RETRY_SECONDS", "runtime_dir_path", "valid_session_id", "open_runtime_dir", "write_atomic", "create_exclusive", "append_line", "append_lineage", "read_lineage", "LINEAGE_FILE", "LINEAGE_READ_BYTES", "read_file", "lock_file"},
         )
 
 

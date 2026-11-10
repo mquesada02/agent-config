@@ -12,6 +12,8 @@ import time
 import unittest
 import uuid
 
+import runtime_dir
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCH = os.path.join(HERE, "launch.py")
 SESSION = "11111111-2222-3333-4444-555555555555"
@@ -259,6 +261,12 @@ class LineageTest(LaunchTestCase):
         self.assertEqual({key: entry[key] for key in entry if key != "time"},
                          {"successor": NEW_HANDLE, "predecessor": OLD_HANDLE, "predecessor_session": SESSION, "successor_session": session_id})
         self.assertGreaterEqual(entry["time"], before)
+
+    def test_the_line_of_the_launcher_is_read_by_the_reader_of_the_cleanup(self):
+        self.launch()
+        dir_fd = runtime_dir.open_runtime_dir(self.folder)
+        self.addCleanup(os.close, dir_fd)
+        self.assertEqual(runtime_dir.read_lineage(dir_fd), {NEW_HANDLE: OLD_HANDLE})
 
     def test_every_role_writes_a_line(self):
         for role in ("plain", "coordinator"):

@@ -47,8 +47,6 @@ PROMPT_WITH_HANDLE = "Read {handoff} and follow it. You are the successor of Orc
 PROMPT_WITHOUT_HANDLE = "Read {handoff} and follow it. The session you replace did not run in an Orca terminal. When your takeover is done, tell the user to close the old session."
 WORKER_PROMPT = "You are a worker successor. Wait. An Orca dispatch arrives soon. When it does, read {handoff} before you act on it."
 
-LINEAGE_FILE = "lineage.jsonl"  # one JSON line per confirmed Orca start; the worktree cleanup reads it (the launcher is the only writer)
-
 STRAY_NOTE = "a terminal may have been created; check Orca for a stray terminal and close it"
 
 RETRY_STATUS_WORDS = ("failed",)  # the result words that let a rerun pass the claim; escalation-failed is not one: its successor already waits
@@ -392,12 +390,8 @@ class Launch:
         A failed write is ignored: the successor is live, and a missing line only means that the cleanup finds no lineage proof."""
         if not self.old_handle:
             return
-        line = json.dumps(
-            {"successor": self.successor, "predecessor": self.old_handle, "time": time.time(),
-             "predecessor_session": self.session, "successor_session": self.successor_session}
-        )
         try:
-            runtime_dir.append_line(self.dir_fd, LINEAGE_FILE, line + "\n")
+            runtime_dir.append_lineage(self.dir_fd, self.successor, self.old_handle, self.session, self.successor_session)
         except OSError:
             pass
 

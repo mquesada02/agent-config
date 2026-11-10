@@ -23,8 +23,6 @@ PROTECTED = ("develop", "main")
 SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 DEFAULT_WAIT_INTERVAL = 1.0
 DEFAULT_WAIT_LIMIT = 60.0
-LINEAGE_FILE = "lineage.jsonl"  # written by hooks/context-handoff/launch.py
-LINEAGE_READ_BYTES = 4 * 1024 * 1024
 LINEAGE_MAX_STEPS = 20
 
 
@@ -136,26 +134,9 @@ def read_lineage():
     if dir_fd is None:
         return None
     try:
-        text = runtime_dir.read_file(dir_fd, LINEAGE_FILE, LINEAGE_READ_BYTES)
-    except (OSError, ValueError):
-        return None
+        return runtime_dir.read_lineage(dir_fd)
     finally:
         os.close(dir_fd)
-    if text is None:
-        return None
-    links = {}
-    for line in text.splitlines():
-        try:
-            entry = json.loads(line)
-        except (ValueError, RecursionError):
-            return None
-        if not isinstance(entry, dict):
-            return None
-        successor, predecessor = entry.get("successor"), entry.get("predecessor")
-        if not all(isinstance(value, str) and value for value in (successor, predecessor)) or successor in links:
-            return None
-        links[successor] = predecessor
-    return links
 
 
 def in_predecessor_chain(creator, handle):

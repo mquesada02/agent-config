@@ -1,9 +1,13 @@
 import json
 import os
 import stat
+import sys
 import unittest
 
 from cleanup_support import CleanupCase, HANDLE
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "context-handoff"))
+import runtime_dir  # noqa: E402
 
 
 class LineageCase(CleanupCase):
@@ -42,6 +46,12 @@ class ChainTest(LineageCase):
 
     def test_the_grandpredecessor_created_it(self):
         self.write_lineage(("term_b", "term_a"), (HANDLE, "term_b"))
+        self.assert_passes(self.run_cleanup(self.wt))
+
+    def test_a_line_written_by_the_launcher_writer_passes(self):
+        dir_fd = runtime_dir.open_runtime_dir(self.folder)
+        self.addCleanup(os.close, dir_fd)
+        runtime_dir.append_lineage(dir_fd, HANDLE, "term_a", "session-a", "session-b")
         self.assert_passes(self.run_cleanup(self.wt))
 
     def test_a_terminal_outside_the_chain_is_refused(self):
