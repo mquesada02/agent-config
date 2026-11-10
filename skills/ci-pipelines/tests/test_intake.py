@@ -1,9 +1,10 @@
 """Tests of scripts/intake.py through its command line, with a fake `gh` on PATH (see fake_gh.py)."""
 import json
 import os
+import re
 import unittest
 
-from fake_gh import Sandbox
+from fake_gh import INTAKE, Sandbox
 from skill_files import SKILL, read
 
 KEYS = [
@@ -446,7 +447,7 @@ class NodeSchedule(IntakeCase):
     def test_offline_uses_the_dated_list_and_names_it(self):
         fact = self.majors()
         self.assertFact(fact, {"majors": [22, 24, 26], "newest_lts": 26}, "default")
-        self.assertIn("scripts/node-support-offline.json", fact["source"])
+        self.assertIn("offline list tools.md", fact["source"])
         self.assertIn("2026-11-09", fact["source"])
 
     def test_a_local_schedule_keeps_started_and_unexpired_majors(self):
@@ -462,16 +463,23 @@ class NodeSchedule(IntakeCase):
     def test_an_unreadable_schedule_falls_back_to_the_offline_list(self):
         fact = self.majors(schedule=os.path.join(self.box.root, "missing.json"))
         self.assertEqual(fact["status"], "default")
-        self.assertIn("scripts/node-support-offline.json", fact["source"])
+        self.assertIn("offline list tools.md", fact["source"])
 
     def test_a_schedule_with_no_lts_uses_the_highest_major(self):
         path = self.write_schedule({"v23": SCHEDULE["v23"]})
         self.assertFact(self.majors(schedule=path), {"majors": [23], "newest_lts": 23}, "detected")
 
-    def test_the_offline_list_file_has_its_three_fields(self):
-        data = json.loads(read(os.path.join(SKILL, "scripts", "node-support-offline.json")))
+    def test_the_offline_list_block_of_tools_md_has_its_three_fields(self):
+        text = read(os.path.join(SKILL, "tools.md"))
+        heading = text.index("## Offline Node support list")
+        block = re.search(r"```json\n(.*?)\n```", text[heading:], re.S).group(1)
+        data = json.loads(block)
         self.assertEqual(sorted(data), ["date", "majors", "newest_lts"])
         self.assertIn(data["newest_lts"], data["majors"])
+
+    def test_the_old_list_file_is_gone_and_the_script_does_not_name_it(self):
+        self.assertFalse(os.path.exists(os.path.join(SKILL, "scripts", "node-support-offline.json")))
+        self.assertNotIn("node-support-offline", read(INTAKE))
 
 
 class WorkflowsAndTools(IntakeCase):
@@ -492,6 +500,23 @@ class WorkflowsAndTools(IntakeCase):
             "zizmor": {"installed": True, "version": None},
             "pinact": {"installed": False, "version": None},
         })
+
+    def test_all_three_tools_on_path_are_detected_with_their_versions(self):
+        self.box.tool("actionlint", "1.7.0")
+        self.box.tool("zizmor", "zizmor 1.2.0")
+        self.box.tool("pinact", "pinact 3.0.0")
+        tools = self.facts({"package.json": {}})["installed_tools"]
+        self.assertEqual(tools["value"], {
+            "actionlint": {"installed": True, "version": "1.7.0"},
+            "zizmor": {"installed": True, "version": "zizmor 1.2.0"},
+            "pinact": {"installed": True, "version": "pinact 3.0.0"},
+        })
+
+    def test_no_tool_on_path_is_detected_as_not_installed(self):
+        tools = self.facts({"package.json": {}})["installed_tools"]
+        self.assertEqual(tools["status"], "detected")
+        self.assertEqual(tools["value"], {
+            name: {"installed": False, "version": None} for name in ("actionlint", "zizmor", "pinact")})
 
 
 if __name__ == "__main__":

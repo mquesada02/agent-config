@@ -151,6 +151,6 @@
       "newest_lts": 26
     },
     "status": "default",
-    "source": "offline list scripts/node-support-offline.json dated 2026-11-09"
+    "source": "offline list tools.md dated 2026-11-09"
   }
 }

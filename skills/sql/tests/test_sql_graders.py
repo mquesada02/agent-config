@@ -6,508 +6,327 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SKILL_DIR = os.path.dirname(HERE)
-GRADERS = os.path.join(SKILL_DIR, "graders")
-LABEL = "Rewrite (unproven: no database):"
+GRADERS = os.path.join(os.path.dirname(HERE), "graders")
+
+HEAD = "import postgres from 'postgres'\nconst sql = postgres('postgres://localhost/example')\n"
+
+DEFAULT_STYLE = {
+    "keyword_case": "upper",
+    "indent": "2 spaces",
+    "clause_per_line": True,
+    "comma": "trailing",
+    "alias_as": True,
+}
 
 
-def run(script, args=(), stdin=None):
-    """Run a grader command. Returns (exit code, stdout lines, stderr)."""
-    proc = subprocess.run(
-        [sys.executable, "-I", os.path.join(GRADERS, script), *args],
-        input=stdin, capture_output=True, text=True,
+def run(name, *args):
+    result = subprocess.run(
+        [sys.executable, os.path.join(GRADERS, name), *args], capture_output=True, text=True
     )
-    return proc.returncode, proc.stdout.splitlines(), proc.stderr
+    return result.returncode, result.stdout, result.stderr
 
 
-def table(heading, rows):
-    head = [f"## {heading}", "| # | Rule | Where | Problem | Fix |", "|---|---|---|---|---|"]
-    return "\n".join(head + [f"| {' | '.join(row)} |" for row in rows])
-
-
-GOOD = "\n".join([
-    "# sql optimize: orders.ts",
-    "**Result: 1 critical, 1 required, 2 suggestions.**",
-    "",
-    table("Critical", [["1", "PGJS-01", "orders.ts:10", "Extra parentheses in IN.", "Use IN ${sql(ids)}."]]),
-    "",
-    table("Required", [["2", "PG-03", "orders.ts:20, orders.ts:30-32", "Cast on the column.", "Cast the value."]]),
-    "",
-    table("Suggestions", [
-        ["3", "PG-08", "orders.ts:40", "SELECT * in a template.", "List the columns."],
-        ["4", "PG-09", "orders.ts:50", "Correlated subquery.",
-         f"{LABEL} SELECT 1 FROM t. Run a database diff."],
-    ]),
-    "",
-    "## Approve",
-    "Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`.",
-    "",
-])
-
-WITH_DISABLED = GOOD.replace(
-    "**Result: 1 critical, 1 required, 2 suggestions.**\n",
-    "**Result: 1 critical, 1 required, 2 suggestions.**\nDisabled rules: PG-10, PG-06.\n"
-    "Note: PG-05 is disabled with no reason, so it stays enabled.\n",
-)
-
-EMPTY = "\n".join([
-    "# sql optimize: the query",
-    "**Result: 0 critical, 0 required, 0 suggestions.**",
-    "",
-    "## Approve",
-    "There is nothing to approve.",
-    "",
-])
-
-
-class RuleIdGraderTest(unittest.TestCase):
-    def grade(self, text, *args):
-        return run("grade_rule_ids.py", ["-", *args], text)
-
-    def test_with_no_flags_a_readable_report_passes(self):
-        code, out, _ = self.grade(GOOD)
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-    def test_expect_found_passes(self):
-        code, out, _ = self.grade(GOOD, "--expect", "PGJS-01", "PG-08")
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-    def test_expect_missing_fails_with_a_line(self):
-        code, out, _ = self.grade(GOOD, "--expect", "PG-01")
-        self.assertEqual(code, 1)
-        self.assertEqual(out[-1], "FAIL")
-        self.assertTrue(out[0].startswith("FAIL expect:PG-01:"), out)
-
-    def test_forbid_found_fails_and_forbid_absent_passes(self):
-        code, out, _ = self.grade(GOOD, "--forbid", "PG-03")
-        self.assertEqual(code, 1)
-        self.assertTrue(out[0].startswith("FAIL forbid:PG-03:"), out)
-        code, out, _ = self.grade(GOOD, "--forbid", "PG-10")
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-    def test_an_id_only_in_prose_is_not_found(self):
-        text = GOOD.replace("# sql optimize: orders.ts", "# sql optimize: orders.ts\nNote: PG-01 is mentioned here.")
-        code, out, _ = self.grade(text, "--expect", "PG-01")
-        self.assertEqual(code, 1)
-        code, out, _ = self.grade(text, "--forbid", "PG-01")
-        self.assertEqual(code, 0)
-
-    def test_a_row_with_an_escaped_pipe_in_a_cell_is_read(self):
-        text = table("Critical", [["1", "PG-02", "a.ts:1", r"A \| B", "Fix."]])
-        code, out, _ = self.grade(text, "--expect", "PG-02")
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-    def test_the_header_and_separator_rows_are_not_rules(self):
-        code, out, _ = self.grade(GOOD, "--forbid", "Rule", "Where", "#")
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-    def test_an_unreadable_report_exits_2_with_no_verdict_line(self):
-        code, out, err = run("grade_rule_ids.py", ["/no/such/report.md"])
-        self.assertEqual(code, 2)
-        self.assertEqual(out, [])
-        self.assertTrue(err.strip())
-
-    def test_a_path_argument_is_read(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "report.md")
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(GOOD)
-            code, out, _ = run("grade_rule_ids.py", [path, "--expect", "PG-09"])
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-
-def assistant(*calls):
-    return json.dumps({
-        "type": "assistant",
-        "message": {"content": [{"type": "text", "text": "ok"}] + [
-            {"type": "tool_use", "name": name, "input": data} for name, data in calls
-        ]},
-    })
-
-
-def bash(command):
-    return assistant(("Bash", {"command": command}))
-
-
-RESULT_LINE = json.dumps({"type": "result", "result": "done"})
-
-
-class NoChangeGraderTest(unittest.TestCase):
-    def grade(self, *lines):
-        return run("grade_no_change.py", ["-"], "\n".join(lines) + "\n")
-
-    def assert_pass(self, *lines):
-        code, out, _ = self.grade(*lines)
-        self.assertEqual((code, out), (0, ["PASS"]), lines)
-
-    def assert_fail(self, *lines):
-        code, out, _ = self.grade(*lines)
-        self.assertEqual(code, 1, lines)
-        self.assertEqual(out[-1], "FAIL")
-        self.assertTrue(out[0].startswith("FAIL change:"), out)
-
-    def test_a_trace_with_reads_only_passes(self):
-        self.assert_pass(
-            assistant(("Read", {"file_path": "a.ts"}), ("Grep", {"pattern": "sql"})),
-            bash("python3 scripts/extract.py invoice-format.ts"),
-            RESULT_LINE,
-        )
-
-    def test_edit_write_and_notebook_edit_fail(self):
-        for tool in ("Edit", "Write", "NotebookEdit"):
-            with self.subTest(tool=tool):
-                self.assert_fail(assistant((tool, {"file_path": "a.ts"})), RESULT_LINE)
-
-    def test_each_file_changing_bash_form_fails(self):
-        for command in (
-            "mv a b", "cp a b", "rm a", "patch -p1 < x.diff", "echo x | tee a",
-            "sed -i 's/a/b/' f", "sed -Ei 's/a/b/' f", "sed -ni p f", "sed -i.bak 's/a/b/' f",
-            "sed -i'' 's/a/b/' f", "sed --in-place 's/a/b/' f", "sed --in-place=.bak 's/a/b/' f",
-            "echo x > out.txt", "echo x >> out.txt", "echo x 2> err.txt", "echo x &> out.txt",
-            "FOO=1 rm a", "sudo rm a", "env FOO=1 mv a b", "/bin/rm a",
-            "cat a | sed -i s/a/b/ f", "ls && rm a", "ls; rm a", "ls & rm a", "ls\nrm a", "ls || cp a b",
-        ):
-            with self.subTest(command=command):
-                self.assert_fail(bash(command), RESULT_LINE)
-
-    def test_descriptor_copies_and_dev_null_are_not_changes(self):
-        for command in (
-            "python3 x.py 2>&1", "python3 x.py >&2", "python3 x.py &>/dev/null",
-            "python3 x.py > /dev/null", "python3 x.py 2>/dev/null", "python3 x.py >>/dev/null 2>&1",
-            "python3 x.py 2>&1 | head", "grep sql a.ts | wc -l", "sed -n 1,5p f", "sed -e p f",
-        ):
-            with self.subTest(command=command):
-                self.assert_pass(bash(command), RESULT_LINE)
-
-    def test_a_file_name_that_holds_rm_cp_or_tee_is_not_a_match(self):
-        for command in ("cat form.ts", "cat copy.ts", "ls committee/", "grep x term/cpu.ts", "cat /tmp/rm/a"):
-            with self.subTest(command=command):
-                self.assert_pass(bash(command), RESULT_LINE)
-
-    def test_a_change_after_a_pipe_fails(self):
-        self.assert_fail(bash("cat a.ts | tee b.ts"), RESULT_LINE)
-
-    def test_a_quoted_gt_is_the_accepted_false_fail(self):
-        self.assert_fail(bash("grep '>' a.ts"), RESULT_LINE)
-
-    def test_any_changing_call_among_many_fails(self):
-        self.assert_fail(assistant(("Read", {"file_path": "a"})), bash("ls"), bash("rm a"), RESULT_LINE)
-
-    def test_a_non_json_line_exits_2_with_no_verdict_line(self):
-        code, out, err = self.grade(assistant(("Read", {})), "not json", RESULT_LINE)
-        self.assertEqual((code, out), (2, []))
-        self.assertTrue(err.strip())
-
-    def test_a_trace_with_no_assistant_line_exits_2(self):
-        code, out, err = self.grade(RESULT_LINE)
-        self.assertEqual((code, out), (2, []))
-        self.assertTrue(err.strip())
-
-    def test_a_missing_trace_file_exits_2(self):
-        code, out, _ = run("grade_no_change.py", ["/no/such/trace.jsonl"])
-        self.assertEqual((code, out), (2, []))
-
-    def test_a_path_argument_is_read(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "trace.jsonl")
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(bash("ls") + "\n" + RESULT_LINE + "\n")
-            code, out, _ = run("grade_no_change.py", [path])
-        self.assertEqual((code, out), (0, ["PASS"]))
-
-
-class ReportGraderTest(unittest.TestCase):
-    def grade(self, text, *args):
-        return run("grade_report.py", ["-", *args], text)
-
-    def assert_pass(self, text, *args):
-        code, out, _ = self.grade(text, *args)
-        self.assertEqual((code, out), (0, ["PASS"]), out)
-
-    def assert_check(self, text, check, *args):
-        code, out, _ = self.grade(text, *args)
-        self.assertEqual(code, 1)
-        self.assertEqual(out[-1], "FAIL")
-        self.assertTrue(any(line.startswith(f"FAIL {check}:") for line in out), out)
-
-    def test_a_good_report_passes(self):
-        self.assert_pass(GOOD)
-
-    def test_a_good_report_with_a_rewrite_row_and_a_disabled_line_passes(self):
-        self.assert_pass(WITH_DISABLED)
-        self.assert_pass(WITH_DISABLED, "--disabled", "PG-10", "PG-06")
-
-    def test_a_report_with_no_finding_passes(self):
-        self.assert_pass(EMPTY)
-
-    def test_singular_suggestion_is_accepted(self):
-        text = GOOD.replace("2 suggestions.", "2 suggestion.")
-        self.assert_pass(text)
-
-    def test_a_missing_title_fails(self):
-        self.assert_check(GOOD.replace("# sql optimize: orders.ts", "# report"), "title")
-
-    def test_a_missing_summary_fails(self):
-        self.assert_check(GOOD.replace("**Result: 1 critical, 1 required, 2 suggestions.**\n", ""), "summary")
-
-    def test_counts_that_differ_from_the_rows_fail(self):
-        self.assert_check(GOOD.replace("1 critical, 1 required", "2 critical, 1 required"), "counts")
-
-    def test_a_table_with_a_zero_count_fails(self):
-        self.assert_check(GOOD.replace("1 critical, 1 required", "0 critical, 1 required"), "tables")
-
-    def test_a_wrong_severity_order_fails(self):
-        text = "\n".join([
-            "# sql optimize: a.ts", "**Result: 1 critical, 1 required, 0 suggestions.**", "",
-            table("Required", [["1", "PG-03", "a.ts:1", "p", "f"]]), "",
-            table("Critical", [["2", "PG-01", "a.ts:2", "p", "f"]]), "",
-            "## Approve",
-            "Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`.", "",
-        ])
-        self.assert_check(text, "sections")
-
-    def test_a_gap_in_numbering_fails(self):
-        self.assert_check(GOOD.replace("| 3 | PG-08", "| 5 | PG-08"), "numbering")
-
-    def test_numbers_that_restart_in_each_table_fail(self):
-        self.assert_check(GOOD.replace("| 2 | PG-03", "| 1 | PG-03"), "numbering")
-
-    def test_a_duplicate_rule_id_fails_in_one_table_and_across_tables(self):
-        self.assert_check(GOOD.replace("| 4 | PG-09", "| 4 | PG-08"), "unique")
-        self.assert_check(GOOD.replace("| 2 | PG-03", "| 2 | PGJS-01"), "unique")
-
-    def test_a_rule_cell_with_two_ids_fails(self):
-        self.assert_check(GOOD.replace("| PG-03 |", "| PG-03, PG-04 |"), "unique")
-
-    def test_a_where_cell_with_no_line_fails(self):
-        self.assert_check(GOOD.replace("orders.ts:10 ", "orders.ts "), "where")
-        self.assert_check(GOOD.replace("orders.ts:10 ", "orders.ts:0 "), "where")
-        self.assert_check(GOOD.replace("orders.ts:30-32", "orders.ts:30-"), "where")
-
-    def test_a_wrong_table_header_fails(self):
-        self.assert_check(GOOD.replace("| # | Rule | Where | Problem | Fix |", "| # | Rule | Where | Fix |", 1), "tables")
-
-    def test_a_row_with_a_missing_cell_fails(self):
-        self.assert_check(GOOD.replace("| Use IN ${sql(ids)}. |", "|"), "rows")
-
-    def test_a_new_line_inside_a_cell_fails(self):
-        self.assert_check(GOOD.replace("Extra parentheses in IN.", "Extra\nparentheses in IN."), "rows")
-
-    def test_an_escaped_pipe_inside_a_cell_is_one_cell(self):
-        self.assert_pass(GOOD.replace("Extra parentheses in IN.", r"Extra \| parentheses in IN."))
-
-    def test_a_wrong_approval_text_fails(self):
-        self.assert_check(GOOD.replace("Reply with the findings to fix:", "Reply with:"), "approve")
-        self.assert_check(EMPTY.replace("There is nothing to approve.", "Nothing."), "approve")
-
-    def test_the_approval_text_for_findings_cannot_say_nothing_to_approve(self):
-        self.assert_check(GOOD.split("## Approve")[0] + "## Approve\nThere is nothing to approve.\n", "approve")
-
-    def test_an_approve_section_that_is_not_last_fails(self):
-        approve = "## Approve\nReply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`.\n"
-        text = GOOD.replace(approve, "")
-        text = text.replace("## Critical", approve + "\n## Critical", 1)
-        self.assert_check(text, "approve")
-
-    def test_a_missing_approve_section_fails(self):
-        self.assert_check(GOOD.split("## Approve")[0], "approve")
-
-    def test_a_rewrite_with_no_label_fails(self):
-        text = GOOD.replace(f"{LABEL} SELECT 1 FROM t. Run a database diff.", "Rewrite: SELECT 1 FROM t, database diff.")
-        self.assert_check(text, "rewrite")
-
-    def test_a_rewrite_with_no_database_diff_fails(self):
-        self.assert_check(GOOD.replace("Run a database diff.", "Check it."), "rewrite")
-
-    def test_a_lower_case_rewrite_word_is_not_matched(self):
-        self.assert_pass(GOOD.replace("List the columns.", "You can rewrite it as a list."))
-
-    def test_the_capitalised_word_in_a_plain_fix_fails(self):
-        self.assert_check(GOOD.replace("List the columns.", "Rewrite it as a list."), "rewrite")
-
-    def test_a_missing_disabled_line_fails_when_disabled_is_given(self):
-        self.assert_check(GOOD, "disabled", "--disabled", "PG-10")
-
-    def test_a_disabled_line_that_differs_from_the_flag_fails(self):
-        self.assert_check(WITH_DISABLED, "disabled", "--disabled", "PG-10")
-        self.assert_check(WITH_DISABLED, "disabled", "--disabled", "PG-10", "PG-06", "PG-07")
-
-    def test_a_disabled_id_in_a_table_fails(self):
-        self.assert_check(WITH_DISABLED.replace("| PG-08 |", "| PG-10 |"), "disabled")
-        self.assert_check(WITH_DISABLED.replace("| PG-08 |", "| PG-10 |"), "disabled", "--disabled", "PG-10", "PG-06")
-
-    def test_a_disabled_id_named_twice_fails(self):
-        self.assert_check(WITH_DISABLED.replace("PG-10, PG-06", "PG-10, PG-10"), "disabled")
-
-    def test_a_disabled_line_with_a_bad_form_fails(self):
-        self.assert_check(WITH_DISABLED.replace("Disabled rules: PG-10, PG-06.", "Disabled rules: PG-10 PG-06"), "disabled")
-
-    def test_a_line_that_is_not_a_note_between_summary_and_tables_fails(self):
-        self.assert_check(GOOD.replace("\n\n## Critical", "\nSome prose.\n\n## Critical", 1), "sections")
-
-    def test_a_table_for_a_rule_found_in_an_unknown_heading_fails(self):
-        self.assert_check(GOOD.replace("## Required", "## Other"), "sections")
-
-    def test_an_unreadable_report_exits_2_with_no_verdict_line(self):
-        code, out, err = run("grade_report.py", ["/no/such/report.md"])
-        self.assertEqual((code, out), (2, []))
-        self.assertTrue(err.strip())
-
-
-def write(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
-
-
-class RunnerTest(unittest.TestCase):
+class GraderCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = tmp.name
-        self.evals = os.path.join(self.root, "evals")
+        self.tmp = tmp.name
 
-    def case(self, name, expect=None, forbid=None, disabled=None, expect_json=True):
-        if expect_json:
-            data = {"expect": expect or [], "forbid": forbid or []}
-            if disabled is not None:
-                data["disabled"] = disabled
-            write(os.path.join(self.evals, name, "expect.json"), json.dumps(data))
-        else:
-            os.makedirs(os.path.join(self.evals, name), exist_ok=True)
-
-    def trace(self, name, message, calls=(), raw=None):
-        path = os.path.join(self.root, "traces", name)
-        if raw is None:
-            lines = [assistant(*calls), json.dumps({"type": "result", "result": message})]
-            raw = "\n".join(lines) + "\n"
-        write(path, raw)
+    def write(self, name, text):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
         return path
 
-    def result(self, cases):
-        path = os.path.join(self.root, "result.json")
-        data = {"cases": [
-            {"name": name, "arms": {"with": [{"tracePath": trace} for trace in traces]}}
-            for name, traces in cases
-        ]}
-        write(path, json.dumps(data))
-        return path
+    def grade(self, name, letter, *args, expect):
+        code, out, err = run(name, *args)
+        self.assertEqual(err, "", err)
+        report = json.loads(out)
+        self.assertEqual(report["grader"], letter)
+        self.assertEqual(report["pass"], expect, report)
+        self.assertEqual(code, 0 if expect else 1)
+        self.assertEqual(bool(report["failures"]), not expect)
+        return report
 
-    def grade(self, result):
-        return run("grade_eval_results.py", [result, "--evals", self.evals])
+    def assertUsage(self, name, *args):
+        code, out, err = run(name, *args)
+        self.assertEqual(code, 2, args)
+        self.assertEqual(out, "")
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
 
-    def test_a_passing_run_prints_its_line_and_pass(self):
-        self.case("opt-a", expect=["PGJS-01"], forbid=["PG-01"])
-        path = self.trace("a1.jsonl", GOOD, [("Read", {"file_path": "orders.ts"})])
-        code, out, _ = self.grade(self.result([("opt-a", [path])]))
-        self.assertEqual((code, out), (0, ["opt-a#1: PASS", "PASS"]))
 
-    def test_a_failing_run_prints_check_lines_and_fail(self):
-        self.case("opt-a", expect=["PG-01"])
-        ok = self.trace("a1.jsonl", GOOD, [("Read", {})])
-        bad = self.trace("a2.jsonl", GOOD, [("Edit", {"file_path": "a.ts"})])
-        code, out, _ = self.grade(self.result([("opt-a", [ok, bad])]))
-        self.assertEqual(code, 1)
-        self.assertEqual(out[-1], "FAIL")
-        self.assertIn("opt-a#1: FAIL", out)
-        self.assertIn("opt-a#2: FAIL", out)
-        self.assertTrue(any(line.startswith("FAIL opt-a#1 expect:PG-01:") for line in out), out)
-        self.assertTrue(any(line.startswith("FAIL opt-a#2 change:") for line in out), out)
+def template(body):
+    return HEAD + "export const q = (x: number, cond: boolean) => sql`" + body + "`\n"
 
-    def test_a_report_with_a_bad_layout_fails_the_run(self):
-        self.case("opt-a")
-        path = self.trace("a1.jsonl", GOOD.replace("# sql optimize: orders.ts", "# report"), [("Read", {})])
-        code, out, _ = self.grade(self.result([("opt-a", [path])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any(line.startswith("FAIL opt-a#1 title:") for line in out), out)
 
-    def test_the_disabled_list_of_expect_json_is_passed_to_grader_i(self):
-        self.case("opt-d", disabled=["PG-10", "PG-06"])
-        path = self.trace("d1.jsonl", WITH_DISABLED, [("Read", {})])
-        code, out, _ = self.grade(self.result([("opt-d", [path])]))
-        self.assertEqual((code, out), (0, ["opt-d#1: PASS", "PASS"]))
-        self.case("opt-d", disabled=["PG-10"])
-        code, out, _ = self.grade(self.result([("opt-d", [path])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any(line.startswith("FAIL opt-d#1 disabled:") for line in out), out)
+BEFORE = template(
+    "\n  select a\n  from t\n  where b = ${x}\n  ${cond ? sql`and c = 1` : sql``}\n"
+)
 
-    def test_a_null_disabled_list_is_the_same_as_no_disabled_list(self):
-        self.case("opt-a")
-        write(os.path.join(self.evals, "opt-a", "expect.json"),
-              json.dumps({"expect": [], "forbid": [], "disabled": None}))
-        path = self.trace("a1.jsonl", GOOD, [("Read", {})])
-        code, out, err = self.grade(self.result([("opt-a", [path])]))
-        self.assertEqual((code, out), (0, ["opt-a#1: PASS", "PASS"]), err)
 
-    def test_a_case_with_no_expect_json_is_skipped(self):
-        self.case("opt-a")
-        self.case("trigger-x", expect_json=False)
-        path = self.trace("a1.jsonl", GOOD, [("Read", {})])
-        other = self.trace("x1.jsonl", "not a report", [("Read", {})])
-        code, out, _ = self.grade(self.result([("trigger-x", [other]), ("opt-a", [path])]))
-        self.assertEqual((code, out), (0, ["opt-a#1: PASS", "PASS"]))
+class InterpolationsSameTest(GraderCase):
+    def test_a_reformat_that_keeps_every_interpolation_passes(self):
+        before = self.write("before.ts", BEFORE)
+        after = self.write(
+            "after.ts",
+            template("\n    SELECT a\n    FROM t\n    WHERE b = ${x}\n    ${cond ? sql`and c = 1` : sql``}\n"),
+        )
+        self.grade("interpolations_same.py", "A", before, after, expect=True)
 
-    def test_a_missing_trace_fails_the_run_and_names_keep_temp(self):
-        self.case("opt-a")
-        code, out, _ = self.grade(self.result([("opt-a", [os.path.join(self.root, "none.jsonl")])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any("--keep-temp" in line for line in out), out)
-        self.assertEqual(out[-1], "FAIL")
+    def test_a_changed_expression_fails(self):
+        before = self.write("before.ts", BEFORE)
+        after = self.write("after.ts", BEFORE.replace("b = ${x}", "b = ${y}"))
+        report = self.grade("interpolations_same.py", "A", before, after, expect=False)
+        self.assertIn("y", report["failures"][0])
 
-    def test_a_run_with_no_trace_path_fails_with_keep_temp(self):
-        self.case("opt-a")
-        code, out, _ = self.grade(self.result([("opt-a", [""])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any("--keep-temp" in line for line in out), out)
+    def test_a_moved_clause_fails(self):
+        before = self.write("before.ts", BEFORE)
+        after = self.write(
+            "after.ts",
+            template("\n  select a\n  from t ${x}\n  where b = 1\n  ${cond ? sql`and c = 1` : sql``}\n"),
+        )
+        self.grade("interpolations_same.py", "A", before, after, expect=False)
 
-    def test_a_trace_with_no_final_message_fails_the_run(self):
-        self.case("opt-a")
-        path = self.trace("a1.jsonl", None, raw=assistant(("Read", {})) + "\n")
-        code, out, _ = self.grade(self.result([("opt-a", [path])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any("--keep-temp" in line for line in out), out)
+    def test_a_missing_interpolation_fails(self):
+        before = self.write("before.ts", BEFORE)
+        after = self.write("after.ts", BEFORE.replace("b = ${x}", "b = 1"))
+        self.grade("interpolations_same.py", "A", before, after, expect=False)
 
-    def test_a_corrupt_trace_fails_only_that_run_with_exit_1(self):
-        self.case("opt-a")
-        bad = self.trace("a1.jsonl", None, raw="{not json\n")
-        ok = self.trace("a2.jsonl", GOOD, [("Read", {})])
-        code, out, _ = self.grade(self.result([("opt-a", [bad, ok])]))
-        self.assertEqual(code, 1)
-        self.assertTrue(any(line.startswith("FAIL opt-a#1 trace:") and bad in line for line in out), out)
-        self.assertIn("opt-a#1: FAIL", out)
-        self.assertIn("opt-a#2: PASS", out)
-        self.assertEqual(out[-1], "FAIL")
+    def test_a_different_statement_count_fails(self):
+        before = self.write("before.ts", BEFORE)
+        after = self.write("after.ts", BEFORE + "export const r = sql`select 1`\n")
+        report = self.grade("interpolations_same.py", "A", before, after, expect=False)
+        self.assertIn("statement", report["failures"][0])
 
-    def assert_exit_2(self, result):
-        code, out, err = self.grade(result)
-        self.assertEqual(code, 2)
-        self.assertEqual(out, [])
-        self.assertTrue(err.strip())
+    def test_a_different_tag_fails(self):
+        text = HEAD + "const db = postgres('x')\nexport const q = %s`select 1`\n"
+        before = self.write("before.ts", text % "sql")
+        after = self.write("after.ts", text % "db")
+        self.grade("interpolations_same.py", "A", before, after, expect=False)
 
-    def test_an_unreadable_result_exits_2(self):
-        self.assert_exit_2(os.path.join(self.root, "missing.json"))
-        bad = os.path.join(self.root, "bad.json")
-        write(bad, "{not json")
-        self.assert_exit_2(bad)
-        shape = os.path.join(self.root, "shape.json")
-        write(shape, json.dumps({"cases": "x"}))
-        self.assert_exit_2(shape)
+    def test_sql_files_pass_and_fail(self):
+        before = self.write("before.sql", "select a from t where b = 1")
+        after = self.write("after.sql", "SELECT a\nFROM t\nWHERE b = 1")
+        self.grade("interpolations_same.py", "A", before, after, expect=True)
+        other = self.write("other.sql", "SELECT a\nFROM t")
+        self.grade("interpolations_same.py", "A", before, other, expect=True)
+        self.grade("interpolations_same.py", "A", before, self.write("two.sql", "select 1;\nselect 2"), expect=False)
 
-    def test_an_unusable_expect_json_exits_2(self):
-        self.case("opt-a")
-        path = self.trace("a1.jsonl", GOOD, [("Read", {})])
-        result = self.result([("opt-a", [path])])
-        for text in ("[]", "{not json", json.dumps({"expect": "PG-01", "forbid": []}),
-                     json.dumps({"expect": [], "forbid": [], "disabled": "PG-10"})):
-            with self.subTest(text=text):
-                write(os.path.join(self.evals, "opt-a", "expect.json"), text)
-                self.assert_exit_2(result)
+    def test_an_unreadable_file_is_a_failure_not_a_usage_error(self):
+        before = self.write("before.ts", BEFORE)
+        report = self.grade("interpolations_same.py", "A", before, os.path.join(self.tmp, "none.ts"), expect=False)
+        self.assertIn("cannot read", report["failures"][0])
 
-    def test_no_graded_case_exits_2(self):
-        self.case("trigger-x", expect_json=False)
-        path = self.trace("x1.jsonl", GOOD, [("Read", {})])
-        self.assert_exit_2(self.result([("trigger-x", [path])]))
-        self.assert_exit_2(self.result([]))
+    def test_the_tags_option_is_passed_on(self):
+        text = "const db = (x: string) => x\nexport const q = db`select a from t where b = ${1}`\n"
+        before = self.write("before.ts", text)
+        after = self.write("after.ts", text.replace("${1}", "${2}"))
+        self.grade("interpolations_same.py", "A", before, after, expect=True)
+        self.grade("interpolations_same.py", "A", before, after, "--tags", "db", expect=False)
+
+    def test_usage_errors(self):
+        before = self.write("before.ts", BEFORE)
+        self.assertUsage("interpolations_same.py")
+        self.assertUsage("interpolations_same.py", before)
+        self.assertUsage("interpolations_same.py", before, before, before)
+        self.assertUsage("interpolations_same.py", before, before, "--nope")
+        self.assertUsage("interpolations_same.py", before, before, "--tags")
+        self.assertUsage("interpolations_same.py", before, before, "--tags", "a", "--tags", "b")
+
+
+LINES = "".join("line %d\n" % n for n in range(1, 11))
+
+
+def replace_lines(start, end, new):
+    lines = LINES.splitlines(keepends=True)
+    return "".join(lines[: start - 1]) + new + "".join(lines[end:])
+
+
+class OnlyTargetChangesTest(GraderCase):
+    def check(self, after_text, *targets, expect):
+        before = self.write("before.txt", LINES)
+        after = self.write("after.txt", after_text)
+        args = [arg for target in targets for arg in ("--target", target)]
+        return self.grade("only_target_changes.py", "B", before, after, *args, expect=expect)
+
+    def test_the_same_file_passes(self):
+        self.check(LINES, "3-5", expect=True)
+
+    def test_a_change_inside_the_target_passes(self):
+        self.check(replace_lines(3, 5, "new a\nnew b\n"), "3-5", expect=True)
+
+    def test_a_target_that_grows_or_vanishes_passes(self):
+        self.check(replace_lines(3, 5, "x\n" * 7), "3-5", expect=True)
+        self.check(replace_lines(3, 5, ""), "3-5", expect=True)
+
+    def test_a_change_outside_the_target_fails(self):
+        self.check(replace_lines(7, 7, "changed\n"), "3-5", expect=False)
+        self.check(replace_lines(1, 1, "changed\n"), "3-5", expect=False)
+
+    def test_a_line_ending_change_outside_the_target_fails(self):
+        self.check(LINES.replace("line 8\n", "line 8\r\n"), "3-5", expect=False)
+
+    def test_a_deleted_tail_fails(self):
+        self.check("".join(LINES.splitlines(keepends=True)[:9]), "3-5", expect=False)
+
+    def test_two_targets(self):
+        after = replace_lines(2, 3, "a\n").replace("line 7\n", "b\nc\n")
+        self.check(after, "2-3", "7-7", expect=True)
+        self.check(after.replace("line 5\n", "five\n"), "2-3", "7-7", expect=False)
+
+    def test_adjacent_targets_are_valid(self):
+        self.check(replace_lines(1, 6, "new\n"), "1-3", "4-6", expect=True)
+        self.check(replace_lines(1, 6, "new\n") + "extra\n", "1-3", "4-6", expect=False)
+
+    def test_a_target_at_the_start_and_one_at_the_end(self):
+        self.check(replace_lines(1, 2, "x\n"), "1-2", expect=True)
+        self.check(replace_lines(9, 10, "x\n"), "9-10", expect=True)
+
+    def test_the_first_and_last_segment_must_not_overlap(self):
+        before = "a\nb\nc\n"
+        after = "a\n"
+        before_path = self.write("b.txt", before)
+        after_path = self.write("a.txt", after)
+        self.grade("only_target_changes.py", "B", before_path, after_path, "--target", "2-2", expect=False)
+
+    def test_a_middle_segment_is_matched_in_order(self):
+        after = replace_lines(2, 2, "x\n")
+        self.check(after, "2-2", "4-4", expect=True)
+        swapped = "line 1\nline 5\nx\nline 3\ny\nline 6\n"
+        self.check(swapped, "2-2", "4-4", expect=False)
+
+    def test_usage_errors(self):
+        before = self.write("before.txt", LINES)
+        for targets in (
+            ["3-5", "5-7"],
+            ["3-5", "3-5"],
+            ["7-8", "3-5"],
+            ["5-3"],
+            ["0-3"],
+            ["1-11"],
+            ["abc"],
+            ["3"],
+            ["1.5-3"],
+            ["-3-5"],
+        ):
+            with self.subTest(targets=targets):
+                args = [arg for target in targets for arg in ("--target", target)]
+                self.assertUsage("only_target_changes.py", before, before, *args)
+        self.assertUsage("only_target_changes.py", before, before)
+        self.assertUsage("only_target_changes.py", before, "--target", "1-2")
+        self.assertUsage("only_target_changes.py", before, before, before, "--target", "1-2")
+        self.assertUsage("only_target_changes.py", before, before, "--target")
+        self.assertUsage("only_target_changes.py", before, before, "--nope", "--target", "1-2")
+
+    def test_an_unreadable_file_is_a_failure(self):
+        before = self.write("before.txt", LINES)
+        self.grade(
+            "only_target_changes.py", "B", before, os.path.join(self.tmp, "none.txt"), "--target", "1-2", expect=False
+        )
+
+
+FIRST = "SELECT a,\n  b\nFROM t AS x\nWHERE c;\n\nSELECT d\nFROM u AS y;\n"
+SECOND_IN_LOWER = FIRST.replace("SELECT d\nFROM u AS y", "select d\nfrom u as y")
+
+
+class StyleMatchesTest(GraderCase):
+    def style(self, **change):
+        return self.write("style.json", json.dumps({**DEFAULT_STYLE, **change}))
+
+    def check(self, first_text, *extra, second_text=None, expect, **change):
+        first = self.write("first.sql", first_text)
+        second = self.write("second.sql", first_text if second_text is None else second_text)
+        return self.grade(
+            "style_matches.py", "C", first, second, "--style", self.style(**change), *extra, expect=expect
+        )
+
+    def test_a_file_in_the_style_passes(self):
+        self.check(FIRST, expect=True)
+
+    def test_a_second_run_that_differs_fails(self):
+        report = self.check(FIRST, second_text=FIRST + "\n", expect=False)
+        self.assertIn("second", report["failures"][0])
+
+    def test_a_keyword_case_that_differs_fails(self):
+        self.check(SECOND_IN_LOWER, expect=False)
+        self.check(FIRST, expect=False, keyword_case="lower")
+
+    def test_two_statements_that_vote_differently_fail_the_expected_value(self):
+        self.check(SECOND_IN_LOWER, expect=False, keyword_case="lower")
+
+    def test_an_indent_that_differs_fails(self):
+        self.check(FIRST, expect=False, indent="4 spaces")
+        self.check(FIRST, expect=False, indent="tab")
+
+    def test_a_clause_layout_that_differs_fails(self):
+        self.check("SELECT a FROM t;\n", expect=False)
+        self.check(FIRST, expect=False, clause_per_line=False)
+
+    def test_a_comma_that_differs_fails(self):
+        self.check("SELECT a\n  , b\nFROM t;\n", expect=False)
+        self.check(FIRST, expect=False, comma="leading")
+
+    def test_the_comma_is_not_checked_when_clause_per_line_is_false(self):
+        text = "SELECT a, b FROM t AS x;\n"
+        self.check(text, expect=True, clause_per_line=False)
+        self.check(text, expect=True, clause_per_line=False, comma="leading")
+
+    def test_an_alias_that_differs_fails(self):
+        self.check("SELECT a\nFROM t x;\n", expect=False)
+        self.check(FIRST, expect=False, alias_as=False)
+
+    def test_a_property_with_no_vote_passes(self):
+        self.check("SELECT 1;\n", expect=True)
+
+    def test_a_nested_fragment_statement_is_not_voted(self):
+        text = HEAD + "export const q = (c: boolean) => sql`\n  SELECT a\n  FROM t ${c ? sql`where b` : sql``}\n`\n"
+        first = self.write("first.ts", text)
+        second = self.write("second.ts", text)
+        self.grade("style_matches.py", "C", first, second, "--style", self.style(), expect=True)
+
+    def test_the_target_limits_the_statements_that_are_voted(self):
+        self.check(SECOND_IN_LOWER, "--target", "1-4", expect=True)
+        self.check(SECOND_IN_LOWER, "--target", "6-7", expect=False)
+
+    def test_a_statement_outside_the_target_is_not_counted(self):
+        self.check(FIRST, "--target", "2-4", expect=False)
+
+    def test_a_target_with_no_statement_fails(self):
+        report = self.check(FIRST, "--target", "5-5", expect=False)
+        self.assertIn("no statement", report["failures"][0])
+
+    def test_the_tags_option_is_passed_on(self):
+        text = "const db = (x: string) => x\nexport const q = db`\nSELECT a\nFROM t\n`\n"
+        first = self.write("first.ts", text)
+        self.grade("style_matches.py", "C", first, first, "--style", self.style(), expect=False)
+        self.grade("style_matches.py", "C", first, first, "--style", self.style(), "--tags", "db", expect=True)
+
+    def test_usage_errors(self):
+        first = self.write("first.sql", FIRST)
+        style = self.style()
+        bad_json = self.write("bad.json", "{")
+        missing_key = self.write("missing.json", json.dumps({"keyword_case": "upper"}))
+        wrong_type = self.write("wrong.json", json.dumps({**DEFAULT_STYLE, "alias_as": "yes"}))
+        for args in (
+            [],
+            [first],
+            [first, first],
+            [first, first, "--style"],
+            [first, first, "--style", style, "extra"],
+            [first, first, "--style", style, "--style", style],
+            [first, first, "--style", style, "--nope"],
+            [first, first, "--style", bad_json],
+            [first, first, "--style", missing_key],
+            [first, first, "--style", wrong_type],
+            [first, first, "--style", os.path.join(self.tmp, "none.json")],
+            [first, first, "--style", style, "--target", "3-2"],
+            [first, first, "--style", style, "--target", "1-99"],
+            [first, first, "--style", style, "--target", "x"],
+            [first, first, "--style", style, "--target", "1-2", "--target", "3-4"],
+            [first, first, "--style", style, "--tags"],
+        ):
+            with self.subTest(args=args):
+                self.assertUsage("style_matches.py", *args)
 
 
 if __name__ == "__main__":

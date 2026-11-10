@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: format-no-rules-file
+description: Seam 4 format case with no safe tool and no rules file. The default style applies, the second run changes nothing, and the final message suggests /sql setup.
+tags: [format, written-style, no-rules-file]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 16
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    In the file `notes-store.ts` (it is in the current folder, and the current folder is the repo root), run `/sql format` on line 5 only. Change no other line. When the first run is done, copy the file to `first-run.ts` with the Write tool (Read the file, then Write the same text to the new path). Then run `/sql format` a second time on the same template (its line range may have moved). In your final message, show the whole file as it was after the first run, in a code block, and say whether the second run changed the file.

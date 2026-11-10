@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import re
 import unittest
@@ -11,6 +12,14 @@ GRAPH_IDS = [f"GRAPH-{n:02d}" for n in range(1, 8)]
 MAINT_IDS = [f"MAINT-{n:02d}" for n in range(1, 4)]
 COST_IDS = [f"COST-{n:02d}" for n in range(1, 9)]
 MONO_IDS = ["MONO-01", "MONO-02"]
+SEC_IDS = [f"SEC-{n:02d}" for n in range(1, 11)]
+ZIZMOR_MAPPING = {
+    "unpinned-uses": "SEC-01", "excessive-permissions": "SEC-03", "template-injection": "SEC-04",
+    "artipacked": "SEC-05", "dangerous-triggers": "SEC-07", "secrets-inherit": "SEC-08",
+    "cache-poisoning": "SEC-09",
+}
+TOOLS_SECTIONS = ["Detection", "Install hints", "Running the tools", "Merging the output",
+                  "zizmor to SEC mapping", "Pin a SHA", "Offline Node support list"]
 
 
 def module_files():
@@ -200,6 +209,124 @@ class CostAndMonorepoRules(unittest.TestCase):
         self.assertIn("`monorepo`", text)
 
 
+class SecurityRules(unittest.TestCase):
+    def setUp(self):
+        self.sec = dict(rule_entries(rule_files()["security"]))
+
+    def test_the_security_file_holds_sec_01_to_sec_10_in_order(self):
+        self.assertEqual(list(self.sec), SEC_IDS)
+
+    def test_the_severity_levels_follow_the_spec_table(self):
+        for rule_id, fields in self.sec.items():
+            expected = "critical" if rule_id in ("SEC-04", "SEC-06", "SEC-07") else "required"
+            self.assertEqual(level(fields), expected, rule_id)
+
+    def test_sec_04_has_a_critical_part_for_untrusted_contexts_and_a_required_part(self):
+        fields = self.sec["SEC-04"]
+        self.assertRegex(fields["Severity"], r"critical \(.*untrusted.*\), required \(.*matrix")
+        text = " ".join(fields.values())
+        for context in ("github.event.*", "github.head_ref", "inputs.*", "secrets.*", "matrix.*"):
+            self.assertIn(context, text)
+
+    def test_sec_06_is_critical_as_a_whole(self):
+        self.assertEqual(self.sec["SEC-06"]["Severity"].strip(), "critical")
+
+    def test_sec_07_is_critical_for_a_pr_head_checkout_and_required_for_the_plain_use(self):
+        fields = self.sec["SEC-07"]
+        self.assertRegex(fields["Severity"], r"critical \(.*PR head.*\), required \(.*plain use")
+        text = " ".join(fields.values())
+        for context in ("github.event.pull_request.head.sha", "github.event.workflow_run.head_sha"):
+            self.assertIn(context, text)
+
+    def test_the_rule_text_holds_its_key_phrases(self):
+        phrases = {
+            "SEC-01": ["40-character commit SHA"], "SEC-02": [".github/dependabot.yml", "github-actions"],
+            "SEC-03": ["contents: read"], "SEC-04": ["${{ ... }}", "env:"],
+            "SEC-05": ["persist-credentials: false"],
+            "SEC-06": ["submodules: recursive", "actions/create-github-app-token"],
+            "SEC-07": ["pull_request_target", "workflow_run"], "SEC-08": ["secrets: inherit"],
+            "SEC-09": ["privileged trigger"], "SEC-10": ["--audit-level=high", "security-audit.yml"],
+        }
+        for rule_id, wanted in phrases.items():
+            for phrase in wanted:
+                self.assertIn(phrase, self.sec[rule_id]["Rule"], rule_id)
+
+    def test_every_check_is_mechanical(self):
+        for rule_id, fields in self.sec.items():
+            self.assertTrue(fields["Check"].startswith("mechanical"), rule_id)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.sec.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_sec_01_fix_points_to_the_sha_lookup_in_tools_md(self):
+        self.assertIn("tools.md", self.sec["SEC-01"]["Fix"])
+
+    def test_the_file_says_which_rules_have_critical_parts(self):
+        text = read(rule_files()["security"])
+        self.assertIn("SEC-04, SEC-06 and SEC-07", text)
+
+
+class ToolsModule(unittest.TestCase):
+    def setUp(self):
+        self.text = read(os.path.join(SKILL, "tools.md"))
+
+    def section(self, name):
+        start = self.text.index(f"## {name}")
+        end = self.text.find("\n## ", start + 1)
+        return self.text[start:end if end != -1 else len(self.text)]
+
+    def test_it_has_the_seven_sections_in_order(self):
+        headings = re.findall(r"^## (.+)$", self.text, re.M)
+        self.assertEqual(headings, TOOLS_SECTIONS)
+
+    def test_detection_uses_the_intake_fact_only(self):
+        section = self.section("Detection")
+        self.assertIn("installed_tools", section)
+        self.assertIn("installed: true", section)
+
+    def test_the_install_hints_name_the_three_tools(self):
+        section = self.section("Install hints")
+        for hint in ("brew install actionlint", "uvx zizmor", "brew install zizmor", "brew install pinact"):
+            self.assertIn(hint, section)
+        self.assertIn("Install it with", section)
+
+    def test_the_run_commands_use_the_default_persona(self):
+        section = self.section("Running the tools")
+        self.assertIn("actionlint -format", section)
+        self.assertIn("zizmor --format=json-v1", section)
+        self.assertIn("no `--persona` flag", section)
+
+    def test_the_mapping_table_has_exactly_the_seven_audits_and_every_sec_id_exists(self):
+        section = self.section("zizmor to SEC mapping")
+        rows = re.findall(r"^\| `([a-z-]+)` \| (SEC-\d\d)", section, re.M)
+        self.assertEqual(dict(rows), ZIZMOR_MAPPING)
+        self.assertEqual(len(rows), 7)
+        known = {rule_id for _, rule_id, _ in all_rules()}
+        for audit, sec_id in rows:
+            self.assertIn(sec_id, known, audit)
+
+    def test_the_mapping_table_has_the_header_of_the_decision(self):
+        self.assertIn("| zizmor audit | SEC rule |", self.section("zizmor to SEC mapping"))
+
+    def test_the_merge_text_gives_one_row_with_the_sec_severity(self):
+        section = self.section("Merging the output")
+        for phrase in ("row + 1", "never write the audit id", "suggestion", "once", "`actionlint-<kind>`",
+                       "whatever zizmor says about its own severity"):
+            self.assertIn(phrase, section)
+
+    def test_the_pin_section_names_pinact_and_the_annotated_tag_dereference(self):
+        section = self.section("Pin a SHA")
+        for phrase in ("pinact run", "git/ref/tags", "git/tags/<sha>", "annotated"):
+            self.assertIn(phrase, section)
+
+    def test_the_offline_block_parses_with_the_three_fields(self):
+        block = re.search(r"```json\n(.*?)\n```", self.section("Offline Node support list"), re.S).group(1)
+        data = json.loads(block)
+        self.assertEqual(sorted(data), ["date", "majors", "newest_lts"])
+        self.assertIn(data["newest_lts"], data["majors"])
+
+
 class Router(unittest.TestCase):
     def setUp(self):
         self.text = read(os.path.join(SKILL, "SKILL.md"))
@@ -234,7 +361,20 @@ class Router(unittest.TestCase):
         self.assertLess(self.text.index("## Intake"), self.text.index("## Pick the branch"))
         intake = self.text[self.text.index("## Intake"):self.text.index("## Pick the branch")]
         self.assertIn("before you pick a branch", intake.lower())
-        self.assertIn("scripts/node-support-offline.json", self.text)
+        self.assertIn("tools.md", intake)
+        self.assertNotIn("node-support-offline", self.text)
+
+    def test_the_router_points_to_the_tools_module_and_the_security_rules(self):
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("[tools.md](tools.md)", modules)
+        self.assertIn("offline list", modules)
+        self.assertIn("SEC-01 to SEC-10", modules)
+        self.assertIn("[rules/security.md](rules/security.md)", modules)
+
+    def test_the_intake_script_bullet_says_it_reads_the_offline_node_list_from_the_tools_module(self):
+        modules = self.text[self.text.index("## Modules"):]
+        bullet = next(line for line in modules.splitlines() if "scripts/intake.py" in line)
+        self.assertIn("reads the dated offline Node list from [tools.md](tools.md)", bullet)
 
     def test_the_naming_rule_09_reads_the_intake_fact_not_gh_calls(self):
         fields = dict(rule_entries(rule_files()["naming"]))["NAME-09"]
@@ -243,7 +383,8 @@ class Router(unittest.TestCase):
 
     def test_another_edit_points_to_every_rule_file(self):
         bullet = self.text[self.text.index("**Another edit**"):self.text.index("## Modules")]
-        for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/cost.md", "rules/maintainability.md"):
+        for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/cost.md", "rules/security.md",
+                          "rules/maintainability.md"):
             self.assertIn(rule_file, bullet)
         self.assertIn("rules/monorepo.md", bullet)
         self.assertIn("when the intake finds a monorepo", bullet)
@@ -323,6 +464,31 @@ class ReviewSteps(unittest.TestCase):
         self.assertIn("create values", section)
         for banned in ("gh api", "command -v", "interim"):
             self.assertNotIn(banned, section)
+
+    def test_it_loads_the_security_file_and_names_the_tools_module(self):
+        self.assertIn("rules/security.md", self.text)
+        self.assertIn("tools.md", self.text)
+
+    def test_step_4_points_to_the_tools_module_for_the_hints(self):
+        step = self.text[self.text.index("\n4. take the tool status"):self.text.index("\n5.")]
+        self.assertIn("[tools.md](tools.md)", step)
+
+    def test_the_tool_step_runs_the_tools_only_when_on_path_and_merges_the_output(self):
+        step = self.text[self.text.index("run the installed tools"):]
+        step = step[:step.index("\n7.")]
+        self.assertIn("`installed: true`", step)
+        self.assertIn("merging the output", step)
+
+    def test_the_security_and_tool_facts_section_names_what_it_reads(self):
+        start = self.text.index("## security and tool facts")
+        section = self.text[start:self.text.index("\n## ", start + 1)]
+        for phrase in (".github/dependabot.yml", "severity of its sec rule part", "suggestion", "no other command"):
+            self.assertIn(phrase, section)
+
+    def test_the_tool_status_section_points_to_tools_md_for_the_hints(self):
+        start = self.text.index("## tool status")
+        section = self.text[start:self.text.index("\n## ", start + 1)]
+        self.assertIn("tools.md", section)
 
     def test_it_makes_no_edit(self):
         self.assertIn("edits nothing", self.text)
