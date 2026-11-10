@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCH = os.path.join(HERE, "launch.py")
@@ -220,6 +221,21 @@ class LaunchTestCase(unittest.TestCase):
     def option(self, call, flag):
         return call["argv"][call["argv"].index(flag) + 1]
 
+    def assert_start_command(self, command):
+        """The start command is the plain one plus `--session-id <uuid>`. Returns the session ID."""
+        base = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium"
+        self.assertTrue(command.startswith(base + " --session-id "), command)
+        session_id = command[len(base + " --session-id "):]
+        self.assertEqual(str(uuid.UUID(session_id)), session_id)
+        return session_id
+
+    def lineage(self):
+        path = os.path.join(self.folder, "lineage.jsonl")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle.read().splitlines()]
+
     def prompt_with_handle(self):
         return f"Read {self.quoted_handoff} and follow it. You are the successor of Orca terminal {OLD_HANDLE}. Close that terminal only after your takeover is done."
 
@@ -232,6 +248,49 @@ class LaunchTestCase(unittest.TestCase):
 
     def manual_text(self):
         return f"the handoff file is at {self.quoted_handoff}; start the successor with {self.manual_command()}"
+
+
+class LineageTest(LaunchTestCase):
+    def test_a_confirmed_start_writes_one_line(self):
+        before = time.time()
+        self.launch()
+        session_id = self.assert_start_command(self.option(self.call("terminal create"), "--command"))
+        (entry,) = self.lineage()
+        self.assertEqual({key: entry[key] for key in entry if key != "time"},
+                         {"successor": NEW_HANDLE, "predecessor": OLD_HANDLE, "predecessor_session": SESSION, "successor_session": session_id})
+        self.assertGreaterEqual(entry["time"], before)
+
+    def test_every_role_writes_a_line(self):
+        for role in ("plain", "coordinator"):
+            with self.subTest(role=role):
+                self.launch(self.arguments(role=role))
+                self.assertEqual(self.lineage()[-1]["successor"], NEW_HANDLE)
+
+    def test_a_worker_writes_a_line(self):
+        worker = self.arguments(role="worker") + [OLD_HANDLE, TASK, DISPATCH, COORDINATOR]
+        self.launch(worker)
+        self.assertEqual(self.lineage()[0]["predecessor"], OLD_HANDLE)
+
+    def test_the_manual_fallback_writes_no_line(self):
+        self.scenario["status"] = reply({"app": {"running": False}, "runtime": {"reachable": False}})
+        status, _text = self.launch()
+        self.assertEqual(status, "manual")
+        self.assertIsNone(self.lineage())
+
+    def test_a_failed_start_writes_no_line(self):
+        self.scenario["terminal wait"] = reply({"wait": {"satisfied": False}})
+        status, _text = self.launch()
+        self.assertEqual(status, "failed")
+        self.assertIsNone(self.lineage())
+
+    def test_no_predecessor_handle_writes_no_line(self):
+        self.launch(handle=None)
+        self.assertIsNone(self.lineage())
+
+    def test_an_unusable_lineage_entry_does_not_fail_the_handoff(self):
+        os.mkdir(os.path.join(self.folder, "lineage.jsonl"))
+        status, text = self.launch()
+        self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
 
 
 class PlainSuccessTest(LaunchTestCase):
@@ -250,10 +309,7 @@ class PlainSuccessTest(LaunchTestCase):
         self.assertEqual(self.option(create, "--worktree"), "path:" + self.worktree)
         self.assertIn("--title=Fix the thing ↻1", create["argv"])
         command = self.option(create, "--command")
-        self.assertEqual(
-            command,
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium",
-        )
+        self.assert_start_command(command)
         self.assertNotIn("Read ", command)  # the prompt is sent after the idle wait
         self.assertNotIn("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", command)  # it breaks Orca's idle detection after the first turn (thirteenth amendment on #8)
 
@@ -283,9 +339,10 @@ class PlainSuccessTest(LaunchTestCase):
     def test_empty_model_mode_and_effort_pass_no_flag(self):
         status, _ = self.launch(self.arguments(model="", permission_mode="", effort=""))
         self.assertEqual(status, "ok")
-        self.assertEqual(self.option(self.call("terminal create"), "--command"),
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude",
-        )
+        command = self.option(self.call("terminal create"), "--command")
+        prefix = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --session-id "
+        self.assertTrue(command.startswith(prefix), command)
+        self.assertEqual(str(uuid.UUID(command[len(prefix):])), command[len(prefix):])
         self.assertIn(shlex.quote(self.prompt_without_handle()), self.read("manual"))
         self.assertNotIn("--model", self.read("manual"))
 
@@ -473,8 +530,7 @@ class SharedRolePathTest(LaunchTestCase):
         for _role, status, text in self.run_roles():
             self.assertEqual((status, text), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
             self.assertEqual(self.names(), ["status", "worktree list", "terminal show", "terminal create", "terminal wait", "terminal send"])
-            self.assertEqual(self.option(self.call("terminal create"), "--command"),
-                "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
+            self.assert_start_command(self.option(self.call("terminal create"), "--command"))
             self.assertEqual(self.option(self.call("terminal send"), "--text"), self.prompt_with_handle())
             self.assertEqual(self.read("manual"), self.manual_text())
 
@@ -1192,8 +1248,7 @@ class WorkerSuccessTest(WorkerTestCase):
             self.names(),
             ["status", "worktree list", "orchestration worker-show", "terminal show", "terminal create", "terminal wait", "terminal send", "orchestration send"],
         )
-        self.assertEqual(self.option(self.call("terminal create"), "--command"),
-            "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium")
+        self.assert_start_command(self.option(self.call("terminal create"), "--command"))
         self.assertEqual(self.option(self.call("terminal send"), "--text"), self.worker_prompt())
         self.assertEqual(self.option(self.call("orchestration worker-show"), "--dispatch"), DISPATCH)
         self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")

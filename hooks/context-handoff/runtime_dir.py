@@ -129,10 +129,24 @@ def _open_regular_file(dir_fd, name, flags, mode=0o600):
     return file_fd
 
 
-def read_file(dir_fd, name):
+def append_line(dir_fd, name, text):
+    """Append text to `name` in the folder (created if needed) on an O_APPEND descriptor.
+
+    Raises OSError for an entry that is not a regular file or a failed write.
+    """
+    file_fd = _open_regular_file(dir_fd, name, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+    try:
+        data = text.encode("utf-8")
+        while data:
+            data = data[os.write(file_fd, data):]
+    finally:
+        os.close(file_fd)
+
+
+def read_file(dir_fd, name, limit=MAX_READ_BYTES):
     """Return the UTF-8 text of `name` in the folder, or None when it does not exist.
 
-    Raises for a file that is not a regular file, is over MAX_READ_BYTES, or is not valid UTF-8.
+    Raises for a file that is not a regular file, is over `limit` bytes, or is not valid UTF-8.
     """
     try:
         file_fd = _open_regular_file(dir_fd, name, os.O_RDONLY)
@@ -144,9 +158,9 @@ def read_file(dir_fd, name):
         _close_quietly(file_fd)
         raise
     with handle:
-        data = handle.read(MAX_READ_BYTES + 1)
-    if len(data) > MAX_READ_BYTES:
-        raise OSError(f"{name} is over {MAX_READ_BYTES} bytes")
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise OSError(f"{name} is over {limit} bytes")
     return data.decode("utf-8")
 
 
