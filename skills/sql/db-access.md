@@ -1,6 +1,6 @@
 # Database access module
 
-This module holds the only way that the skill reads a plan from a real database. It covers `SELECT` statements only. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
+This module holds the only way that the skill reads a plan from a real database, and the catalog facts of the `facts` action. It covers `SELECT` statements only. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
 
 ## Rules
 
@@ -70,7 +70,7 @@ A statement with `static_review_only` true (DDL, `VACUUM`, `CREATE INDEX CONCURR
 
 ## No full result
 
-`pg_run explain` returns a plan only. It never returns result rows. Claude never runs a statement to read its rows.
+`pg_run explain` returns a plan only. `pg_run facts` returns catalog metadata only. Neither returns result rows. Claude never runs a statement to read its rows.
 
 ## Timeouts and versions
 
@@ -99,6 +99,27 @@ Stub. Ticket #396 fills this section with the write path. It holds no behavior y
 
 Stub. Ticket #397 fills this section with the `diff` action. It holds no behavior yet.
 
-## Facts (stub)
+## Facts
 
-Stub. Ticket #400 fills this section with the `facts` action. It holds no behavior yet.
+`facts` reads the nullability and the type of columns from the catalog. Run it:
+
+```
+python3 <skill folder>/scripts/pg_run.py facts --repo <repo root> --service <name> --names <name> [<name> ...]
+```
+
+A name is `table.column` or `schema.table.column`. The parts are matched exactly (case-sensitive, with no quote handling and no case folding), so write them as they are in the catalog. An unqualified table is found through the `search_path` of the session. A name of another shape, or with a character that is not printable ASCII, is `missing` and is never sent to the server. When no name is sent, the command makes no `psql` call at all. The command takes no statement, so it needs no guard and no `--mode`. At least one name is required (a usage error, exit 2, otherwise). A name that starts with `-` is a usage error.
+
+The command checks the allowlist first, as `explain` does. It reads the server version, then runs one fixed catalog query in one read-only transaction, with the session options and the timeouts of the Timeouts and versions section. The names reach the server only as one quoted value, never as SQL text.
+
+With `ok` true, the object has `action` (`facts`), `service` and `facts`. `facts` has one key for each name that you gave, in the same order. The value is one of:
+
+- `{"nullable": <true, false or null>, "type": "<type>"}`: the column exists. `nullable` is `false` for a `NOT NULL` column of a table. It is `null` for a column of a view or a materialized view, because the catalog holds no nullability for it. `type` is the type as the catalog writes it (`integer`, `date`, `numeric(10,2)`, a domain name for a domain).
+- `{"missing": true}`: the column or the table does not exist, or the name has an invalid shape.
+
+The output holds catalog metadata only: no row data. The errors are the kinds of the pg_run section (`not_allowed`, `connection_failed`, `statement_failed`, `psql_failed`, `bad_output`), with the same redaction and the same exit codes (0 when `ok` is true, 1 when `ok` is false, 2 for a usage error).
+
+What Claude does:
+
+- Read only the keys that the rules need. A `nullable` of `null` and `missing` are not facts: the rule uses the repo fact instead.
+- A very long list of names can exceed the argument length limit of the system. The command then gives `psql_failed`. Send fewer names.
+- Never run `psql` by hand to read the catalog.

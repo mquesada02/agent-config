@@ -1,6 +1,6 @@
 # PostgreSQL dialect module
 
-This module holds the `PG-*` rules of the static optimize report. They need no database: each rule reads the SQL text and, where its entry says so, the repo schema. A rule that needs a fact fires only when the repo shows the fact.
+This module holds the `PG-*` rules of the static optimize report. They work with no database: each rule reads the SQL text and, where its entry says so, the repo schema. A rule that needs a fact fires only when the repo shows the fact, or, with an allowlisted database, when the catalog shows it (the optimize module says how).
 
 A rewrite is a fix of a `PG-*` finding that replaces the SQL text of a statement (it can change the result). A fix that only gives advice, with no replacement SQL, is not a rewrite.
 
@@ -31,7 +31,7 @@ A rewrite is a fix of a `PG-*` finding that replaces the SQL text of a statement
 
 - **Title:** `NOT IN` over a nullable column
 - **Severity:** critical
-- **Detects:** `NOT IN (subquery)` where the column that the subquery selects is nullable (a `NULL` in it makes `NOT IN` return no rows). The column on the left of `NOT IN` is not checked. Without a database this fires only when the repo shows the fact: a migration or schema column that the schema shows as nullable (a column definition with no `NOT NULL` and no `PRIMARY KEY`; a primary key is not nullable). Otherwise the rule does not fire.
+- **Detects:** `NOT IN (subquery)` where the column that the subquery selects is nullable (a `NULL` in it makes `NOT IN` return no rows). The column on the left of `NOT IN` is not checked. With an allowlisted database, the fact comes from the catalog: the `facts` action says that the column is nullable. Without a database this fires only when the repo shows the fact: a migration or schema column that the schema shows as nullable (a column definition with no `NOT NULL` and no `PRIMARY KEY`; a primary key is not nullable). The same repo fact is used when the catalog gives no answer. Otherwise the rule does not fire.
 - **Why it matters:** When one selected value is `NULL`, the comparison is never true, so the query returns no rows at all.
 - **Fix:** Use `NOT EXISTS`, or filter the subquery with `WHERE <column> IS NOT NULL`.
 - **Example:** The bad form, then the good form.
