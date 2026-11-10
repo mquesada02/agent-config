@@ -373,6 +373,24 @@ class ContractTest(unittest.TestCase):
                 proc, result = out(["-"], document)
                 self.assertEqual((proc.returncode, result["error"]), (1, "bad_input"))
 
+    def test_a_non_finite_number_gives_bad_input_and_the_output_is_strict_json(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                document = '[{"Plan": {"Node Type": "Seq Scan", "Plan Rows": 100, "Actual Rows": %s, "Actual Loops": 1}}]'
+                proc = run(["-"], document % constant)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                result = json.loads(proc.stdout, parse_constant=lambda name: self.fail(f"bare {name} in the output"))
+                self.assertEqual((result["ok"], result["error"]), (False, "bad_input"))
+
+    def test_a_plan_nested_too_deep_gives_bad_input_and_no_traceback(self):
+        for depth in (1000, 5000):
+            with self.subTest(depth=depth):
+                text = '{"Node Type": "Result", "Actual Rows": 1, "Actual Loops": 1, "Plans": [' * depth
+                text = '[{"Plan": ' + text + "{}" + "]}" * depth + "}]"
+                proc, result = out(["-"], text)
+                self.assertEqual((proc.returncode, proc.stderr), (1, ""), proc.stderr[-300:])
+                self.assertEqual((result["ok"], result["error"]), (False, "bad_input"))
+
     def test_empty_input_gives_bad_input(self):
         proc, result = out(["-"], "")
         self.assertEqual((proc.returncode, result["error"]), (1, "bad_input"))

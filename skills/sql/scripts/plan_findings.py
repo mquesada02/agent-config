@@ -12,6 +12,7 @@ be fractional (PostgreSQL 18). The script uses only the standard library, opens 
 Output: one line of JSON that starts with {"ok": ...}. With ok true: server_version_num, analyze, notes,
 findings (each: rule, node, path, measured, threshold) and plan (the input plan, unchanged). A finding has no
 severity: the severity is in the dialect module. A plan with no actual values gives no finding and a note.
+Text that is not JSON (NaN and Infinity included) or a plan nested too deep gives ok false and error bad_input.
 Exit code: 0 when ok is true, 1 when ok is false, 2 for a usage error (one line on stderr, nothing on stdout).
 """
 import argparse
@@ -178,6 +179,23 @@ def evaluate(document, version_argument):
     return analyze_plan(plan, version)
 
 
+def reject_constant(name):
+    raise ValueError(f"{name} is not JSON")
+
+
+def run(text, version_argument):
+    """The result object and its output line for the input text."""
+    try:
+        # NaN and Infinity are not JSON: they would make the output line invalid JSON, and NaN fails every comparison.
+        result = evaluate(json.loads(text, parse_constant=reject_constant), version_argument)
+        return result, json.dumps(result)
+    except RecursionError:
+        result = failure("bad_input", "the plan is nested too deep")
+    except ValueError:
+        result = failure("bad_input", "the input is not JSON")
+    return result, json.dumps(result)
+
+
 def read_text(path):
     try:
         if path is None or path == "-":
@@ -198,13 +216,8 @@ def main(argv):
     except Usage as error:
         print(f"plan_findings.py: {error}", file=sys.stderr)
         return 2
-    try:
-        document = json.loads(text)
-    except ValueError:
-        result = failure("bad_input", "the input is not JSON")
-    else:
-        result = evaluate(document, args.server_version_num)
-    print(json.dumps(result))
+    result, line = run(text, args.server_version_num)
+    print(line)
     return 0 if result["ok"] else 1
 
 
