@@ -13,27 +13,14 @@ BEGIN marker up to its END line; R2 the block scalar state goes on after that EN
 marker is dropped and a second unclosed BEGIN marker goes on to its END line; R4 an unclosed BEGIN marker with no END
 line drops to the end of the input; R5 a complete pair stays; R6 the docs changes.
 """
-import os
-import re
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 class DropCases:
@@ -131,14 +118,9 @@ class FilterSeamTest(DropCases, unittest.TestCase):
         return filt(text)
 
 
-def normalized(text):
-    return re.sub(r"\s+", " ", text)
-
-
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def bullet(self, first_words):
         docstring = self.read("redact_filter.py").split('"""')[1]

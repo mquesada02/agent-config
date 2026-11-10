@@ -11,27 +11,14 @@ depth keeps its path; R4 past the cap the rest is dropped when the BEGIN marker 
 drop stops at the next BEGIN marker; R6 no masked value keeps the rest as a normal line; R7 no END line writes nothing
 of the held lines; R8 the docs changes.
 """
-import os
-import re
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 def body_lines(count):
@@ -173,14 +160,9 @@ class FilterSeamTest(JoinedCases, unittest.TestCase):
         self.assertEqual(filt(lines(K + ": " + BEGIN, "MIIE")), "")
 
 
-def normalized(text):
-    return re.sub(r"\s+", " ", text)
-
-
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def test_380_r8_the_pem_hold_bullet_describes_the_joined_line_and_the_cap_gate(self):
         docstring = self.read("redact_filter.py").split('"""')[1]

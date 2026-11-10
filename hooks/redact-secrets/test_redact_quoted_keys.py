@@ -6,18 +6,11 @@ name says "316 story". Fixtures are built from parts, so this file holds no secr
 """
 import unittest
 
-from redact_testkit import redact, run_filter
+from redact_testkit import filt, redact
 
 KEY = "pass" + "word"  # a matched key name
 V = "hunter2"
 V2 = "tail2"
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
 
 
 class QuotedKeyCases:

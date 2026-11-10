@@ -9,10 +9,9 @@ secret-shaped text of its own. The docs checks read the hook files as text: they
 "tests do not call helpers". No input of this file depends on the key column of the empty-key rule or the block
 scalar rule in a rest (the one divergence of story 21), so the seams-agree test skips none.
 """
-import os
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, read_module, redact
 
 K = "pass" + "word"
 TK = "to" + "ken"
@@ -31,17 +30,6 @@ def T(text):
     for name, value in (("@NK", NK), ("@TK", TK), ("@K", K), ("@V", V), ("@P", P), ("@B", BEGIN), ("@E", END)):
         text = text.replace(name, value)
     return text
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 def body_lines(count):
@@ -384,8 +372,7 @@ class SeamsAgree(unittest.TestCase):
 
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def test_347_story_22_rules_docstring_names_the_position_rule(self):
         docstring = self.read("redact_rules.py").split('"""')[1]

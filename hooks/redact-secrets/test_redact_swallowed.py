@@ -6,22 +6,14 @@ Seam 1 is `redact(text)` through the test kit. Seam 2 is the Monitor filter scri
 "Story" numbers (T1 to T9) in a test name are the local stories of ticket spec 403. Fixtures are built from parts,
 so this file holds no secret-shaped text of its own. Placeholders in the comments: SK a secret key, V a secret value.
 """
-import os
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
 V2 = "tail2"
 DEEP = " " * 40  # deeper than every key column in these tests
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
 
 
 class SwallowedCases:
@@ -214,8 +206,7 @@ class SeamAgreementTest(unittest.TestCase):
 
 class SourceAndDocsTest(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return handle.read()
+        return read_module(name)
 
     def test_381_r10_the_filter_no_longer_defines_key_is_live(self):
         self.assertTrue("key_is_live" not in self.read("redact_filter.py"))

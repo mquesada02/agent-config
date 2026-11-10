@@ -8,7 +8,7 @@ import subprocess
 import sys
 import unittest
 
-from redact_testkit import FILTER, filter_env, run_filter
+from redact_testkit import FILTER, filt, filter_env, run_filter
 
 KEY = "pass" + "word"  # a matched key name
 TOK = "to" + "ken"  # a second matched key name
@@ -17,13 +17,6 @@ BEGIN = "-----BEGIN " + "PRIVATE KEY-----"
 END = "-----END " + "PRIVATE KEY-----"
 BEGIN_ENC = "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"
 END_ENC = "-----END " + "ENCRYPTED PRIVATE KEY-----"
-
-
-def filt(text, switch=None):
-    """The text that the filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"), switch)
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
 
 
 def body_lines(count, prefix="body"):

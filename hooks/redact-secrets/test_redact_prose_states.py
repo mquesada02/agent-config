@@ -9,11 +9,9 @@ a key word, `@V` a secret value and `@P` a prose value; `@B` and `@E` are the PE
 parts, so this file holds no secret-shaped text of its own. The docs checks read the hook files as text: they are
 the one exception to "tests go through a public seam".
 """
-import os
-import re
 import unittest
 
-from redact_testkit import HERE, redact, run_filter
+from redact_testkit import filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"
 NK = "redact-" + "sec" + "rets"
@@ -29,17 +27,6 @@ def T(text):
     for name, value in (("@NK", NK), ("@K", K), ("@V", V), ("@P", P), ("@B", BEGIN), ("@E", END)):
         text = text.replace(name, value)
     return text
-
-
-def filt(text):
-    """The text that the Monitor filter writes for a text on stdin."""
-    result = run_filter(text.encode("utf-8", "surrogateescape"))
-    assert result.returncode == 0, result.stderr
-    return result.stdout.decode("utf-8", "surrogateescape")
-
-
-def lines(*parts):
-    return "\n".join(parts) + "\n"
 
 
 def body_lines(count):
@@ -248,14 +235,9 @@ class SeamsAgree(unittest.TestCase):
                 self.assertEqual(redact(text), filt(text), text)
 
 
-def normalized(text):
-    return re.sub(r"\s+", " ", text)
-
-
 class DocsChecks(unittest.TestCase):
     def read(self, name):
-        with open(os.path.join(HERE, name), encoding="utf-8") as handle:
-            return normalized(handle.read())
+        return normalized(read_module(name))
 
     def test_348_story_22_rules_docstring_says_the_state_rules_follow_the_position_rule(self):
         docstring = self.read("redact_rules.py").split('"""')[1]
