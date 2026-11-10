@@ -8,6 +8,8 @@
 !hooks/context-handoff/*.py
 !hooks/forked-skills/
 !hooks/forked-skills/*.py
+!hooks/subagent-readonly/
+!hooks/subagent-readonly/*.py
 !hooks/redact-secrets/
 !hooks/redact-secrets/*.py
 !hooks/workflow-audit/
