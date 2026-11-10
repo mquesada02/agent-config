@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: opt-pgjs-04
+description: Static optimize report for sql.unsafe with a value that is not a constant.
+tags: [optimize, static]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/lookup.ts` on the file `src/lookup.ts` (it is in the current folder). Do not change any file.

@@ -30,12 +30,13 @@ MODULES = {
 
 
 # The modules that are still stubs: MODULES without the source modules that #390 filled
-# and without the style and format modules that #391 filled (format.md keeps #392 for its
-# safe tool path).
+# and the modules that #391 and #393 filled (format.md keeps #392 for its safe tool path;
+# the optimize tickets are asserted by test_sql_optimize_structure.py).
+FILLED = {"style.md", "format.md", "optimize.md", "dialects/postgres.md"}
 STUBS = {
     module: tickets
     for module, tickets in MODULES.items()
-    if not module.startswith("sources/") and module not in ("style.md", "format.md")
+    if not module.startswith("sources/") and module not in FILLED
 }
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
@@ -526,11 +527,16 @@ class FormatCasesTest(unittest.TestCase):
 
 
 class GraderFilesTest(unittest.TestCase):
-    def test_the_graders_folder_holds_the_three_commands_and_no_test_files(self):
+    def test_the_graders_folder_holds_the_grader_commands_and_no_test_files(self):
+        # The format graders of #391 and the optimize graders and runner of #393. The runner
+        # imports the other graders, so a test run leaves a git-ignored __pycache__ folder.
         folder = os.path.join(SKILL_DIR, "graders")
         self.assertEqual(
-            sorted(os.listdir(folder)),
-            ["interpolations_same.py", "only_target_changes.py", "style_matches.py"],
+            sorted(name for name in os.listdir(folder) if name != "__pycache__"),
+            [
+                "grade_eval_results.py", "grade_no_change.py", "grade_report.py", "grade_rule_ids.py",
+                "interpolations_same.py", "only_target_changes.py", "style_matches.py",
+            ],
         )
 
 
