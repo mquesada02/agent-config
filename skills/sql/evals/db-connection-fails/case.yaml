@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: db-connection-fails
+description: A connection that fails is reported with no host, user or database name.
+tags: [optimize, database]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/revenue.ts` on the file `src/revenue.ts` (it is in the current folder). I want the plan of its query from the database through the skill's database path, with the service `app-wronghost`: make one `pg_run` call. Do not change any file. Show the report as the final message, and say in one line what happened to the database call.

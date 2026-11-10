@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: db-off-allowlist
+description: A service that the allowlist does not name gets no database connection.
+tags: [optimize, database]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/revenue.ts` on the file `src/revenue.ts` (it is in the current folder). I want the plan of its query from the database through the skill's database path, with the service `other-db`. Do not change any file. Show the report as the final message, and say in one line what happened to the database request.

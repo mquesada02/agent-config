@@ -1,0 +1,3 @@
+{
+  "expect": ["connection_failed:app-wronghost"]
+}

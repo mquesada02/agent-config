@@ -1,0 +1,4 @@
+{
+  "expect": ["connection_failed:app-badpw"],
+  "sequences_may_differ": false
+}
