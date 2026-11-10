@@ -48,7 +48,15 @@ WORKER_PROMPT = "You are a worker successor. Wait. An Orca dispatch arrives soon
 
 STRAY_NOTE = "a terminal may have been created; check Orca for a stray terminal and close it"
 
+RETRY_STATUS_WORDS = ("failed",)  # the result words that let a rerun pass the claim; escalation-failed is not one: its successor already waits
+
 runtime_dir = None  # imported inside attempt(), so a missing shared module gives one `failed` line instead of a traceback
+
+
+def records_failed_launch(text):
+    """True when the launch file text is exactly the claim line and one result line with a failed status word."""
+    lines = (text or "").splitlines()
+    return len(lines) == 2 and lines[0] == "started" and lines[1].partition(" ")[0] in RETRY_STATUS_WORDS
 
 
 class Reply:
@@ -395,18 +403,42 @@ class Launch:
             " the coordinator may already have the escalation, so check its inbox before you run them"
         )
 
-    def run(self):
-        """Steps 3 to 13 with the launch file. Never raises."""
+    def claim(self):
+        """The claim: only one run per session gets past it. Returns None when this run holds it, else the failure.
+
+        A claim that records a failed launch is replaced, so a rerun of the same command passes. The replacement runs under a lock,
+        so that two reruns cannot both replace it. Any other entry (started, done, or not a regular file) refuses and is left unchanged.
+        """
+        name = self.session + ".launch"
         try:
-            # The claim: only one run per session gets past it.
-            runtime_dir.create_exclusive(self.dir_fd, self.session + ".launch", "started\n")
-        except FileExistsError:  # an entry of any kind; it is never read, and the refusal writes nothing
-            launch_file = os.path.join(self.folder, self.session + ".launch")
-            return self.failed(
-                f"a launch already ran for this session; read {shlex.quote(launch_file)}; if no successor started, remove that file and run the launcher again"
-            )
+            runtime_dir.create_exclusive(self.dir_fd, name, "started\n")
+            return None
+        except FileExistsError:
+            pass
         except OSError:
             return self.failed("cannot write the launch file")
+        try:
+            if records_failed_launch(runtime_dir.read_file(self.dir_fd, name)):  # a refusal of any other entry writes nothing, not even the lock file
+                lock_fd = runtime_dir.lock_file(self.dir_fd, name + ".lock")
+                try:
+                    if records_failed_launch(runtime_dir.read_file(self.dir_fd, name)):  # read again: a run that held the lock may have replaced it
+                        os.unlink(name, dir_fd=self.dir_fd)
+                        runtime_dir.create_exclusive(self.dir_fd, name, "started\n")  # FileExistsError: another run took the claim first
+                        return None
+                finally:
+                    os.close(lock_fd)
+        except (OSError, ValueError):
+            pass
+        launch_file = os.path.join(self.folder, name)
+        return self.failed(
+            f"a launch already ran for this session; read {shlex.quote(launch_file)}; if no successor started, remove that file and run the launcher again"
+        )
+
+    def run(self):
+        """Steps 3 to 13 with the launch file. Never raises."""
+        refusal = self.claim()
+        if refusal:
+            return refusal
         try:
             result = self.execute()
         except Exception as error:
