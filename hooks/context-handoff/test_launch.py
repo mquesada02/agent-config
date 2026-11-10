@@ -888,8 +888,10 @@ class SecondLaunchGuardTest(LaunchTestCase):
         elif kind == "FIFO":
             os.mkfifo(path)
         else:
+            results = {"only started": "", "readable": "ok context handoff done: successor t1\n", "manual": "manual no Orca: start it by hand\n",
+                       "failed": "failed successor failed: the Orca call timed out\n", "escalation-failed": "escalation-failed successor t1 waits\n"}
             with open(path, "w") as handle:
-                handle.write("started\n" if kind == "only started" else "started\nfailed earlier\n")
+                handle.write("started\n" + results.get(kind, "failed earlier\n"))  # "unreadable" keeps a failed record: the unreadable mode must refuse it
             if kind == "unreadable":
                 os.chmod(path, 0)
 
@@ -901,10 +903,19 @@ class SecondLaunchGuardTest(LaunchTestCase):
         self.assertEqual(self.calls(), [])
 
     def test_every_kind_of_existing_launch_file_is_refused(self):
-        for kind in ("readable", "only started", "unreadable", "directory", "symlink to a file", "dangling symlink", "FIFO"):
+        for kind in ("readable", "manual", "only started", "unreadable", "directory", "symlink to a file", "dangling symlink", "FIFO"):
             with self.subTest(kind=kind):
                 self.make_entry(kind)
                 self.assert_refused()
+                self.clear_launch_file()
+
+    def test_a_launch_file_of_a_failed_launch_lets_the_same_command_run_again(self):
+        for kind in ("failed", "escalation-failed"):
+            with self.subTest(kind=kind):
+                self.make_entry(kind)
+                self.assertEqual(self.launch(keep_launch_file=True), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+                self.assertEqual(self.read("launch"), f"started\nok context handoff done: successor {NEW_HANDLE}\n")
+                self.assertEqual(self.launch(keep_launch_file=True), ("failed", self.refusal()))  # the rerun succeeded: the next run is refused as before
                 self.clear_launch_file()
 
     def test_a_manual_file_that_exists_stays_as_it_is(self):
