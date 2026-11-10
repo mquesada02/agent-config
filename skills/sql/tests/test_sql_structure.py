@@ -720,14 +720,16 @@ class FormatSafeToolCasesTest(unittest.TestCase):
 
 class GraderFilesTest(unittest.TestCase):
     def test_the_graders_folder_holds_the_grader_commands_and_no_test_files(self):
-        # The format graders of #391 and the optimize graders and runner of #393. The runner
-        # imports the other graders, so a test run leaves a git-ignored __pycache__ folder.
+        # The format graders of #391, the optimize graders and runner of #393, and the DB graders
+        # and runner of #399. The runners import other graders, so a test run leaves a git-ignored
+        # __pycache__ folder.
         folder = os.path.join(SKILL_DIR, "graders")
         self.assertEqual(
             sorted(name for name in os.listdir(folder) if name != "__pycache__"),
             [
-                "grade_eval_results.py", "grade_no_change.py", "grade_report.py", "grade_rule_ids.py",
-                "interpolations_same.py", "only_target_changes.py", "style_matches.py",
+                "grade_db_eval_results.py", "grade_db_unchanged.py", "grade_eval_results.py",
+                "grade_leak_scan.py", "grade_no_change.py", "grade_refusals.py", "grade_report.py",
+                "grade_rule_ids.py", "interpolations_same.py", "only_target_changes.py", "style_matches.py",
             ],
         )
 
