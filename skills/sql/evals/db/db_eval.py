@@ -233,15 +233,19 @@ def snapshot(state, version, out):
     write_text(out, json.dumps({"version": version, "tables": tables, "sequences": sequences}, indent=2) + "\n")
 
 
+def prepare_repo(case_folder, dest):
+    """Copy the case's repo into dest, run git init there and add the origin of the allowlist key."""
+    shutil.copytree(os.path.join(case_folder, "repo"), dest, dirs_exist_ok=True)
+    for argv in (["git", "init", "-q"], ["git", "remote", "add", "origin", ORIGIN]):
+        if subprocess.run(argv, cwd=dest, capture_output=True).returncode != 0:
+            raise Failure(f"{' '.join(argv[:2])} failed in {dest}")
+
+
 def scaffold(case_folder):
     home = os.environ.get("HOME")
     if not home or not os.path.isabs(home):
         raise Failure("HOME is not set to an absolute path, so scaffold refuses to run")
-    repo = os.path.join(case_folder, "repo")
-    shutil.copytree(repo, os.getcwd(), dirs_exist_ok=True)
-    for argv in (["git", "init", "-q"], ["git", "remote", "add", "origin", ORIGIN]):
-        if subprocess.run(argv, capture_output=True).returncode != 0:
-            raise Failure(f"{' '.join(argv[:2])} failed")
+    prepare_repo(case_folder, os.getcwd())
     write_files(os.path.join(home, ".pg_service.conf"), os.path.join(home, ".pgpass"),
                 os.path.join(home, ".config", "sql-skill", "allowlist.toml"), {"13": 5432, "18": 5432})
 

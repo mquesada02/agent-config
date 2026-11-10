@@ -34,7 +34,9 @@ sys.path.insert(0, HERE)
 import db_eval  # noqa: E402
 
 SKILL_DIR = db_eval.SKILL_DIR
-GRADERS = os.path.join(SKILL_DIR, "graders")
+sys.path.insert(0, os.path.join(SKILL_DIR, "graders"))
+
+import grade_eval_results as results  # noqa: E402
 CASES = os.path.join(HERE, "cases")
 SCRIPTS = ("rules_file", "extract", "allowlist", "pg_run")
 CLAUDE_SECONDS = 900
@@ -66,18 +68,8 @@ def claude_env(state):
     return env
 
 
-def prepare_work_folder(case_folder, work):
-    shutil.copytree(os.path.join(case_folder, "repo"), work)
-    for argv in (["git", "init", "-q"], ["git", "remote", "add", "origin", db_eval.ORIGIN]):
-        if subprocess.run(argv, cwd=work, capture_output=True).returncode != 0:
-            raise db_eval.Failure(f"{' '.join(argv[:2])} failed in {work}")
-
-
 def grader(script, *args):
-    done = subprocess.run([sys.executable, "-I", os.path.join(GRADERS, script), *args],
-                          capture_output=True, text=True)
-    lines = [line for line in done.stdout.splitlines() if line.startswith("FAIL ") and line != "FAIL"]
-    return done.returncode, lines, done.stderr.strip()
+    return results.run_grader(script, list(args))
 
 
 def grade_run(label, trace, expectation, before, after):
@@ -110,7 +102,7 @@ def run_case(state, case_folder, number, out, budget):
     with open(os.path.join(case_folder, "prompt.txt"), encoding="utf-8") as handle:
         prompt = handle.read().strip()
     work = os.path.join(out, f"{name}-{number}-work")
-    prepare_work_folder(case_folder, work)
+    db_eval.prepare_repo(case_folder, work)
     before = {v: os.path.join(out, f"{name}-{number}-before-{v}.json") for v in db_eval.VERSIONS}
     after = {v: os.path.join(out, f"{name}-{number}-after-{v}.json") for v in db_eval.VERSIONS}
     for version in db_eval.VERSIONS:
