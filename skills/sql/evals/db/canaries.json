@@ -1,0 +1,9 @@
+{
+  "password": "cnry-pw-4c8e1d7a92",
+  "wrong_password": "cnry-wrongpw-5b3f0a6e81",
+  "user": "cnry_user_4c8e1d",
+  "dbname": "cnry_db_4c8e1d",
+  "host": "cnry-host-4c8e1d.test.invalid",
+  "host_badpw": "cnry-hostbp-4c8e1d.test.invalid",
+  "host_down": "cnry-hostdn-4c8e1d.test.invalid"
+}
