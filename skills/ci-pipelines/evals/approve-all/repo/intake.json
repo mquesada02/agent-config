@@ -1,0 +1,137 @@
+{
+  "default_branch": {
+    "value": "main",
+    "status": "default",
+    "source": "no default branch found (no gh answer, no origin HEAD)"
+  },
+  "package_manager": {
+    "value": {
+      "manager": "pnpm",
+      "lockfile": "pnpm-lock.yaml"
+    },
+    "status": "detected",
+    "source": "package.json packageManager"
+  },
+  "node_version_app": {
+    "value": "22",
+    "status": "detected",
+    "source": ".nvmrc"
+  },
+  "engines": {
+    "value": [
+      {
+        "path": ".",
+        "value": ">=22",
+        "status": "detected",
+        "source": "./package.json engines.node"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "package_kind": {
+    "value": [
+      {
+        "path": ".",
+        "value": "published",
+        "status": "detected",
+        "source": "./package.json private and publish signals"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "os_claims": {
+    "value": [
+      "linux"
+    ],
+    "status": "default",
+    "source": "no os field in any package.json"
+  },
+  "test_runners": {
+    "value": [],
+    "status": "unknown",
+    "source": "no test runner dependency or config file (no test job)"
+  },
+  "monorepo": {
+    "value": {
+      "monorepo": false,
+      "tool": null
+    },
+    "status": "detected",
+    "source": "no pnpm-workspace.yaml and no workspaces field"
+  },
+  "visibility": {
+    "value": "private",
+    "status": "default",
+    "source": "repository visibility not readable (private, 2 vCPU assumed)"
+  },
+  "runner_labels": {
+    "value": [
+      {
+        "label": "ubuntu-24.04",
+        "kind": "standard",
+        "vcpus": 2,
+        "status": "detected",
+        "source": ".github/workflows/ci.yml"
+      },
+      {
+        "label": "ubuntu-latest",
+        "kind": "standard",
+        "vcpus": 2,
+        "status": "detected",
+        "source": ".github/workflows/ci.yml"
+      }
+    ],
+    "status": "detected",
+    "source": ".github/workflows runs-on values"
+  },
+  "required_checks": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "run_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "existing_workflows": {
+    "value": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/security-audit.yml"
+    ],
+    "status": "detected",
+    "source": ".github/workflows"
+  },
+  "installed_tools": {
+    "value": {
+      "actionlint": {
+        "installed": true,
+        "version": "1.7.7"
+      },
+      "zizmor": {
+        "installed": false,
+        "version": null
+      },
+      "pinact": {
+        "installed": false,
+        "version": null
+      }
+    },
+    "status": "detected",
+    "source": "PATH: actionlint, zizmor, pinact"
+  },
+  "supported_node_majors": {
+    "value": {
+      "majors": [
+        22,
+        24,
+        26
+      ],
+      "newest_lts": 26
+    },
+    "status": "default",
+    "source": "offline list tools.md dated 2026-11-09"
+  }
+}
