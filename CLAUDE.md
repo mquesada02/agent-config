@@ -209,4 +209,4 @@ Docker containers and volumes stay on disk after the session ends. Before you st
 
 ## 15. CPU load
 
-Other sessions and the user share this PC. Run test runners with at most 2 workers, passed on the command line; do not change committed config for it. If the committed config already sets a lower limit, pass no worker flag and no `VITEST_*` variable. Before you start any artificial CPU load, read `~/.claude/docs/agents/cpu-load.md` and follow it.
+Other sessions and the user share this PC. Run test runners with at most 2 workers, passed on the command line; do not change committed config for it. If the committed config already sets a lower limit, pass no worker flag and no `VITEST_*` variable. An agent never starts artificial CPU load itself: only the owner starts it, with a `!` command. Before you ask the owner for artificial CPU load, read `~/.claude/docs/agents/cpu-load.md` and follow it.
