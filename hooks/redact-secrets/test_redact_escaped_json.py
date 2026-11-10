@@ -14,10 +14,9 @@ the state; R8 the docstring phrase of the filter; R9 an escaped-quote key opens 
 docs of the shared decision. Placeholders in the comments: SK a secret key, V a secret value.
 """
 import ast
-import re
 import unittest
 
-from redact_testkit import filt, lines, read_module, redact
+from redact_testkit import filt, lines, normalized, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
@@ -146,9 +145,9 @@ class SeamAgreementTest(unittest.TestCase):
                 self.assertEqual(filt(text), redact(text))
 
 
-def normalized_without_comments(text):
+def uncommented_and_normalized(text):
     """The text with comment markers removed and white space collapsed."""
-    return re.sub(r"\s+", " ", text.replace("#", " "))
+    return normalized(text.replace("#", " "))
 
 
 class DocsChecks(unittest.TestCase):
@@ -164,12 +163,12 @@ class DocsChecks(unittest.TestCase):
     def function_docstring(self, name):
         for node in ast.parse(self.read("redact_rules.py")).body:
             if isinstance(node, ast.FunctionDef) and node.name == name:
-                return normalized_without_comments(ast.get_docstring(node))
+                return uncommented_and_normalized(ast.get_docstring(node))
         self.fail(name)
 
     def test_417_r8_the_json_open_object_bullet_names_a_key_written_with_escaped_quotes(self):
         docstring = self.read("redact_filter.py").split('"""')[1]
-        bullets = [normalized_without_comments(item) for item in docstring.split("\n- ")]
+        bullets = [uncommented_and_normalized(item) for item in docstring.split("\n- ")]
         bullet = [item for item in bullets if item.startswith("A JSON object or array under a matched key")]
         self.assertEqual(len(bullet), 1)
         self.assertIn("a key written with escaped quotes", bullet[0])
@@ -185,12 +184,12 @@ class DocsChecks(unittest.TestCase):
     def test_417_r10_the_state_effect_comment_names_the_json_open_object_state(self):
         source = self.read("redact_rules.py")
         comment = self.between(source, '    if state.rule == "json_open":', "end = matching_bracket(text, start)")
-        self.assertIn(PHRASE, normalized_without_comments(comment))
+        self.assertIn(PHRASE, uncommented_and_normalized(comment))
 
     def test_417_r10_the_key_step_comment_names_the_json_open_object_state(self):
         source = self.read("redact_rules.py")
         comment = self.between(source, '    if kind == "json" and text[start : start + 1] in ("{", "["):', 'rule = "json_open"')
-        self.assertIn(PHRASE, normalized_without_comments(comment))
+        self.assertIn(PHRASE, uncommented_and_normalized(comment))
 
 
 if __name__ == "__main__":

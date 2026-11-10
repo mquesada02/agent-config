@@ -4,10 +4,9 @@ Seam 1 is `redact(text)` through the test kit. Seam 2 is the Monitor filter scri
 "Shape" and "story" numbers in a test name refer to the general spec 311, except where the name says
 "318 story". Fixtures are built from parts, so this file holds no secret-shaped text of its own.
 """
-import os
 import unittest
 
-from redact_testkit import HERE, filt, redact
+from redact_testkit import filt, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 V = "hunter2"
@@ -232,8 +231,7 @@ class FilterSeamTest(EmptyKeyCases, unittest.TestCase):
 
 class DocsTest(unittest.TestCase):
     def test_311_story_20_the_residual_risk_list_no_longer_names_the_closed_sequence_form(self):
-        with open(os.path.join(HERE, "redact_post.py"), encoding="utf-8") as handle:
-            text = handle.read()
+        text = read_module("redact_post.py")
         self.assertNotIn("a YAML sequence under a matched", text)
         self.assertNotIn("a JSON value on the line after", text)  # ticket 314 closed this form
 
