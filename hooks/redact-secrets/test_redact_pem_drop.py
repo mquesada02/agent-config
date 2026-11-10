@@ -119,11 +119,8 @@ class FilterSeamTest(DropCases, unittest.TestCase):
 
 
 class DocsChecks(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def bullet(self, first_words):
-        docstring = self.read("redact_filter.py").split('"""')[1]
+        docstring = read_module("redact_filter.py").split('"""')[1]
         for item in docstring.split("\n- "):
             if normalized(item).startswith(first_words):
                 return normalized(item)
@@ -142,11 +139,11 @@ class DocsChecks(unittest.TestCase):
         self.check_pem_rule("A matched key with an empty value")
 
     def test_379_r6_residual_risk_list_no_longer_names_the_block_scalar_leak(self):
-        text = normalized(self.read("redact_post.py"))
+        text = normalized(read_module("redact_post.py"))
         self.assertNotIn("A BEGIN line inside a YAML block scalar with an unindented PEM body leaks too.", text)
 
     def test_379_r6_residual_risk_list_keeps_the_cr_m10_sentence_and_the_rest_only_bullet(self):
-        text = normalized(self.read("redact_post.py"))
+        text = normalized(read_module("redact_post.py"))
         self.assertIn(
             "A next-line JSON string with a BEGIN line and no END line differs between the two seams (fail-closed).",
             text,

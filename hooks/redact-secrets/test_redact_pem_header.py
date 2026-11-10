@@ -172,11 +172,8 @@ class SeamAgreementTest(unittest.TestCase):
 
 
 class DocsChecks(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def test_416_r8_the_yaml_block_scalar_bullet_names_the_block_scalar_header_line_with_a_begin_marker(self):
-        docstring = self.read("redact_filter.py").split('"""')[1]
+        docstring = read_module("redact_filter.py").split('"""')[1]
         bullets = [normalized(item) for item in docstring.split("\n- ")]
         bullet = [item for item in bullets if item.startswith("A YAML block scalar under a matched key")]
         self.assertEqual(len(bullet), 1)

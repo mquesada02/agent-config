@@ -10,17 +10,13 @@ they are the one exception to "tests do not call helpers".
 import os
 import unittest
 
-from redact_testkit import FILTER, filt, lines, read_module, redact
+from redact_testkit import FILTER, body_lines, filt, lines, read_module, redact
 
 K = "pass" + "word"  # a matched key name
 TK = "to" + "ken"  # a second matched key name
 V = "hunter2"
 BEGIN = "-----BEGIN PRIVATE " + "KEY-----"
 END = "-----END PRIVATE " + "KEY-----"
-
-
-def body_lines(count):
-    return ["MIIE%03d" % number for number in range(count)]
 
 
 class PemJsonCases:
@@ -200,21 +196,18 @@ class FilterSeamTest(PemJsonCases, unittest.TestCase):
 
 
 class DocsTest(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def test_329_story_6_residual_risk_list_names_none_of_the_closed_forms(self):
-        text = self.read("redact_post.py")
+        text = read_module("redact_post.py")
         self.assertNotIn("a YAML sequence under a matched key", text)
         self.assertNotIn("a JSON value on the line after its key", text)
         self.assertNotIn("a YAML block scalar with a tag, an anchor or a quoted key", text)
         self.assertNotIn("One input leaks", text)
 
     def test_329_story_6_residual_risk_pem_bullet_says_the_json_state_goes_on(self):
-        self.assertIn("the JSON state goes on after a PEM block", self.read("redact_post.py"))
+        self.assertIn("the JSON state goes on after a PEM block", read_module("redact_post.py"))
 
     def test_329_story_6_filter_docstring_lists_the_pem_then_json_rules(self):
-        text = self.read(os.path.basename(FILTER))
+        text = read_module(os.path.basename(FILTER))
         self.assertIn("the JSON state goes on after the END line", text)
         self.assertIn("a bracket inside a PEM block", text)
 

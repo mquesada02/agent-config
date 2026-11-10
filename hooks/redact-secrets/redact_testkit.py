@@ -117,3 +117,8 @@ def read_module(name):
     """The text of a file in the hook folder."""
     with open(os.path.join(HERE, name), encoding="utf-8") as handle:
         return handle.read()
+
+
+def body_lines(count):
+    """count PEM body lines: MIIE000, MIIE001, ..."""
+    return ["MIIE%03d" % number for number in range(count)]

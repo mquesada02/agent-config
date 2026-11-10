@@ -19,7 +19,7 @@ BEGIN_ENC = "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"
 END_ENC = "-----END " + "ENCRYPTED PRIVATE KEY-----"
 
 
-def body_lines(count, prefix="body"):
+def secret_body_lines(count, prefix="body"):
     return ["%s%d %s\n" % (prefix, number, SECRET) for number in range(count)]
 
 
@@ -73,11 +73,11 @@ class FlushTest(unittest.TestCase):
 
 class PemTest(unittest.TestCase):
     def test_a_block_is_held_and_replaced_by_one_line(self):
-        text = "a\n" + BEGIN + "\n" + "".join(body_lines(3)) + END + "\nb\n"
+        text = "a\n" + BEGIN + "\n" + "".join(secret_body_lines(3)) + END + "\nb\n"
         self.assertEqual(filt(text), "a\n***\nb\n")
 
     def test_the_text_before_begin_and_after_end_is_kept(self):
-        text = "pre " + BEGIN + "\n" + "".join(body_lines(2)) + END + " post\n"
+        text = "pre " + BEGIN + "\n" + "".join(secret_body_lines(2)) + END + " post\n"
         self.assertEqual(filt(text), "pre *** post\n")
 
     def test_crlf_endings_are_kept(self):
@@ -85,27 +85,27 @@ class PemTest(unittest.TestCase):
         self.assertEqual(filt(text), "***\r\nafter\r\n")
 
     def test_a_block_of_exactly_200_lines_is_replaced_normally(self):
-        text = BEGIN + "\n" + "".join(body_lines(198)) + END + "\nafter\n"
+        text = BEGIN + "\n" + "".join(secret_body_lines(198)) + END + "\nafter\n"
         self.assertEqual(text.count("\n"), 201)
         self.assertEqual(filt(text), "***\nafter\n")
 
     def test_the_cap_drops_the_held_lines_and_the_rest_up_to_end(self):
-        text = BEGIN + "\n" + "".join(body_lines(250)) + END + "\nafter\n"
+        text = BEGIN + "\n" + "".join(secret_body_lines(250)) + END + "\nafter\n"
         out = filt(text)
         self.assertEqual(out, "***\nafter\n")
         self.assertNotIn(SECRET, out)
 
     def test_the_cap_line_is_written_when_the_input_then_ends(self):
-        self.assertEqual(filt(BEGIN + "\n" + "".join(body_lines(250))), "***\n")
+        self.assertEqual(filt(BEGIN + "\n" + "".join(secret_body_lines(250))), "***\n")
 
     def test_a_cap_boundary_with_200_held_lines_and_no_end_writes_the_line(self):
-        self.assertEqual(filt(BEGIN + "\n" + "".join(body_lines(199))), "***\n")
+        self.assertEqual(filt(BEGIN + "\n" + "".join(secret_body_lines(199))), "***\n")
 
     def test_199_held_lines_and_no_end_write_nothing(self):
-        self.assertEqual(filt(BEGIN + "\n" + "".join(body_lines(198))), "")
+        self.assertEqual(filt(BEGIN + "\n" + "".join(secret_body_lines(198))), "")
 
     def test_a_begin_line_with_no_end_before_the_end_of_the_input_writes_nothing(self):
-        self.assertEqual(filt("a\n" + BEGIN + "\n" + "".join(body_lines(3))), "a\n")
+        self.assertEqual(filt("a\n" + BEGIN + "\n" + "".join(secret_body_lines(3))), "a\n")
 
     def test_a_block_on_one_line_is_a_normal_line(self):
         self.assertEqual(filt("x " + BEGIN + "AAA" + END + " y\n"), "x *** y\n")
@@ -133,7 +133,7 @@ class PemTest(unittest.TestCase):
         self.assertTrue(out.endswith("after\n"), out)
 
     def test_a_cap_end_line_that_carries_a_begin_starts_a_new_block(self):
-        text = BEGIN + "\n" + "".join(body_lines(250)) + END + " " + BEGIN + "\nSECRETB\n" + END + "\nafter\n"
+        text = BEGIN + "\n" + "".join(secret_body_lines(250)) + END + " " + BEGIN + "\nSECRETB\n" + END + "\nafter\n"
         out = filt(text)
         self.assertNotIn("SECRETB", out)
         self.assertNotIn(SECRET, out)
@@ -157,12 +157,12 @@ class JsonStateTest(unittest.TestCase):
         self.assertEqual(filt(text), '"%s": "***"\nafter\n' % TOK)
 
     def test_an_object_of_more_than_200_lines_is_still_dropped_until_it_balances(self):
-        text = '"%s": {\n' % TOK + "".join(body_lines(300)) + "}\nafter\n"
+        text = '"%s": {\n' % TOK + "".join(secret_body_lines(300)) + "}\nafter\n"
         out = filt(text)
         self.assertEqual(out, '"%s": "***"\nafter\n' % TOK)
 
     def test_an_object_with_no_closing_bracket_writes_only_the_first_line(self):
-        text = '"%s": {\n' % TOK + "".join(body_lines(5))
+        text = '"%s": {\n' % TOK + "".join(secret_body_lines(5))
         self.assertEqual(filt(text), '"%s": "***"\n' % TOK)
 
     def test_an_object_that_closes_on_its_line_is_a_normal_line(self):

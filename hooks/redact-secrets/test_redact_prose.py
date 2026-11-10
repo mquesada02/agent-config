@@ -11,7 +11,7 @@ scalar rule in a rest (the one divergence of story 21), so the seams-agree test 
 """
 import unittest
 
-from redact_testkit import filt, lines, read_module, redact
+from redact_testkit import body_lines, filt, lines, read_module, redact
 
 K = "pass" + "word"
 TK = "to" + "ken"
@@ -30,10 +30,6 @@ def T(text):
     for name, value in (("@NK", NK), ("@TK", TK), ("@K", K), ("@V", V), ("@P", P), ("@B", BEGIN), ("@E", END)):
         text = text.replace(name, value)
     return text
-
-
-def body_lines(count):
-    return ["MIIE%03d" % number for number in range(count)]
 
 
 # Inputs of the behavior stories; the seams-agree test runs every one of them through both seams.
@@ -371,20 +367,17 @@ class SeamsAgree(unittest.TestCase):
 
 
 class DocsChecks(unittest.TestCase):
-    def read(self, name):
-        return read_module(name)
-
     def test_347_story_22_rules_docstring_names_the_position_rule(self):
-        docstring = self.read("redact_rules.py").split('"""')[1]
+        docstring = read_module("redact_rules.py").split('"""')[1]
         for phrase in ("line start position", "prefix grammar", "flow-mapping position"):
             self.assertIn(phrase, docstring)
 
     def test_347_story_22_filter_docstring_says_a_rest_is_judged_with_the_line_prefix(self):
-        docstring = self.read("redact_filter.py").split('"""')[1]
+        docstring = read_module("redact_filter.py").split('"""')[1]
         self.assertIn("judged with the line prefix", docstring)
 
     def test_347_story_23_residual_risk_list_names_the_accepted_cost(self):
-        text = self.read("redact_post.py")
+        text = read_module("redact_post.py")
         for phrase in ("mid-line prose", "tab after a tool prefix", "grep context lines", "looks like a grep prefix"):
             self.assertIn(phrase, text)
 
