@@ -56,7 +56,7 @@ class ChainTest(LineageCase):
         self.write_lineage((HANDLE, "term_b"))
         self.assert_refused(self.run_cleanup(self.wt))
 
-    def test_the_chain_stops_after_20_steps(self):
+    def test_a_chain_of_20_steps_passes(self):
         names = [HANDLE] + [f"term_{i}" for i in range(1, 20)] + ["term_a"]
         self.write_lineage(*zip(names, names[1:]))  # term_a is the 20th predecessor
         self.assert_passes(self.run_cleanup(self.wt))
@@ -104,7 +104,7 @@ class FailClosedTest(LineageCase):
         self.assert_refused(self.run_cleanup(self.wt))
 
     def test_a_file_over_the_limit_is_refused(self):
-        self.write_lineage((HANDLE, "term_a"), raw=None)
+        self.write_lineage((HANDLE, "term_a"))
         with open(os.path.join(self.folder, "lineage.jsonl"), "a") as handle:
             handle.write(" " * (4 * 1024 * 1024))
         self.assert_refused(self.run_cleanup(self.wt))

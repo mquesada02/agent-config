@@ -221,9 +221,9 @@ class LaunchTestCase(unittest.TestCase):
     def option(self, call, flag):
         return call["argv"][call["argv"].index(flag) + 1]
 
-    def assert_start_command(self, command):
+    def assert_start_command(self, command, flags=" --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium"):
         """The start command is the plain one plus `--session-id <uuid>`. Returns the session ID."""
-        base = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --model 'claude-sonnet-5-5[1m]' --permission-mode auto --effort medium"
+        base = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude" + flags
         self.assertTrue(command.startswith(base + " --session-id "), command)
         session_id = command[len(base + " --session-id "):]
         self.assertEqual(str(uuid.UUID(session_id)), session_id)
@@ -339,10 +339,7 @@ class PlainSuccessTest(LaunchTestCase):
     def test_empty_model_mode_and_effort_pass_no_flag(self):
         status, _ = self.launch(self.arguments(model="", permission_mode="", effort=""))
         self.assertEqual(status, "ok")
-        command = self.option(self.call("terminal create"), "--command")
-        prefix = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " claude --session-id "
-        self.assertTrue(command.startswith(prefix), command)
-        self.assertEqual(str(uuid.UUID(command[len(prefix):])), command[len(prefix):])
+        self.assert_start_command(self.option(self.call("terminal create"), "--command"), flags="")
         self.assertIn(shlex.quote(self.prompt_without_handle()), self.read("manual"))
         self.assertNotIn("--model", self.read("manual"))
 
