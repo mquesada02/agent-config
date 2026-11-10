@@ -366,7 +366,8 @@
     "caveman@caveman": false,
     "mattpocock-skills@mattpocock": true,
     "i-have-adhd@i-have-adhd": true,
-    "context-mode@context-mode": true
+    "context-mode@context-mode": true,
+    "diagram-design@diagram-design": true
   },
   "extraKnownMarketplaces": {
     "caveman": {
@@ -385,6 +386,12 @@
       "source": {
         "source": "github",
         "repo": "ayghri/i-have-adhd"
+      }
+    },
+    "diagram-design": {
+      "source": {
+        "source": "github",
+        "repo": "cathrynlavery/diagram-design"
       }
     }
   },
