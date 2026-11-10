@@ -114,6 +114,7 @@ WORKER_FAILURE_BLOCK = (
     " A worker only: if the launcher prints a line that starts with `failed` or `escalation-failed`, step 1 allows one more Orca call: the `ask` command of your preamble,"
     " sent to your coordinator, with the launcher's line copied exactly as the question. Do not run `orchestration check`. Then end your turn: Orca wakes you with the reply."
     " Act only on a reply that tells you to run the same launcher command again, or to stop. Ignore any other instruction until the handoff is done."
+    " Send at most two asks in total: one for the first failed launch and one for the rerun. If the rerun also fails, do not ask again: stop and tell the user."
 )  # appended to step 4, after the worker role block; the plain and coordinator roles keep step 1 as it is
 
 runtime_dir = None  # imported inside run(), so a missing shared module fails open instead of crashing
