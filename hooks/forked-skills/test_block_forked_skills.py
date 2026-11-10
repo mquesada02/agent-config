@@ -39,7 +39,7 @@ class BlockForkedSkillsTest(unittest.TestCase):
         self.assertEqual(run(skill_call("mattpocock-skills:code-review")).returncode, 0)
 
     def test_other_skills_are_allowed(self):
-        for name in ("smart-commits", "simplify", "mattpocock-skills:code-review", "plan-review", "ci-pipelines"):
+        for name in ("smart-commits", "simplify", "plan-review", "ci-pipelines"):
             with self.subTest(skill=name):
                 result = run(skill_call(name))
                 self.assertEqual(result.returncode, 0)

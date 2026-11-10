@@ -16,33 +16,26 @@ import sys
 FORKED_BUILTIN_SKILLS = ("code-review",)
 
 
-def deny(skill: str) -> None:
-    print(
-        f"Blocked by ~/.claude/hooks/forked-skills/block_forked_skills.py: the built-in skill '{skill}' runs forked. "
-        "Its forked subagent would run on the parent session's model, not on Sonnet, and would fail the audit check "
-        "S7 for every worktree that this session touches. Run it in a separate session that touches no audited "
-        "worktree.",
-        file=sys.stderr,
-    )
+def block(reason: str) -> None:
+    print(f"Blocked by ~/.claude/hooks/forked-skills/block_forked_skills.py: {reason}", file=sys.stderr)
     sys.exit(2)
 
 
 def main() -> None:
     try:
-        data = json.load(sys.stdin)
-        skill = data["tool_input"]["skill"]
-        if not isinstance(skill, str):
-            raise TypeError("skill is not a string")
+        skill = json.load(sys.stdin)["tool_input"]["skill"]
     except (ValueError, KeyError, TypeError):
-        print(
-            "Blocked by ~/.claude/hooks/forked-skills/block_forked_skills.py: the hook cannot read the skill name, "
-            "so it cannot check whether the skill runs forked.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+        skill = None
+    if not isinstance(skill, str):
+        block("the hook cannot read the skill name, so it cannot check whether the skill runs forked.")
     name = skill.strip().lstrip("/").strip()
     if name in FORKED_BUILTIN_SKILLS:
-        deny(name)
+        block(
+            f"the built-in skill '{name}' runs forked. "
+            "Its forked subagent would run on the parent session's model, not on Sonnet, and would fail the audit "
+            "check S7 for every worktree that this session touches. Run it in a separate session that touches no "
+            "audited worktree."
+        )
     sys.exit(0)
 
 
