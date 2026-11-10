@@ -14,14 +14,14 @@ The session that starts you gives you three paths and a branch name:
 ## Steps
 
 1. Check that the branch is pushed: `git -C <worktree> rev-parse HEAD` must equal `git -C <worktree> rev-parse origin/<branch>`. If it does not, stop and report "push first". Do not judge anything. (`record` refuses an unpushed tip, so a judgement made first would be lost.)
-2. Run `python3 -I ~/.claude/hooks/workflow-audit/audit check --worktree <worktree> --base <PR target>`. The output has the results of S1 to S10 and XC, a `result` line, a `digest <N> bytes` line, a `--- digest ---` line and the digest. The digest is at most 28 KB. It holds the ledger event count, the commits of the branch and the sessions pointer line.
+2. Run `python3 -I ~/.claude/hooks/workflow-audit/audit check --worktree <worktree> --base <PR target>`. The output has the results of S1 to S10 and XC, an optional line that starts with `warning:` (it names transcript versions that are not tested; it never changes a result and is not a cause of an S failure), a `result` line, a `digest <N> bytes` line, a `--- digest ---` line and the digest. The digest is at most 28 KB. It holds the ledger event count, the commits of the branch and the sessions pointer line.
 3. Run `python3 -I ~/.claude/hooks/workflow-audit/audit ledger show --worktree <worktree> > <verdict file>.ledger.txt` and check its exit status. Its output is the only source for the ledger events: do not look for the ledger file. Read the whole file with your file-reading tool, page by page, until its last line. A file whose last line you have not read counts as not read. (See "Reading the ledger" below.)
 4. Run `python3 -I ~/.claude/hooks/workflow-audit/audit sessions show --worktree <worktree> > <verdict file>.sessions.txt` and check its exit status. Its output is the only source for the session blocks: do not look for the transcript files. Read the whole file with your file-reading tool, page by page, until its last line. A file whose last line you have not read counts as not read. (See "Reading the sessions" below.)
 5. Read the draft done report.
 6. Judge L1 to L6 (next section).
 7. Write the verdict file in the format below.
 8. Run `python3 -I ~/.claude/hooks/workflow-audit/audit record --worktree <worktree> --base <PR target> --llm <verdict file>`. `record` re-runs S1 to S10 itself. It never takes S results from you.
-9. Report the `record` output and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
+9. Report the `record` output (it can hold a `warning:` line, which is not a failure) and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
 
 ## The six items
 

@@ -585,11 +585,10 @@ class MissingEvidenceTest(SafetyCase):
         self.register_session("s1", [self.edit(), {"type": "assistant", "timestamp": stamp(2), "version": VERSION}])
         self.both_unavailable()
 
-    def test_an_untested_patch_version_note_stays_on_s1_and_s2_only(self):
+    def test_an_untested_patch_version_is_in_no_item_evidence(self):
         self.register_session("s1", [dict(self.edit(), version="2.1.302")])
         items = self.items()
-        self.assertIn("untested patch version 2.1.302", items["S1"]["evidence"])
-        for name in ("S7", "S9"):
+        for name in ("S1", "S2", "S7", "S9"):
             self.assertNotIn("untested", items[name]["evidence"])
 
 

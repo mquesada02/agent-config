@@ -599,9 +599,15 @@ def _audited_transcripts(worktree, dir_fd):
     return audited
 
 
-def _versions_note(audited):
+def _versions_warning(audited):
+    """The warning line for transcript versions not in TESTED_VERSIONS: "" when every version is tested or the transcripts cannot be
+    read (`audited` is None). It never changes a result."""
+    if audited is None:
+        return ""
     versions = sorted({v for transcripts in audited for t in transcripts for v in t.versions} - set(TESTED_VERSIONS))
-    return "".join(f"; untested patch version {version}" for version in versions)
+    if not versions:
+        return ""
+    return f"warning: transcripts from untested Claude Code version{'s' if len(versions) > 1 else ''} {', '.join(versions)}"
 
 
 def _main_checkout(worktree):
@@ -1641,16 +1647,16 @@ def check_s10(dir_fd, ledger, remote_url):
     return True, f"{judged} findings judged, {checked} with a quote checked"
 
 
-def _s_item(name, passed, evidence, note=""):
-    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence) + note}
+def _s_item(name, passed, evidence):
+    return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
 
 
-def _check_item(name, check, *args, note=""):
+def _check_item(name, check, *args):
     try:
         passed, evidence = check(*args)
     except Unavailable as problem:
         passed, evidence = False, str(problem)
-    return _s_item(name, passed, evidence, note)
+    return _s_item(name, passed, evidence)
 
 
 def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
@@ -1864,8 +1870,7 @@ def _transcript_items(worktree, dir_fd):
         audited = _audited_transcripts(worktree, dir_fd)
     except Unavailable as problem:
         return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, problem
-    note = _versions_note(audited)
-    items = [_check_item(name, check, worktree, audited, note=note) for name, check in (("S1", check_s1), ("S2", check_s2))]
+    items = [_check_item(name, check, worktree, audited) for name, check in (("S1", check_s1), ("S2", check_s2))]
     return items, audited, None
 
 
@@ -1902,11 +1907,13 @@ def _record(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        items = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch))[0] + l_items
+        run_items, audited, _ = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch))
+        items = run_items + l_items
+        warning = _versions_warning(audited)
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
         text = json.dumps({
             "sha": tip, "remote_url": remote_url, "branch": branch, "base": base_branch,
-            "time": _now(), "items": items, "result": result,
+            "time": _now(), "items": items, "result": result, **({"warning": warning} if warning else {}),
         })
         if len(text) > runtime_dir.MAX_READ_BYTES:
             raise Refusal("record too large")
@@ -1915,6 +1922,8 @@ def _record(argv):
         os.close(dir_fd)
     for item in items:
         print(item["id"], item["result"])
+    if warning:
+        print(warning)
     print("result", result)
     return 0 if result == "pass" else 1
 
@@ -2243,6 +2252,9 @@ def _check(argv):
     for item in items:
         lines.append(f"{item['id']} {item['result']}")
         lines += ["  " + line for line in item["evidence"].splitlines()]
+    warning = _versions_warning(audited)
+    if warning:
+        lines.append(warning)
     lines.append("result " + ("pass" if all(item["result"] == "pass" for item in items) else "fail"))
     lines.append(f"digest {len(_utf8(digest))} bytes")
     lines.append("--- digest ---")
