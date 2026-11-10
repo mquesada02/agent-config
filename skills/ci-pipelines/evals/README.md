@@ -15,7 +15,7 @@ claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.
 - `--runs 3` and `--threshold 1.0` are the plugin eval defaults, written here on purpose.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace. Pass it only for suites that you wrote.
 - `--ablation with-without` adds the no-skill baseline arm (`W/OUT` and `Δ` columns).
-- `--allow-tools` grants the one shell call of the review steps, the intake script. The pattern matches the path of the script in the skill folder that the run uses. The workspace is a temporary folder that is not inside a git repo (a parent repo with an `origin` would be read), and it has a temporary home and no GitHub credentials. The intake finds no GitHub remote, so `required_checks` is `unknown` and the review says "unreadable" (the `name-09-...` case expects this).
+- `--allow-tools` grants the one shell call of the review steps, the intake script. The pattern matches the path of the script in the skill folder that the run uses. In the review cases the workspace is a temporary folder that is not inside a git repo (a parent repo with an `origin` would be read), and it has a temporary home and no GitHub credentials. The intake finds no GitHub remote, so `required_checks` is `unknown` and the review says "unreadable" (the `name-09-...` case expects this).
 - `--keep-temp` keeps the trace of each run (`tracePath` in the result). The result JSON holds scores and grader verdicts but not the final message, so `grade_eval_results.py` reads the final message from the trace. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Remove them by hand when you are done.
 - Add `--case <glob>` to run one case. Later tickets add cases to this same run.
 - Plugin eval exits 1 when a case scores below the threshold. A bare skill folder is a valid target (it resolves as the plugin `ci-pipelines`), so no wrapper manifest is needed.
@@ -46,7 +46,7 @@ Notes on the security cases:
 
 - The critical parts of SEC-04 and SEC-07 each have a case next to their required part: `sec-04-untrusted-context-in-run` (critical) and `sec-04-matrix-in-run` (required), `sec-07-pr-head-checkout` (critical) and `sec-07-privileged-trigger` (required). The rule-id grader sees only the rule id, so the structure tests on the fixtures and on the rule text prove the severity parts.
 - A plugin eval case cannot control PATH. The `env` field accepts only `EVAL_*` keys, the child session inherits the PATH of the operator shell, and the environment of a scaffold script does not reach the child session (verified with a smoke run: a fake tool that the scaffold put on PATH was not found by the run). So the merge case and the missing-tool case give the review a recorded `intake.json` (with `installed_tools`), and the merge case also gives a recorded `zizmor.json` (the shape of `zizmor --format=json-v1`, one `unpinned-uses` finding on the tag-pinned line). Their prompts tell the review to use these files and to run no tool. The merge case expects `SEC-01` and forbids the bare zizmor id `unpinned-uses`; `grade_eval_results.py` runs the report-structure grader on it, which fails when a rule appears twice at one severity. The missing-tool case still expects the SEC ids, and the report-structure grader checks the install hint.
-- Run the evals on a machine where actionlint and zizmor are not on PATH, or add them to `--allow-tools`: with a tool on PATH the review would try to run it, and the run denies any call other than the intake script.
+- (review cases) Run the evals on a machine where actionlint and zizmor are not on PATH, or add them to `--allow-tools`: with a tool on PATH the review would try to run it, and the run denies any call other than the intake script.
 
 Notes on the cost and monorepo cases:
 
@@ -56,6 +56,24 @@ Notes on the cost and monorepo cases:
 
 Every fixture is synthetic. No text comes from a private repo.
 
+## Approval cases
+
+`approve-1-3`, `approve-2-4`, `approve-all` and `approve-none` test the fix flow. Each case gives a recorded review report and a reply (`1,3`, `2-4`, `all`, `none`). The four cases share one synthetic fixture: the `clean` workflow with five defects, one finding each, in the order of the recorded report: 1 SEC-03, 2 SEC-05, 3 COST-04, 4 COST-07, 5 COST-08.
+
+- **Second turn.** A case has a `history.jsonl` (`context.history_file`): a user turn ("Review our CI setup in this repo.") and an assistant turn with the report. The prompt of the case is the next user turn: the reply, and the line that points to the recorded `intake.json`. The docs do not give the transcript format. The shape in these files is the one that a smoke run resumed (one `user` line and one `assistant` line with a `text` block). With a path target the case runs one arm.
+- **Recorded intake.** `repo/intake.json` says that actionlint is on PATH (a version), and that zizmor and pinact are not. A case cannot control PATH (see the security cases), so the recorded intake makes the model run actionlint after the edits. The graders check that Bash call and its order after the first `Edit`, and a diff in the final message. This proves the attempt and the order, not a real lint pass. The unit tests prove the detection with a fake actionlint on PATH. An operator who has actionlint on PATH gets the real lint in the same run, with the same graders.
+- **Session transcript.** A run of an approval case writes the resumed session transcript into the case folder (a file named like the session id in `history.jsonl`, with the paths of the operator). `evals/.gitignore` ignores it. Do not commit it.
+- **Scaffold.** `scaffold.sh` copies `repo/` and makes the workspace a git repo with one commit, so that `git diff` works. (The review cases have no git repo.)
+- **Graders.** The final message of an editing case holds the applied list, the diff and a post-fix report (title ends with `(after fixes)`). The `expect-<ID>.md` graders (the findings that the reply did not approve) and the `forbid-<ID>.md` graders (the approved ones) read that report. `approve-none` has the three no-edit graders, `no-actionlint.md` and no report graders. Every case has `gh-api-no-write.md`: a `tool_used` grader (`max: 0`) that matches a `gh api` call on a branch protection or ruleset path with a method other than GET, or with a body flag. A call that mixes a read of such a path with a body flag for another path also matches. Run it by hand:
+
+```
+claude plugin eval skills/ci-pipelines --case 'approve-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Edit "Bash(actionlint*)" "Bash(git diff*)" --output-dir <results folder> --json <results folder>/result.json
+```
+
+`Edit` is a gated tool: without `--allow-tools Edit` the run withholds it from the model, and the `actionlint-after-edit.md` grader cannot pass. The allow pattern of the actionlint call is `Bash(actionlint*)`.
+
+Then run `python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. It grades the three editing cases from their `expect.json` and skips `approve-none`. The full run of these cases (3 runs each) belongs to the eval ticket, not to the ticket that added them.
+
 ## Graders
 
 - `expect-<ID>.md` and `forbid-<ID>.md`: a `regex` grader that finds the id in the Rule cell of a table row. They are generated from `expect.json`, and a unit test keeps them in step.
@@ -63,4 +81,5 @@ Every fixture is synthetic. No text comes from a private repo.
 - `no-edit.md`, `no-write.md`, `no-shell-write.md`: `tool_used` graders with `min: 0` and `max: 0`. The skill must not edit a workflow before approval.
 - `fix-quality.md`: an `llm` judge of the fix text. It is `arm: with-only`, so it is reported and not scored.
 - `skill-fired.md` (trigger case): `tool_used: Skill`. Under `--ablation with-without` it is an indicator of the with-arm, not part of the score.
+- `actionlint-ran.md`, `actionlint-after-edit.md`, `no-actionlint.md`, `diff-in-message.md`, `gh-api-no-write.md`, `diff-scope.md` (approval cases): see "Approval cases". `diff-scope.md` is an `llm` judge with `arm: with-only`, so it is reported and not scored.
 - `scripts/grade_eval_results.py`: runs `grade_report.py` and `grade_rule_ids.py` on the final message of each with-arm run of each review case. This is the scored check of the whole report contract.

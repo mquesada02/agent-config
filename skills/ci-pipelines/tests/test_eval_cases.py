@@ -106,7 +106,7 @@ def expect_lists(name):
 
 
 def review_cases():
-    return [n for n in case_names() if not n.startswith("trigger-")]
+    return [n for n in case_names() if not n.startswith(("trigger-", "approve-"))]
 
 
 def grader_files(name):
@@ -268,12 +268,12 @@ GIT_URLS = (
 
 
 class NewFixtures(unittest.TestCase):
-    """Fixtures of the job graph, maintainability, cost, monorepo and security cases keep private names out."""
+    """Fixtures of the job graph, maintainability, cost, monorepo, security and approval cases keep private names out."""
 
     @classmethod
     def setUpClass(cls):
         cls.cases = [n for n in case_names()
-                     if n.startswith(("graph-", "maint-", "cost-", "mono-", "sec-", "merge-", "tool-"))
+                     if n.startswith(("graph-", "maint-", "cost-", "mono-", "sec-", "merge-", "tool-", "approve-"))
                      or n in ("fx-duplicate-build", "fx-inline-tests", "fx-no-limits", "fx-paths-required",
                               "fx-token-in-run")]
         cls.texts = {}
@@ -284,7 +284,7 @@ class NewFixtures(unittest.TestCase):
                     cls.texts[path] = read(path)
 
     def test_the_new_cases_exist(self):
-        self.assertEqual(len(self.cases), 42)
+        self.assertEqual(len(self.cases), 46)
 
     def test_no_new_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():

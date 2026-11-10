@@ -1,0 +1,11 @@
+{
+  "expect": [
+    "SEC-03",
+    "COST-08"
+  ],
+  "forbid": [
+    "SEC-05",
+    "COST-04",
+    "COST-07"
+  ]
+}
