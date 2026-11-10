@@ -687,9 +687,6 @@ class FactsTest(PgRunTestCase):
         self.assertIn(done.returncode, (0, 1), done.stderr)
         return done.returncode, json.loads(done.stdout)
 
-    def facts_call(self):
-        return self.explain_call()
-
     @staticmethod
     def sent_names(call):
         argv = call["argv"]
@@ -746,14 +743,14 @@ class FactsTest(PgRunTestCase):
             rows=[{"i": 0, "nullable": False, "type": "integer"}, {"i": 1, "nullable": True, "type": "numeric(10,2)"}],
         )
         self.assertEqual(code, 0, data)
-        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "id"], [1, "shop", "orders", "total"]])
+        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "users", "id"], [1, "shop", "orders", "total"]])
         self.assertEqual(list(data["facts"]), ["users.id", "shop.orders.total"])
 
     def test_a_name_of_an_invalid_shape_is_missing_and_is_not_sent(self):
         names = ["nodot", "a.b.c.d", "a..b", ".x", "a.", "users.id"]
         code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": True, "type": "text"}])
         self.assertEqual(code, 0, data)
-        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "id"]])
+        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "users", "id"]])
         self.assertEqual(list(data["facts"]), names)
         for name in names[:-1]:
             self.assertEqual(data["facts"][name], {"missing": True})
@@ -770,7 +767,7 @@ class FactsTest(PgRunTestCase):
         names = ["users.café", "users.i\td", "users.ok"]
         code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": False, "type": "text"}])
         self.assertEqual(code, 0, data)
-        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "ok"]])
+        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "users", "ok"]])
         self.assertEqual(data["facts"]["users.café"], {"missing": True})
         self.assertEqual(data["facts"]["users.i\td"], {"missing": True})
 
@@ -824,7 +821,7 @@ class FactsTest(PgRunTestCase):
 
     def test_the_version_gate_applies_to_the_run(self):
         self.run_facts("t.a", rows=[], env={"FAKE_VERSION": "130005"})
-        self.assertNotIn("transaction_timeout", self.facts_call()["argv"][-1])
+        self.assertNotIn("transaction_timeout", self.explain_call()["argv"][-1])
 
 
 if __name__ == "__main__":
