@@ -23,6 +23,10 @@ SEVERITIES = {
     "PG-05": "suggestion", "PG-06": "suggestion", "PG-07": "suggestion",
     "PG-08": "suggestion", "PG-09": "suggestion", "PG-10": "suggestion",
 }
+PLAN_SEVERITIES = {
+    "PLAN-01": "required", "PLAN-02": "required", "PLAN-03": "required",
+    "PLAN-04": "suggestion", "PLAN-05": "suggestion",
+}
 FIELDS = ["Title", "Severity", "Detects", "Why it matters", "Fix", "Example"]
 NO_ID_CRITICAL_REQUIRED = [rule for rule, level in SEVERITIES.items() if level in ("critical", "required")]
 TOOL_GRADERS = {
@@ -90,6 +94,33 @@ def catalog_ids():
             capture_output=True, text=True, check=True,
         )
     return json.loads(proc.stdout)["disabled_without_reason"]
+
+
+def plan_catalog_ids():
+    """The PLAN-* ids of CATALOG in scripts/rules_file.py, read through the reader command line."""
+    candidates = [f"PLAN-{n:02d}" for n in range(100)]
+    toml = "[rules]\ndisabled = [" + ", ".join(f'"{c}"' for c in candidates) + "]\n"
+    with tempfile.TemporaryDirectory() as repo:
+        os.makedirs(os.path.join(repo, "docs", "agents"))
+        with open(os.path.join(repo, "docs", "agents", "sql.md"), "w", encoding="utf-8") as handle:
+            handle.write("# SQL rules\n\n```toml\n" + toml + "```\n")
+        proc = subprocess.run(
+            [sys.executable, os.path.join(SKILL_DIR, "scripts", "rules_file.py"), repo],
+            capture_output=True, text=True, check=True,
+        )
+    return json.loads(proc.stdout)["disabled_without_reason"]
+
+
+def plan_entries():
+    """The rule entries under `## Plan reading`: id -> list of (field, text) in order, and the heading ids."""
+    body = section(read(DIALECT), "Plan reading")
+    result, order = {}, []
+    for block in re.split(r"(?m)^### ", body)[1:]:
+        rule_id, _, rest = block.partition("\n")
+        rule_id = rule_id.strip()
+        order.append(rule_id)
+        result[rule_id] = (re.findall(r"(?m)^- \*\*([^*]+):\*\* ?(.*)$", rest), rest)
+    return result, order
 
 
 def case_folders():
@@ -174,9 +205,54 @@ class CatalogTest(unittest.TestCase):
         self.assertRegex(why, r"\bUTC\b")
         self.assertNotRegex(why, r"(?i)time zone of the process")
 
-    def test_the_dialect_module_has_a_plan_reading_section_naming_the_ticket(self):
-        plan = section(read(DIALECT), "Plan reading")
-        self.assertIn("#395", plan)
+    def test_the_dialect_module_has_a_filled_plan_reading_section(self):
+        text = read(DIALECT)
+        plan = section(text, "Plan reading")
+        self.assertNotRegex(plan, r"(?i)\bstub\b")
+        self.assertNotIn("#395", plan)
+        self.assertIn("plan_findings.py", plan)
+        self.assertRegex(plan, r"(?i)never from reading the plan")
+        self.assertRegex(plan, r"(?i)only from the Database path")
+        self.assertRegex(plan, r"(?i)actual values")
+        self.assertRegex(text.split("\n## ", 1)[0], r"(?i)PLAN-\*.*exception|exception.*PLAN-\*")
+
+    def test_the_plan_entries_equal_the_plan_catalog_in_order_with_all_fields(self):
+        found, order = plan_entries()
+        self.assertEqual(order, sorted(plan_catalog_ids()))
+        self.assertEqual(order, sorted(PLAN_SEVERITIES))
+        self.assertEqual(len(order), len(set(order)), "duplicate id")
+        for rule_id, (fields, _) in found.items():
+            with self.subTest(rule=rule_id):
+                self.assertEqual([name for name, _ in fields], FIELDS)
+                self.assertTrue(all(text.strip() for _, text in fields))
+
+    def test_each_plan_entry_has_the_catalog_severity(self):
+        for rule_id, (fields, _) in plan_entries()[0].items():
+            with self.subTest(rule=rule_id):
+                self.assertTrue(dict(fields)["Severity"].startswith(PLAN_SEVERITIES[rule_id]))
+
+    def test_each_plan_example_has_a_bad_and_a_good_fenced_form(self):
+        for rule_id, (_, rest) in plan_entries()[0].items():
+            with self.subTest(rule=rule_id):
+                example = rest.split("**Example:**", 1)[1]
+                self.assertGreaterEqual(example.count("```") // 2, 2)
+                self.assertIn("Bad:", example)
+                self.assertIn("Good:", example)
+
+    def test_each_plan_detects_text_holds_its_numbers(self):
+        found = {rule_id: dict(fields)["Detects"] for rule_id, (fields, _) in plan_entries()[0].items()}
+        for rule_id, numbers in {
+            "PLAN-01": ("1000", "10 times"), "PLAN-02": ("10,000", "90%"), "PLAN-03": ("external", "Hash Batches"),
+            "PLAN-04": ("1000", "Nested Loop"), "PLAN-05": ("90%", "1000"),
+        }.items():
+            for needle in numbers:
+                with self.subTest(rule=rule_id, needle=needle):
+                    self.assertIn(needle, found[rule_id])
+
+    def test_a_plan_fix_gives_advice_in_words_not_a_rewrite(self):
+        for rule_id, (fields, _) in plan_entries()[0].items():
+            with self.subTest(rule=rule_id):
+                self.assertNotIn("Rewrite", dict(fields)["Fix"])
 
     def test_the_source_module_keeps_the_filled_module_rules(self):
         text = read(SOURCE)
@@ -212,12 +288,33 @@ class OptimizeModuleTest(unittest.TestCase):
 
     def test_it_names_a_stub_section_for_each_later_ticket(self):
         parts = re.split(r"(?m)^## ", self.text)
-        for ticket in ("#395", "#396", "#397"):
+        for ticket in ("#396", "#397"):
             with self.subTest(ticket=ticket):
                 self.assertTrue(
                     any(ticket in part and re.search(r"(?i)stub|later|not yet", part) for part in parts[1:]),
                     ticket,
                 )
+
+    def test_the_plan_findings_section_is_filled_and_keeps_the_later_stubs(self):
+        self.assertNotRegex(self.text, r"(?m)^## Plan findings \(stub\)")
+        plan = section(self.text, "Plan findings")
+        self.assertNotRegex(plan, r"(?i)\bstub\b")
+        self.assertNotIn("#395", self.text)
+        self.assertIn("plan_findings.py", plan)
+        self.assertIn("actual values", plan)
+        self.assertNotRegex(plan, r"\bpg_run\b")
+        self.assertRegex(plan, r"never the capitalised word `Rewrite`|never.*capitalised word `Rewrite`")
+        for ticket in ("#396", "#397"):
+            with self.subTest(ticket=ticket):
+                self.assertIn(ticket, self.text)
+
+    def test_the_database_path_holds_the_failure_note_lines(self):
+        path = section(self.text, "Database path")
+        self.assertIn("plan_findings.py", path)
+        self.assertIn("pg_run_failed", path)
+        self.assertIn("bad_input", path)
+        self.assertRegex(path, r"was denied by a tool hook")
+        self.assertRegex(path, r"(?i)heredoc")
 
     def test_it_names_no_database_call(self):
         self.assertNotRegex(self.text, r"\bpsql\b")

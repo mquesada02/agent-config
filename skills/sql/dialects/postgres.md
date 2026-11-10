@@ -1,6 +1,6 @@
 # PostgreSQL dialect module
 
-This module holds the `PG-*` rules of the static optimize report. They work with no database: each rule reads the SQL text and, where its entry says so, the repo schema. A rule that needs a fact fires only when the repo shows the fact, or, with an allowlisted database, when the catalog shows it (the optimize module says how).
+This module holds the `PG-*` rules of the static optimize report, and the `PLAN-*` rules of the plan reading (the section Plan reading below). The `PG-*` rules work with no database: each rule reads the SQL text and, where its entry says so, the repo schema. The `PLAN-*` rules are the exception: they need a plan with actual values, so they fire only with an allowlisted database. A rule that needs a fact fires only when the repo shows the fact, or, with an allowlisted database, when the catalog shows it (the optimize module says how).
 
 A rewrite is a fix of a `PG-*` finding that replaces the SQL text of a statement (it can change the result). A fix that only gives advice, with no replacement SQL, is not a rewrite.
 
@@ -218,4 +218,115 @@ A rewrite is a fix of a `PG-*` finding that replaces the SQL text of a statement
 
 ## Plan reading
 
-Stub. Ticket #395 (sql skill: plan findings) fills this section: the `PLAN-*` rules and the reading of a query plan. It needs a database, so it holds no behavior in this module yet.
+The `PLAN-*` findings come from `scripts/plan_findings.py`, never from reading the plan JSON yourself. The plan comes only from the Database path of the optimize module (`pg_run`), and every `PLAN-*` rule needs a plan with actual values (`EXPLAIN (ANALYZE, BUFFERS)`). A plan with no actual values gives no `PLAN-*` finding. With no database, no `PLAN-*` rule fires. The script reads fractional row counts (PostgreSQL 18) and applies the fixed thresholds below to each plan node, unless the rule says that it reads the whole plan. A node that never ran (`Actual Loops` 0) is skipped.
+
+The script gives the measured values and the thresholds of each finding. The severity is the one of the entry. A fix of a `PLAN-*` finding is advice in words: it holds no replacement SQL, so it is never a rewrite.
+
+### PLAN-01
+
+- **Title:** Row estimate far from the actual rows
+- **Severity:** required
+- **Detects:** A node with 1000 or more actual rows, where the estimate is off by 10 times or more, in either direction (an over- or an underestimate). Actual rows are `Actual Rows` × `Actual Loops`. Estimated rows are `Plan Rows` × `Actual Loops`.
+- **Why it matters:** The planner chooses join order, join method and scan type from its row estimates. A wrong estimate can lead to a slow plan.
+- **Fix:** Refresh the statistics with `ANALYZE` on the tables. If the estimate stays wrong, add extended statistics on correlated columns, or rewrite the condition so that the planner can estimate it (no function on the column, no expression that hides the column).
+- **Example:** The bad form, then the good form.
+
+  Bad:
+
+  ```
+  Seq Scan on orders (rows=100) (actual rows=5000 loops=1)
+  ```
+
+  Good:
+
+  ```
+  Seq Scan on orders (rows=5000) (actual rows=5000 loops=1)
+  ```
+
+### PLAN-02
+
+- **Title:** Seq scan that discards most rows
+- **Severity:** required
+- **Detects:** A `Seq Scan` node that scans 10,000 or more rows, where the filter removes 90% or more of them. Scanned rows are (`Actual Rows` + `Rows Removed by Filter`) × `Actual Loops`. The removed ratio is `Rows Removed by Filter` / (`Actual Rows` + `Rows Removed by Filter`).
+- **Why it matters:** The query reads the whole table to keep a small part of it. The cost grows with the table, not with the result.
+- **Fix:** Add an index on the filtered column (a partial index when the filter uses a fixed condition), or make the condition usable by an existing index (no function on the column).
+- **Example:** The bad form, then the good form.
+
+  Bad:
+
+  ```
+  Seq Scan on events (actual rows=300) Rows Removed by Filter: 29700
+  ```
+
+  Good:
+
+  ```
+  Index Scan using events_kind_idx on events (actual rows=300)
+  ```
+
+### PLAN-03
+
+- **Title:** Spill to disk
+- **Severity:** required
+- **Detects:** A node that writes to disk by any of these signals: a `Sort Method` that starts with `external`; `Hash Batches` above 1; `Temp Written Blocks` above 0 that the node adds itself, that is, above the sum of `Temp Written Blocks` of its direct children (the buffer counts of a node include its children).
+- **Why it matters:** The work does not fit in memory (`work_mem`), so the node writes temporary files and reads them back. This is much slower than an in-memory sort or hash.
+- **Fix:** Reduce the rows that reach the node (filter earlier, select fewer columns), or raise `work_mem` for this query or role after you check the memory that the server has. Do not raise it for the whole server.
+- **Example:** The bad form, then the good form.
+
+  Bad:
+
+  ```
+  Sort Method: external merge  Disk: 4000kB
+  ```
+
+  Good:
+
+  ```
+  Sort Method: quicksort  Memory: 900kB
+  ```
+
+### PLAN-04
+
+- **Title:** Nested loop with many inner loops
+- **Severity:** suggestion
+- **Detects:** A `Nested Loop` node whose inner child has 1000 or more actual loops (the child with `Parent Relationship` `Inner`, or the second child when no child has it).
+- **Why it matters:** The inner side runs once for each outer row. With many outer rows this repeats a lookup thousands of times, and a hash or merge join can be faster.
+- **Fix:** Check that the inner side uses an index on the join column. If the outer side is large, give the planner a reason to choose a hash join (fresh statistics, a join condition on indexed columns), or reduce the outer rows first.
+- **Example:** The bad form, then the good form.
+
+  Bad:
+
+  ```
+  Nested Loop
+    -> Seq Scan on ids (actual rows=2000)
+    -> Index Scan on orders (actual rows=1 loops=2000)
+  ```
+
+  Good:
+
+  ```
+  Hash Join
+    -> Seq Scan on orders (actual rows=2000)
+    -> Hash -> Seq Scan on ids (actual rows=2000)
+  ```
+
+### PLAN-05
+
+- **Title:** Low cache hit ratio
+- **Severity:** suggestion
+- **Detects:** The whole plan, from the buffer totals of the top node: `Shared Hit Blocks` / (`Shared Hit Blocks` + `Shared Read Blocks`) is below 90%, with 1000 or more `Shared Read Blocks`. With no buffer counts at the top node, the rule does not fire.
+- **Why it matters:** The query reads many blocks from disk (or from the operating system cache) instead of from the shared buffers. A cold cache makes a query look slower than it is in steady state.
+- **Fix:** Run the query again to see the warm result before you act. Then read fewer blocks: add an index so that the query touches less of the table, select fewer columns, or filter earlier. Raise `shared_buffers` only after you check the memory of the server.
+- **Example:** The bad form, then the good form.
+
+  Bad:
+
+  ```
+  Buffers: shared hit=100 read=1500
+  ```
+
+  Good:
+
+  ```
+  Buffers: shared hit=1600
+  ```

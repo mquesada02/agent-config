@@ -207,7 +207,7 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertIn("Database path", first)
 
     def test_the_other_stubs_are_kept(self):
-        for ticket in ("#395", "#396", "#397"):
+        for ticket in ("#396", "#397"):
             with self.subTest(ticket=ticket):
                 self.assertIn(ticket, self.text)
 
