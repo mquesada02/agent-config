@@ -429,7 +429,7 @@ class Launch:
                     before = os.lstat(name, dir_fd=self.dir_fd)
                     if records_failed_launch(runtime_dir.read_file(self.dir_fd, name)):  # read again: a run that held the lock may have replaced it
                         now = os.lstat(name, dir_fd=self.dir_fd)  # a file that is not the one that was read stays: it may be a fresh claim
-                        if (now.st_dev, now.st_ino) == (before.st_dev, before.st_ino):
+                        if os.path.samestat(before, now):
                             os.unlink(name, dir_fd=self.dir_fd)
                             try:
                                 runtime_dir.create_exclusive(self.dir_fd, name, "started\n")

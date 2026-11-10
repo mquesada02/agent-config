@@ -800,7 +800,7 @@ runpy.run_path(launch, run_name="__main__")
 # launch file raises a ValueError (the claim does not use the atomic write, so this is the result write). Mode "claim": the exclusive create
 # raises an out-of-space error. The patches are in this driver, not in the script.
 CLAIM_DRIVER = """
-import runpy, sys
+import os, runpy, sys
 here, launch, mode = sys.argv[1:4]
 sys.path.insert(0, here)
 import runtime_dir
@@ -827,7 +827,6 @@ elif mode == "recreate":  # the create after the delete of a rerun fails with an
 elif mode == "short-lock":  # the wait for the lock is short, so a lock that another descriptor holds times out fast
     runtime_dir.LOCK_WAIT_SECONDS = 0.3
 elif mode == "swap":  # between the second read and the delete, a fresh claim replaces the failed record (a rename keeps the old inode in use)
-    import os
     real = runtime_dir.read_file
     reads = []
     def read_file(dir_fd, name):
