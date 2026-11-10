@@ -482,9 +482,23 @@ class S9HeredocTest(S9Case):
         self.assert_flagged(["cat <<'EOF'\ndon't\nEOF\nrm -rf y", "cat <<'EOF' && rm -rf y\ndon't\nEOF", "rm -rf y; cat <<'EOF'\nx\nEOF"])
 
     def test_the_body_of_a_quoted_heredoc_read_by_any_other_command_is_still_command_text(self):
-        self.assert_flagged(["bash <<'EOF'\nrm -rf x\nEOF", "sh <<'EOF'\nrm -rf x\nEOF", "python3 - <<'EOF'\nrm -rf x\nEOF",
+        self.assert_flagged(["bash <<'EOF'\nrm -rf x\nEOF", "sh <<'EOF'\nrm -rf x\nEOF",
                              "ssh host <<'EOF'\nrm -rf x\nEOF", "eval <<'EOF'\nrm -rf x\nEOF", "xargs <<'EOF'\nrm -rf x\nEOF",
-                             "bash <<'EOF'\ndon't\nrm x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF"])
+                             "bash <<'EOF'\ndon't\nrm x\nEOF"])
+
+    def test_the_body_of_a_quoted_heredoc_read_by_an_interpreter_is_not_command_text(self):
+        body = "x = '''it's'''\nimport x from \"vitest\"\n"
+        for command in ("python3 - <<'EOF'\nrm -rf x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF", "node <<'EOF'\nrm -rf x\nEOF",
+                        "python <<'EOF'\nrm -rf x\nEOF", "perl <<'EOF'\nrm -rf x\nEOF", "ruby <<'EOF'\nrm -rf x\nEOF",
+                        "python3 - <<'EOF'\n" + body + "EOF\npnpm exec vitest run a.test.tsx --maxWorkers=2"):
+            with self.subTest(command=command):
+                self.assert_clean([command])
+
+    def test_the_commands_outside_the_body_of_an_interpreter_heredoc_are_still_checked(self):
+        self.assert_flagged(["python3 - <<'EOF'\nx = '''it's'''\nimport x from \"vitest\"\nEOF\npnpm exec vitest run a.test.tsx --maxWorkers=4"])
+
+    def test_an_interpreter_heredoc_that_a_pipe_or_shell_state_can_run_is_still_command_text(self):
+        self.assert_flagged(["python3 - <<'EOF' | bash\nrm -rf x\nEOF", "eval x; python3 - <<'EOF'\nrm -rf x\nEOF", "./python3 <<'EOF'\nrm -rf x\nEOF"])
 
     def test_a_path_that_ends_in_a_data_command_name_is_not_a_data_command(self):
         self.assert_flagged(["./cat <<'EOF'\nrm -rf x\nEOF", "/tmp/x/tee f <<'EOF'\nrm -rf x\nEOF", "bin/cat <<'EOF'\nrm -rf x\nEOF"])

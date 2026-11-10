@@ -947,6 +947,11 @@ class HeredocBodyTest(GateTestCase):
             with self.subTest(command=command):
                 self.assertIsNotNone(self.denial(self.gate(command)))
 
+    def test_the_body_of_a_quoted_heredoc_read_by_an_interpreter_is_still_gated(self):
+        for command in (f"python3 - <<'EOF'\ndon't\n{self.DENIED}\nEOF", f"python3 - <<'EOF'\n{self.DENIED}\nEOF"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.denial(self.gate(command)))
+
 
 if __name__ == "__main__":
     unittest.main()
