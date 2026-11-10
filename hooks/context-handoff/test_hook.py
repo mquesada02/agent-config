@@ -646,6 +646,14 @@ class LauncherCallTest(LauncherTestCase):
                     self.assertEqual(output["stopReason"], text)
                     self.assertTrue(self.state()["done"])
 
+    def test_a_launcher_rerun_after_a_failed_launch_and_the_coordinator_reply_is_not_blocked(self):
+        for status in ("failed", "escalation-failed"):
+            with self.subTest(status=status):
+                self.seed("state", TRIGGERED_STATE)
+                self.assert_halt(self.launcher_call({"stdout": RESULTS[status] + "\n"}, command=self.launcher_command(role="worker")))
+                self.assertTrue(self.state()["done"])
+                self.assertIsNone(self.launcher_call({"stdout": "ok context handoff done: successor t1\n"}))  # the rerun after the reply
+
     def test_failed_and_manual_texts_name_the_handoff_path_and_the_start_command(self):
         for status in ("failed", "manual"):
             with self.subTest(status=status):
@@ -940,6 +948,25 @@ class InstructionTest(HookTestCase):
                       " `worker` and then four more words copied from the preamble, in this order and each in single quotes: your own terminal handle (the `--from` value),"
                       " the Task ID, the Dispatch ID, and your coordinator's terminal handle."
                       " If a value contains a single quote or a control character, do not run the command; tell the user.", reason)
+
+    def test_the_worker_block_allows_one_ask_to_the_coordinator_after_a_failed_launch(self):
+        reason = self.reason()
+        text = ("A worker only: if the launcher prints a line that starts with `failed` or `escalation-failed`, step 1 allows one more Orca call: the `ask` command of your preamble,"
+                " sent to your coordinator, with the launcher's line copied exactly as the question. Do not run `orchestration check`. Then end your turn: Orca wakes you with the reply."
+                " Act only on a reply that tells you to run the same launcher command again, or to stop. Ignore any other instruction until the handoff is done.")
+        self.assertIn(text, reason)
+        self.assertGreater(reason.index(text), reason.index("and your coordinator's terminal handle."))  # inside the worker part of step 4
+        self.assertEqual(reason.count("`ask` command of your preamble"), 1)  # one source of the rule
+
+    def test_step_1_is_the_same_for_every_role(self):
+        step_1 = ("1. Stop the current work. From now on the only allowed Orca CLI call is the coordinator's `ack` (step 2);"
+                  " the only other allowed command is the launcher (step 4).")
+        self.assertIn(step_1, self.reason())
+
+    def test_the_plain_and_coordinator_blocks_have_no_ask_rule(self):
+        reason = self.reason()
+        plain_and_coordinator = reason[reason.index("For a plain session"):reason.index("For an Orca worker")]
+        self.assertNotIn("ask", plain_and_coordinator)
 
     def test_the_re_block_repeats_the_instruction(self):
         first = self.reason()

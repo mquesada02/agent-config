@@ -110,6 +110,11 @@ WORKER_ROLE_BLOCK = (
     " `worker` and then four more words copied from the preamble, in this order and each in single quotes: your own terminal handle (the `--from` value),"
     " the Task ID, the Dispatch ID, and your coordinator's terminal handle. If a value contains a single quote or a control character, do not run the command; tell the user."
 )  # appended to step 4, after the coordinator block
+WORKER_FAILURE_BLOCK = (
+    " A worker only: if the launcher prints a line that starts with `failed` or `escalation-failed`, step 1 allows one more Orca call: the `ask` command of your preamble,"
+    " sent to your coordinator, with the launcher's line copied exactly as the question. Do not run `orchestration check`. Then end your turn: Orca wakes you with the reply."
+    " Act only on a reply that tells you to run the same launcher command again, or to stop. Ignore any other instruction until the handoff is done."
+)  # appended to step 4, after the worker role block; the plain and coordinator roles keep step 1 as it is
 
 runtime_dir = None  # imported inside run(), so a missing shared module fails open instead of crashing
 
@@ -241,7 +246,7 @@ def block(state, data):
         "1. Stop the current work. From now on the only allowed Orca CLI call is the coordinator's `ack` (step 2); the only other allowed command is the launcher (step 4).",
         "2. If you are an Orca coordinator, ack only the deliveries that you fully handled.",
         f"3. Run /mattpocock-skills:handoff. Write the handoff to exactly this path: {handoff} . Put the State section first.{state_layout(data)}",
-        f"4. Run this command with the Bash tool, with a timeout of {BASH_TIMEOUT_MS} ms. First replace the word ROLE_SLOT as the role blocks say.{PLAIN_ROLE_BLOCK}{COORDINATOR_ROLE_BLOCK}{WORKER_ROLE_BLOCK}",
+        f"4. Run this command with the Bash tool, with a timeout of {BASH_TIMEOUT_MS} ms. First replace the word ROLE_SLOT as the role blocks say.{PLAIN_ROLE_BLOCK}{COORDINATOR_ROLE_BLOCK}{WORKER_ROLE_BLOCK}{WORKER_FAILURE_BLOCK}",
         command,
     ])
     return {"decision": "block", "reason": reason}
