@@ -43,16 +43,15 @@ def children(node):
     return [child for child in plans if isinstance(child, dict)] if isinstance(plans, list) else []
 
 
-def label(node):
-    kind = node.get("Node Type")
-    kind = kind if isinstance(kind, str) else "Unknown"
-    relation = node.get("Relation Name")
-    return f"{kind} on {relation}" if isinstance(relation, str) and relation else kind
-
-
 def kind_of(node):
     kind = node.get("Node Type")
     return kind if isinstance(kind, str) else "Unknown"
+
+
+def label(node):
+    kind = kind_of(node)
+    relation = node.get("Relation Name")
+    return f"{kind} on {relation}" if isinstance(relation, str) and relation else kind
 
 
 def has_actual(node):
@@ -71,12 +70,8 @@ def plan_01(node, path):
     if actual < MIN_ACTUAL_ROWS:
         return []
     larger, smaller = max(actual, estimated), min(actual, estimated)
-    if smaller == 0:
-        ratio, fires = None, True
-    else:
-        ratio = larger / smaller
-        fires = ratio >= MAX_RATIO
-    if not fires:
+    ratio = larger / smaller if smaller else None
+    if ratio is not None and ratio < MAX_RATIO:
         return []
     return [finding("PLAN-01", node, path, {"actual_rows": actual, "estimated_rows": estimated, "ratio": ratio},
                     {"min_actual_rows": MIN_ACTUAL_ROWS, "ratio": MAX_RATIO})]
