@@ -1,6 +1,6 @@
 # Setup module
 
-`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never skip a step and never reorder them.
+`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never skip a step and never reorder them. Before the `write` call of Step 6, you must have sent one message of your own that starts with `Diff to confirm:` and holds the diff. A `write` call without that message is an error, even when nobody can answer.
 
 Every script needs Python 3.11 or newer. `<skill folder>` is the folder of this skill and `<repo root>` is the repo. Never read the PG password file (`PGPASSFILE`, `~/.pgpass`): setup reads service names only.
 
@@ -92,7 +92,7 @@ Show each name in `service_check.missing`. The developer corrects it or keeps it
    - Run `plan` alone: never pipe or filter its output, because the whole JSON output must be in the result of the call (the digest of the confirmation comes from it).
    - A malformed file gives `ok` false: stop and show the message.
    - Resolve every `conflicts` entry first. Ask per key: keep the current value or take the proposed one. Drop a key that the developer keeps from the proposal, then run `plan` again. A re-run only appends prose rules: it never removes a hand-written line or comment.
-3. Show the one diff. Print `rules_file.diff` and `allowlist.diff` (an absent `allowlist` means no allowlist change) as text in a message of your own, in a code block, together with the `warnings` and the `skipped_rules`. Do this before any write, even when the developer gave the confirmation in advance. Then ask for the confirmation, once.
+3. Show the one diff. Print `rules_file.diff` and `allowlist.diff` (an absent `allowlist` means no allowlist change) as text in a message of your own, in a code block, together with the `warnings` and the `skipped_rules`. Do this before any write, even when the developer gave the confirmation in advance. The diff text must be in your own message: the result of a tool call does not count. Start that message with the line `Diff to confirm:`, then give the diff in a code block. Make the `write` call only after that message. Then ask for the confirmation, once.
 4. Write both files after that confirmation, with the digest of the latest plan:
 
    ```
