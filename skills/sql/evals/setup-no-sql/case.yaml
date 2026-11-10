@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: setup-no-sql
+description: Seam 4 setup case. `/sql setup` on a repo with no SQL. Setup writes the default style, an empty tag list and no allowlist, and its report says that no formatter detector ran.
+tags: [setup]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    Run `/sql setup` on the repo in the current folder (the current folder is the repo root). Nobody can answer your questions, so use these answers. Confirm the empty tag list. Decline the formatter install. Name no PG service (the answer is "none"). Add no rule of my own. Show me the diff, and then confirm it and write the files. In your final message, show the whole rules file as it was written in a code block, and give the setup report: the chosen formatter and the other tools that the detector found, the tags, the services and what was written.

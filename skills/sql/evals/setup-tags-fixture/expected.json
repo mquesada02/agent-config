@@ -1,0 +1,32 @@
+{
+  "settings": {
+    "style": {
+      "keyword_case": "lower",
+      "indent": "2 spaces",
+      "clause_per_line": true,
+      "comma": "trailing",
+      "alias_as": false
+    },
+    "formatter": {
+      "tool": "none"
+    },
+    "sources": {
+      "tags": [
+        "sql",
+        "this.sql",
+        "tx"
+      ]
+    },
+    "rules": {
+      "disabled": []
+    }
+  },
+  "contains": [
+    "Pass a list to IN with a tag call such as sql(ids); never put the call in extra parentheses or pass a bare variable.",
+    "Name every column that a report query selects."
+  ],
+  "absent": [
+    "Do not start a LIKE pattern with a percent sign when the column has an index.",
+    "Do not use SELECT * in a template; name the columns."
+  ]
+}

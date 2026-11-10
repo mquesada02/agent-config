@@ -132,6 +132,22 @@ Graders:
 
 `db-expect.json` holds the `expect` list of H kinds and the optional keys `sequences_may_differ` and `rules` (an object with the lists `expect` and `forbid` of rule ids: the driver grades the final message of the run with grader E, `grade_rule_ids.py`; the plugin eval scorer `grade_db_eval_results.py` ignores `rules`). The graders take their expectations from the command line, so a later ticket adds a case with no grader change, unless it needs a new H kind. `db/canaries.json` holds fixed synthetic values (password, wrong password, user, database, three host names). They appear only in generated files, never in a committed fixture, prompt or module text. The driver cases have no `case.yaml`, `prompt.md` or `graders/` folder, so `claude plugin eval` does not find them. Docker rules: `docker run --rm`, a unique container name, `docker rm -fv` in a `finally` block, no named volume, no `docker ... prune`. Check with `docker ps -a` and `docker volume ls -f dangling=true` after a run.
 
+## Setup cases
+
+The `setup-*` cases run `/sql setup`. Each has `case.yaml`, `scaffold.sh`, `repo/`, `expected.json` (the `--expect` file of grader D) and `graders/`. Each prompt holds the replies, because a case has one user turn. Run them with `--keep-temp`, `--output-dir` and `--json` so that each run has a `tracePath`:
+
+```
+claude plugin eval skills/sql --no-publish -j 2 --runs 3 --threshold 1.0 --ablation none --scaffold --keep-temp --allow-tools Bash Write Edit --trust-plugin --case 'setup-*' --output-dir <results folder> --json <results folder>/result.json
+```
+
+Grader D (`graders/grade_setup.py TRACE --repo <folder> --expect <expected.json> [--allowlist <file> --key <repo key>]`) runs by hand on each kept run: the trace is `tracePath`; the kept run folder is `<kept folder>/home/cwd` (the repo) and the run HOME is `<kept folder>/home` (open it with the `chmod` that the eval prints). The allowlist is `<run HOME>/.config/sql-skill/allowlist.toml` and the key is `example.com/acme/shop`. In a plugin eval the Bash tool is read-only, so `setup_files.py write` gives `write_failed` and the Write fallback of `setup.md` writes the files. The Write tool is denied for a new allowlist file outside the run folder (amendment 4 on #377), so `setup-tags-fixture` has no `services` key; a flow test in `tests/test_sql_setup_evals.py` passes D with `services` for it.
+
+| Case | What it proves |
+|---|---|
+| `setup-tags-fixture` | Tags `sql`, `this.sql` and `tx` are detected and stored; three pitfall candidates, one kept; the diff is shown before the write |
+| `setup-no-sql` | A repo with no SQL: default style, empty tags, no allowlist, no detector run |
+| `setup-rerun` | A re-run asks per changed key, keeps the hand-written comment and rule, appends the new rule |
+
 ## Fixture rules
 
 - Every fixture is synthetic. No fixture copies code from the private inspiration repo, and no file names it.
