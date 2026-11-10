@@ -15,7 +15,7 @@ Before you pick a branch, run the intake script on the repo: `python3 scripts/in
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md).
 - **Create** (the user asks for a new CI workflow): not built yet. Say so, and offer a review of the existing workflows.
-- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md) and keep your edit consistent with it. Do not review the whole repo.
+- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md) and [rules/maintainability.md](rules/maintainability.md), and keep your edit consistent with them. Do not review the whole repo.
 
 ## Modules
 
@@ -23,3 +23,5 @@ Before you pick a branch, run the intake script on the repo: `python3 scripts/in
 - [scripts/node-support-offline.json](scripts/node-support-offline.json): the dated offline list of supported Node majors. The intake script uses it with no network.
 - [review.md](review.md): the review steps and the report contract.
 - [rules/naming.md](rules/naming.md): NAME-01 to NAME-09. Each rule has an id, a default severity, the rule, its check and its fix.
+- [rules/job-graph.md](rules/job-graph.md): GRAPH-01 to GRAPH-07 (jobs, `needs:`, matrices, shards, the build artifact, suite matrices).
+- [rules/maintainability.md](rules/maintainability.md): MAINT-01 to MAINT-03 (long `run:` blocks, step comments, copied workflows).

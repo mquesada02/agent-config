@@ -1,9 +1,9 @@
 {
   "name": "example-app",
-  "private": true,
   "packageManager": "pnpm@10.0.0",
+  "main": "dist/index.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "lint": "eslint .",

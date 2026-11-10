@@ -1,5 +1,6 @@
 {
   "expect": [
+    "GRAPH-07",
     "NAME-07"
   ],
   "forbid": []

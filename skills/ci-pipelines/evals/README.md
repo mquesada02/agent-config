@@ -38,7 +38,7 @@ Each folder holds one case:
 | `expect.json` | `expect`: rule ids that must appear. `forbid`: rule ids that must not appear. |
 | `graders/*.md` | The in-run graders (plugin eval has no custom-code graders). |
 
-Review cases: `name-01-...` to `name-09-...` (one bad fixture for each naming rule), `fx-sequential-quality`, `fx-suite-list` and `clean` (it forbids every critical and required rule id). Trigger case: `trigger-edit-workflow` asks for a workflow edit and does not name the skill.
+Review cases: `name-01-...` to `name-09-...` (one bad fixture for each naming rule), `graph-01-...` to `graph-07-...` and `maint-01-...` to `maint-03-...` (one bad fixture for each job graph and maintainability rule), `fx-sequential-quality`, `fx-suite-list`, `fx-duplicate-build`, `fx-inline-tests` and `clean` (it forbids every critical and required rule id). GRAPH-05 is a measured rule, and the eval sandbox has no run history, so it has two cases. `graph-05-shards-no-history` forbids GRAPH-05: with the sandbox's own unknown history, the review must give no shard finding. `graph-05-shards-with-history` expects GRAPH-05: its prompt gives the review a recorded intake output (`repo/intake.json`, the intake contract with `run_history` detected, a test job median of about 25 minutes, so 4 shards) and tells it not to run the intake script. `maint-03-copied-workflow` names two copies of the workflow in its prompt, because MAINT-03 applies only on request. Trigger case: `trigger-edit-workflow` asks for a workflow edit and does not name the skill.
 
 Every fixture is synthetic. No text comes from a private repo.
 

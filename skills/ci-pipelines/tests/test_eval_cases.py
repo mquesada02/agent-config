@@ -1,5 +1,6 @@
 import glob
 import json
+import math
 import os
 import re
 import unittest
@@ -76,14 +77,30 @@ class ReviewCases(unittest.TestCase):
         (name,) = [n for n in review_cases() if n.startswith("name-09-")]
         self.assertEqual(expect_lists(name), (["NAME-04", "NAME-09"], []))
 
-    def test_the_multi_rule_cases_expect_their_naming_ids(self):
-        self.assertEqual(expect_lists("fx-sequential-quality"), (["NAME-04", "NAME-06"], []))
-        self.assertEqual(expect_lists("fx-suite-list"), (["NAME-07"], []))
+    def test_there_is_one_bad_case_for_each_job_graph_and_maintainability_rule(self):
+        measured = {rule_id for _, rule_id, fields in all_rules() if "measured" in fields["Severity"]}
+        for prefix, count in (("graph", 7), ("maint", 3)):
+            for number in range(1, count + 1):
+                matches = [n for n in review_cases() if n.startswith(f"{prefix}-{number:02d}-")]
+                rule = f"{prefix.upper()}-{number:02d}"
+                if rule in measured:
+                    self.assertEqual(sorted(expect_lists(n) for n in matches), [([], [rule]), ([rule], [])], rule)
+                else:
+                    self.assertEqual([expect_lists(n) for n in matches], [([rule], [])], rule)
+
+    def test_the_multi_rule_cases_expect_their_ids(self):
+        self.assertEqual(expect_lists("fx-sequential-quality"), (["GRAPH-01", "NAME-04", "NAME-06"], []))
+        self.assertEqual(expect_lists("fx-suite-list"), (["GRAPH-07", "NAME-07"], []))
+        self.assertEqual(expect_lists("fx-duplicate-build"), (["GRAPH-06"], []))
+        self.assertEqual(expect_lists("fx-inline-tests"), (["MAINT-01"], []))
 
     def test_each_rule_id_is_expected_by_a_review_case(self):
         expected = {rule for name in review_cases() for rule in expect_lists(name)[0]}
-        for _, rule_id, _ in all_rules():
+        forbidden = {rule for name in review_cases() for rule in expect_lists(name)[1]}
+        for _, rule_id, fields in all_rules():
             self.assertIn(rule_id, expected, f"no review case expects {rule_id}")
+            if "measured" in fields["Severity"]:
+                self.assertIn(rule_id, forbidden, f"no review case forbids the measured rule {rule_id}")
 
     def test_the_clean_case_forbids_every_critical_and_required_id(self):
         expect, forbid = expect_lists("clean")
@@ -135,7 +152,85 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
             self.assertNotIn("ci-pipelines", prompt)
-            self.assertIsNone(re.search(r"\bname-\d\d", prompt), "the prompt names a NAME rule")
+            self.assertIsNone(re.search(r"\b(name|graph|maint)-\d\d", prompt), "the prompt names a rule")
+
+    def test_the_copied_workflow_prompt_names_two_copies(self):
+        (name,) = [n for n in review_cases() if n.startswith("maint-03-")]
+        prompt = read(os.path.join(case_dir(name), "prompt.md"))
+        self.assertIn("example-api", prompt)
+        self.assertIn("example-worker", prompt)
+
+
+class NewFixtures(unittest.TestCase):
+    """Fixtures of the job graph and maintainability cases keep private names out."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cases = [n for n in case_names()
+                     if n.startswith(("graph-", "maint-")) or n in ("fx-duplicate-build", "fx-inline-tests")]
+        cls.texts = {}
+        for name in cls.cases:
+            base = os.path.join(case_dir(name), "repo")
+            for path in glob.glob(os.path.join(base, "**", "*"), recursive=True):
+                if os.path.isfile(path):
+                    cls.texts[path] = read(path)
+
+    def test_the_new_cases_exist(self):
+        self.assertEqual(len(self.cases), 13)
+
+    def test_no_new_fixture_holds_a_url(self):
+        for path, text in self.texts.items():
+            self.assertNotRegex(text, r"https?://", path)
+
+    def test_every_uses_owner_is_actions_or_pnpm(self):
+        for path, text in self.texts.items():
+            for owner in re.findall(r"uses:\s*([^/\s@]+)/", text):
+                self.assertIn(owner, ("actions", "pnpm"), path)
+
+    def test_every_package_name_starts_with_example(self):
+        for path, text in self.texts.items():
+            if os.path.basename(path) == "package.json":
+                self.assertTrue(json.loads(text)["name"].startswith("example-"), path)
+
+
+class RecordedIntake(unittest.TestCase):
+    """The case that gives the review a known run history through a recorded intake output."""
+    CASE = "graph-05-shards-with-history"
+    FACTS = ("default_branch", "package_manager", "node_version_app", "engines", "package_kind", "os_claims",
+             "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
+             "existing_workflows", "installed_tools", "supported_node_majors")
+
+    def setUp(self):
+        with open(os.path.join(case_dir(self.CASE), "repo", "intake.json"), encoding="utf-8") as handle:
+            self.intake = json.load(handle)
+
+    def test_the_case_expects_graph_05(self):
+        self.assertEqual(expect_lists(self.CASE), (["GRAPH-05"], []))
+
+    def test_the_file_holds_the_15_intake_facts_with_their_three_keys(self):
+        self.assertEqual(sorted(self.intake), sorted(self.FACTS))
+        for name, fact in self.intake.items():
+            self.assertEqual(sorted(fact), ["source", "status", "value"], name)
+
+    def test_the_run_history_is_detected_and_gives_4_shards(self):
+        history = self.intake["run_history"]
+        self.assertEqual(history["status"], "detected")
+        self.assertEqual(history["value"]["runs"], 10)
+        medians = [job["median_seconds"] for name, job in history["value"]["jobs"].items() if name.startswith("Test")]
+        minutes = max(medians) / 60
+        self.assertGreater(minutes, 10)
+        self.assertEqual(min(8, math.ceil(minutes / 8)), 4)
+
+    def test_the_tools_do_not_depend_on_the_machine(self):
+        for tool in self.intake["installed_tools"]["value"].values():
+            self.assertFalse(tool["installed"])
+
+    def test_the_prompt_points_to_the_file_and_the_sandbox_run_history_stays_unknown_elsewhere(self):
+        prompt = read(os.path.join(case_dir(self.CASE), "prompt.md"))
+        self.assertIn("intake.json", prompt)
+        self.assertIn("do not run the intake script", prompt)
+        other = read(os.path.join(case_dir("graph-05-shards-no-history"), "prompt.md"))
+        self.assertNotIn("intake.json", other)
 
 
 class TriggerCase(unittest.TestCase):

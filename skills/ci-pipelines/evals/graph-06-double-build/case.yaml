@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: graph-06-double-build
+context:
+  scaffold_script: scaffold.sh
