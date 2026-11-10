@@ -1,0 +1,12 @@
+{
+  "file": "notes-store.ts",
+  "target": "5-5",
+  "style": {
+    "keyword_case": "upper",
+    "indent": "2 spaces",
+    "clause_per_line": true,
+    "comma": "trailing",
+    "alias_as": true
+  },
+  "tags": []
+}
