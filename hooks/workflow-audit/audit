@@ -366,7 +366,7 @@ class Transcript:
         self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
         self.inputs = []     # dicts of the user rows and queued_command prompts that S5 reads: index, raw time, raw origin, field, texts
-        self.asks = set()    # the ids of the AskUserQuestion tool_use blocks; only S5 reads them
+        self.asks = {}       # AskUserQuestion tool_use id -> the question texts of the call; only S5 reads them
         self.answered = []   # dicts of the user rows with a tool_result block: index, raw time, tool_use ids, raw toolUseResult.answers; only S5 reads them
         self.cwds = set()
         self.versions = set()
@@ -463,7 +463,9 @@ def _read_row(transcript, index, row):
                 transcript.launches.append((name, [tool_input.get(key) if isinstance(tool_input.get(key), str) else None for key in LAUNCH_FIELDS[name]]))
                 continue
             if name == "AskUserQuestion":
-                transcript.asks.add(block["id"])
+                questions = tool_input.get("questions")
+                transcript.asks[block["id"]] = ([item["question"] for item in questions if isinstance(item, dict) and isinstance(item.get("question"), str)]
+                                                if isinstance(questions, list) else [])
                 continue
             if name not in EDIT_TOOLS and name != "Bash":
                 continue
@@ -1484,8 +1486,8 @@ def _origin_kind(value, field, where):
 
 
 def _real_input(audited):
-    """(moment or None, normalised text) of every block of real user input, in the order of the audited sessions, then the rows, then
-    the blocks or values. Only the main transcript of a session that is not a worker session counts.
+    """(moment or None, normalised text, question texts of the call or None for typed text) of every block of real user input, in the
+    order of the audited sessions, then the rows, then the blocks or values. Only the main transcript of a session that is not a worker session counts.
     Raises Unavailable for a malformed origin, attachment.origin or answers in a row that is read."""
     units = []
     for transcripts in audited:
@@ -1497,13 +1499,14 @@ def _real_input(audited):
             if "texts" in entry:
                 if _origin_kind(entry["origin"], entry["field"], where) == "human" and entry["texts"]:
                     moment = _row_time(entry["time"])
-                    units += [(moment, _normalise(text)) for text in entry["texts"]]
-            elif entry["answers"] is not ABSENT and main.asks.intersection(entry["ids"]):
+                    units += [(moment, _normalise(text), None) for text in entry["texts"]]
+            elif entry["answers"] is not ABSENT and main.asks.keys() & set(entry["ids"]):
                 answers = entry["answers"]
                 if not isinstance(answers, dict) or not all(isinstance(value, str) for value in answers.values()):
                     raise Unavailable(f"malformed answers in {where}")
                 moment = _row_time(entry["time"])
-                units += [(moment, _normalise(value)) for value in answers.values()]
+                questions = [text for call_id in entry["ids"] for text in main.asks.get(call_id, [])]
+                units += [(moment, _normalise(value), questions) for value in answers.values()]
     return units
 
 
@@ -1517,7 +1520,7 @@ def _unbacked_extensions(ledger, extensions, units):
         caps[key] = cap + event["rounds"]
         capped = next(round_event for _, round_event in ledger.round_events if (round_event["loop"], round_event["phase"]) == key and round_event["round"] == cap)
         low, high, quote = _instant(capped["time"], "the ledger"), _instant(event["time"], "the ledger"), _normalise(event["quote"])
-        found = next((position for position, (moment, text) in enumerate(units)
+        found = next((position for position, (moment, text, _) in enumerate(units)
                       if position not in used and moment is not None and low < moment <= high and quote in text), None)
         if found is None:
             failures.append(f"extension {number} ({event['loop']} {event['phase']} +{event['rounds']}): quote not found in real user input")
@@ -1526,13 +1529,43 @@ def _unbacked_extensions(ledger, extensions, units):
     return failures
 
 
+def _names_whole_number(text, number):
+    """True when `text` holds `number` as a whole number: not inside a longer number such as 1300 or 1,300."""
+    return re.search(rf"(?<!\d)(?<!\d[,.]){number}(?!\d)(?![,.]\d)", text) is not None
+
+
 def _unbacked_size_approvals(approvals, units):
-    """The S5 evidence lines of the size-approval events whose quote is not found in real user input (`units`) at or before the event."""
-    failures = []
+    """The S5 evidence lines of the size-approval events that no AskUserQuestion answer backs (`units`, from `_real_input`). The answer
+    holds the quote, belongs to a call whose question names the approved size as a whole number, is not after the event, and backs
+    one event only: each event takes the earliest unused answer that fits."""
+    used, failures = set(), []
     for number, event in enumerate(approvals, 1):
         high, quote = _instant(event["time"], "the ledger"), _normalise(event["quote"])
-        if not any(moment is not None and moment <= high and quote in text for moment, text in units):
-            failures.append(f"size-approval {number} ({event['lines']} lines): quote not found in real user input")
+        stage, found = None, None  # stage: how far the best quote match got through the rules
+        for position, (moment, text, questions) in enumerate(units):
+            if quote not in text:
+                continue
+            if questions is None:
+                reached = 0
+            elif not any(_names_whole_number(question, event["lines"]) for question in questions):
+                reached = 1
+            elif moment is None or moment > high:
+                reached = 2
+            elif position in used:
+                reached = 3
+            else:
+                found = position
+                break
+            stage = reached if stage is None else max(stage, reached)
+        head = f"size-approval {number} ({event['lines']} lines)"
+        if found is not None:
+            used.add(found)
+        elif stage is None:
+            failures.append(f"{head}: quote not found in real user input")
+        else:
+            reason = ("the quote is in typed user text, not in an AskUserQuestion answer", "the question does not name the approved size",
+                      "the answer is after the event", "the answer already backs another size-approval")[stage]
+            failures.append(f"{head}: {reason}")
     return failures
 
 
