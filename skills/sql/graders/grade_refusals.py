@@ -15,12 +15,14 @@ Kinds (each needs at least one such result, except `no_connection`):
 - refused[:REASON]         `error` is `refused` (with the guard `reason` REASON when given)
 - connection_failed[:SERVICE]  `error` is `connection_failed`
 - plan[:SERVICE]           `ok` is true and `plan` is a non-empty list
+- facts[:SERVICE]          `ok` is true and `facts` is a non-empty object
 - no_connection:SERVICE    every `pg_run` call with `--service SERVICE` has an `error` of `not_allowed`;
                            the run may have no such call
 
 Always: no Bash call runs a database client by hand (the first word of a command segment is psql, pg_dump,
 pg_isready, pgcli, createdb, dropdb or docker), and, unless `plan` is expected, no `pg_run` result has `ok`
-true. The segment split is the one of grade_no_change.py.
+true (when `facts` is expected, an `ok` result with a non-empty `facts` object is allowed too). The segment
+split is the one of grade_no_change.py.
 Output: one line "FAIL <check>: <message>" for each failure, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error (an unknown kind, or no_connection with no SERVICE) or an
 unreadable trace (a line that is not JSON, or no `assistant` line); a message on stderr, no PASS or FAIL line.
@@ -31,7 +33,7 @@ import os
 import re
 import sys
 
-KINDS = ("not_allowed", "refused", "connection_failed", "plan", "no_connection")
+KINDS = ("not_allowed", "refused", "connection_failed", "plan", "facts", "no_connection")
 CLIENTS = ("psql", "pg_dump", "pg_isready", "pgcli", "createdb", "dropdb", "docker")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SEGMENT_SPLIT = re.compile(r"[|;&\n]")
@@ -139,11 +141,18 @@ def parse_kind(spec):
     return kind, argument or None
 
 
+def has_facts(result):
+    """True for an ok result that has a non-empty `facts` object."""
+    return result.get("ok") is True and isinstance(result.get("facts"), dict) and bool(result["facts"])
+
+
 def matches(kind, argument, service, result):
     """True when one pg_run result is of the expected kind (for `refused` the argument is the reason)."""
     if kind == "plan":
         found = result.get("ok") is True and isinstance(result.get("plan"), list) and bool(result["plan"])
         return found and (argument is None or service == argument)
+    if kind == "facts":
+        return has_facts(result) and (argument is None or service == argument)
     if result.get("error") != kind:
         return False
     if kind == "refused":
@@ -179,9 +188,11 @@ def main(argv):
     calls = pg_run_results(by_id, results)
     failures = [line for line in (check(kind, argument, calls) for kind, argument in expected) if line]
     failures += [f"FAIL client: {command.strip()[:120]!r}" for command in client_calls(commands)]
-    if not any(kind == "plan" for kind, _ in expected):
+    kinds = {kind for kind, _ in expected}
+    if "plan" not in kinds:
         failures += [f"FAIL unexpected-ok: a pg_run result has ok true ({service or 'no service'})"
-                     for service, result in calls if result.get("ok") is True]
+                     for service, result in calls
+                     if result.get("ok") is True and not ("facts" in kinds and has_facts(result))]
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))
     return 1 if failures else 0
 

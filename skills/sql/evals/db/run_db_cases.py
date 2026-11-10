@@ -68,8 +68,21 @@ def claude_env(state):
     return env
 
 
-def grader(script, *args):
-    return results.run_grader(script, list(args))
+def grader(script, *args, stdin=None):
+    return results.run_grader(script, list(args), stdin=stdin)
+
+
+def grade_rules(label, trace, rules):
+    """The failure lines of grader E (grade_rule_ids.py) on the final message of the transcript."""
+    message = results.final_message(trace)
+    if message is None:
+        return [f"FAIL {label} trace: no final message in {trace}"]
+    args = ["-", "--expect", *rules["expect"], "--forbid", *rules["forbid"]]
+    code, found, error = grader("grade_rule_ids.py", *args, stdin=message)
+    lines = [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
+    if code == 2:
+        lines.append(f"FAIL {label} grade_rule_ids.py: cannot grade ({error})")
+    return lines
 
 
 def grade_run(label, trace, expectation, before, after):
@@ -83,6 +96,8 @@ def grade_run(label, trace, expectation, before, after):
         lines += [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
         if code == 2:
             lines.append(f"FAIL {label} {script}: cannot grade ({error})")
+    if "rules" in expectation:
+        lines += grade_rules(label, trace, expectation["rules"])
     for version in db_eval.VERSIONS:
         args = [before[version], after[version]]
         if expectation.get("sequences_may_differ"):

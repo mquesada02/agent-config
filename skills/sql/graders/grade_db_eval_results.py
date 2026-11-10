@@ -7,8 +7,9 @@ Plugin eval has no custom-code graders, so this script runs grade_refusals.py (H
 each run in the `arms.with` list of each case of the result whose folder under DIR has a db-expect.json (the
 other cases are skipped). The trace of a run is its `tracePath` field, which exists only when the eval ran
 with --keep-temp; a run with no trace file gives one "trace" failure. db-expect.json is an object with
-`expect` (a list of H kinds, see grade_refusals.py) and an optional `sequences_may_differ` (boolean, read by
-the driver, not by this script). Default DIR: the evals folder beside the graders folder. Default FILE:
+`expect` (a list of H kinds, see grade_refusals.py) and the optional keys `sequences_may_differ` (boolean)
+and `rules` (an object with the lists `expect` and `forbid` of rule ids, graded by grader E); the driver
+reads both optional keys, this script reads neither. Default DIR: the evals folder beside the graders folder. Default FILE:
 evals/db/canaries.json.
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failed check, one line "<case>#<n>: PASS|FAIL"
 for each run (n starts at 1), then PASS or FAIL. Exit code: 0 pass, 1 fail, 2 usage error or unreadable
