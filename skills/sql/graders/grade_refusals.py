@@ -141,6 +141,11 @@ def parse_kind(spec):
     return kind, argument or None
 
 
+def has_plan(result):
+    """True for an ok result that has a non-empty `plan` list."""
+    return result.get("ok") is True and isinstance(result.get("plan"), list) and bool(result["plan"])
+
+
 def has_facts(result):
     """True for an ok result that has a non-empty `facts` object."""
     return result.get("ok") is True and isinstance(result.get("facts"), dict) and bool(result["facts"])
@@ -148,11 +153,9 @@ def has_facts(result):
 
 def matches(kind, argument, service, result):
     """True when one pg_run result is of the expected kind (for `refused` the argument is the reason)."""
-    if kind == "plan":
-        found = result.get("ok") is True and isinstance(result.get("plan"), list) and bool(result["plan"])
+    if kind in ("plan", "facts"):
+        found = has_plan(result) if kind == "plan" else has_facts(result)
         return found and (argument is None or service == argument)
-    if kind == "facts":
-        return has_facts(result) and (argument is None or service == argument)
     if result.get("error") != kind:
         return False
     if kind == "refused":

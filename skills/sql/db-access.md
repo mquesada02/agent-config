@@ -1,6 +1,6 @@
 # Database access module
 
-This module holds the only way that the skill reads a plan from a real database, and the catalog facts of the `facts` action. It covers `SELECT` statements only. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
+This module holds the only way that the skill reads a plan from a real database, and the catalog facts of the `facts` action. It covers `SELECT` statements only, and `facts` takes no statement. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
 
 ## Rules
 

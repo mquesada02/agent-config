@@ -42,7 +42,7 @@ If `error` is not null, stop. Show its `message` and its `line` (the line can be
 
 ## Rules
 
-These rules check how a postgres.js template is composed. They need no database. A fix of a `PGJS-*` finding repairs the template. It is not a rewrite of the SQL text.
+These rules check how a postgres.js template is composed. They work with no database (PGJS-02 can also read a column type from the catalog when the database is allowlisted). A fix of a `PGJS-*` finding repairs the template. It is not a rewrite of the SQL text.
 
 ### PGJS-01
 

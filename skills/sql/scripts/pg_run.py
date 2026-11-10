@@ -265,12 +265,10 @@ def facts(service, parsed, overrides):
             stdin=FACTS_SCRIPT,
         )
         found = fact_rows(out, len(sent))
+    index = {parts: number for number, parts in enumerate(sent)}
     return {
         "ok": True, "action": "facts", "service": service,
-        "facts": {
-            name: found.get(sent.index(parts), {"missing": True}) if parts else {"missing": True}
-            for name, parts in parsed.items()
-        },
+        "facts": {name: found.get(index.get(parts), {"missing": True}) for name, parts in parsed.items()},
     }
 
 
