@@ -8,7 +8,7 @@ from fake_gh import INTAKE, Sandbox
 from skill_files import SKILL, read
 
 KEYS = [
-    "default_branch", "package_manager", "node_version_app", "engines", "package_kind", "os_claims",
+    "default_branch", "package_manager", "node_version_app", "engines", "scripts", "package_kind", "os_claims",
     "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
     "existing_workflows", "installed_tools", "supported_node_majors",
 ]
@@ -48,7 +48,7 @@ class IntakeCase(unittest.TestCase):
 
 
 class Shape(IntakeCase):
-    def test_the_output_has_the_15_facts_in_order_each_with_value_status_and_source(self):
+    def test_the_output_has_the_16_facts_in_order_each_with_value_status_and_source(self):
         facts = self.facts({"package.json": {"name": "a"}})
         self.assertEqual(list(facts), KEYS)
         for key, fact in facts.items():
@@ -164,6 +164,44 @@ class Packages(IntakeCase):
         pnpm = self.facts({"package.json": {}, "pnpm-workspace.yaml": "packages:\n  - 'libs/*'\n  - '!libs/skip'\n",
                            "libs/a/package.json": {}, "libs/skip/package.json": {}})
         self.assertEqual([e["path"] for e in pnpm["package_kind"]["value"]], [".", "libs/a"])
+
+
+class Scripts(IntakeCase):
+    def scripts(self, files):
+        return self.facts(files)["scripts"]
+
+    def test_a_single_package_lists_the_names_of_its_scripts(self):
+        fact = self.scripts({"package.json": {"scripts": {"lint": "eslint .", "test": "vitest run"}}})
+        self.assertEqual(fact["status"], "detected")
+        self.assertEqual(fact["value"], [{"path": ".", "value": ["lint", "test"], "status": "detected",
+                                          "source": "./package.json scripts"}])
+
+    def test_a_package_with_no_scripts_field_has_an_empty_detected_list(self):
+        fact = self.scripts({"package.json": {"name": "a"}})
+        self.assertEqual((fact["value"][0]["value"], fact["value"][0]["status"]), ([], "detected"))
+        self.assertEqual(fact["status"], "detected")
+
+    def test_a_monorepo_has_one_entry_for_each_package_in_path_order(self):
+        fact = self.scripts({
+            "package.json": {"workspaces": ["packages/*"], "scripts": {"build": "turbo run build"}},
+            "packages/a/package.json": {"scripts": {"lint": "x"}},
+            "packages/b/package.json": {"name": "b"},
+        })
+        self.assertEqual([(e["path"], e["value"]) for e in fact["value"]],
+                         [(".", ["build"]), ("packages/a", ["lint"]), ("packages/b", [])])
+
+    def test_an_unreadable_package_json_is_an_unknown_entry(self):
+        fact = self.scripts({"package.json": "{ not json"})
+        self.assertEqual((fact["value"][0]["value"], fact["value"][0]["status"]), ([], "unknown"))
+        self.assertEqual(fact["status"], "unknown")
+
+    def test_no_package_json_at_all_gives_an_empty_list_with_the_status_unknown(self):
+        self.assertFact(self.scripts({"README.md": "x"}), [], "unknown")
+
+    def test_a_scripts_field_of_the_wrong_shape_gives_an_empty_list(self):
+        for value in ("lint", ["lint"], None, 3):
+            fact = self.scripts({"package.json": {"scripts": value}})
+            self.assertEqual(fact["value"][0]["value"], [], value)
 
 
 class Comments(IntakeCase):

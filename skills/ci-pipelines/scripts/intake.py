@@ -242,6 +242,20 @@ def engines_fact(packages, newest_lts):
     return fact(entries, aggregate(entries, "unknown"), "package.json of each package")
 
 
+def scripts_fact(packages):
+    entries = []
+    for path, data in packages:
+        scripts = (data or {}).get("scripts")
+        names = sorted(scripts) if isinstance(scripts, dict) else []
+        if data is None:
+            entries.append({"path": path, "value": [], "status": "unknown",
+                            "source": f"{path}/package.json is not valid JSON"})
+        else:
+            entries.append({"path": path, "value": names, "status": "detected",
+                            "source": f"{path}/package.json scripts"})
+    return fact(entries, aggregate(entries, "unknown"), "package.json of each package")
+
+
 def kind_fact(packages):
     entries = []
     for path, data in packages:
@@ -475,6 +489,7 @@ def collect(repo):
         "package_manager": package_manager(repo, root),
         "node_version_app": node_version(repo, root, newest_lts),
         "engines": engines_fact(packages, newest_lts),
+        "scripts": scripts_fact(packages),
         "package_kind": kind_fact(packages),
         "os_claims": os_claims(packages),
         "test_runners": detect_runners(repo, packages),
