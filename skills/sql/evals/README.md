@@ -25,7 +25,7 @@ A case that needs the database or the temp service files adds `--scaffold`, beca
 claude plugin eval skills/sql --no-publish -j 2 --runs 3 --threshold 1.0 --ablation none --scaffold --allow-tools Bash
 ```
 
-A case that makes Claude edit files (the four `format-*` cases) also needs `Edit` and `Write`, because they are gated tools like `Bash`. Add `--trust-plugin` in a shell with no terminal:
+A case that makes Claude edit files (every `format-*` case) also needs `Edit` and `Write`, because they are gated tools like `Bash`. Add `--trust-plugin` in a shell with no terminal:
 
 ```
 claude plugin eval skills/sql --no-publish -j 2 --runs 3 --threshold 1.0 --ablation none --scaffold --allow-tools Bash Write Edit --trust-plugin --case <case>
@@ -49,10 +49,19 @@ Notes:
 | `format-sql-file-written-style` | No safe tool. `/sql format` on the middle statement of a `.sql` file, with the default style in the rules file |
 | `format-keyword-position` | No safe tool. A template with a `${...}` before the first clause word gets the written style, and the `${...}` is never split |
 | `format-no-rules-file` | No safe tool and no rules file. The default style applies, and the final message suggests `/sql setup` |
+| `format-template-safe-tool` | A safe tool. `/sql format` on one template of a `.ts` file in a repo with the Prettier chain (`prettier`, `prettier-plugin-embed`, `prettier-plugin-sql`, `language` `postgresql`): the detector picks `prettier-plugin-embed`, the runner formats only the target, and a `value` interpolation and a conditional fragment survive. The scaffold runs `npm ci` in the run folder |
+| `format-sql-file-safe-tool` | A safe tool. `/sql format` on the middle statement of a `.sql` file in a repo with `prettier-plugin-sql` in its Prettier config: the detector picks `prettier-plugin-sql` (form `sql`) and the runner formats only the target. The scaffold runs `npm ci` in the run folder |
+| `format-tag-outside-embedded-tags` | A tag outside `embeddedSqlTags`. The repo has the Prettier chain, but its `embeddedSqlTags` option covers only `sql` and the templates use `db`. The written style does the work, the report names the gap, and the runner does not run |
+
+## Safe tool cases
+
+The three cases `format-template-safe-tool`, `format-sql-file-safe-tool` and `format-tag-outside-embedded-tags` need a real formatter. Their scaffold copies the fixture and runs `npm ci` in the run's working folder, with the npm cache in that folder (`--cache "$PWD/.npm-cache"`). The packages are pinned in the fixture's `package.json` and `package-lock.json`. Nothing is installed globally or in the real HOME, and the scaffold needs network access to the npm registry. The eval shell of Claude is read-only for Bash in the working folder (a probe of the eval shell showed that writes there fail, and the system temp folder is writable). So `scripts/run_formatter.py` writes its `--output` file in the temp folder, and the case writes the target file with the Write tool (the prompts ask for `first-run.<ext>` the same way). The `llm` graders read only the final message, so each prompt asks Claude to show the whole file and to name the formatter in it.
+
+Each case has the `tool_used` graders `no-connection.md` and `no-raw-formatter.md` (no Bash call starts a formatter by hand), and `runner-ran.md` (the first two cases: at least one call of `run_formatter.py`) or `runner-not-run.md` (the tag case: none).
 
 ## Format cases: the grader commands
 
-The four `format-*` cases have each an `expected.json` (`file`, `target`, `style`, `tags`) and the fixture. The prompt asks Claude to run the format twice, to copy the file to `first-run.<ext>` after the first run (with the Write tool: the eval sandbox blocks writes from Bash), and to show the whole file after the first run in the final message. The `llm` graders read only that final message. `claude plugin eval` has no grader type that runs a command, so the `llm` graders of each case state the same checks as the three commands in `skills/sql/graders/`. Run the commands by hand on the output of a run kept with `--keep-temp` (the scaffold folder, with the fixture file and `first-run.<ext>`):
+The `format-*` cases have each an `expected.json` (`file`, `target`, `style`, `tags`) and the fixture. The prompt asks Claude to run the format twice, to copy the file to `first-run.<ext>` after the first run (with the Write tool: the eval sandbox blocks writes from Bash), and to show the whole file after the first run in the final message. The `llm` graders read only that final message. `claude plugin eval` has no grader type that runs a command, so the `llm` graders of each case state the same checks as the three commands in `skills/sql/graders/`. Run the commands by hand on the output of a run kept with `--keep-temp` (the scaffold folder, with the fixture file and `first-run.<ext>`):
 
 ```
 python3 skills/sql/graders/interpolations_same.py <fixture file> <first-run file> [--tags <tags>]

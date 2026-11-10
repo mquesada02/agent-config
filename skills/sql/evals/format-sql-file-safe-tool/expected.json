@@ -1,0 +1,14 @@
+{
+  "file": "reports.sql",
+  "target": "3-3",
+  "style": {
+    "keyword_case": "upper",
+    "indent": "2 spaces",
+    "clause_per_line": true,
+    "comma": "trailing",
+    "alias_as": false
+  },
+  "tags": [
+    "sql"
+  ]
+}

@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: format-tag-outside-embedded-tags
+description: Seam 4 format case with a tag outside embeddedSqlTags. The repo has the Prettier chain, but its embeddedSqlTags option covers only sql, and the templates use the tag db. Claude uses the written style, reports the gap, and runs no tool.
+tags: [format, safe-tool, tag-gap]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    In the file `inventory-store.ts` (it is in the current folder, and the current folder is the repo root), run `/sql format` on lines 9 to 15 only. Change no other line. When the first run is done, copy the file to `first-run.ts` with the Write tool (Read the file, then Write the same text to the new path). Then run `/sql format` a second time on the same template (its line range may have moved). In your final message, show the whole file as it was after the first run, in a code block, repeat the lines of the format report about the formatter and about the tags that the Prettier option does not cover, and say whether the second run changed the file.

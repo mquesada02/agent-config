@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -30,8 +31,8 @@ MODULES = {
 
 
 # The modules that are still stubs: MODULES without the source modules that #390 filled
-# and without the style and format modules that #391 filled (format.md keeps #392 for its
-# safe tool path).
+# and without the style and format modules that #391 and #392 filled. The "format.md" entry
+# of MODULES keeps both tickets as an ownership mark that no test reads against the file text.
 STUBS = {
     module: tickets
     for module, tickets in MODULES.items()
@@ -401,12 +402,31 @@ class FormatModuleTest(unittest.TestCase):
     def test_the_headings_are_in_order(self):
         self.assertEqual(headings(self.text), ["Target", "Style", "Write", "Report", "Safe tool path"])
 
-    def test_the_module_keeps_392_and_holds_no_formatter_command(self):
+    def test_the_module_is_filled_and_holds_no_formatter_command(self):
         self.assertRegex(self.text.splitlines()[0], r"^# \S")
-        self.assertIn("#392", section(self.text, "Safe tool path"))
+        self.assertNotIn("#392", self.text)
         self.assertNotIn("#391", self.text)
         self.assertNotRegex(self.text, r"(?i)\bstub\b")
         self.assertNotRegex(self.text, r"npx|prettier --|sqlfluff (fix|format)")
+        self.assertIn("safe formatter tool", self.text.split("\n## ", 1)[0])
+        self.assertNotIn("this module runs no safe tool", self.text)
+
+    def test_the_safe_tool_path_names_the_scripts_and_the_rules(self):
+        path = section(self.text, "Safe tool path")
+        for needle in (
+            "scripts/detect_formatter.py", "scripts/run_formatter.py", "--form", "--tool", "--tags",
+            "--range", "--output", "`cp`", "`cat`", "Write tool", "uncovered_tags", "`keyword`",
+            "`none`", "`ok` is false", "start_line", "extractor again", "prettier-plugin-sql-cst",
+            "eslint-plugin-sql --fix",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, path)
+
+    def test_the_report_names_the_tools_and_the_gap(self):
+        report = section(self.text, "Report")
+        for needle in ("Formatter:", "Other tools found", "embeddedSqlTags", "uncovered_tags", "written style", "check <name>"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, report)
 
     def test_the_target_and_report_hold_their_rules(self):
         target = section(self.text, "Target")
@@ -414,7 +434,7 @@ class FormatModuleTest(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, target)
         report = section(self.text, "Report")
-        for needle in ("rules file", "repo majority", "default", "/sql setup", "no safe tool"):
+        for needle in ("rules file", "repo majority", "default", "/sql setup", "written style"):
             with self.subTest(needle=needle):
                 self.assertIn(needle.lower(), report.lower())
 
@@ -523,6 +543,176 @@ class FormatCasesTest(unittest.TestCase):
         for command in ("interpolations_same.py", "only_target_changes.py", "style_matches.py"):
             with self.subTest(command=command):
                 self.assertIn(command, text)
+
+
+SAFE_TOOL_CASES = {
+    "format-template-safe-tool": ("template", "prettier-plugin-embed", "runner-ran.md"),
+    "format-sql-file-safe-tool": ("sql", "prettier-plugin-sql", "runner-ran.md"),
+    "format-tag-outside-embedded-tags": ("template", "prettier-plugin-embed", "runner-not-run.md"),
+}
+SAFE_TOOL_GRADERS = [
+    "interpolations-same.md", "no-connection.md", "no-raw-formatter.md",
+    "only-target-changes.md", "style-matches.md",
+]
+
+
+class FormatSafeToolCasesTest(unittest.TestCase):
+    def case(self, name, *parts):
+        return os.path.join(EVALS, name, *parts)
+
+    def scaffold(self, name, work, installs_on=1, check=True):
+        """Run the scaffold with a stub `npm` that creates node_modules/.bin/prettier on its
+        `installs_on`-th call (0: never)."""
+        stub = tempfile.mkdtemp(dir=work)
+        npm = os.path.join(stub, "npm")
+        with open(npm, "w", encoding="utf-8") as handle:
+            handle.write(
+                '#!/bin/sh\nd="$(dirname "$0")"\npwd > "$d/npm-cwd"\necho "$@" > "$d/npm-args"\n'
+                'echo x >> "$d/npm-calls"\n'
+                'if [ "%d" -gt 0 ] && [ "$(wc -l < "$d/npm-calls")" -ge %d ]; then\n'
+                '  mkdir -p node_modules/.bin && : > node_modules/.bin/prettier && chmod +x node_modules/.bin/prettier\n'
+                'fi\n' % (installs_on, installs_on)
+            )
+        os.chmod(npm, 0o755)
+        run = os.path.join(work, "run")
+        os.makedirs(run)
+        env = {"PATH": stub + os.pathsep + os.environ["PATH"]}
+        result = subprocess.run(
+            ["bash", self.case(name, "scaffold.sh")], cwd=run, env=env, capture_output=True, text=True
+        )
+        if check:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        return run, stub, result
+
+    def test_each_case_has_its_files_and_its_exact_grader_set(self):
+        for name, (_, _, runner) in SAFE_TOOL_CASES.items():
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                for part in ("case.yaml", "scaffold.sh", "expected.json", "package.json", "package-lock.json",
+                             ".prettierrc.json", os.path.join("docs", "agents", "sql.md"), expected["file"]):
+                    self.assertTrue(os.path.isfile(self.case(name, part)), part)
+                self.assertEqual(sorted(os.listdir(self.case(name, "graders"))), sorted(SAFE_TOOL_GRADERS + [runner]))
+
+    def test_the_case_file_sets_the_scaffold_the_tools_and_the_turns(self):
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name):
+                text = read(self.case(name, "case.yaml"))
+                self.assertRegex(text, rf"(?m)^name: {name}$")
+                self.assertRegex(text, r"(?m)^  scaffold_script: scaffold\.sh$")
+                self.assertIn("allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]", text)
+                self.assertRegex(text, r"(?m)^  max_turns: 20$")
+                prompt = text.split("prompt: |", 1)[1]
+                self.assertIn("/sql format", prompt)
+                self.assertIn("first-run.", prompt)
+                self.assertIn("the current folder is the repo root", prompt)
+
+    def test_expected_json_names_the_file_target_style_and_tags(self):
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                self.assertEqual(sorted(expected), ["file", "style", "tags", "target"])
+                self.assertRegex(expected["target"], r"^\d+-\d+$")
+                self.assertEqual(sorted(expected["style"]), sorted(STYLE_KEYS))
+                self.assertIsInstance(expected["tags"], list)
+                lines = read(self.case(name, expected["file"])).split("\n")
+                start, end = (int(part) for part in expected["target"].split("-"))
+                self.assertLessEqual(end, len(lines) - 1)
+                self.assertGreaterEqual(start, 1)
+
+    def test_the_tool_used_graders(self):
+        for name, (_, _, runner) in SAFE_TOOL_CASES.items():
+            expectations = {
+                "no-connection.md": ("psql|pg_run|PGSERVICE|service=", 0, 0),
+                "no-raw-formatter.md": (r"(node_modules/\.bin/|npx +|^ *)(prettier|sqlfluff|pg_format|sql-formatter)( |$)", 0, 0),
+                runner: (r"run_formatter\.py", 0 if runner == "runner-not-run.md" else 1, 0 if runner == "runner-not-run.md" else None),
+            }
+            for grader, (needle, minimum, maximum) in expectations.items():
+                with self.subTest(case=name, grader=grader):
+                    head = frontmatter(read(self.case(name, "graders", grader)))
+                    self.assertRegex(head, r"(?m)^type: tool_used$")
+                    self.assertRegex(head, r"(?m)^tool: Bash$")
+                    self.assertIn(needle, head)
+                    self.assertRegex(head, rf"(?m)^min: {minimum}$")
+                    if maximum is None:
+                        self.assertNotRegex(head, r"(?m)^max:")
+                    else:
+                        self.assertRegex(head, rf"(?m)^max: {maximum}$")
+
+    def test_the_rubrics_are_llm_graders(self):
+        for name in SAFE_TOOL_CASES:
+            for grader in ("interpolations-same.md", "only-target-changes.md", "style-matches.md"):
+                with self.subTest(case=name, grader=grader):
+                    self.assertRegex(frontmatter(read(self.case(name, "graders", grader))), r"(?m)^type: llm$")
+
+    def test_the_packages_are_pinned_and_locked(self):
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name):
+                package = json.loads(read(self.case(name, "package.json")))
+                versions = package["devDependencies"]
+                self.assertEqual(sorted(versions), ["prettier", "prettier-plugin-embed", "prettier-plugin-sql"])
+                for version in versions.values():
+                    self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+                lock = json.loads(read(self.case(name, "package-lock.json")))
+                self.assertEqual(lock["packages"][""]["devDependencies"], versions)
+
+    def test_the_scaffold_copies_the_fixture_and_installs_in_the_run_folder(self):
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as work:
+                expected = json.loads(read(self.case(name, "expected.json")))
+                run, stub, _ = self.scaffold(name, work)
+                self.assertEqual(read(os.path.join(run, expected["file"])), read(self.case(name, expected["file"])))
+                for part in (".prettierrc.json", "package.json", "package-lock.json", os.path.join("docs", "agents", "sql.md")):
+                    self.assertEqual(read(os.path.join(run, part)), read(self.case(name, part)))
+                self.assertEqual(os.path.realpath(read(os.path.join(stub, "npm-cwd")).strip()), os.path.realpath(run))
+                args = read(os.path.join(stub, "npm-args")).split()
+                self.assertEqual(args[0], "ci")
+                self.assertIn("--ignore-scripts", args)
+                self.assertIn("--include=dev", args)
+                self.assertEqual(args[args.index("--cache") + 1], os.path.join(os.path.realpath(run), ".npm-cache"))
+
+    def test_the_scaffold_retries_a_missing_install_and_then_fails_loudly(self):
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as work:
+                _, stub, result = self.scaffold(name, work, installs_on=2)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(len(read(os.path.join(stub, "npm-calls")).split()), 2)
+            with self.subTest(case=name, never=True), tempfile.TemporaryDirectory() as work:
+                _, stub, result = self.scaffold(name, work, installs_on=0, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("node_modules/.bin/prettier is missing", result.stderr)
+                self.assertEqual(len(read(os.path.join(stub, "npm-calls")).split()), 3)
+
+    def test_the_detector_picks_the_tool_that_each_case_expects(self):
+        detector = os.path.join(SKILL_DIR, "scripts", "detect_formatter.py")
+        for name, (form, tool, _) in SAFE_TOOL_CASES.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as work:
+                run, _, _ = self.scaffold(name, work)
+                expected = json.loads(read(self.case(name, "expected.json")))
+                command = [sys.executable, detector, run, "--form", form, "--tags", ",".join(expected["tags"])]
+                out = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)
+                self.assertEqual(out["chosen"], tool)
+                self.assertEqual(out["uncovered_tags"], ["db"] if name == "format-tag-outside-embedded-tags" else [])
+
+    def test_the_tag_case_has_a_db_tag_and_a_style_that_is_not_the_tools(self):
+        name = "format-tag-outside-embedded-tags"
+        self.assertIn('tags = ["db"]', read(self.case(name, "docs", "agents", "sql.md")))
+        self.assertIn("const db = postgres(", read(self.case(name, "inventory-store.ts")))
+        self.assertIn('"embeddedSqlTags": ["sql"]', read(self.case(name, ".prettierrc.json")))
+        expected = json.loads(read(self.case(name, "expected.json")))
+        self.assertEqual(expected["style"]["keyword_case"], "lower")
+
+    def test_the_template_fixtures_keep_the_fragment_in_the_text_that_the_tool_keeps(self):
+        text = read(self.case("format-template-safe-tool", "inventory-store.ts"))
+        self.assertIn("${onlyLow ? sql`AND s.qty < 5` : sql``}", text)
+
+    def test_the_procedure_names_the_cases_and_the_install(self):
+        text = read(PROCEDURE)
+        for name in SAFE_TOOL_CASES:
+            with self.subTest(case=name):
+                self.assertIn("`" + name + "`", text)
+        for needle in ("npm ci", "run_formatter.py", "--output", "read-only"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text)
 
 
 class GraderFilesTest(unittest.TestCase):
