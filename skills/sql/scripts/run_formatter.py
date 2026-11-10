@@ -243,7 +243,7 @@ def format_file(root, path, relative, tool, ranges, tags, output):
                     % (statements[index]["start_line"], statements[index]["end_line"]),
                 )
         old_spans = [(s["start_line"], s["end_line"]) for s in target_statements]
-        old_regions = regions_of(sorted(old_spans))
+        old_regions = regions_of(old_spans)
         pairs = []
         for region in old_regions:
             members = [

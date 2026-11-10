@@ -244,7 +244,6 @@ def choose(form, found, tool_value):
 
 def detect(root, form, tags, tool_value):
     repo = Repo(root, form)
-    none_reason = None
     if form == "template":
         found, none_reason = find_template_tool(repo)
     else:
