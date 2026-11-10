@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -28,11 +29,13 @@ MODULES = {
 }
 
 
-# The modules that are still stubs: MODULES without the source modules that #390 filled.
+# The modules that are still stubs: MODULES without the source modules that #390 filled
+# and without the style and format modules that #391 filled (format.md keeps #392 for its
+# safe tool path).
 STUBS = {
     module: tickets
     for module, tickets in MODULES.items()
-    if not module.startswith("sources/")
+    if not module.startswith("sources/") and module not in ("style.md", "format.md")
 }
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
@@ -299,6 +302,236 @@ class ExtractCaseTest(unittest.TestCase):
 
     def test_the_cases_table_names_the_case(self):
         self.assertIn("`extract-tag-not-sql`", read(PROCEDURE))
+
+
+SQL_TEXT = os.path.join(SKILL_DIR, "scripts", "sql_text.py")
+STYLE_KEYS = ("keyword_case", "indent", "clause_per_line", "comma", "alias_as")
+FORMAT_CASES = (
+    "format-template-written-style",
+    "format-sql-file-written-style",
+    "format-keyword-position",
+    "format-no-rules-file",
+)
+
+
+def constant(name):
+    """The words of a one-line string constant of scripts/sql_text.py."""
+    match = re.search(rf'^{name} = "(.*)"$', read(SQL_TEXT), re.M)
+    assert match, f"no one-line constant {name}"
+    return match.group(1).split()
+
+
+def headings(text):
+    return re.findall(r"(?m)^## (.+)$", text)
+
+
+class WordListConstantsTest(unittest.TestCase):
+    def test_the_three_lists_are_one_line_constants_with_distinct_words(self):
+        for name in ("KEYWORDS", "CLAUSE_WORDS", "ANCHOR_WORDS"):
+            with self.subTest(name=name):
+                words = constant(name)
+                self.assertTrue(words)
+                self.assertEqual(len(words), len(set(words)))
+                self.assertTrue(all(word == word.upper() for word in words))
+
+    def test_every_clause_word_is_a_keyword(self):
+        self.assertTrue(set(constant("CLAUSE_WORDS")) <= set(constant("KEYWORDS")))
+
+
+class StyleModuleTest(unittest.TestCase):
+    def setUp(self):
+        self.text = read(os.path.join(SKILL_DIR, "style.md"))
+
+    def test_the_headings_are_in_order(self):
+        self.assertEqual(
+            headings(self.text),
+            ["Choose the style", "Default style", "Written style", "Template layout"],
+        )
+
+    def test_the_module_is_filled(self):
+        self.assertRegex(self.text.splitlines()[0], r"^# \S")
+        self.assertNotRegex(self.text, r"(?i)\bstub\b")
+        self.assertNotIn("#391", self.text)
+
+    def test_the_keyword_and_clause_word_lines_hold_the_constants(self):
+        for label, name in (("Keywords", "KEYWORDS"), ("Clause words", "CLAUSE_WORDS")):
+            with self.subTest(label=label):
+                match = re.search(rf"(?m)^{label}: (.*)$", self.text)
+                self.assertIsNotNone(match, f"no {label} line")
+                self.assertEqual(match.group(1).split(), constant(name))
+
+    def test_the_default_values_and_the_two_examples(self):
+        body = section(self.text, "Default style")
+        for needle in (
+            "`keyword_case` is `upper`",
+            "`indent` is `2 spaces`",
+            "`clause_per_line` is true",
+            "`comma` is `trailing`",
+            "`alias_as` is true",
+            "JOIN orders AS o ON o.user_id = u.id",
+            "${active ? sql`AND u.active` : sql``}",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, body)
+
+    def test_every_style_key_is_named_and_the_choice_names_the_measurer(self):
+        for key in STYLE_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(key, self.text)
+        choose = section(self.text, "Choose the style")
+        for needle in ("scripts/measure_style.py", "--tags", "[style]", "[sources]", "git ls-files", "fewer than 3"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, choose)
+
+    def test_the_written_style_and_layout_hold_their_rules(self):
+        written = section(self.text, "Written style")
+        for needle in ("`BY`", "`JOIN`", "`--` comment", "fragment", "`leading`", "`AS`"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, written)
+        layout = section(self.text, "Template layout")
+        for needle in ("closing backtick", "opening backtick", "opaque word", "boundary"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, layout)
+
+
+class FormatModuleTest(unittest.TestCase):
+    def setUp(self):
+        self.text = read(os.path.join(SKILL_DIR, "format.md"))
+
+    def test_the_headings_are_in_order(self):
+        self.assertEqual(headings(self.text), ["Target", "Style", "Write", "Report", "Safe tool path"])
+
+    def test_the_module_keeps_392_and_holds_no_formatter_command(self):
+        self.assertRegex(self.text.splitlines()[0], r"^# \S")
+        self.assertIn("#392", section(self.text, "Safe tool path"))
+        self.assertNotIn("#391", self.text)
+        self.assertNotRegex(self.text, r"(?i)\bstub\b")
+        self.assertNotRegex(self.text, r"npx|prettier --|sqlfluff (fix|format)")
+
+    def test_the_target_and_report_hold_their_rules(self):
+        target = section(self.text, "Target")
+        for needle in ("git diff -U0 HEAD", "scripts/extract.py", "ask"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, target)
+        report = section(self.text, "Report")
+        for needle in ("rules file", "repo majority", "default", "/sql setup", "no safe tool"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle.lower(), report.lower())
+
+
+class FormatCasesTest(unittest.TestCase):
+    def case(self, name, *parts):
+        return os.path.join(EVALS, name, *parts)
+
+    def test_each_case_has_its_files(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                for part in ("case.yaml", "scaffold.sh", "expected.json"):
+                    self.assertTrue(os.path.isfile(self.case(name, part)), part)
+                graders = sorted(os.listdir(self.case(name, "graders")))
+                common = ["interpolations-same.md", "no-connection.md", "no-formatter.md", "only-target-changes.md", "style-matches.md"]
+                extra = ["setup-suggested.md"] if name == "format-no-rules-file" else []
+                self.assertEqual(graders, sorted(common + extra))
+
+    def test_the_case_file_sets_the_scaffold_the_tools_and_the_turns(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                text = read(self.case(name, "case.yaml"))
+                self.assertRegex(text, rf"(?m)^name: {name}$")
+                self.assertRegex(text, r"(?m)^  scaffold_script: scaffold\.sh$")
+                self.assertIn("allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]", text)
+                self.assertRegex(text, r"(?m)^  max_turns: 16$")
+                prompt = text.split("prompt: |", 1)[1]
+                self.assertIn("/sql format", prompt)
+                self.assertIn("first-run.", prompt)
+
+    def test_expected_json_names_the_file_target_style_and_tags(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                self.assertEqual(sorted(expected), ["file", "style", "tags", "target"])
+                self.assertTrue(os.path.isfile(self.case(name, expected["file"])))
+                self.assertRegex(expected["target"], r"^\d+-\d+$")
+                self.assertEqual(sorted(expected["style"]), sorted(STYLE_KEYS))
+                self.assertIsInstance(expected["tags"], list)
+
+    def test_the_scaffold_copies_the_fixture_and_the_rules_file(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as work:
+                expected = json.loads(read(self.case(name, "expected.json")))
+                subprocess.run(
+                    ["bash", self.case(name, "scaffold.sh")],
+                    cwd=work, check=True, env={"PATH": os.environ["PATH"]},
+                )
+                self.assertEqual(read(os.path.join(work, expected["file"])), read(self.case(name, expected["file"])))
+                rules = os.path.join(work, "docs", "agents", "sql.md")
+                self.assertEqual(os.path.isfile(rules), name != "format-no-rules-file")
+
+    def test_the_target_lies_inside_the_fixture_and_the_keyword_case_has_a_keyword_interpolation(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                start, end = map(int, expected["target"].split("-"))
+                lines = read(self.case(name, expected["file"])).splitlines()
+                self.assertTrue(1 <= start <= end <= len(lines))
+        text = read(self.case("format-keyword-position", "rows-store.ts"))
+        self.assertRegex(text, r"(?m)^  \$\{sel\} \* from")
+
+    def test_the_fixtures_have_the_binding_no_formatter_and_the_rules_file_tags(self):
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                if expected["file"].endswith(".ts"):
+                    text = read(self.case(name, expected["file"]))
+                    self.assertIn("import postgres from 'postgres'", text)
+                    self.assertIn("const sql = postgres(", text)
+                self.assertFalse(os.path.exists(self.case(name, "package.json")))
+        for name in FORMAT_CASES[:3]:
+            self.assertIn('tags = ["sql"]', read(self.case(name, "docs", "agents", "sql.md")))
+        self.assertFalse(os.path.exists(self.case("format-no-rules-file", "docs")))
+
+    def test_the_tool_used_graders(self):
+        for name in FORMAT_CASES:
+            for grader, needle in (
+                ("no-connection.md", "psql|pg_run|PGSERVICE|service="),
+                ("no-formatter.md", "prettier|pg_format|pgFormatter|sql-formatter|sqlfluff|eslint"),
+            ):
+                with self.subTest(case=name, grader=grader):
+                    head = frontmatter(read(self.case(name, "graders", grader)))
+                    self.assertRegex(head, r"(?m)^type: tool_used$")
+                    self.assertRegex(head, r"(?m)^tool: Bash$")
+                    self.assertRegex(head, r"(?m)^min: 0$")
+                    self.assertRegex(head, r"(?m)^max: 0$")
+                    self.assertIn(needle, head)
+
+    def test_the_rubrics_are_llm_graders_and_the_no_rules_case_names_setup(self):
+        for name in FORMAT_CASES:
+            for grader in ("interpolations-same.md", "only-target-changes.md", "style-matches.md"):
+                with self.subTest(case=name, grader=grader):
+                    self.assertRegex(frontmatter(read(self.case(name, "graders", grader))), r"(?m)^type: llm$")
+        setup = read(self.case("format-no-rules-file", "graders", "setup-suggested.md"))
+        self.assertRegex(frontmatter(setup), r"(?m)^type: llm$")
+        self.assertIn("/sql setup", setup)
+
+    def test_the_procedure_names_the_cases_and_the_run_command(self):
+        text = read(PROCEDURE)
+        for name in FORMAT_CASES:
+            with self.subTest(case=name):
+                self.assertIn("`" + name + "`", text)
+        self.assertIn("--scaffold --allow-tools Bash Write Edit", text)
+        self.assertIn("--keep-temp", text)
+        for command in ("interpolations_same.py", "only_target_changes.py", "style_matches.py"):
+            with self.subTest(command=command):
+                self.assertIn(command, text)
+
+
+class GraderFilesTest(unittest.TestCase):
+    def test_the_graders_folder_holds_the_three_commands_and_no_test_files(self):
+        folder = os.path.join(SKILL_DIR, "graders")
+        self.assertEqual(
+            sorted(os.listdir(folder)),
+            ["interpolations_same.py", "only_target_changes.py", "style_matches.py"],
+        )
 
 
 class RepoFilesTest(unittest.TestCase):

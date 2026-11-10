@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: format-sql-file-written-style
+description: Seam 4 format case with no safe tool. Claude formats the middle statement of a .sql file with the default style written in the rules file, twice, and the second run changes nothing.
+tags: [format, written-style, sql-file]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 16
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    In the file `reports.sql` (it is in the current folder), run `/sql format` on line 3 only (the second statement). Change no other line. When the first run is done, copy the file to `first-run.sql` with `cp`. Then run `/sql format` a second time on the same statement (its line range may have moved).
