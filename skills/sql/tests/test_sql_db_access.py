@@ -9,10 +9,10 @@ OPTIMIZE = os.path.join(SKILL_DIR, "optimize.md")
 ROUTER = os.path.join(SKILL_DIR, "SKILL.md")
 
 # The stub sections that db-access.md keeps: heading -> the ticket that fills it.
-STUB_SECTIONS = {"Write mode (stub)": "#396", "Diff (stub)": "#397", "Facts (stub)": "#400"}
+STUB_SECTIONS = {"Write mode (stub)": "#396", "Diff (stub)": "#397"}
 SECTIONS = (
     "Rules", "Allowlist", "pg_run", "Read-only path", "Statements that EXPLAIN cannot take",
-    "No full result", "Timeouts and versions", "Residual risk",
+    "No full result", "Timeouts and versions", "Residual risk", "Facts",
 )
 ERROR_KINDS = ("not_allowed", "refused", "connection_failed", "statement_failed", "psql_failed", "bad_output")
 GUARD_REASONS = (
@@ -43,7 +43,28 @@ class DbAccessModuleTest(unittest.TestCase):
         cls.text = read(DB_ACCESS)
         cls.headings = re.findall(r"(?m)^## (.+)$", cls.text)
 
-    def test_it_is_not_a_stub_outside_its_three_stub_sections(self):
+    def test_the_facts_section_is_not_a_stub_and_describes_the_action(self):
+        facts = section(self.text, "Facts")
+        self.assertNotRegex(facts, r"(?i)\bstub\b")
+        self.assertNotIn("#400", facts)
+        self.assertIn("pg_run.py facts --repo <repo root> --service <name> --names", facts)
+        for needle in ("table.column", "schema.table.column", "nullable", "type", "missing", "null"):
+            with self.subTest(needle=needle):
+                self.assertIn(f"`{needle}`", facts)
+        self.assertRegex(facts, r"(?i)catalog metadata only")
+        self.assertRegex(facts, r"(?i)view")
+        self.assertRegex(facts, r"(?i)non-ASCII|printable ASCII")
+        self.assertRegex(facts, r"(?i)no `psql` call|never sent")
+        for error in (kind for kind in ERROR_KINDS if kind != "refused"):
+            self.assertIn(error, facts)
+        self.assertNotIn("refused", facts)
+
+    def test_the_intro_and_the_no_full_result_section_name_facts(self):
+        self.assertIn("facts", self.text.split("\n## ", 1)[0])
+        self.assertRegex(section(self.text, "No full result"), r"(?i)`pg_run facts` returns catalog metadata only")
+        self.assertIn("no write path", self.text)
+
+    def test_it_is_not_a_stub_outside_its_stub_sections(self):
         body = self.text
         for heading in STUB_SECTIONS:
             body = body.replace(section(self.text, heading), "")
@@ -154,10 +175,19 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertRegex(self.path, r"(?i)failed")
         self.assertRegex(self.path, r"(?i)no `PLAN-\*` row")
 
-    def test_the_path_keeps_a_stub_paragraph_for_the_catalog_facts(self):
-        paragraphs = [p for p in self.path.split("\n\n") if "#400" in p]
-        self.assertTrue(paragraphs)
-        self.assertTrue(any(re.search(r"(?i)stub", p) for p in paragraphs))
+    def test_the_path_has_the_catalog_facts_step_with_its_call_gates_and_fallback(self):
+        facts = next(p for p in re.split(r"\n\n", self.path) if "Catalog facts" in p)
+        self.assertNotRegex(self.path, r"(?i)\bstub\b")
+        self.assertNotIn("#400", self.path)
+        self.assertIn("pg_run.py facts", self.path)
+        self.assertRegex(facts, r"PG-02")
+        self.assertRegex(facts, r"PGJS-02")
+        self.assertRegex(facts, r"(?i)one `?pg_run\.py facts`? call")
+        self.assertRegex(self.path, r"(?i)no `facts` call")
+        self.assertRegex(self.path, r"(?i)repo-fact rule")
+        self.assertIn("Note: the facts call failed (<error>), so the rules use only the facts that the repo shows.", self.path)
+        self.assertRegex(self.path, r"(?i)exactly one table")
+        self.assertRegex(self.path, r"(?i)INSERT INTO")
 
     def test_the_steps_list_points_to_the_section_before_the_report_step(self):
         steps = [line for line in section(self.text, "Steps").splitlines() if re.match(r"\d+\. ", line)]
@@ -177,7 +207,7 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertIn("Database path", first)
 
     def test_the_other_stubs_are_kept(self):
-        for ticket in ("#395", "#396", "#397", "#400"):
+        for ticket in ("#395", "#396", "#397"):
             with self.subTest(ticket=ticket):
                 self.assertIn(ticket, self.text)
 

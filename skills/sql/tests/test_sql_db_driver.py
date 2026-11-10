@@ -45,6 +45,16 @@ elif mode == "leak":
     events.append({"type": "result", "result": os.environ["FAKE_LEAK"]})
 elif mode == "noplan":
     events += [call("a", "app-pg13"), result("a", plan)]
+elif mode.startswith("facts"):
+    facts = {"ok": True, "action": "facts", "service": "x", "facts": {"shop.customers.email": {"nullable": True, "type": "text"}}}
+    for call_id, service in (("a", "app-pg13"), ("b", "app-pg18")):
+        command = "python3 /skill/scripts/pg_run.py facts --repo . --service " + service + " --names shop.customers.email"
+        events.append({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": call_id, "name": "Bash", "input": {"command": command}}]}})
+        events.append(result(call_id, facts))
+    row = "| 1 | PG-02 | src/customers.ts:5 | NOT IN over a nullable column | Use NOT EXISTS. |"
+    if mode != "facts-nofinal":
+        events.append({"type": "result", "result": "# sql optimize: src/customers.ts\n\n## Critical\n" + ("" if mode == "facts-norule" else row)})
 for event in events:
     print(json.dumps(event))
 '''
@@ -195,14 +205,38 @@ class DriverTest(base.TempTest):
             with self.subTest(args=args):
                 self.assertEqual(self.driver(*args).returncode, 2)
 
+    def test_a_case_with_a_rules_key_is_graded_by_grader_e_on_the_final_message(self):
+        proc = self.driver("--case", "facts-pg-02", "--runs", "1", env={"FAKE_CLAUDE_MODE": "facts"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout.splitlines(), ["facts-pg-02#1: PASS", "PASS"])
+
+    def test_a_report_without_the_expected_rule_id_fails_with_the_case_label(self):
+        proc = self.driver("--case", "facts-pg-02", "--runs", "1", env={"FAKE_CLAUDE_MODE": "facts-norule"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.stdout.splitlines(), [
+            "FAIL facts-pg-02#1 expect:PG-02: not found in the Rule column", "facts-pg-02#1: FAIL", "FAIL"])
+
+    def test_a_run_with_no_final_message_fails_when_the_case_has_rules(self):
+        proc = self.driver("--case", "facts-pg-02", "--runs", "1", env={"FAKE_CLAUDE_MODE": "facts-nofinal"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(line.startswith("FAIL facts-pg-02#1 trace: no final message") for line in proc.stdout.splitlines()),
+                        proc.stdout)
+
+    def test_a_case_with_no_rules_key_runs_no_grader_e(self):
+        proc = self.driver("--case", "plan-select", "--runs", "1")
+        self.assertEqual(proc.stdout.splitlines(), ["plan-select#1: PASS", "PASS"])
+
     def test_the_real_case_names_and_their_expectations(self):
         expected = {"plan-select": ["plan:app-pg13", "plan:app-pg18"],
+                    "facts-pg-02": ["facts:app-pg13", "facts:app-pg18"],
                     "bad-password": ["connection_failed:app-badpw"],
                     "wrong-host": ["connection_failed:app-wronghost"]}
         self.assertEqual(sorted(os.listdir(CASES)), sorted(expected))
         for name, kinds in expected.items():
             with open(os.path.join(CASES, name, "db-expect.json"), encoding="utf-8") as handle:
-                self.assertEqual(json.load(handle)["expect"], kinds)
+                data = json.load(handle)
+            self.assertEqual(data["expect"], kinds)
+            self.assertEqual(data.get("rules"), {"expect": ["PG-02"], "forbid": []} if name == "facts-pg-02" else None)
 
 
 if __name__ == "__main__":

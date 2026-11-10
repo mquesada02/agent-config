@@ -44,6 +44,7 @@ NOT_ALLOWED = {"ok": False, "error": "not_allowed", "reason": "service_not_liste
 REFUSED = {"ok": False, "error": "refused", "reason": "forbidden_function", "static_review_only": False}
 FAILED = {"ok": False, "error": "connection_failed", "message": "could not connect to app-down"}
 PLAN = {"ok": True, "action": "explain", "plan": [{"Plan": {"Node Type": "Result"}}]}
+FACTS = {"ok": True, "action": "facts", "service": "app", "facts": {"t.c": {"nullable": True, "type": "text"}}}
 
 
 class TempTest(unittest.TestCase):
@@ -199,6 +200,41 @@ class RefusalsTest(TempTest):
     def test_a_plan_run_with_another_ok_result_passes(self):
         events = pg_run_events("t1", "app-pg13", PLAN) + pg_run_events("t2", "app-pg18", PLAN)
         self.assertEqual(self.grade(events, "plan:app-pg13", "plan:app-pg18")[:2], (0, ["PASS"]))
+
+    def test_the_facts_kind_passes_on_an_ok_result_with_a_non_empty_facts_object(self):
+        events = pg_run_events("t1", "app-pg18", FACTS)
+        for expect in (["facts"], ["facts:app-pg18"]):
+            with self.subTest(expect=expect):
+                self.assertEqual(self.grade(events, *expect)[:2], (0, ["PASS"]))
+
+    def test_the_facts_kind_fails_on_a_missing_empty_or_other_result(self):
+        cases = [
+            (pg_run_events("t1", "app", FACTS), "facts:app-pg13"),
+            (pg_run_events("t1", "app", {"ok": True, "action": "facts", "facts": {}}), "facts"),
+            (pg_run_events("t1", "app", {"ok": True, "action": "facts"}), "facts"),
+            (pg_run_events("t1", "app", PLAN), "facts"),
+            (pg_run_events("t1", "app", NOT_ALLOWED), "facts"),
+            ([call("t0", "echo hi")], "facts"),
+        ]
+        for events, kind in cases:
+            with self.subTest(kind=kind, events=len(events)):
+                code, lines, _ = self.grade(events, kind)
+                self.assertEqual(code, 1)
+                self.assertIn(f"FAIL expected: {kind} not found", lines)
+
+    def test_an_ok_facts_result_passes_only_when_facts_is_expected(self):
+        events = pg_run_events("t1", "app-pg18", FACTS)
+        code, lines, _ = self.grade(events, "no_connection:other-db")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("FAIL unexpected-ok:") for line in lines))
+
+    def test_a_run_that_expects_facts_still_fails_an_ok_result_of_another_kind(self):
+        for payload in (PLAN, {"ok": True, "action": "facts", "facts": {}}, {"ok": True, "action": "facts"}):
+            with self.subTest(payload=payload.get("action")):
+                events = pg_run_events("t1", "app-pg18", FACTS) + pg_run_events("t2", "app-pg13", payload)
+                code, lines, _ = self.grade(events, "facts:app-pg18")
+                self.assertEqual(code, 1)
+                self.assertTrue(any(line.startswith("FAIL unexpected-ok:") for line in lines))
 
     def test_usage_errors_are_exit_2(self):
         path = self.write("trace.jsonl", trace(call("t1", "echo")))

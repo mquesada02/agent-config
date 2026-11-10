@@ -29,6 +29,9 @@ SETUP_SQL = """
 CREATE SCHEMA pgrun_test;
 CREATE TABLE pgrun_test.items (a int);
 INSERT INTO pgrun_test.items SELECT generate_series(1, 5);
+CREATE VIEW pgrun_test.items_v AS SELECT a FROM pgrun_test.items;
+CREATE TABLE public.facts_t (id int NOT NULL, due_on date, note text);
+INSERT INTO public.facts_t VALUES (1, DATE '2026-01-01', 'x'), (2, NULL, NULL);
 CREATE FUNCTION pgrun_test.writes() RETURNS int LANGUAGE sql
   AS $f$ INSERT INTO pgrun_test.items VALUES (99) RETURNING a $f$;
 CREATE FUNCTION pgrun_test.probe() RETURNS int LANGUAGE plpgsql AS $f$
@@ -212,6 +215,64 @@ class PgRunDockerTest(unittest.TestCase):
     def test_the_rows_are_unchanged_after_the_runs(self):
         for version in VERSIONS:
             self.assertEqual(self.rows(version), "5|15")
+
+    def facts(self, version, *names):
+        done = subprocess.run(
+            [sys.executable, "-I", SCRIPT, "facts", "--repo", self.repo, "--service", f"pgrun_{version}",
+             "--names", *names],
+            capture_output=True, text=True, env=self.env, timeout=120,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        data = json.loads(done.stdout)
+        self.assertTrue(data["ok"], data)
+        return data["facts"]
+
+    def facts_rows(self, version):
+        done = host_psql(self.ports[version], "-c", "SELECT count(*), sum(id) FROM public.facts_t")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def test_facts_reads_nullability_and_type_from_the_catalog(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.facts(
+                    version, "pgrun_test.items.a", "public.facts_t.id", "facts_t.id", "facts_t.due_on", "facts_t.note",
+                )
+                self.assertEqual(data["pgrun_test.items.a"], {"nullable": True, "type": "integer"})
+                self.assertEqual(data["public.facts_t.id"], {"nullable": False, "type": "integer"})
+                self.assertEqual(data["facts_t.id"], {"nullable": False, "type": "integer"})
+                self.assertEqual(data["facts_t.due_on"], {"nullable": True, "type": "date"})
+                self.assertEqual(data["facts_t.note"], {"nullable": True, "type": "text"})
+
+    def test_facts_reports_a_missing_column_table_or_schema_and_a_view_column_has_no_nullability(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.facts(
+                    version, "facts_t.nope", "nope.id", "zz.facts_t.id", "pgrun_test.items_v.a", "pgrun_test.items.a",
+                )
+                self.assertEqual(data["facts_t.nope"], {"missing": True})
+                self.assertEqual(data["nope.id"], {"missing": True})
+                self.assertEqual(data["zz.facts_t.id"], {"missing": True})
+                self.assertEqual(data["pgrun_test.items_v.a"], {"nullable": None, "type": "integer"})
+                self.assertEqual(data["pgrun_test.items.a"], {"nullable": True, "type": "integer"})
+
+    def test_a_name_that_holds_sql_text_is_a_value_that_runs_nothing(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                valid_shape = "facts_t.id'; DROP TABLE facts_t; --"
+                data = self.facts(version, valid_shape, "x'; DROP TABLE facts_t; --", "facts_t.id")
+                self.assertEqual(data[valid_shape], {"missing": True})
+                self.assertEqual(data["x'; DROP TABLE facts_t; --"], {"missing": True})
+                self.assertEqual(data["facts_t.id"], {"nullable": False, "type": "integer"})
+                self.assertEqual(self.facts_rows(version), "2|3")
+
+    def test_facts_leaves_the_data_unchanged_although_the_service_entry_says_read_write(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.facts(version, "facts_t.id", "pgrun_test.items.a", "facts_t.due_on")
+                self.assertEqual(len(data), 3)
+                self.assertEqual(self.facts_rows(version), "2|3")
+                self.assertEqual(self.rows(version), "5|15")
 
 
 if __name__ == "__main__":

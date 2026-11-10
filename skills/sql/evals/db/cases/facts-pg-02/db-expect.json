@@ -1,0 +1,5 @@
+{
+  "expect": ["facts:app-pg13", "facts:app-pg18"],
+  "sequences_may_differ": false,
+  "rules": {"expect": ["PG-02"], "forbid": []}
+}

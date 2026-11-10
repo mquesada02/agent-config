@@ -42,7 +42,7 @@ If `error` is not null, stop. Show its `message` and its `line` (the line can be
 
 ## Rules
 
-These rules check how a postgres.js template is composed. They need no database. A fix of a `PGJS-*` finding repairs the template. It is not a rewrite of the SQL text.
+These rules check how a postgres.js template is composed. They work with no database (PGJS-02 can also read a column type from the catalog when the database is allowlisted). A fix of a `PGJS-*` finding repairs the template. It is not a rewrite of the SQL text.
 
 ### PGJS-01
 
@@ -69,7 +69,7 @@ These rules check how a postgres.js template is composed. They need no database.
 
 - **Title:** JS `Date` passed to a `date` parameter
 - **Severity:** required
-- **Detects:** A JS `Date` value bound to a parameter that is a `date`. Without a database this fires only when the repo shows both facts: a `Date` value (a TypeScript type, `new Date(...)` or a `Date` variable) and a `date` parameter (a `::date` cast in the SQL, or a migration or schema column of type `date`). Otherwise the rule does not fire.
+- **Detects:** A JS `Date` value bound to a parameter that is a `date`. With an allowlisted database, the `date` fact comes from the catalog: the `facts` action says that the column has the type `date` (the `Date` value fact still comes from the repo). Without a database this fires only when the repo shows both facts: a `Date` value (a TypeScript type, `new Date(...)` or a `Date` variable) and a `date` parameter (a `::date` cast in the SQL, or a migration or schema column of type `date`). Otherwise the rule does not fire.
 - **Why it matters:** The driver sends a `Date` as a UTC timestamp (`toISOString()`, typed `timestamptz`). When that instant is cast to `date`, the day is the day of the session time zone. It can differ from the local calendar day of the caller, so the day can shift.
 - **Fix:** Pass the day as text (`'2026-11-09'`), or format the `Date` to its day before the call.
 - **Example:** The bad form, then the good form.

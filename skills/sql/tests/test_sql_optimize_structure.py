@@ -144,6 +144,19 @@ class CatalogTest(unittest.TestCase):
         self.assertRegex(dict(source["PGJS-02"])["Detects"], r"(?i)only when the repo shows")
         self.assertRegex(dict(dialect["PG-02"])["Detects"], r"(?i)only when the repo shows")
 
+    def test_the_fact_rules_name_the_catalog_for_an_allowlisted_database(self):
+        source, _ = entries(SOURCE)
+        dialect, _ = entries(DIALECT)
+        for entry in (dict(source["PGJS-02"])["Detects"], dict(dialect["PG-02"])["Detects"]):
+            self.assertRegex(entry, r"(?i)allowlisted database")
+            self.assertRegex(entry, r"(?i)catalog")
+        self.assertNotRegex(read(DIALECT).split("\n## ", 1)[0], r"(?i)need no database")
+
+    def test_the_steps_say_that_facts_also_cover_a_statement_with_an_interpolation(self):
+        steps = section(read(OPTIMIZE), "Steps")
+        self.assertRegex(steps, r"(?i)catalog")
+        self.assertRegex(steps, r"(?i)interpolation")
+
     def test_the_pg_09_fix_gives_replacement_sql(self):
         dialect, _ = entries(DIALECT)
         self.assertRegex(dict(dialect["PG-09"])["Fix"], r"(?i)join")
@@ -199,7 +212,7 @@ class OptimizeModuleTest(unittest.TestCase):
 
     def test_it_names_a_stub_section_for_each_later_ticket(self):
         parts = re.split(r"(?m)^## ", self.text)
-        for ticket in ("#395", "#396", "#397", "#400"):
+        for ticket in ("#395", "#396", "#397"):
             with self.subTest(ticket=ticket):
                 self.assertTrue(
                     any(ticket in part and re.search(r"(?i)stub|later|not yet", part) for part in parts[1:]),

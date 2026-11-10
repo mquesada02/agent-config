@@ -14,7 +14,8 @@ DRIVER_CASES = os.path.join(DB, "cases")
 RULES_FILE = os.path.join(SKILL_DIR, "scripts", "rules_file.py")
 README = os.path.join(EVALS, "README.md")
 PLUGIN_CASES = ("db-off-allowlist", "db-bypass-refused", "db-connection-fails")
-KIND = re.compile(r"(not_allowed|refused|connection_failed|plan)(:[A-Za-z0-9_.-]+)?|no_connection:[A-Za-z0-9_.-]+")
+KIND = re.compile(r"(not_allowed|refused|connection_failed|plan|facts)(:[A-Za-z0-9_.-]+)?|no_connection:[A-Za-z0-9_.-]+")
+ROOT_README = os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "README.md")
 
 with open(os.path.join(DB, "canaries.json"), encoding="utf-8") as handle:
     CANARIES = json.load(handle)
@@ -159,7 +160,7 @@ class PluginCasesTest(unittest.TestCase):
 class DriverCasesTest(unittest.TestCase):
     def test_each_case_has_a_prompt_an_expectation_and_a_repo_and_nothing_that_plugin_eval_finds(self):
         names = sorted(os.listdir(DRIVER_CASES))
-        self.assertEqual(names, ["bad-password", "plan-select", "wrong-host"])
+        self.assertEqual(names, ["bad-password", "facts-pg-02", "plan-select", "wrong-host"])
         for name in names:
             folder = os.path.join(DRIVER_CASES, name)
             with self.subTest(case=name):
@@ -189,7 +190,11 @@ class CaseRepoTest(unittest.TestCase):
                 self.assertTrue(data["expect"])
                 for kind in data["expect"]:
                     self.assertRegex(kind, KIND)
-                self.assertLessEqual(set(data), {"expect", "sequences_may_differ"})
+                self.assertLessEqual(set(data), {"expect", "sequences_may_differ", "rules"})
+                if "rules" in data:
+                    self.assertEqual(set(data["rules"]), {"expect", "forbid"})
+                    for ids in data["rules"].values():
+                        self.assertTrue(all(re.fullmatch(r"(PGJS|PG|PLAN)-\d\d", item) for item in ids))
 
     def test_no_fixture_is_a_python_test_file(self):
         for path in files_under(EVALS):
@@ -202,9 +207,24 @@ class ReadmeTest(unittest.TestCase):
         for needle in ("grade_db_unchanged.py", "grade_refusals.py", "grade_leak_scan.py", "grade_db_eval_results.py",
                        "run_db_cases.py", "db_eval.py", "no network", "Unix socket", "db-off-allowlist",
                        "db-bypass-refused", "db-connection-fails", "plan-select", "bad-password", "wrong-host",
+                       "facts-pg-02", "facts[:SERVICE]", "`rules`",
                        "canaries.json", "db-expect.json", "grader G and the leak scan"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
+
+    def test_the_tracked_table_of_the_root_readme_covers_every_file_of_the_facts_case(self):
+        globs = re.findall(r"^\| ((?:`[^`]+`(?:, )?)+) \|", slurp(ROOT_README), re.MULTILINE)
+        patterns = []
+        for cell in globs:
+            for glob in re.findall(r"`([^`]+)`", cell):
+                regex = re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+                patterns.append(re.compile(regex + r"\Z"))
+        repo_root = os.path.dirname(os.path.dirname(SKILL_DIR))
+        paths = [os.path.relpath(path, repo_root) for path in files_under(os.path.join(DRIVER_CASES, "facts-pg-02"))]
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(pattern.match(path) for pattern in patterns), path)
 
 
 if __name__ == "__main__":
