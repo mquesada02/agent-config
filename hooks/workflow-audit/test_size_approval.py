@@ -4,7 +4,7 @@ import os
 import re
 import unittest
 
-from audit_support import HERE, event, owner_row, stamp
+from audit_support import HERE, ask_rows, event, owner_row, stamp
 from test_brief import read_brief
 from test_claude_md import ROOT_CLAUDE_MD, read, section
 from test_extension_s5 import HUMAN, ExtensionCase, rounds
@@ -13,6 +13,7 @@ from test_ledger import LedgerCase
 QUOTE = "yes, about 300 lines is fine"
 APPROVED_AT = 200
 NOT_FOUND = "size-approval 1 (300 lines): quote not found in real user input"
+HEAD = "size-approval 1 (300 lines)"
 
 
 def size_approval(at=APPROVED_AT, quote=QUOTE, lines=300):
@@ -51,17 +52,46 @@ class SizeApprovalLedgerTest(LedgerCase):
 
 
 class SizeApprovalS5Test(ExtensionCase):
-    def test_a_quote_in_real_user_input_before_the_event_passes(self):
-        self.passes([owner_row(f"Sure, {QUOTE}.", 100, HUMAN)], events=[size_approval()])
+    ASK = "Approve about 300 changed lines?"
 
-    def test_a_quote_at_the_event_time_passes(self):
-        self.passes([owner_row(QUOTE, APPROVED_AT, HUMAN)], events=[size_approval()])
+    def answer(self, at=100, question=ASK, call_id="ask1", quote=QUOTE):
+        return ask_rows(call_id, {question: f"Sure, {quote}."}, at, question=question)
 
-    def test_a_quote_after_the_event_fails(self):
-        self.fails([owner_row(QUOTE, APPROVED_AT + 1, HUMAN)], NOT_FOUND, events=[size_approval()])
+    def test_an_answer_to_a_question_with_the_size_before_the_event_passes(self):
+        self.passes(self.answer(), events=[size_approval()])
+
+    def test_an_answer_at_the_event_time_passes(self):
+        self.passes(self.answer(at=APPROVED_AT - 1), events=[size_approval()])
+
+    def test_an_answer_after_the_event_fails(self):
+        self.fails(self.answer(at=APPROVED_AT), f"{HEAD}: the answer is after the event", events=[size_approval()])
+
+    def test_the_same_quote_in_a_typed_prompt_fails(self):
+        self.fails([owner_row(QUOTE, 100, HUMAN)], f"{HEAD}: the quote is in typed user text, not in an AskUserQuestion answer",
+                   events=[size_approval()])
+
+    def test_a_question_without_the_size_fails(self):
+        self.fails(self.answer(question="Approve the change?"), f"{HEAD}: the question does not name the approved size",
+                   events=[size_approval()])
+
+    def test_the_size_must_be_a_whole_number_in_the_question(self):
+        for question in ("Approve about 1300 changed lines?", "Approve about 1,300 changed lines?", "Approve about 300.5 lines?"):
+            with self.subTest(question):
+                self.fails(self.answer(question=question), f"{HEAD}: the question does not name the approved size",
+                           events=[size_approval()])
+
+    def test_the_size_may_end_a_sentence(self):
+        self.passes(self.answer(question="Approve 300?"), events=[size_approval()])
+
+    def test_one_answer_backs_one_size_approval(self):
+        self.fails(self.answer(), "size-approval 2 (300 lines): the answer already backs another size-approval",
+                   events=[size_approval(), size_approval(at=APPROVED_AT + 1)])
+
+    def test_two_answers_back_two_size_approvals(self):
+        self.passes(self.answer() + self.answer(at=110, call_id="ask2"), events=[size_approval(), size_approval(at=APPROVED_AT + 1)])
 
     def test_a_quote_that_is_not_in_real_user_input_fails(self):
-        self.fails([owner_row("something else", 100, HUMAN)], NOT_FOUND, events=[size_approval()])
+        self.fails(self.answer(quote="something else"), NOT_FOUND, events=[size_approval()])
 
     def test_a_ledger_without_a_size_approval_keeps_its_s5_result(self):
         self.passes([], events=rounds(1))
