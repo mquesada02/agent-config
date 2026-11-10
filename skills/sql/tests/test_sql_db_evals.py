@@ -160,7 +160,9 @@ class PluginCasesTest(unittest.TestCase):
 class DriverCasesTest(unittest.TestCase):
     def test_each_case_has_a_prompt_an_expectation_and_a_repo_and_nothing_that_plugin_eval_finds(self):
         names = sorted(os.listdir(DRIVER_CASES))
-        self.assertEqual(names, ["bad-password", "facts-pg-02", "plan-select", "wrong-host"])
+        self.assertEqual(names, [
+            "bad-password", "facts-pg-02", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
+            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "wrong-host"])
         for name in names:
             folder = os.path.join(DRIVER_CASES, name)
             with self.subTest(case=name):
@@ -190,7 +192,14 @@ class CaseRepoTest(unittest.TestCase):
                 self.assertTrue(data["expect"])
                 for kind in data["expect"]:
                     self.assertRegex(kind, KIND)
-                self.assertLessEqual(set(data), {"expect", "sequences_may_differ", "rules"})
+                self.assertLessEqual(set(data), {"expect", "sequences_may_differ", "rules", "report", "judge", "disabled"})
+                if "report" in data:
+                    self.assertIs(data["report"], True)
+                if "judge" in data:
+                    self.assertTrue(os.path.isfile(os.path.join(DB, data["judge"])), data["judge"])
+                if "disabled" in data:
+                    self.assertTrue(data["report"])
+                    self.assertTrue(all(re.fullmatch(r"(PGJS|PG|PLAN)-\d\d", item) for item in data["disabled"]))
                 if "rules" in data:
                     self.assertEqual(set(data["rules"]), {"expect", "forbid"})
                     for ids in data["rules"].values():
@@ -207,24 +216,102 @@ class ReadmeTest(unittest.TestCase):
         for needle in ("grade_db_unchanged.py", "grade_refusals.py", "grade_leak_scan.py", "grade_db_eval_results.py",
                        "run_db_cases.py", "db_eval.py", "no network", "Unix socket", "db-off-allowlist",
                        "db-bypass-refused", "db-connection-fails", "plan-select", "bad-password", "wrong-host",
-                       "facts-pg-02", "facts[:SERVICE]", "`rules`",
+                       "facts-pg-02", "facts[:SERVICE]", "`rules`", "plan-01-estimate", "plan-02-seq-scan",
+                       "plan-03-spill", "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled",
+                       "plan_findings.py", "`report`", "`judge`", "`disabled`", "rubric-plan.md", "shop.events",
                        "canaries.json", "db-expect.json", "grader G and the leak scan"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
 
-    def test_the_tracked_table_of_the_root_readme_covers_every_file_of_the_facts_case(self):
+    def tracked_patterns(self):
         globs = re.findall(r"^\| ((?:`[^`]+`(?:, )?)+) \|", slurp(ROOT_README), re.MULTILINE)
         patterns = []
         for cell in globs:
             for glob in re.findall(r"`([^`]+)`", cell):
                 regex = re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
                 patterns.append(re.compile(regex + r"\Z"))
+        return patterns
+
+    def test_the_tracked_table_of_the_root_readme_covers_every_file_of_the_facts_case(self):
+        patterns = self.tracked_patterns()
         repo_root = os.path.dirname(os.path.dirname(SKILL_DIR))
         paths = [os.path.relpath(path, repo_root) for path in files_under(os.path.join(DRIVER_CASES, "facts-pg-02"))]
         self.assertTrue(paths)
         for path in paths:
             with self.subTest(path=path):
                 self.assertTrue(any(pattern.match(path) for pattern in patterns), path)
+
+    def test_the_tracked_table_covers_every_file_of_the_plan_findings_ticket(self):
+        patterns = self.tracked_patterns()
+        repo_root = os.path.dirname(os.path.dirname(SKILL_DIR))
+        found = [os.path.join(SKILL_DIR, "scripts", "plan_findings.py"), os.path.join(DB, "rubric-plan.md"),
+                 os.path.join(HERE, "test_sql_plan_findings.py")]
+        # The fixtures sit in a subfolder of tests, as the style fixtures do: `skills/sql/tests/*` covers them
+        # in the table, and the `!skills/**` line of .gitignore tracks them.
+        for name in sorted(os.listdir(DRIVER_CASES)):
+            if name.startswith("plan-") and name != "plan-select":
+                found += list(files_under(os.path.join(DRIVER_CASES, name)))
+        self.assertGreater(len(found), 20)
+        for path in found:
+            relative = os.path.relpath(path, repo_root)
+            with self.subTest(path=relative):
+                self.assertTrue(os.path.isfile(path))
+                self.assertTrue(any(pattern.match(relative) for pattern in patterns), relative)
+
+
+class PlanCasesTest(unittest.TestCase):
+    PLAN_CASES = ("plan-01-estimate", "plan-02-seq-scan", "plan-03-spill", "plan-04-nested-loop", "plan-05-cache",
+                  "plan-clean", "plan-disabled")
+
+    def expectation(self, name):
+        return json.loads(slurp(os.path.join(DRIVER_CASES, name, "db-expect.json")))
+
+    def test_every_plan_rule_is_expected_by_a_driver_case(self):
+        expected = set()
+        for name in os.listdir(DRIVER_CASES):
+            expected.update(self.expectation(name).get("rules", {}).get("expect", []))
+        self.assertEqual(sorted(i for i in expected if i.startswith("PLAN-")), [f"PLAN-0{n}" for n in range(1, 6)])
+
+    def test_each_rule_case_expects_its_rule_and_the_plan_of_both_services(self):
+        for number, name in enumerate(self.PLAN_CASES[:5], start=1):
+            with self.subTest(case=name):
+                data = self.expectation(name)
+                self.assertEqual(data["expect"], ["plan:app-pg13", "plan:app-pg18"])
+                self.assertEqual(data["rules"], {"expect": [f"PLAN-0{number}"], "forbid": []})
+                self.assertIs(data["report"], True)
+                self.assertEqual(data["judge"], "rubric-plan.md")
+                self.assertFalse(data["sequences_may_differ"])
+
+    def test_the_clean_case_forbids_the_five_ids_and_has_no_judge(self):
+        data = self.expectation("plan-clean")
+        self.assertEqual(data["rules"], {"expect": [], "forbid": [f"PLAN-0{n}" for n in range(1, 6)]})
+        self.assertNotIn("judge", data)
+        self.assertIs(data["report"], True)
+
+    def test_the_disabled_case_disables_plan_02_with_a_reason_line_and_forbids_it(self):
+        data = self.expectation("plan-disabled")
+        self.assertEqual(data["disabled"], ["PLAN-02"])
+        self.assertEqual(data["rules"], {"expect": [], "forbid": ["PLAN-02"]})
+        rules = slurp(os.path.join(DRIVER_CASES, "plan-disabled", "repo", "docs", "agents", "sql.md"))
+        self.assertRegex(rules, r'(?m)^disabled = \["PLAN-02"\]$')
+        self.assertRegex(rules, r"(?m)^- PLAN-02: \S")
+        self.assertEqual(slurp(os.path.join(DRIVER_CASES, "plan-disabled", "repo", "src", "report.ts")),
+                         slurp(os.path.join(DRIVER_CASES, "plan-02-seq-scan", "repo", "src", "report.ts")))
+
+    def test_no_prompt_names_a_rule_id_or_an_interpolation_holds_in_a_template(self):
+        for name in self.PLAN_CASES:
+            with self.subTest(case=name):
+                prompt = slurp(os.path.join(DRIVER_CASES, name, "prompt.txt"))
+                self.assertNotRegex(prompt, r"\bPGJS-\d|\bPG-\d|\bPLAN-\d")
+                self.assertIn("plan_findings.py", prompt)
+                self.assertRegex(prompt, r"(?i)no `cd`, no `&&`, no `;` and no heredoc")
+                template = slurp(os.path.join(DRIVER_CASES, name, "repo", "src", "report.ts"))
+                self.assertEqual(template.count("sql`"), 1)
+                self.assertNotIn("${", template)
+
+    def test_the_rubric_asks_for_one_score_line(self):
+        text = slurp(os.path.join(DB, "rubric-plan.md"))
+        self.assertIn("SCORE: <n>/5", text)
 
 
 if __name__ == "__main__":

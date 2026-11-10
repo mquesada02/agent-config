@@ -1,0 +1,18 @@
+{
+  "expect": [
+    "plan:app-pg13",
+    "plan:app-pg18"
+  ],
+  "sequences_may_differ": false,
+  "rules": {
+    "expect": [],
+    "forbid": [
+      "PLAN-01",
+      "PLAN-02",
+      "PLAN-03",
+      "PLAN-04",
+      "PLAN-05"
+    ]
+  },
+  "report": true
+}

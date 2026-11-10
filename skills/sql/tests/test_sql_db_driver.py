@@ -18,6 +18,15 @@ CASES = os.path.join(SKILL_DIR, "evals", "db", "cases")
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys, time
 work = os.environ["FAKE_DOCKER_DIR"]
+argv = sys.argv[1:]
+if "--tools" in argv and argv[argv.index("--tools") + 1] == "":
+    with open(os.path.join(work, "claude-judge.json"), "w") as handle:
+        json.dump({"argv": argv, "env": dict(os.environ), "cwd": os.getcwd()}, handle)
+    judge = os.environ.get("FAKE_JUDGE_MODE", "ok")
+    if judge == "fail":
+        sys.exit(3)
+    print("SCORE: 4/5 clear cause" if judge == "ok" else "no score here")
+    sys.exit(0)
 with open(os.path.join(work, "claude.json"), "w") as handle:
     json.dump({"argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd()}, handle)
 mode = os.environ.get("FAKE_CLAUDE_MODE", "plan")
@@ -55,6 +64,30 @@ elif mode.startswith("facts"):
     row = "| 1 | PG-02 | src/customers.ts:5 | NOT IN over a nullable column | Use NOT EXISTS. |"
     if mode != "facts-nofinal":
         events.append({"type": "result", "result": "# sql optimize: src/customers.ts\n\n## Critical\n" + ("" if mode == "facts-norule" else row)})
+REPORTS = {
+    "plan02": "# sql optimize: src/report.ts\n\n**Result: 0 critical, 1 required, 0 suggestions.**\n\n## Required\n\n"
+              "| # | Rule | Where | Problem | Fix |\n|---|---|---|---|---|\n"
+              "| 1 | PLAN-02 | src/report.ts:5-7 | Seq Scan on events scanned 30000 rows against 10000. It reads the table to keep few rows. "
+              "| Add an index on kind. |\n\n## Approve\n\n"
+              "Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`.\n",
+    "disabled": "# sql optimize: src/report.ts\n\n**Result: 0 critical, 0 required, 0 suggestions.**\n\n"
+                "Disabled rules: PLAN-02.\n\n## Approve\n\nThere is nothing to approve.\n",
+    "clean": "# sql optimize: src/report.ts\n\n**Result: 0 critical, 0 required, 0 suggestions.**\n\n"
+             "## Approve\n\nThere is nothing to approve.\n",
+}
+REPORTS["plan02-bad"] = REPORTS["plan02"].split("## Approve")[0]
+REPORTS["disabled-wrong"] = REPORTS["disabled"].replace("PLAN-02", "PLAN-03")
+if mode in REPORTS or mode == "plan02-nofinal":
+    checked = {"ok": True, "server_version_num": 130000, "analyze": True, "notes": [], "findings": [],
+               "plan": [{"Plan": {"Node Type": "Result"}}]}
+    for call_id, service in (("a", "app-pg13"), ("b", "app-pg18")):
+        command = ("python3 /skill/scripts/pg_run.py explain --repo . --service " + service +
+                   " --mode select --statement 'SELECT 1' | python3 /skill/scripts/plan_findings.py -")
+        events.append({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": call_id, "name": "Bash", "input": {"command": command}}]}})
+        events.append(result(call_id, checked))
+    if mode != "plan02-nofinal":
+        events.append({"type": "result", "result": REPORTS[mode]})
 for event in events:
     print(json.dumps(event))
 '''
@@ -77,8 +110,8 @@ class DriverTest(base.TempTest):
         self.env.update({"PATH": self.bin, "XDG_CONFIG_HOME": self.xdg, "PGHOST": "must-be-dropped",
                          "PGSERVICE": "must-be-dropped", "PGPASSWORD": "must-be-dropped"})
 
-    def driver(self, *args, env=None):
-        return subprocess.run([sys.executable, "-I", DRIVER, "--out", self.out, *args], capture_output=True,
+    def driver(self, *args, env=None, out=None):
+        return subprocess.run([sys.executable, "-I", DRIVER, "--out", out or self.out, *args], capture_output=True,
                               text=True, env={**self.env, **(env or {})}, cwd=self.root)
 
     def claude(self):
@@ -115,7 +148,8 @@ class DriverTest(base.TempTest):
         self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "2.5")
         allowed = argv[argv.index("--allowedTools") + 1:]
         self.assertEqual(allowed, ["Skill", "Read"] + [
-            f"Bash(python3 {SKILL_DIR}/scripts/{name}.py:*)" for name in ("rules_file", "extract", "allowlist", "pg_run")])
+            f"Bash(python3 {SKILL_DIR}/scripts/{name}.py:*)"
+            for name in ("rules_file", "extract", "allowlist", "pg_run", "plan_findings")])
         for name in ("Edit", "Write", "NotebookEdit"):
             self.assertFalse([arg for arg in argv if name in arg])
 
@@ -226,17 +260,100 @@ class DriverTest(base.TempTest):
         proc = self.driver("--case", "plan-select", "--runs", "1")
         self.assertEqual(proc.stdout.splitlines(), ["plan-select#1: PASS", "PASS"])
 
+    def judge(self):
+        with open(os.path.join(self.work, "claude-judge.json"), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_a_report_case_is_graded_by_graders_e_and_i_and_the_judge_line_is_printed(self):
+        proc = self.driver("--case", "plan-02-seq-scan", "--runs", "1", env={"FAKE_CLAUDE_MODE": "plan02"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout.splitlines(),
+                         ["plan-02-seq-scan#1: PASS", "JUDGE plan-02-seq-scan#1: 4/5 clear cause", "PASS"])
+
+    def test_the_judge_call_has_no_tools_no_session_no_settings_and_no_database_variable(self):
+        self.driver("--case", "plan-02-seq-scan", "--runs", "1", env={"FAKE_CLAUDE_MODE": "plan02"})
+        seen = self.judge()
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+        self.assertEqual(argv[argv.index("--setting-sources") + 1], "")
+        for flag in ("--no-session-persistence", "--strict-mcp-config"):
+            self.assertIn(flag, argv)
+        self.assertNotIn("--allowedTools", argv)
+        self.assertFalse([key for key in seen["env"] if key.startswith("PG")])
+        prompt = argv[argv.index("-p") + 1]
+        self.assertIn("SCORE: <n>/5", prompt)
+        self.assertIn("| 1 | PLAN-02 |", prompt)
+
+    def test_a_judge_that_fails_or_gives_no_score_is_reported_and_changes_no_result(self):
+        for judge, text in (("fail", "not scored (exit code 3)"), ("noscore", "not scored (no score line)")):
+            with self.subTest(judge=judge):
+                proc = self.driver("--case", "plan-02-seq-scan", "--runs", "1", out=os.path.join(self.root, judge),
+                                   env={"FAKE_CLAUDE_MODE": "plan02", "FAKE_JUDGE_MODE": judge})
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertEqual(proc.stdout.splitlines(),
+                                 ["plan-02-seq-scan#1: PASS", f"JUDGE plan-02-seq-scan#1: {text}", "PASS"])
+
+    def test_a_judge_line_does_not_hide_a_failure(self):
+        proc = self.driver("--case", "plan-02-seq-scan", "--runs", "1", env={"FAKE_CLAUDE_MODE": "plan02-bad"})
+        self.assertEqual(proc.returncode, 1)
+        lines = proc.stdout.splitlines()
+        self.assertTrue(any(line.startswith("FAIL plan-02-seq-scan#1 ") for line in lines), proc.stdout)
+        self.assertIn("plan-02-seq-scan#1: FAIL", lines)
+        self.assertTrue(any(line.startswith("JUDGE plan-02-seq-scan#1") for line in lines))
+        self.assertEqual(lines[-1], "FAIL")
+
+    def test_a_report_case_with_no_final_message_fails(self):
+        proc = self.driver("--case", "plan-02-seq-scan", "--runs", "1", env={"FAKE_CLAUDE_MODE": "plan02-nofinal"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(line.startswith("FAIL plan-02-seq-scan#1 trace: no final message")
+                            for line in proc.stdout.splitlines()), proc.stdout)
+        self.assertIn("JUDGE plan-02-seq-scan#1: not scored (no final message)", proc.stdout)
+
+    def test_the_disabled_key_is_passed_to_grader_i(self):
+        proc = self.driver("--case", "plan-disabled", "--runs", "1", env={"FAKE_CLAUDE_MODE": "disabled"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = self.driver("--case", "plan-disabled", "--runs", "1", out=os.path.join(self.root, "out-wrong"),
+                           env={"FAKE_CLAUDE_MODE": "disabled-wrong"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(line.startswith("FAIL plan-disabled#1 disabled") for line in proc.stdout.splitlines()),
+                        proc.stdout)
+
+    def test_a_clean_case_has_no_judge_line(self):
+        proc = self.driver("--case", "plan-clean", "--runs", "1", env={"FAKE_CLAUDE_MODE": "clean"})
+        self.assertEqual(proc.stdout.splitlines(), ["plan-clean#1: PASS", "PASS"])
+        self.assertFalse(os.path.exists(os.path.join(self.work, "claude-judge.json")))
+
+    def test_a_rule_case_fails_when_the_report_lacks_the_expected_rule(self):
+        proc = self.driver("--case", "plan-02-seq-scan", "--runs", "1", env={"FAKE_CLAUDE_MODE": "clean"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL plan-02-seq-scan#1 expect:PLAN-02: not found in the Rule column", proc.stdout)
+
     def test_the_real_case_names_and_their_expectations(self):
-        expected = {"plan-select": ["plan:app-pg13", "plan:app-pg18"],
-                    "facts-pg-02": ["facts:app-pg13", "facts:app-pg18"],
+        plans = ["plan:app-pg13", "plan:app-pg18"]
+        expected = {"plan-select": plans, "facts-pg-02": ["facts:app-pg13", "facts:app-pg18"],
+                    "plan-01-estimate": plans, "plan-02-seq-scan": plans, "plan-03-spill": plans,
+                    "plan-04-nested-loop": plans, "plan-05-cache": plans, "plan-clean": plans,
+                    "plan-disabled": plans,
                     "bad-password": ["connection_failed:app-badpw"],
                     "wrong-host": ["connection_failed:app-wronghost"]}
+        rules = {"facts-pg-02": {"expect": ["PG-02"], "forbid": []},
+                 "plan-01-estimate": {"expect": ["PLAN-01"], "forbid": []},
+                 "plan-02-seq-scan": {"expect": ["PLAN-02"], "forbid": []},
+                 "plan-03-spill": {"expect": ["PLAN-03"], "forbid": []},
+                 "plan-04-nested-loop": {"expect": ["PLAN-04"], "forbid": []},
+                 "plan-05-cache": {"expect": ["PLAN-05"], "forbid": []},
+                 "plan-clean": {"expect": [], "forbid": [f"PLAN-0{n}" for n in range(1, 6)]},
+                 "plan-disabled": {"expect": [], "forbid": ["PLAN-02"]}}
         self.assertEqual(sorted(os.listdir(CASES)), sorted(expected))
         for name, kinds in expected.items():
             with open(os.path.join(CASES, name, "db-expect.json"), encoding="utf-8") as handle:
                 data = json.load(handle)
             self.assertEqual(data["expect"], kinds)
-            self.assertEqual(data.get("rules"), {"expect": ["PG-02"], "forbid": []} if name == "facts-pg-02" else None)
+            self.assertEqual(data.get("rules"), rules.get(name))
+            report = name.startswith("plan-") and name != "plan-select"
+            self.assertEqual(data.get("report"), True if report else None)
+            self.assertEqual(data.get("judge"), "rubric-plan.md" if report and name != "plan-clean" else None)
 
 
 if __name__ == "__main__":
