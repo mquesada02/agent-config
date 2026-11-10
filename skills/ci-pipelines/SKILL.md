@@ -9,11 +9,11 @@ Rules and steps for GitHub Actions CI workflows of Node/TypeScript repos.
 
 ## Intake
 
-Before you pick a branch, run the intake script on the repo: `python3 scripts/intake.py <repo path>` (the script path is relative to this skill folder). It prints one JSON object. Read only this JSON for the repo facts. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report. With no network, the script reads the dated list of supported Node majors from [tools.md](tools.md), and the `installed_tools` fact says which of actionlint, zizmor and pinact are on PATH (see [tools.md](tools.md)).
+Before you pick a branch, run the intake script on the repo: `python3 scripts/intake.py <repo path>` (the script path is relative to this skill folder). It prints one JSON object. Read only this JSON for the repo facts. On the reply to a review report, you reuse the intake facts of the review in this conversation, and you run the intake script again only when none are in the conversation. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report. With no network, the script reads the dated list of supported Node majors from [tools.md](tools.md), and the `installed_tools` fact says which of actionlint, zizmor and pinact are on PATH (see [tools.md](tools.md)).
 
 ## Pick the branch
 
-- **Review** (the user asks to review or check CI): follow [review.md](review.md).
+- **Review** (the user asks to review or check CI): follow [review.md](review.md). When the user replies to a review report with a selection (`all`, `none`, a list or a range), follow "Fix on approval" in [review.md](review.md).
 - **Create** (the user asks for a new CI workflow): not built yet. Say so, and offer a review of the existing workflows.
 - **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and keep your edit consistent with them. Do not review the whole repo.
 
@@ -21,7 +21,7 @@ Before you pick a branch, run the intake script on the repo: `python3 scripts/in
 
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls. It reads the dated offline Node list from [tools.md](tools.md) when it has no network.
 - [tools.md](tools.md): detection and install hints for actionlint, zizmor and pinact, the zizmor-to-SEC mapping, the output merge, the SHA lookup and the dated offline list of supported Node majors (the intake script reads this list with no network).
-- [review.md](review.md): the review steps and the report contract.
+- [review.md](review.md): the review steps, the report contract and the fix-on-approval steps.
 - [rules/naming.md](rules/naming.md): NAME-01 to NAME-09. Each rule has an id, a default severity, the rule, its check and its fix.
 - [rules/job-graph.md](rules/job-graph.md): GRAPH-01 to GRAPH-07 (jobs, `needs:`, matrices, shards, the build artifact, suite matrices).
 - [rules/cost.md](rules/cost.md): COST-01 to COST-08 (triggers, concurrency, path filters, timeouts, installs, workers, runner labels, checkout depth).

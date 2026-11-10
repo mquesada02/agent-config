@@ -416,7 +416,7 @@ class ReviewSteps(unittest.TestCase):
     def test_it_takes_its_facts_from_the_intake_and_runs_no_gh_or_tool_calls(self):
         for fact in ("required_checks", "installed_tools", "runner_labels"):
             self.assertIn(fact, self.text)
-        for gone in ("gh api", "command -v", "actionlint -version", "zizmor --version", "interim"):
+        for gone in ("command -v", "actionlint -version", "zizmor --version", "interim"):
             self.assertNotIn(gone, self.text)
 
     def test_section_2_names_defaults_and_unknown_facts(self):
@@ -490,9 +490,11 @@ class ReviewSteps(unittest.TestCase):
         section = self.text[start:self.text.index("\n## ", start + 1)]
         self.assertIn("tools.md", section)
 
-    def test_it_makes_no_edit(self):
-        self.assertIn("edits nothing", self.text)
-        self.assertIn("make no edit", self.text)
+    def test_it_makes_no_edit_before_the_user_approves_and_points_to_the_fix_section(self):
+        steps = self.text[self.text.index("## steps"):self.text.index("\n## ", self.text.index("## steps") + 1)]
+        self.assertIn("make no edit", steps)
+        self.assertIn("before the user approves", steps)
+        self.assertIn("fix on approval", steps)
 
 
 class EvalReadme(unittest.TestCase):
