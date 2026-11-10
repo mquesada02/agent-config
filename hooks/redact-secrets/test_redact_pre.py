@@ -79,6 +79,13 @@ class RewriteTest(unittest.TestCase):
     def test_a_comment_on_an_earlier_line_is_safe(self):
         self.assertEqual(self.command_after("# note\nls"), "# note\nls" + SUFFIX)
 
+    def test_a_command_that_already_ends_with_the_suffix_passes_unchanged(self):
+        # the model resends a rewritten call after auto mode refuses it (#328)
+        for command in ("ls" + SUFFIX, "a\nb" + SUFFIX + "\n", "ls" + SUFFIX + SUFFIX):
+            with self.subTest(command=command):
+                result = run_pre(bash_pre_event(command))
+                self.assertEqual((result.returncode, result.stdout), (0, ""))
+
     def test_an_empty_command_passes_unchanged(self):
         for command in ("", "   ", "\n\t\n"):
             with self.subTest(command=command):

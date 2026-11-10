@@ -798,8 +798,10 @@ def check_s2(worktree, audited):
                 target = os.path.join(call["cwd"], target)  # a relative path means the row's cwd, not the audit's
             if os.path.isabs(target) and os.path.realpath(target) == root:
                 command = command[prefix.end():].strip()
-        # a foreground call that the model resent with the redact_pre suffix; a background call never gets it
-        if not call["background"] and command.endswith(FAILED_SUFFIX):
+        elif not (call["cwd"] and _inside(os.path.realpath(call["cwd"]), root)):
+            return None  # no `cd` prefix: the run counts only when its row cwd is inside the audited worktree
+        # a foreground call that the model resent with the redact_pre suffix (stacked once per resend in transcripts from before redact_pre stopped stacking it); a background call never gets it
+        while not call["background"] and command.endswith(FAILED_SUFFIX):
             command = command[:-len(FAILED_SUFFIX)].strip()
         return command
 

@@ -37,6 +37,12 @@ class BriefTextTest(unittest.TestCase):
         self.assertIn("S10 results are S results, which you never write", self.full)
         self.assertIn("reason in force", self.variant.split("**L1, pre-dispatch.**", 1)[1])
 
+    def test_the_full_variant_says_a_user_bang_run_does_not_count_for_s2(self):
+        sessions = self.full.split("## Reading the sessions", 1)[1].split("## The verdict file", 1)[0]
+        for phrase in ("`!` prefix does not count for S2", "no tool result", "do not ask the owner for another `!` run", "overrides a failed audit"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, sessions)
+
     def test_the_brief_names_s10_in_its_item_lists(self):
         for phrase in ("the results of S1 to S10 and XC", "`record` re-runs S1 to S10 itself", "It runs S3, S5, S7, S10 and the cross-check itself",
                        "the `round`, `finding`, `finding-amend` and `status` events"):
