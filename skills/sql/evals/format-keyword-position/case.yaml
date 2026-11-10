@@ -8,4 +8,4 @@ execution:
   max_turns: 16
   allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
   prompt: |
-    In the file `rows-store.ts` (it is in the current folder), run `/sql format` on lines 9 to 11 only. Change no other line. When the first run is done, copy the file to `first-run.ts` with `cp`. Then run `/sql format` a second time on the same template (its line range may have moved).
+    In the file `rows-store.ts` (it is in the current folder, and the current folder is the repo root), run `/sql format` on lines 9 to 11 only. Change no other line. When the first run is done, copy the file to `first-run.ts` with the Write tool (Read the file, then Write the same text to the new path). Then run `/sql format` a second time on the same template (its line range may have moved). In your final message, show the whole file as it was after the first run, in a code block, and say whether the second run changed the file.
