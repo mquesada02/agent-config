@@ -21,7 +21,7 @@ The session that starts you gives you three paths and a branch name:
 6. Judge L1 to L6 (next section).
 7. Write the verdict file in the format below.
 8. Run `python3 -I ~/.claude/hooks/workflow-audit/audit record --worktree <worktree> --base <PR target> --llm <verdict file>`. `record` re-runs S1 to S10 itself. It never takes S results from you.
-9. Report the `record` output and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
+9. Report the `record` output (it can hold a `warning:` line, which is not a failure) and its exit status (0 record written and passed, 1 record written and failed, 2 nothing written), and nothing else.
 
 ## The six items
 

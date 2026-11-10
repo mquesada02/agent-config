@@ -262,6 +262,13 @@ class VersionTest(TranscriptCase):
         self.assertEqual(record["result"], "fail")
         self.assertIn(self.WARNING, result.stdout.decode().splitlines())
 
+    def test_the_warning_lists_every_untested_version(self):
+        run = bash_row("make test", "b1", 20, version="2.1.300")
+        self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.302"), run, result_row("b1", 21)])
+        tip = self.branch()
+        self.record()
+        self.assertEqual(self.read_record(tip)["warning"], "warning: transcripts from untested Claude Code versions 2.1.300, 2.1.302")
+
     def test_no_warning_when_every_version_is_tested(self):
         run = bash_row("make test", "b1", 20)
         self.register_session("s1", [self.with_row(), self.own_edit("e2", 11), run, result_row("b1", 21)])

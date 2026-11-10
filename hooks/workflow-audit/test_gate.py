@@ -64,6 +64,16 @@ class DenialReasonTest(GateTestCase):
         self.git("remote", "set-url", "origin", self.origin + "-other")
         self.assert_denied(self.gate(PR), "remote mismatch")
 
+    def test_a_passing_record_with_a_warning_field_allows(self):
+        tip = self.audited_branch()
+        path = os.path.join(self.runtime, f"{tip}.json")
+        with open(path) as handle:
+            record = json.load(handle)
+        record["warning"] = "warning: transcripts from untested Claude Code version 2.1.300"
+        with open(path, "w") as handle:
+            json.dump(record, handle)
+        self.assert_allowed(self.gate(PR))
+
     def test_a_local_commit_that_is_not_pushed_does_not_change_the_pushed_tip(self):
         self.audited_branch()
         self.commit("local only")
