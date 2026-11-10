@@ -28,6 +28,17 @@ MODULES = {
 }
 
 
+# The modules that are still stubs: MODULES without the source modules that #390 filled.
+STUBS = {
+    module: tickets
+    for module, tickets in MODULES.items()
+    if not module.startswith("sources/")
+}
+
+JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
+EXTRACT_CASE = os.path.join(EVALS, "extract-tag-not-sql")
+
+
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
@@ -89,8 +100,10 @@ class RouterTest(unittest.TestCase):
 
 
 class StubTest(unittest.TestCase):
+    """The modules that are still stubs (STUBS), each naming the tickets that fill it."""
+
     def test_every_module_exists_and_names_the_tickets_that_fill_it(self):
-        for module, tickets in MODULES.items():
+        for module, tickets in STUBS.items():
             with self.subTest(module=module):
                 path = os.path.join(SKILL_DIR, module)
                 self.assertTrue(os.path.isfile(path), f"{module} is missing")
@@ -98,6 +111,55 @@ class StubTest(unittest.TestCase):
                 self.assertRegex(text, r"(?m)^# \S")
                 for ticket in tickets:
                     self.assertIn(ticket, text)
+
+
+class SourceModuleTest(unittest.TestCase):
+    COMMON = ("scripts/extract.py", "--tags", "position", "start_line", "error")
+    EXTRA = {
+        "sources/postgres-js.md": (
+            "detected_tags", "[sources]", "value", "fragment", "keyword", "this.sql",
+        ),
+        "sources/sql-files.md": ("statement",),
+    }
+
+    def test_the_source_modules_are_filled(self):
+        for module, extra in self.EXTRA.items():
+            with self.subTest(module=module):
+                text = read(os.path.join(SKILL_DIR, module))
+                self.assertRegex(text.splitlines()[0], r"^# \S")
+                lower = text.lower()
+                for needle in self.COMMON + extra:
+                    self.assertIn(needle.lower(), lower, needle)
+                self.assertNotRegex(text, r"(?i)\bstub\b")
+                self.assertNotIn("#390", text)
+
+    def test_the_source_modules_are_not_in_the_stub_list(self):
+        for module in self.EXTRA:
+            self.assertIn(module, MODULES)
+            self.assertNotIn(module, STUBS)
+
+
+class SourceModuleRouterTest(unittest.TestCase):
+    def setUp(self):
+        self.body = section(read(ROUTER), "Source module")
+
+    def test_the_section_names_both_modules_the_script_and_the_extensions(self):
+        for needle in ("sources/sql-files.md", "sources/postgres-js.md", "scripts/extract.py", ".sql", ".ts"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, self.body)
+
+    def test_every_js_extension_is_named(self):
+        for extension in JS_EXTENSIONS:
+            with self.subTest(extension=extension):
+                self.assertIn(extension, self.body)
+
+    def test_it_says_the_extension_is_case_insensitive_and_other_forms_are_not_supported(self):
+        lower = self.body.lower()
+        self.assertIn("case-insensitive", lower)
+        self.assertIn("not supported", lower)
+
+    def test_the_model_invoked_path_is_unchanged(self):
+        self.assertIn("model-invoked", self.body.lower())
 
 
 class FixtureNamesTest(unittest.TestCase):
@@ -165,6 +227,78 @@ class TriggerCaseTest(unittest.TestCase):
                 self.assertRegex(head, r"(?m)^min: 0$")
                 self.assertRegex(head, r"(?m)^max: 0$")
                 self.assertIn(needle, head)
+
+
+class ExtractCaseTest(unittest.TestCase):
+    GRADERS = (
+        "skill-fired.md", "extractor-ran.md", "names-each-template.md",
+        "no-connection.md", "no-formatter.md",
+    )
+
+    def grader(self, name):
+        return read(os.path.join(EXTRACT_CASE, "graders", name))
+
+    def test_the_case_folder_has_a_case_file_a_scaffold_and_the_five_graders(self):
+        self.assertTrue(os.path.isfile(os.path.join(EXTRACT_CASE, "case.yaml")))
+        self.assertTrue(os.path.isfile(os.path.join(EXTRACT_CASE, "scaffold.sh")))
+        found = sorted(os.listdir(os.path.join(EXTRACT_CASE, "graders")))
+        self.assertEqual(found, sorted(self.GRADERS))
+
+    def test_the_case_file_does_not_name_the_skill_and_sets_the_scaffold(self):
+        case = read(os.path.join(EXTRACT_CASE, "case.yaml"))
+        self.assertRegex(case, r"(?m)^  scaffold_script: scaffold\.sh$")
+        self.assertIn("allowed_tools: [Skill, Read, Glob, Grep, Bash]", case)
+        self.assertRegex(case, r"(?m)^  max_turns: 8$")
+        prompt = case.split("prompt: |", 1)[1]
+        self.assertNotRegex(prompt, r"(?i)/sql|sql skill")
+
+    def test_the_scaffold_copies_the_fixture_into_the_working_folder(self):
+        with tempfile.TemporaryDirectory() as work:
+            subprocess.run(
+                ["bash", os.path.join(EXTRACT_CASE, "scaffold.sh")],
+                cwd=work, check=True, env={"PATH": os.environ["PATH"]},
+            )
+            copied = read(os.path.join(work, "billing-store.ts"))
+        self.assertEqual(copied, read(os.path.join(EXTRACT_CASE, "billing-store.ts")))
+
+    def test_the_tool_used_graders(self):
+        skill = frontmatter(self.grader("skill-fired.md"))
+        self.assertRegex(skill, r"(?m)^type: tool_used$")
+        self.assertRegex(skill, r"(?m)^tool: Skill$")
+        ran = frontmatter(self.grader("extractor-ran.md"))
+        self.assertRegex(ran, r"(?m)^type: tool_used$")
+        self.assertRegex(ran, r"(?m)^tool: Bash$")
+        self.assertRegex(ran, r"(?m)^min: 1$")
+        self.assertIn(r"extract\.py", ran)
+        for name, needle in (
+            ("no-connection.md", "psql|pg_run|PGSERVICE|service="),
+            ("no-formatter.md", "prettier|pg_format|pgFormatter|sql-formatter|sqlfluff|eslint"),
+        ):
+            with self.subTest(name=name):
+                head = frontmatter(self.grader(name))
+                self.assertRegex(head, r"(?m)^type: tool_used$")
+                self.assertRegex(head, r"(?m)^tool: Bash$")
+                self.assertRegex(head, r"(?m)^min: 0$")
+                self.assertRegex(head, r"(?m)^max: 0$")
+                self.assertIn(needle, head)
+
+    def test_the_rubric_has_a_type_and_names_the_tags(self):
+        text = self.grader("names-each-template.md")
+        self.assertRegex(frontmatter(text), r"(?m)^type: \S+")
+        for tag in ("db", "this.db", "tx"):
+            with self.subTest(tag=tag):
+                self.assertIn("`" + tag + "`", text)
+
+    def test_the_fixture_has_the_detection_forms_and_no_python_test_file(self):
+        source = [n for n in os.listdir(EXTRACT_CASE) if n.endswith(".ts")]
+        self.assertTrue(source)
+        text = read(os.path.join(EXTRACT_CASE, source[0]))
+        for needle in ("import postgres from 'postgres'", "const db = postgres(", "this.db = postgres(", "db.begin("):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text)
+
+    def test_the_cases_table_names_the_case(self):
+        self.assertIn("`extract-tag-not-sql`", read(PROCEDURE))
 
 
 class RepoFilesTest(unittest.TestCase):
