@@ -23,7 +23,14 @@ AUDIT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DENY_NOTICE = ("A subagent must not change remote state. Do not run this command. Report the need as a finding in your review "
                "instead; the owner runs it.")
 UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
-UNRESOLVED = "a command word that a variable, a substitution or a pattern builds"
+
+
+def unresolved_reason(names, what):
+    """The deny reason when a word is built by a variable, a substitution or a pattern (the hook cannot read what it names), else None."""
+    if any(UNRESOLVABLE_WORD.search(name) for name in names):
+        return f"a {what} that a variable, a substitution or a pattern builds"
+    return None
+
 
 # `gh <group> <verb>`: the verbs of each group that change something on GitHub.
 GH_WRITE_VERBS = {
@@ -86,8 +93,9 @@ def positional(words, value_options):
 def gh_reason(words):
     """The deny reason of the words after `gh`, or None."""
     names = positional(words, GH_VALUE_OPTIONS)[:2]
-    if any(UNRESOLVABLE_WORD.search(name) for name in names):
-        return "a gh subcommand that a variable, a substitution or a pattern builds"
+    reason = unresolved_reason(names, "gh subcommand")
+    if reason:
+        return reason
     if names[:1] == ["api"]:
         return gh_api_reason(words)
     if len(names) == 2 and names[1] in GH_WRITE_VERBS.get(names[0], ()):
@@ -119,8 +127,9 @@ def gh_api_reason(words):
 
 def terraform_reason(words):
     names = positional(words, ())[:2]
-    if any(UNRESOLVABLE_WORD.search(name) for name in names):
-        return "a terraform subcommand that a variable, a substitution or a pattern builds"
+    reason = unresolved_reason(names, "terraform subcommand")
+    if reason:
+        return reason
     if names[:1] and names[0] in TERRAFORM_WRITE:
         return f"terraform {names[0]} changes remote state"
     if names[:1] == ["state"] and len(names) == 2 and names[1] in TERRAFORM_STATE_WRITE:
@@ -130,14 +139,15 @@ def terraform_reason(words):
 
 def aws_reason(words):
     names = positional(words, AWS_VALUE_OPTIONS)[:2]
-    if any(UNRESOLVABLE_WORD.search(name) for name in names):
-        return "an aws operation that a variable, a substitution or a pattern builds"
+    reason = unresolved_reason(names, "aws operation")
+    if reason:
+        return reason
     if len(names) == 2 and not AWS_READ_VERB.fullmatch(names[1]):
         return f"aws {names[0]} {names[1]} is not a read operation (get-*, list-*, describe-*, head-*)"
     return None
 
 
-class Reader:
+class DenyRules:
     def __init__(self, audit):
         self.audit = audit
 
@@ -146,23 +156,23 @@ class Reader:
         if rest is None:
             return None
         first = self.audit._words(rest[:1])
-        if first and UNRESOLVABLE_WORD.search(first[0]):
-            return "a git subcommand that a variable, a substitution or a pattern builds"
-        return "git push changes the remote" if first == ["push"] else None
+        return unresolved_reason(first, "git subcommand") or ("git push changes the remote" if first == ["push"] else None)
 
     def segment_reason(self, segment, depth):
         words = self.audit._command_words(segment)
         if not words:
             return None
-        if UNRESOLVABLE_WORD.search(os.path.basename(words[0])):
-            return UNRESOLVED
-        if os.path.basename(words[0]) in self.audit.NAMING_ONLY_COMMANDS:
+        first = os.path.basename(words[0])
+        reason = unresolved_reason([first], "command word")
+        if reason:
+            return reason
+        if first in self.audit.NAMING_ONLY_COMMANDS:
             return None
         for index, word in enumerate(words):
             name = os.path.basename(word)
             rest = words[index + 1:]
             reason = None
-            if name == "gh":
+            if self.audit._is_gh(word):
                 reason = gh_reason(rest)
             elif name == "terraform":
                 reason = terraform_reason(rest)
@@ -224,7 +234,7 @@ def main():
     tool_input = data.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     try:
-        reason = (Reader(load_reader()).command_reason(command) if isinstance(command, str)
+        reason = (DenyRules(load_reader()).command_reason(command) if isinstance(command, str)
                   else "the hook input holds no command text")
     except Exception as error:
         reason = f"the hook failed ({type(error).__name__})"
