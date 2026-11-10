@@ -1,6 +1,6 @@
 # Optimize module
 
-`/sql optimize` reports the problems of the SQL that the user points at. This module holds the path with no database: it reads the SQL text and the repo files, writes a report, and waits for the user to approve. It never connects to a database, and the module [db-access.md](db-access.md) is not used on this path.
+`/sql optimize` reports the problems of the SQL that the user points at. The path with no database reads the SQL text and the repo files, writes a report, and waits for the user to approve. That path never connects to a database and does not use [db-access.md](db-access.md). The database path (the section Database path below) reads a real plan, and it does use [db-access.md](db-access.md).
 
 ## Steps
 
@@ -8,7 +8,8 @@
 2. Pick the source module by the file form (the router's source module rule). Run its extractor and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
 3. Apply every enabled rule of [dialects/postgres.md](dialects/postgres.md) (the `PG-*` rules) to each statement. For a postgres.js template, also apply the `PGJS-*` rules of [sources/postgres-js.md](sources/postgres-js.md).
 4. A rule that needs a fact fires only when the repo shows the fact. Read the repo files for it (a schema file, a migration, a type). When the repo does not show the fact, the rule does not fire.
-5. Write the report as the final message, as described below. Then stop.
+5. When the repo allows a database, take the plan of each complete `SELECT` as the section Database path says. A failed call gives a `Note:` line, and the run goes on.
+6. Write the report as the final message, as described below. Then stop.
 
 One finding is one row. A rule id has at most one row in the whole report. When a rule matches in many places, write all places in the Where cell of its one row, separated by `, `.
 
@@ -64,9 +65,21 @@ With no database, every rewrite is unproven. Write it in the Fix cell. The cell 
 
 The skill edits no file before the user replies. After the reply, it edits only the findings that the reply chooses. A rewrite is applied only when the reply names its number, as a number in a list or inside a range. A reply of `all` does not cover a rewrite: name the unproven rows to the user and ask for their numbers.
 
-## Database path (stub)
+## Database path
 
-Stub. Tickets #394 (the database allowlist and the connection) and #400 (the catalog facts) fill this section. It holds no behavior yet.
+Load [db-access.md](db-access.md) when the run reaches this section. A plan comes only from `pg_run`, as that module says.
+
+1. Run the allowlist reader: `python3 <skill folder>/scripts/allowlist.py <repo root>`. With `access` false, stay on the no-database path and write no extra line.
+2. With `access` true and no service in `services`, stay on the no-database path.
+3. With no rules file (the router's rules file reader prints `found` false), stay on the no-database path: make no connection.
+4. Pick the statements: each `SELECT` or `WITH ... SELECT` that is complete SQL. A `.sql` statement is complete. A template is complete when it has no `${...}` interpolation and no `$n` placeholder outside a string or a comment. A statement with an interpolation or a placeholder has no values, so it gets no call and stays on the no-database path.
+5. Pick the service. When the allowlist names several, use the service that the user named, or ask which one to use. The module does not run `--check-services`: setup does.
+6. For each picked statement, run `python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <name> --mode select` and read its JSON, as [db-access.md](db-access.md) says.
+7. A call with `ok` false is named in one `Note:` line: `Note: the database call for <file>:<start_line>-<end_line> failed (<error>), so that statement has only static findings.` Write the redacted `message` in the line when it helps. Then go on with the static report.
+
+The plan is not turned into findings here (a later ticket does it, see Plan findings): write no `PLAN-*` row. The `ok` plan changes no finding of the static rules.
+
+Catalog facts (stub): ticket #400 fills this paragraph with the catalog facts of the `facts` action. It holds no behavior yet.
 
 ## Plan findings (stub)
 
