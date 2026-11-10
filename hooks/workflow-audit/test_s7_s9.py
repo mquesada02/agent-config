@@ -489,6 +489,7 @@ class S9HeredocTest(S9Case):
     def test_the_body_of_a_quoted_heredoc_read_by_an_interpreter_is_not_command_text(self):
         body = "x = '''it's'''\nimport x from \"vitest\"\n"
         for command in ("python3 - <<'EOF'\nrm -rf x\nEOF", "python3 <<'EOF'\ndon't\nrm x\nEOF", "node <<'EOF'\nrm -rf x\nEOF",
+                        "python <<'EOF'\nrm -rf x\nEOF", "perl <<'EOF'\nrm -rf x\nEOF", "ruby <<'EOF'\nrm -rf x\nEOF",
                         "python3 - <<'EOF'\n" + body + "EOF\npnpm exec vitest run a.test.tsx --maxWorkers=2"):
             with self.subTest(command=command):
                 self.assert_clean([command])

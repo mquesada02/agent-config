@@ -97,6 +97,7 @@ DATA_COMMANDS = frozenset(("cat", "tee"))
 # Interpreters that are not shells: the body of a quoted heredoc they read is their program, not shell text. Only S9 (`_command_problems`)
 # adds these to DATA_COMMANDS; the gate (`gate_reason`) keeps DATA_COMMANDS alone.
 INTERPRETER_COMMANDS = frozenset(("python", "python3", "node", "perl", "ruby"))
+S9_HEREDOC_READERS = DATA_COMMANDS | INTERPRETER_COMMANDS
 # Builtins and keywords with which the shell itself changes what a command name runs (an external program cannot change its parent shell).
 # A context that holds one of these words, or a PATH word, does not show what `cat` is. `read`, `printf`, `getopts`, `mapfile`, `readarray`
 # and `unset` are here because they build or remove a name or a function (`printf -v`, `read $x`); keep them. `BASH_CMDS[cat]=/path` has no
@@ -1793,7 +1794,7 @@ def _segment_problems(words, depth):
 
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
-    command = _join_as_bash(strip_data_heredocs(command, DATA_COMMANDS | INTERPRETER_COMMANDS))  # the gates' join, as bash joins
+    command = _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))  # the gates' join, as bash joins
     try:
         items = split_command(command)
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
@@ -2438,9 +2439,8 @@ def _next_separator(items, index):
 
 def _reads_as_data(context, after, items, segment, readers):
     """True when the reader of a quoted heredoc is in `readers` and the checks here find nothing that can run its body. The gate passes
-    DATA_COMMANDS; S9 passes DATA_COMMANDS plus INTERPRETER_COMMANDS. `context`
-    is the parsed text up to the operator, `after` the rest of the operator line, `items` its split, `segment` the words of the command
-    that holds the operator. The name `cat` is trusted only when the text shows nothing that can change it: only the shell itself
+    DATA_COMMANDS; S9 passes S9_HEREDOC_READERS. `context` is the parsed text up to the operator, `after` the rest
+    of the operator line, `items` its split, `segment` the words of the command that holds the operator. A reader name such as `cat` is trusted only when the text shows nothing that can change it: only the shell itself
     (SHELL_STATE_WORDS, a PATH word, a command word it expands) does that. What lives outside the text (an alias, a function or a script
     that is already there) is not seen."""
     if re.search(r"[(`]", context) or re.search(r"[|(`]|<<|[<>]&", after):
@@ -2455,12 +2455,12 @@ def _reads_as_data(context, after, items, segment, readers):
     return not any(UNRESOLVABLE_PATH.search(found[0]) for found in map(_command_words, segments) if found)
 
 
-def strip_data_heredocs(command, readers=DATA_COMMANDS):
+def strip_data_heredocs(command, readers):
     """The command without the body lines of each quoted heredoc that a command in `readers` reads: bash does not run that body.
-    The gate uses the default, DATA_COMMANDS. S9 passes DATA_COMMANDS | INTERPRETER_COMMANDS, so the body of a script that an interpreter reads is data too.
+    The gate passes DATA_COMMANDS; S9 passes S9_HEREDOC_READERS.
     The operator and end lines stay. Every other body stays. From the first line that this scan cannot follow with the rules of bash,
     nothing more is removed: a continued line, a line with two heredocs (or a here-string next to one), an end word it cannot read,
-    a quote left open, an ANSI-C quote, or a body with no end line. A script that a data command writes and bash then runs is not seen.
+    a quote left open, an ANSI-C quote, or a body with no end line. A script that a reader writes and bash then runs is not seen.
     A caller strips before it joins continued lines: bash does not join the lines of a quoted body, and a continued line stops this scan."""
     lines = command.split("\n")
     kept, parsed, index = [], [], 0  # `parsed` holds the lines that the shell parses: the body of a heredoc is not one
@@ -2999,7 +2999,7 @@ def _final_reason(command, segments, unfollowed):
 
 def gate_reason(command, cwd, session_id=None):
     """The deny reason for a Bash command, or None to allow it."""
-    command = _join_as_bash(strip_data_heredocs(command))  # so a continued command is one segment with all its words
+    command = _join_as_bash(strip_data_heredocs(command, DATA_COMMANDS))  # so a continued command is one segment with all its words
     try:
         items = split_command(command)
     except Exception:
