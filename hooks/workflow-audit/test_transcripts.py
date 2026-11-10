@@ -394,6 +394,23 @@ class DeclarationTest(TranscriptCase):
         items = self.declared({"CLAUDE.md": "# no section\n", ".claude/CLAUDE.md": declaration("make test")})
         self.assert_item(items, "S2", "pass")
 
+    def test_the_section_in_agents_md_is_read(self):
+        items = self.declared({"CLAUDE.md": None, "AGENTS.md": declaration("make test")})
+        self.assert_item(items, "S2", "pass")
+
+    def test_sections_in_agents_md_and_claude_md_fail_s2(self):
+        items = self.declared({"CLAUDE.md": declaration("make test"), "AGENTS.md": declaration("make other")})
+        self.assert_item(items, "S2", "fail", "found 2")
+
+    def test_sections_in_agents_md_and_dot_claude_fail_s2(self):
+        items = self.declared({"CLAUDE.md": None, ".claude/CLAUDE.md": declaration("make test"),
+                               "AGENTS.md": declaration("make other")})
+        self.assert_item(items, "S2", "fail", "found 2")
+
+    def test_the_error_names_the_three_declaration_files(self):
+        items = self.declared({"CLAUDE.md": None, "AGENTS.md": "# no section\n"})
+        self.assert_item(items, "S2", "fail", ".claude/CLAUDE.md, CLAUDE.md, AGENTS.md, found 0")
+
     def test_two_blocks_and_an_empty_block_fail_s2(self):
         two = "### Test command\n\n```\nmake test\n```\n\n```\nmake other\n```\n"
         self.assert_item(self.declared({"CLAUDE.md": two}), "S2", "fail", "found 2")

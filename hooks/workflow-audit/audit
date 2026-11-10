@@ -125,6 +125,7 @@ CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
 FAILED_LINE = "command-failed"
 FAILED_SUFFIX = " || echo " + FAILED_LINE
 TEST_COMMAND_HEADING = "### Test command"
+DECLARATION_FILES = (".claude/CLAUDE.md", "CLAUDE.md", "AGENTS.md")
 MAX_LINK_HOPS = 40  # the links S2 follows to reach a declaration file, as the kernel limits a path lookup
 # S7: a worker session is a session whose main transcript has a user text row that holds both phrases of the Orca dispatch preamble.
 WORKER_MARKERS = ("You are a dispatched worker", "--dispatch-id")
@@ -748,14 +749,14 @@ def _sections(text):
 def _declared_command(worktree):
     """The declared test command, or "none". Raises ValueError for a declaration problem."""
     sections, seen = [], set()
-    for path in (".claude/CLAUDE.md", "CLAUDE.md"):
+    for path in DECLARATION_FILES:
         found = _declaration_text(worktree, path)
         if found is not None and found[0] not in seen:  # two paths that resolve to one file declare once
             resolved, text = found
             seen.add(resolved)
             sections += _sections(text)
     if len(sections) != 1:
-        raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in .claude/CLAUDE.md and CLAUDE.md, found {len(sections)}")
+        raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in {', '.join(DECLARATION_FILES)}, found {len(sections)}")
     if len(sections[0]) != 1 or not sections[0][0]:
         raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs exactly one non-empty fenced block, found {len(sections[0])}")
     return sections[0][0]
