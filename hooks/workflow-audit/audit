@@ -800,7 +800,7 @@ def check_s2(worktree, audited):
                 command = command[prefix.end():].strip()
         elif not (call["cwd"] and _inside(os.path.realpath(call["cwd"]), root)):
             return None  # no `cd` prefix: the run counts only when its row cwd is inside the audited worktree
-        # a foreground call that the model resent with the redact_pre suffix (once per resend); a background call never gets it
+        # a foreground call that the model resent with the redact_pre suffix (stacked once per resend in transcripts from before redact_pre stopped stacking it); a background call never gets it
         while not call["background"] and command.endswith(FAILED_SUFFIX):
             command = command[:-len(FAILED_SUFFIX)].strip()
         return command

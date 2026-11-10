@@ -8,8 +8,8 @@ It denies a command whose last line is not safe to append to (a heredoc anywhere
 `;`, `&`, `\\`, `|`, `||` or `&&`, or a comment), with a reason that names the cause. It returns `updatedInput`
 with every other input field unchanged and never sets `permissionDecision: "allow"`, so permission prompts
 and rules still apply. A command that already ends with the suffix (the model resent a rewritten call) passes
-unchanged, so the suffix never stacks. An empty command, a call with no string command and a tool other than Bash and
-Monitor pass unchanged. A Bash call with `run_in_background: true` passes unchanged too: its tool result
+unchanged, so the suffix never stacks. An empty command, a call with no string command and a tool other than
+Bash and Monitor pass unchanged. A Bash call with `run_in_background: true` passes unchanged too: its tool result
 holds no command output, and its task notification must keep the real exit code (#295).
 
 For a Monitor call it appends ` 2>&1 | python3 -I -u ~/.claude/hooks/redact-secrets/redact_filter.py` instead

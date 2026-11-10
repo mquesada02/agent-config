@@ -583,7 +583,7 @@ class S2Test(TranscriptCase):
                 with self.subTest(count=count, command=template):
                     self.setUp()
                     command = template.format(wt=self.wt) + " || echo command-failed" * count
-                    self.assert_item(self.run_rows(bash_row(command, "b1", 20, cwd=self.wt), result_row("b1", 21, stdout="OK")), "S2", "pass")
+                    self.assert_item(self.run_rows(self.run_row(command, "b1", 20), result_row("b1", 21, stdout="OK")), "S2", "pass")
 
     def test_a_run_with_no_cd_prefix_counts_only_when_its_cwd_is_inside_the_worktree(self):
         for cwd, verdict in (("sub", "pass"), ("/elsewhere", "fail"), (None, "fail")):
@@ -591,7 +591,11 @@ class S2Test(TranscriptCase):
                 self.setUp()
                 cwd = os.path.join(self.wt, cwd) if cwd == "sub" else cwd  # self.wt is new after each setUp
                 rows = [bash_row("make test", "b1", 20, cwd=cwd), result_row("b1", 21)]
-                self.assert_item(self.run_rows(*rows), "S2", verdict, *(("did not run",) if verdict == "fail" else ()))
+                items = self.run_rows(*rows)
+                if verdict == "pass":
+                    self.assert_item(items, "S2", "pass")
+                else:
+                    self.assert_item(items, "S2", "fail", "did not run")
 
     def test_a_run_with_a_cd_prefix_keeps_its_rule_whatever_its_cwd(self):
         rows = [bash_row(f"cd {self.wt} && make test", "b1", 20, cwd="/elsewhere"), result_row("b1", 21)]
