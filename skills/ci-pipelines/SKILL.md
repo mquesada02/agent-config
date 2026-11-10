@@ -14,7 +14,7 @@ Before you pick a branch, run the intake script on the repo: `python3 scripts/in
 ## Pick the branch
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md). When the user replies to a review report with a selection (`all`, `none`, a list or a range), follow "Fix on approval" in [review.md](review.md).
-- **Create** (the user asks for a new CI workflow): not built yet. Say so, and offer a review of the existing workflows.
+- **Create** (the user asks for a new CI workflow): follow [create.md](create.md). It picks a template, fills it from the intake facts and ends with a self-review report.
 - **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and keep your edit consistent with them. Do not review the whole repo.
 
 ## Modules
@@ -22,6 +22,10 @@ Before you pick a branch, run the intake script on the repo: `python3 scripts/in
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls. It reads the dated offline Node list from [tools.md](tools.md) when it has no network.
 - [tools.md](tools.md): detection and install hints for actionlint, zizmor and pinact, the zizmor-to-SEC mapping, the output merge, the SHA lookup and the dated offline list of supported Node majors (the intake script reads this list with no network).
 - [review.md](review.md): the review steps, the report contract and the fix-on-approval steps.
+- [create.md](create.md): the create steps, the fill table, and the Dependabot and `security-audit.yml` texts.
+- [templates/single-package.yml](templates/single-package.yml) and [templates/monorepo.yml](templates/monorepo.yml): the two workflow templates that create mode fills.
+- [scripts/check_workflow.py](scripts/check_workflow.py): the structural assertion script. It takes a workflow and assertions and returns pass or fail. The create evals and the unit tests use it.
+- [scripts/grade_create_results.py](scripts/grade_create_results.py): the post-run grader of the create eval cases (structural assertions and the real actionlint).
 - [rules/naming.md](rules/naming.md): NAME-01 to NAME-09. Each rule has an id, a default severity, the rule, its check and its fix.
 - [rules/job-graph.md](rules/job-graph.md): GRAPH-01 to GRAPH-07 (jobs, `needs:`, matrices, shards, the build artifact, suite matrices).
 - [rules/cost.md](rules/cost.md): COST-01 to COST-08 (triggers, concurrency, path filters, timeouts, installs, workers, runner labels, checkout depth).
