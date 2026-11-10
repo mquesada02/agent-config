@@ -382,6 +382,27 @@ class ContractTest(unittest.TestCase):
                 result = json.loads(proc.stdout, parse_constant=lambda name: self.fail(f"bare {name} in the output"))
                 self.assertEqual((result["ok"], result["error"]), (False, "bad_input"))
 
+    def test_a_number_that_is_or_becomes_not_finite_gives_bad_input_and_the_output_is_strict_json(self):
+        root = '{"Node Type": "Seq Scan", "Plan Rows": %s, "Actual Rows": %s, "Actual Loops": %s}'
+        for label, fields in (("overflow", ("5", "1e999", "1")), ("both overflow", ("1e999", "1e999", "1")),
+                              ("product overflows", ("5", "1e308", "1e308")), ("huge integer", ("1", "1" + "0" * 400, "1"))):
+            with self.subTest(case=label):
+                proc = run(["-"], "[{\"Plan\": " + root % fields + "}]")
+                self.assertEqual((proc.returncode, proc.stderr), (1, ""), proc.stderr[-300:])
+                result = json.loads(proc.stdout, parse_constant=lambda name: self.fail(f"bare {name} in the output"))
+                self.assertEqual((result["ok"], result["error"]), (False, "bad_input"))
+
+    def test_a_plan_file_with_bytes_that_are_not_utf_8_gives_bad_input_like_stdin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "plan.json")
+            with open(path, "wb") as handle:
+                handle.write(b"\xff\xfe[")
+            for args, stdin in (([path], None), (["-"], "��[")):
+                with self.subTest(args=args):
+                    proc, result = out(args, stdin)
+                    self.assertEqual((proc.returncode, proc.stderr), (1, ""), proc.stderr[-300:])
+                    self.assertEqual((result["ok"], result["error"]), (False, "bad_input"))
+
     def test_a_plan_nested_too_deep_gives_bad_input_and_no_traceback(self):
         for depth in (1000, 5000):
             with self.subTest(depth=depth):
@@ -408,7 +429,7 @@ class ContractTest(unittest.TestCase):
         for needle in ("socket", "subprocess", "urllib", "psql", "open(path, \"w", "write("):
             self.assertNotIn(needle, text)
         imported = {line.split()[1].split(".")[0] for line in text.splitlines() if line.startswith("import ")}
-        self.assertTrue(imported <= {"argparse", "json", "sys"}, imported)
+        self.assertTrue(imported <= {"argparse", "json", "math", "sys"}, imported)
         with tempfile.TemporaryDirectory() as folder:
             proc = subprocess.run([sys.executable, "-I", SCRIPT, fixture("plan-01")], cwd=folder,
                                   capture_output=True, text=True, env={})

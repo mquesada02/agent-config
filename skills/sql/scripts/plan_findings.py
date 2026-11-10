@@ -12,11 +12,13 @@ be fractional (PostgreSQL 18). The script uses only the standard library, opens 
 Output: one line of JSON that starts with {"ok": ...}. With ok true: server_version_num, analyze, notes,
 findings (each: rule, node, path, measured, threshold) and plan (the input plan, unchanged). A finding has no
 severity: the severity is in the dialect module. A plan with no actual values gives no finding and a note.
-Text that is not JSON (NaN and Infinity included) or a plan nested too deep gives ok false and error bad_input.
+Text that is not JSON, a number that is not finite (NaN, Infinity, 1e999) or too large, or a plan nested too deep
+gives ok false and error bad_input.
 Exit code: 0 when ok is true, 1 when ok is false, 2 for a usage error (one line on stderr, nothing on stdout).
 """
 import argparse
 import json
+import math
 import sys
 
 MIN_ACTUAL_ROWS = 1000
@@ -183,16 +185,25 @@ def reject_constant(name):
     raise ValueError(f"{name} is not JSON")
 
 
+def finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is not a finite number")
+    return value
+
+
 def run(text, version_argument):
     """The result object and its output line for the input text."""
     try:
-        # NaN and Infinity are not JSON: they would make the output line invalid JSON, and NaN fails every comparison.
-        result = evaluate(json.loads(text, parse_constant=reject_constant), version_argument)
-        return result, json.dumps(result)
+        # NaN and Infinity are not JSON, and a number like 1e999 is read as infinity: a non-finite number would make the
+        # output line invalid JSON, and NaN fails every comparison. allow_nan=False catches a value that a rule computes.
+        document = json.loads(text, parse_constant=reject_constant, parse_float=finite_float)
+        result = evaluate(document, version_argument)
+        return result, json.dumps(result, allow_nan=False)
     except RecursionError:
         result = failure("bad_input", "the plan is nested too deep")
-    except ValueError:
-        result = failure("bad_input", "the input is not JSON")
+    except (ValueError, OverflowError):
+        result = failure("bad_input", "the input is not JSON, or it holds a number that is not finite or too large")
     return result, json.dumps(result)
 
 
@@ -200,7 +211,7 @@ def read_text(path):
     try:
         if path is None or path == "-":
             return sys.stdin.buffer.read().decode("utf-8", errors="replace")
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:
             return handle.read()
     except OSError as error:
         raise Usage(f"cannot read {path}: {error.strerror}")
