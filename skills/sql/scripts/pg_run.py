@@ -119,6 +119,8 @@ def psql_env():
 
 
 class Failure(Exception):
+    """A failed step; `result` is the final JSON result of the run."""
+
     def __init__(self, result):
         super().__init__(result["error"])
         self.result = result

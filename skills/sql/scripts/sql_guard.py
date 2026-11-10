@@ -17,7 +17,7 @@ import re
 Token = collections.namedtuple("Token", "kind value start")
 
 # The lexer classes of PostgreSQL (scan.l): every non-ASCII character is an identifier character, and
-# only ASCII blanks are whitespace. Python's Unicode classes (`\w`, `str.isspace`) would split tokens
+# only ASCII blanks (space, tab, line breaks, form feed, vertical tab) are whitespace. Python's Unicode classes (`\w`, `str.isspace`) would split tokens
 # where the server does not, and could hide a `;` in a dollar-quoted string that the server never opens.
 IDENT_START = "A-Za-z_\x80-\U0010ffff"
 WHITESPACE = " \t\n\r\f\v"
@@ -126,11 +126,10 @@ def tokenize(text):
             index = end
         elif char == "$":
             placeholder = PLACEHOLDER.match(text, index)
-            tag = DOLLAR_TAG.match(text, index)
             if placeholder:
                 tokens.append(Token("param", placeholder.group(), index))
                 index = placeholder.end()
-            elif tag:
+            elif tag := DOLLAR_TAG.match(text, index):
                 end = text.find(tag.group(), tag.end())
                 if end == -1:
                     tokens.append(Token("bad", "", index))
@@ -141,8 +140,8 @@ def tokenize(text):
             else:
                 tokens.append(Token("punct", "$", index))
                 index += 1
-        elif WORD.match(text, index):
-            word = WORD.match(text, index).group()
+        elif word_match := WORD.match(text, index):
+            word = word_match.group()
             if word.lower() == "e" and text.startswith("'", index + 1):
                 end = _escape_string_end(text, index + 1)
                 if end == -1:
@@ -157,8 +156,8 @@ def tokenize(text):
             else:
                 tokens.append(Token("word", word, index))
                 index += len(word)
-        elif NUMBER.match(text, index):
-            number = NUMBER.match(text, index).group()
+        elif number_match := NUMBER.match(text, index):
+            number = number_match.group()
             tokens.append(Token("number", number, index))
             index += len(number)
         else:
@@ -180,7 +179,7 @@ def _static_review_only(first):
     if first.kind == "punct" and first.value == "(":
         return False
     if first.kind == "word":
-        return first.value.upper() not in (SELECT_WORDS | WRITE_WORDS | ANALYZABLE_FIRST)
+        return first.value.upper() not in ANALYZABLE_FIRST
     return True
 
 
