@@ -137,12 +137,25 @@ class SectionSevenTest(RuleTextCase):
     def test_the_worker_channel_to_the_user_is_unchanged(self):
         self.assert_in(self.text, "A worker has no direct channel to the user.")
 
+    def test_a_worker_never_ends_its_turn_while_an_ask_a_test_run_or_a_ci_watch_is_open(self):
+        self.assert_in(self.text, "A worker never ends its turn while an `ask`, a background test run or a CI watch is open.",
+                       "It waits on them in the foreground (a blocking wait with no short timeout)",
+                       "or it keeps working on parts that they do not touch")
+
+    def test_the_coordinator_confirms_a_new_turn_after_every_reply_and_wakes_the_worker_if_not(self):
+        self.assert_in(self.text, "After every `reply` to a worker, the coordinator reads the worker's terminal and confirms that a new turn started.",
+                       "If not, it sends the answer or a wake prompt to the terminal", "and checks again")
+
 
 class SectionsEightAndElevenTest(RuleTextCase):
     def test_every_task_in_a_git_repo_ends_with_a_pr(self):
         self.assert_in(section(read(ROOT_CLAUDE_MD), 8), "Every task in a git repo ends with a PR, opened with `gh pr create` after a passing audit",
                        "A hook blocks `gh pr create` until a passing audit record exists for the pushed commit",
                        "Only the user may override a failed audit, by running `! gh pr create` themselves")
+
+    def test_section_eleven_names_the_open_ask_rule_for_workers(self):
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 11),
+                       "- A worker never ends its turn while an `ask`, a background test run or a CI watch is open (section 7).")
 
     def test_the_pr_rule_is_the_first_line_of_section_eight(self):
         lines = section(read(ROOT_CLAUDE_MD), 8).splitlines()

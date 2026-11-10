@@ -150,6 +150,8 @@ After starting step 5, the original session acts as a **coordinator** of the Orc
 When a `worker_done` arrives, the coordinator audits the ticket as in section 6 step 5, on the branch and the worktree that the worker reported. This replaces the manual evidence check. After a pass, the coordinator opens the PR with `gh pr create`. On a fail, it reports each failed item with its evidence to the user and asks.
 Before the first dispatch, the main section 7 session runs the pre-dispatch audit of its step 3 and 4.1 plan-review loops. It starts the auditor subagent with the pre-dispatch variant of the brief, which runs `audit record --pre-dispatch --worktree <path> --map <issue> --llm <file>`. It gives it the PR target (the base branch of the PR) with the worktree path and the map issue. `--map` takes the map's GitHub issue number or its Linear key (for example `ENG-42`). This replaces the manual step 4.1 evidence check. A hook blocks `orchestration worker-start` until this audit passes; a plain `worker-start --retry-of` for a worker handover is exempt, but a wrapped form such as `bash -c` is not. A context-handoff successor of the main session runs the audit again before its next dispatch. On a fail, it reports each failed item with its evidence to the user and asks.
 A worker has no direct channel to the user. To ask the user (grilling included), it must send an Orca `ask` to the coordinator and wait for the `reply`. The coordinator must ask the user and send the answer back to that worker as the `reply`. To list something for the user, it puts the item in its `worker_done` report, and the coordinator passes it on.
+A worker never ends its turn while an `ask`, a background test run or a CI watch is open. It waits on them in the foreground (a blocking wait with no short timeout), or it keeps working on parts that they do not touch.
+After every `reply` to a worker, the coordinator reads the worker's terminal and confirms that a new turn started. If not, it sends the answer or a wake prompt to the terminal (the Orca terminal send command with submit and wait), and checks again.
 
 ## 8. Git contribution
 
@@ -183,6 +185,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.
+  - A worker never ends its turn while an `ask`, a background test run or a CI watch is open (section 7).
   - /orca-cli: full handoffs, spawning agents in child worktrees, reading or sending to terminals.
 - Outside a git repository, ask the user before delegating to Orca workers.
 
