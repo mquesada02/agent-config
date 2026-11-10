@@ -48,7 +48,7 @@ WORKER_PROMPT = "You are a worker successor. Wait. An Orca dispatch arrives soon
 
 STRAY_NOTE = "a terminal may have been created; check Orca for a stray terminal and close it"
 
-RETRY_STATUS_WORDS = ("failed", "escalation-failed")  # the result words that let a rerun pass the claim; they are the hook's STATUS_WORDS of a failed launch
+RETRY_STATUS_WORDS = ("failed",)  # the result words that let a rerun pass the claim; escalation-failed is not one: its successor already waits
 
 runtime_dir = None  # imported inside attempt(), so a missing shared module gives one `failed` line instead of a traceback
 

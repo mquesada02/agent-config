@@ -903,20 +903,17 @@ class SecondLaunchGuardTest(LaunchTestCase):
         self.assertEqual(self.calls(), [])
 
     def test_every_kind_of_existing_launch_file_is_refused(self):
-        for kind in ("readable", "manual", "only started", "unreadable", "directory", "symlink to a file", "dangling symlink", "FIFO"):
+        for kind in ("readable", "manual", "escalation-failed", "only started", "unreadable", "directory", "symlink to a file", "dangling symlink", "FIFO"):
             with self.subTest(kind=kind):
                 self.make_entry(kind)
                 self.assert_refused()
                 self.clear_launch_file()
 
     def test_a_launch_file_of_a_failed_launch_lets_the_same_command_run_again(self):
-        for kind in ("failed", "escalation-failed"):
-            with self.subTest(kind=kind):
-                self.make_entry(kind)
-                self.assertEqual(self.launch(keep_launch_file=True), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
-                self.assertEqual(self.read("launch"), f"started\nok context handoff done: successor {NEW_HANDLE}\n")
-                self.assertEqual(self.launch(keep_launch_file=True), ("failed", self.refusal()))  # the rerun succeeded: the next run is refused as before
-                self.clear_launch_file()
+        self.make_entry("failed")
+        self.assertEqual(self.launch(keep_launch_file=True), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        self.assertEqual(self.read("launch"), f"started\nok context handoff done: successor {NEW_HANDLE}\n")
+        self.assertEqual(self.launch(keep_launch_file=True), ("failed", self.refusal()))  # the rerun succeeded: the next run is refused as before
 
     def test_a_manual_file_that_exists_stays_as_it_is(self):
         self.make_entry("only started")

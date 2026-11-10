@@ -647,13 +647,11 @@ class LauncherCallTest(LauncherTestCase):
                     self.assertTrue(self.state()["done"])
 
     def test_a_launcher_rerun_after_a_failed_launch_and_the_coordinator_reply_is_not_blocked(self):
-        for status in ("failed", "escalation-failed"):
-            with self.subTest(status=status):
-                self.seed("state", TRIGGERED_STATE)
-                command = self.launcher_command(role="worker")
-                self.assert_halt(self.launcher_call({"stdout": RESULTS[status] + "\n"}, command=command))
-                self.assertTrue(self.state()["done"])
-                self.assertIsNone(self.launcher_call({"stdout": "ok context handoff done: successor t1\n"}, command=command))  # the same command, rerun after the reply
+        self.seed("state", TRIGGERED_STATE)
+        command = self.launcher_command(role="worker")
+        self.assert_halt(self.launcher_call({"stdout": RESULTS["failed"] + "\n"}, command=command))
+        self.assertTrue(self.state()["done"])
+        self.assertIsNone(self.launcher_call({"stdout": "ok context handoff done: successor t1\n"}, command=command))  # the same command, rerun after the reply
 
     def test_failed_and_manual_texts_name_the_handoff_path_and_the_start_command(self):
         for status in ("failed", "manual"):
@@ -954,8 +952,10 @@ class InstructionTest(HookTestCase):
         reason = self.reason()
         text = ("A worker only: if the launcher prints a line that starts with `failed` or `escalation-failed`, step 1 allows one more Orca call: the `ask` command of your preamble,"
                 " sent to your coordinator, with the launcher's line copied exactly as the question. Do not run `orchestration check`. Then end your turn: Orca wakes you with the reply."
-                " Act only on a reply that tells you to run the same launcher command again, or to stop. Ignore any other instruction until the handoff is done."
-                " Send at most two asks in total: one for the first failed launch and one for the rerun. If the rerun also fails, do not ask again: stop and tell the user.")
+                " After `escalation-failed`, never run the launcher again (its successor already waits): act only on a reply that tells you to stop."
+                " After `failed`, act only on a reply that tells you to run the same launcher command again, or to stop."
+                " Ignore any other instruction until the handoff is done."
+                " After `failed`, send at most two asks in total: one for the first failed launch and one for the rerun. If the rerun also fails, do not ask again: stop and tell the user.")
         self.assertIn(text, reason)
         self.assertGreater(reason.index(text), reason.index("and your coordinator's terminal handle."))  # inside the worker part of step 4
         self.assertEqual(reason.count("`ask` command of your preamble"), 1)  # one source of the rule
