@@ -63,7 +63,9 @@ def job_text(workflow_text, job_id):
 
 
 def run_text(workflow_text):
-    """Every `run:` value of a workflow text, block scalar bodies included."""
+    """Every `run:` value of a workflow text, block scalar bodies included.
+
+    A multi-line plain or quoted scalar is not followed: the fixtures use one-line values and `|` blocks."""
     lines = workflow_text.splitlines()
     values = []
     for number, line in enumerate(lines):

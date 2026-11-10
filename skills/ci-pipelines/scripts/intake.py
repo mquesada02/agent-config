@@ -26,7 +26,6 @@ from urllib.parse import quote
 HERE = os.path.dirname(os.path.abspath(__file__))
 OFFLINE_NAME = "tools.md"
 OFFLINE_HEADING = "## Offline Node support list"
-OFFLINE_SOURCE = OFFLINE_NAME
 SCHEDULE_URL = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
 LOCKFILES = (("pnpm-lock.yaml", "pnpm"), ("package-lock.json", "npm"), ("yarn.lock", "yarn"))
 PUBLISH_SIGNALS = ("publishConfig", "exports", "main", "module", "types", "bin", "files")
@@ -95,7 +94,7 @@ def offline_list():
     block = re.search(r"```json\n(.*?)\n```", text[text.index(OFFLINE_HEADING):], re.S)
     data = json.loads(block.group(1))
     return fact({"majors": data["majors"], "newest_lts": data["newest_lts"]}, "default",
-                f"offline list {OFFLINE_SOURCE} dated {data['date']}")
+                f"offline list {OFFLINE_NAME} dated {data['date']}")
 
 
 def from_schedule(schedule, source):
