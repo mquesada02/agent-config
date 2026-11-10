@@ -23,6 +23,25 @@ COST_MONO_CASES = {
     "mono-01-no-affected-run": (["MONO-01"], ["COST-08"]),
     "mono-02-no-tool": (["MONO-02"], []),
 }
+SEC_CASES = {
+    "sec-01-tag-pin": (["SEC-01"], []),
+    "sec-02-no-dependabot": (["SEC-02"], []),
+    "sec-03-no-permissions": (["SEC-03"], []),
+    "sec-04-untrusted-context-in-run": (["SEC-04"], []),
+    "sec-04-matrix-in-run": (["SEC-04"], []),
+    "sec-05-persist-credentials": (["SEC-05"], []),
+    "sec-06-token-in-git-url": (["SEC-06"], []),
+    "sec-07-pr-head-checkout": (["SEC-07"], []),
+    "sec-07-privileged-trigger": (["SEC-07"], []),
+    "sec-08-secrets-inherit": (["SEC-08"], []),
+    "sec-09-cache-under-privileged-trigger": (["SEC-09"], []),
+    "sec-10-audit-in-test-job": (["SEC-10"], []),
+}
+SEC_EXTRA_CASES = {
+    "fx-token-in-run": (["SEC-04", "SEC-05", "SEC-06"], []),
+    "merge-01-zizmor-unpinned": (["SEC-01"], ["unpinned-uses"]),
+    "tool-01-zizmor-missing": (["SEC-01", "SEC-03"], []),
+}
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -35,6 +54,39 @@ def row_pattern(rule_id):
 def job_ids(workflow_text):
     """The job ids of a workflow text: the keys at two spaces of indent under `jobs:`."""
     return re.findall(r"(?m)^  [a-z][\w-]*:\n", workflow_text.split("\njobs:\n")[1])
+
+
+def job_text(workflow_text, job_id):
+    """The text of one job: from its key at two spaces of indent to the next job key."""
+    jobs = workflow_text.split("\njobs:\n")[1]
+    return re.search(r"(?ms)^  " + re.escape(job_id) + r":\n(.*?)(?=^  [a-z][\w-]*:\n|\Z)", jobs).group(0)
+
+
+def run_text(workflow_text):
+    """Every `run:` value of a workflow text, block scalar bodies included."""
+    lines = workflow_text.splitlines()
+    values = []
+    for number, line in enumerate(lines):
+        found = re.match(r"^(\s*(?:- )?)run:\s*(.*)$", line)
+        if not found:
+            continue
+        value = found.group(2)
+        if re.fullmatch(r"[|>][+-]?", value):
+            key_indent = len(found.group(1))
+            body = []
+            for later in lines[number + 1:]:
+                if later.strip() and len(later) - len(later.lstrip()) <= key_indent:
+                    break
+                body.append(later)
+            value = "\n".join(body)
+        values.append(value)
+    return "\n".join(values)
+
+
+def checkout_blocks(workflow_text):
+    """The step blocks of a workflow text that hold a checkout action."""
+    steps = re.split(r"(?m)^(?= *- (?:name|uses|run):)", workflow_text)
+    return [step for step in steps if "actions/checkout@" in step]
 
 
 def case_names():
@@ -108,7 +160,8 @@ class ReviewCases(unittest.TestCase):
                     self.assertEqual([expect_lists(n) for n in matches], [([rule], [])], rule)
 
     def test_the_multi_rule_cases_expect_their_ids(self):
-        self.assertEqual(expect_lists("fx-sequential-quality"), (["GRAPH-01", "NAME-04", "NAME-06"], []))
+        self.assertEqual(expect_lists("fx-sequential-quality"),
+                         (["GRAPH-01", "NAME-04", "NAME-06", "SEC-01", "SEC-10"], []))
         self.assertEqual(expect_lists("fx-suite-list"), (["GRAPH-07", "NAME-07"], []))
         self.assertEqual(expect_lists("fx-duplicate-build"), (["GRAPH-06"], []))
         self.assertEqual(expect_lists("fx-inline-tests"), (["MAINT-01"], []))
@@ -120,6 +173,18 @@ class ReviewCases(unittest.TestCase):
         self.assertEqual(found, set(COST_MONO_CASES))
         for name, lists in COST_MONO_CASES.items():
             self.assertEqual(expect_lists(name), lists, name)
+
+    def test_the_security_cases_are_exactly_these_with_their_lists(self):
+        found = {n for n in review_cases() if n.startswith(("sec-", "merge-", "tool-")) or n == "fx-token-in-run"}
+        self.assertEqual(found, set(SEC_CASES) | set(SEC_EXTRA_CASES))
+        for name, lists in {**SEC_CASES, **SEC_EXTRA_CASES}.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_there_is_a_case_for_each_sec_rule_and_one_for_each_critical_part_next_to_its_required_part(self):
+        for number in range(1, 11):
+            self.assertTrue([n for n in SEC_CASES if n.startswith(f"sec-{number:02d}-")], f"SEC-{number:02d}")
+        for number in (4, 7):
+            self.assertEqual(len([n for n in SEC_CASES if n.startswith(f"sec-{number:02d}-")]), 2, number)
 
     def test_cost_04_has_a_case_for_each_part_and_one_that_forbids_it(self):
         expects = [n for n in COST_MONO_CASES if n.startswith("cost-04-") and COST_MONO_CASES[n][0]]
@@ -185,7 +250,7 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
             self.assertNotIn("ci-pipelines", prompt)
-            self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono)-\d\d", prompt), "the prompt names a rule")
+            self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono|sec)-\d\d", prompt), "the prompt names a rule")
 
     def test_the_copied_workflow_prompt_names_two_copies(self):
         (name,) = [n for n in review_cases() if n.startswith("maint-03-")]
@@ -194,14 +259,21 @@ class ReviewCases(unittest.TestCase):
         self.assertIn("example-worker", prompt)
 
 
+GIT_URLS = (
+    r"https://github\.com/example-org/example-[a-z0-9-]+",
+    r"https://x-access-token:\$\{\{ secrets\.EXAMPLE_TOKEN \}\}@github\.com/example-org/example-[a-z0-9-]+",
+)
+
+
 class NewFixtures(unittest.TestCase):
-    """Fixtures of the job graph, maintainability, cost and monorepo cases keep private names out."""
+    """Fixtures of the job graph, maintainability, cost, monorepo and security cases keep private names out."""
 
     @classmethod
     def setUpClass(cls):
         cls.cases = [n for n in case_names()
-                     if n.startswith(("graph-", "maint-", "cost-", "mono-"))
-                     or n in ("fx-duplicate-build", "fx-inline-tests", "fx-no-limits", "fx-paths-required")]
+                     if n.startswith(("graph-", "maint-", "cost-", "mono-", "sec-", "merge-", "tool-"))
+                     or n in ("fx-duplicate-build", "fx-inline-tests", "fx-no-limits", "fx-paths-required",
+                              "fx-token-in-run")]
         cls.texts = {}
         for name in cls.cases:
             base = os.path.join(case_dir(name), "repo")
@@ -210,15 +282,17 @@ class NewFixtures(unittest.TestCase):
                     cls.texts[path] = read(path)
 
     def test_the_new_cases_exist(self):
-        self.assertEqual(len(self.cases), 27)
+        self.assertEqual(len(self.cases), 42)
 
-    def test_no_new_fixture_holds_a_url(self):
+    def test_no_new_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():
+            for form in GIT_URLS:
+                text = re.sub(form, "", text)
             self.assertNotRegex(text, r"https?://", path)
 
-    def test_every_uses_owner_is_actions_or_pnpm(self):
+    def test_every_uses_owner_is_actions_or_pnpm_and_a_local_reference_is_skipped(self):
         for path, text in self.texts.items():
-            for owner in re.findall(r"uses:\s*([^/\s@]+)/", text):
+            for owner in re.findall(r"uses:\s*([A-Za-z][^/\s@]*)/", text):
                 self.assertIn(owner, ("actions", "pnpm"), path)
 
     def test_every_package_name_starts_with_example(self):
@@ -246,22 +320,34 @@ class RecordedIntakeChecks:
         for name, fact in self.intake.items():
             self.assertEqual(sorted(fact), ["source", "status", "value"], name)
 
-    def test_the_run_history_is_detected_with_10_runs(self):
-        history = self.intake["run_history"]
-        self.assertEqual(history["status"], "detected")
-        self.assertEqual(history["value"]["runs"], 10)
-
-    def test_the_tools_do_not_depend_on_the_machine(self):
-        for tool in self.intake["installed_tools"]["value"].values():
-            self.assertFalse(tool["installed"])
+    def test_the_offline_node_list_names_tools_md_and_not_the_deleted_file(self):
+        source = self.intake["supported_node_majors"]["source"]
+        self.assertIn("tools.md", source)
+        self.assertNotIn("node-support-offline", source)
 
     def test_the_prompt_points_to_the_file(self):
         prompt = read(os.path.join(case_dir(self.CASE), "prompt.md"))
         self.assertIn("intake.json", prompt)
         self.assertIn("do not run the intake script", prompt)
 
+    def installed(self):
+        return {name: tool["installed"] for name, tool in self.intake["installed_tools"]["value"].items()}
 
-class RecordedIntakeGraph05(RecordedIntakeChecks, unittest.TestCase):
+
+class RecordedHistoryChecks(RecordedIntakeChecks):
+    """The checks of the cases that record a detected run history (GRAPH-05 and COST-04)."""
+
+    def test_the_run_history_is_detected_with_10_runs(self):
+        history = self.intake["run_history"]
+        self.assertEqual(history["status"], "detected")
+        self.assertEqual(history["value"]["runs"], 10)
+
+    def test_the_tools_do_not_depend_on_the_machine(self):
+        for installed in self.installed().values():
+            self.assertFalse(installed)
+
+
+class RecordedIntakeGraph05(RecordedHistoryChecks, unittest.TestCase):
     CASE = "graph-05-shards-with-history"
 
     def test_the_case_expects_graph_05(self):
@@ -278,7 +364,7 @@ class RecordedIntakeGraph05(RecordedIntakeChecks, unittest.TestCase):
         self.assertNotIn("intake.json", other)
 
 
-class RecordedIntakeCost04(RecordedIntakeChecks, unittest.TestCase):
+class RecordedIntakeCost04(RecordedHistoryChecks, unittest.TestCase):
     CASE = "cost-04-timeout-too-high-with-history"
     NO_HISTORY = "cost-04-timeout-too-high-no-history"
 
@@ -311,6 +397,136 @@ class RecordedIntakeCost04(RecordedIntakeChecks, unittest.TestCase):
         self.assertNotIn("intake.json", read(os.path.join(case_dir(self.NO_HISTORY), "prompt.md")))
 
 
+def workflow_text(case, name="ci.yml"):
+    return read(os.path.join(case_dir(case), "repo", ".github", "workflows", name))
+
+
+class RecordedIntakeMerge(RecordedIntakeChecks, unittest.TestCase):
+    CASE = "merge-01-zizmor-unpinned"
+
+    def test_only_zizmor_is_on_path_and_the_run_history_is_unknown(self):
+        self.assertEqual(self.installed(), {"actionlint": False, "zizmor": True, "pinact": False})
+        self.assertEqual(self.intake["run_history"]["status"], "unknown")
+
+    def test_the_prompt_points_to_the_recorded_zizmor_output_and_runs_no_tool(self):
+        prompt = read(os.path.join(case_dir(self.CASE), "prompt.md"))
+        self.assertIn("zizmor.json", prompt)
+        self.assertIn("do not run zizmor or any other tool", prompt)
+
+    def test_the_recorded_zizmor_output_has_one_unpinned_uses_finding_on_the_tag_pinned_line(self):
+        path = os.path.join(case_dir(self.CASE), "repo", "zizmor.json")
+        text = read(path)
+        self.assertNotRegex(text, r"https?://")
+        findings = json.loads(text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["ident"], "unpinned-uses")
+        self.assertEqual(findings[0]["determinations"]["persona"], "Regular")
+        location = findings[0]["locations"][0]
+        self.assertEqual(location["symbolic"]["key"]["Local"]["given_path"], ".github/workflows/ci.yml")
+        lines = workflow_text(self.CASE).splitlines()
+        line = next(i for i, text in enumerate(lines, start=1) if "actions/checkout@v4" in text)
+        self.assertEqual(location["concrete"]["location"]["start_point"]["row"] + 1, line)
+
+
+class RecordedIntakeMissingTool(RecordedIntakeChecks, unittest.TestCase):
+    CASE = "tool-01-zizmor-missing"
+
+    def test_no_tool_is_on_path_and_the_run_history_is_unknown(self):
+        self.assertEqual(self.installed(), {"actionlint": False, "zizmor": False, "pinact": False})
+        self.assertEqual(self.intake["run_history"]["status"], "unknown")
+
+    def test_the_fixture_has_a_tag_pin_and_no_permissions_block(self):
+        text = workflow_text(self.CASE)
+        self.assertRegex(text, r"uses: actions/checkout@v\d")
+        self.assertNotIn("permissions:", text)
+
+
+class WorkflowTextHelpers(unittest.TestCase):
+    SAMPLE = (
+        "name: x\njobs:\n  build:\n    steps:\n      - run: pnpm audit\n"
+        "  test:\n    steps:\n      - run: |\n          echo \"${{ github.event.pull_request.title }}\"\n"
+        "          echo two\n      - name: next\n        run: echo done\n"
+    )
+
+    def test_job_text_stops_at_the_next_job(self):
+        self.assertIn("pnpm audit", job_text(self.SAMPLE, "build"))
+        self.assertNotIn("pnpm audit", job_text(self.SAMPLE, "test"))
+
+    def test_run_text_holds_block_scalar_bodies_and_stops_at_the_next_step(self):
+        text = run_text(self.SAMPLE)
+        self.assertIn("github.event.pull_request.title", text)
+        self.assertIn("echo two", text)
+        self.assertIn("echo done", text)
+        self.assertNotIn("name: next", text)
+
+    def test_checkout_blocks_are_split_per_step(self):
+        sample = ("      - uses: actions/checkout@v4\n        with:\n          persist-credentials: false\n"
+                  "      - uses: actions/checkout@v4\n")
+        blocks = checkout_blocks(sample)
+        self.assertEqual(len(blocks), 2)
+        self.assertIn("persist-credentials: false", blocks[0])
+        self.assertNotIn("persist-credentials: false", blocks[1])
+
+
+class SecurityFixtures(unittest.TestCase):
+    def text(self, case):
+        folder = os.path.join(case_dir(case), "repo", ".github", "workflows")
+        return "\n".join(read(path) for path in sorted(glob.glob(os.path.join(folder, "*.yml"))))
+
+    def test_the_sec_04_critical_fixture_has_an_untrusted_context_in_run(self):
+        self.assertIn('echo "${{ github.event.pull_request.title }}"', self.text("sec-04-untrusted-context-in-run"))
+
+    def test_the_sec_04_required_fixture_has_only_a_matrix_context_in_run(self):
+        text = self.text("sec-04-matrix-in-run")
+        self.assertRegex(text, r"run: .*\$\{\{ matrix\.\w+ \}\}")
+        run_values = run_text(text)
+        for untrusted in ("github.event.", "github.head_ref", "inputs.", "secrets."):
+            self.assertNotIn(untrusted, run_values)
+
+    def test_the_sec_07_critical_fixture_checks_out_the_pr_head_under_a_privileged_trigger(self):
+        text = self.text("sec-07-pr-head-checkout")
+        self.assertIn("pull_request_target", text)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
+
+    def test_the_sec_07_required_fixture_has_the_trigger_and_no_pr_head_checkout_and_no_cache(self):
+        text = self.text("sec-07-privileged-trigger")
+        self.assertIn("workflow_run", text)
+        self.assertNotIn("ref:", text)
+        self.assertNotIn("cache:", text)
+
+    def test_the_sec_08_fixture_calls_a_local_workflow_that_exists_with_secrets_inherit(self):
+        text = self.text("sec-08-secrets-inherit")
+        self.assertIn("secrets: inherit", text)
+        self.assertRegex(text, r"uses: \./\.github/workflows/[a-z-]+\.yml")
+        self.assertIn("workflow_call", text)
+
+    def test_the_sec_09_fixture_caches_under_a_privileged_trigger(self):
+        text = self.text("sec-09-cache-under-privileged-trigger")
+        self.assertIn("pull_request_target", text)
+        self.assertIn("cache: pnpm", text)
+
+    def test_the_sec_10_fixture_audits_inside_the_test_job(self):
+        text = self.text("sec-10-audit-in-test-job")
+        self.assertIn("pnpm audit", job_text(text, "test"))
+
+    def test_the_sec_02_fixture_has_sha_pins_and_no_dependabot_file(self):
+        self.assertRegex(self.text("sec-02-no-dependabot"), r"uses: actions/checkout@[0-9a-f]{40} # v")
+        self.assertFalse(os.path.exists(os.path.join(case_dir("sec-02-no-dependabot"), "repo", ".github",
+                                                     "dependabot.yml")))
+
+    def test_the_fx_token_in_run_fixture_writes_the_git_config_with_a_secret_and_keeps_credentials(self):
+        text = self.text("fx-token-in-run")
+        self.assertIn("${{ secrets.EXAMPLE_TOKEN }}", text)
+        self.assertIn("git config --global", text)
+        self.assertNotIn("persist-credentials", text)
+
+    def test_fx_sequential_quality_has_tag_pins_and_one_audit_step(self):
+        text = self.text("fx-sequential-quality")
+        self.assertNotRegex(text, r"@[0-9a-f]{40}")
+        self.assertRegex(text, r"uses: actions/checkout@v\d")
+        self.assertEqual(text.count("pnpm audit"), 1)
+
+
 class CleanWorkflow(unittest.TestCase):
     def test_the_concurrency_group_is_the_cost_02_expression(self):
         text = read(os.path.join(case_dir("clean"), "repo", ".github", "workflows", "ci.yml"))
@@ -318,10 +534,50 @@ class CleanWorkflow(unittest.TestCase):
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
 
     def test_every_job_has_a_timeout_and_a_pinned_runner(self):
-        text = read(os.path.join(case_dir("clean"), "repo", ".github", "workflows", "ci.yml"))
-        jobs = job_ids(text)
-        self.assertEqual(len(re.findall(r"(?m)^    timeout-minutes: \d+$", text)), len(jobs))
-        self.assertEqual(len(re.findall(r"(?m)^    runs-on: ubuntu-24\.04$", text)), len(jobs))
+        for name in ("ci.yml", "security-audit.yml"):
+            text = workflow_text("clean", name)
+            jobs = job_ids(text)
+            self.assertTrue(jobs, name)
+            self.assertEqual(len(re.findall(r"(?m)^    timeout-minutes: \d+$", text)), len(jobs), name)
+            self.assertEqual(len(re.findall(r"(?m)^    runs-on: ubuntu-24\.04$", text)), len(jobs), name)
+
+    def test_every_uses_has_a_full_sha_and_a_version_comment_and_a_known_owner(self):
+        for name in ("ci.yml", "security-audit.yml"):
+            text = workflow_text("clean", name)
+            uses = re.findall(r"uses: (\S+)(.*)", text)
+            self.assertTrue(uses, name)
+            for action, rest in uses:
+                self.assertRegex(action, r"^(actions|pnpm|dorny)/[\w.-]+@[0-9a-f]{40}$", action)
+                self.assertRegex(rest, r"^ # v\d", action)
+
+    def test_every_checkout_keeps_no_credentials(self):
+        for name in ("ci.yml", "security-audit.yml"):
+            text = workflow_text("clean", name)
+            blocks = checkout_blocks(text)
+            self.assertTrue(blocks, name)
+            for block in blocks:
+                self.assertEqual(block.count("persist-credentials: false"), 1, name)
+
+    def test_dependabot_has_the_github_actions_entry(self):
+        text = read(os.path.join(case_dir("clean"), "repo", ".github", "dependabot.yml"))
+        self.assertIn("package-ecosystem: github-actions", text)
+        self.assertIn("directory: /", text)
+        self.assertIn("interval: weekly", text)
+
+    def test_the_audit_job_is_gated_on_the_lockfile_and_is_part_of_the_gate(self):
+        text = workflow_text("clean")
+        self.assertIn("  audit:\n", text)
+        self.assertIn("pnpm audit --audit-level=high", text)
+        self.assertIn("needs.changes.outputs.lockfile == 'true'", text)
+        self.assertIn("needs: [changes, lint, typecheck, test, build, audit]", text)
+        self.assertIn('.result == "success" or .result == "skipped"', text)
+
+    def test_the_weekly_audit_workflow_uses_an_odd_minute(self):
+        text = workflow_text("clean", "security-audit.yml")
+        minute = int(re.search(r"cron: '(\d+) ", text).group(1))
+        self.assertEqual(minute % 2, 1)
+        self.assertIn("pnpm audit --audit-level=high", text)
+        self.assertIn("contents: read", text)
 
 
 class TriggerCase(unittest.TestCase):

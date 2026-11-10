@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sec-10-audit-in-test-job
+context:
+  scaffold_script: scaffold.sh

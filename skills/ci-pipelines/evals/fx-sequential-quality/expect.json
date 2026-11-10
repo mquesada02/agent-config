@@ -2,7 +2,9 @@
   "expect": [
     "GRAPH-01",
     "NAME-04",
-    "NAME-06"
+    "NAME-06",
+    "SEC-01",
+    "SEC-10"
   ],
   "forbid": []
 }

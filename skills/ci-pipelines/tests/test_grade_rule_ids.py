@@ -72,6 +72,22 @@ class GradeRuleIds(unittest.TestCase):
         code, _, _ = run_script(SCRIPT, ["-", "--expect", "NAME-04"], stdin=text)
         self.assertEqual(code, 0)
 
+    def test_a_merged_report_passes_the_merge_case_lists(self):
+        text = make_report(required=[row("SEC-01", where="ci.yml:7")])
+        code, _, _ = self.grade(text, "--expect", "SEC-01", "--forbid", "unpinned-uses")
+        self.assertEqual(code, 0)
+
+    def test_a_report_that_lists_the_bare_zizmor_id_fails_the_merge_case_lists(self):
+        text = make_report(required=[row("SEC-01"), row("unpinned-uses")])
+        code, out, _ = self.grade(text, "--expect", "SEC-01", "--forbid", "unpinned-uses")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL forbid:unpinned-uses:", out)
+
+    def test_an_unmapped_audit_id_in_a_rule_cell_is_found(self):
+        text = make_report(suggestion=[row("obfuscation")])
+        code, _, _ = self.grade(text, "--expect", "obfuscation")
+        self.assertEqual(code, 0)
+
     def test_an_unreadable_report_is_a_usage_error(self):
         code, _, err = run_script(SCRIPT, [os.path.join("no", "such", "report.md")])
         self.assertEqual(code, 2)

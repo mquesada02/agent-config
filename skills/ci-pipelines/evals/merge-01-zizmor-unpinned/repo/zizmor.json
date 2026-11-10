@@ -1,0 +1,38 @@
+[
+  {
+    "ident": "unpinned-uses",
+    "desc": "unpinned action reference",
+    "determinations": {
+      "confidence": "High",
+      "severity": "High",
+      "persona": "Regular"
+    },
+    "locations": [
+      {
+        "symbolic": {
+          "key": {
+            "Local": {
+              "given_path": ".github/workflows/ci.yml"
+            }
+          },
+          "annotation": "action is not pinned to a commit"
+        },
+        "concrete": {
+          "location": {
+            "start_point": {
+              "row": 16,
+              "column": 14
+            },
+            "end_point": {
+              "row": 16,
+              "column": 33
+            }
+          },
+          "feature": "actions/checkout@v4",
+          "comments": []
+        }
+      }
+    ],
+    "ignored": false
+  }
+]

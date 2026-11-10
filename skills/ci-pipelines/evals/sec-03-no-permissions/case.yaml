@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sec-03-no-permissions
+context:
+  scaffold_script: scaffold.sh

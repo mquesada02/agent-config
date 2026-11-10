@@ -163,6 +163,16 @@ class GradeReport(unittest.TestCase):
     def test_both_tools_on_path_pass(self):
         self.assertPasses(self.full(tools=["- actionlint: on PATH (1.7.0)", "- zizmor: on PATH (1.5.0)"]))
 
+    def test_a_merged_finding_appears_once_and_passes(self):
+        self.assertPasses(make_report(required=[row("SEC-01", where="ci.yml:7, ci.yml:12")]))
+
+    def test_a_merged_finding_written_twice_at_one_severity_fails(self):
+        self.assertFailsCheck(make_report(required=[row("SEC-01"), row("SEC-01")]), "unique")
+
+    def test_the_missing_tool_report_with_an_install_hint_passes(self):
+        tools = ["- actionlint: not on PATH. Install it with `brew install actionlint`.", TOOLS_OK[1]]
+        self.assertPasses(make_report(required=[row("SEC-01"), row("SEC-03")], tools=tools))
+
     def test_a_tool_on_path_without_its_version_fails(self):
         self.assertFailsCheck(self.full(tools=["- actionlint: on PATH", TOOLS_OK[1]]), "tools")
 
