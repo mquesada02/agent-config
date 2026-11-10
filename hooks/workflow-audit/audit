@@ -1594,7 +1594,9 @@ def check_s6(worktree, ledger):
         return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
     later = [(position, event["sha"]) for position, event in ledger.commits if position > final]
     if not later:
-        return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD" if known else f"unknown commit {sha[:7]}"
+        if not known:
+            return False, f"unknown commit {sha[:7]}"
+        return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD"
     rebased_position, rebased = later[-1]
     if not _is_known_commit(worktree, rebased):
         return False, f"unknown commit {rebased[:7]}"

@@ -293,16 +293,18 @@ class S6RebaseTest(LedgerChecksCase):
         self.check(items, "S6", "fail", f"rebased phase-commit {self.tip[:7]} has a different patch-id")
         self.check(items, "S6", "fail", "no final round follows it")
 
-    def test_a_later_phase_commit_that_is_not_an_ancestor_of_head_fails(self):
+    def side_commit(self):
         self.git("checkout", "-q", "-b", "side")
         side = self.commit("feat: side", name="side.txt")
         self.git("checkout", "-q", "feature")
+        return side
+
+    def test_a_later_phase_commit_that_is_not_an_ancestor_of_head_fails(self):
+        side = self.side_commit()
         self.check(self.items(self.events(phase_commit_event(side))), "S6", "fail", f"rebased phase-commit {side[:7]} is not an ancestor of HEAD")
 
     def test_a_later_phase_commit_with_a_final_round_after_it_still_needs_to_be_an_ancestor(self):
-        self.git("checkout", "-q", "-b", "side")
-        side = self.commit("feat: side", name="side.txt")
-        self.git("checkout", "-q", "feature")
+        side = self.side_commit()
         self.check(self.items(self.events(phase_commit_event(side), round_event(2, **FINAL))), "S6", "fail", "is not an ancestor of HEAD")
 
     def test_an_unknown_later_phase_commit_fails(self):
