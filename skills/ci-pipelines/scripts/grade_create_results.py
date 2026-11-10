@@ -94,8 +94,8 @@ def created_blocks(message):
             in_created, path = line.strip() == "## Created", None
         elif line.startswith("# "):
             in_created, path = False, None
-        elif in_created and PATH_HEADING.match(line):
-            path = PATH_HEADING.match(line).group(1)
+        elif in_created and (heading := PATH_HEADING.match(line)):
+            path = heading.group(1)
         elif HEADING.match(line):
             path = None
     return blocks

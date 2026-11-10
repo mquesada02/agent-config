@@ -3,14 +3,11 @@ import glob
 import json
 import os
 import re
-import subprocess
-import sys
 import unittest
 
-from skill_files import EVALS, SKILL, all_rules, frontmatter, level, read
-from test_create_steps import fenced_blocks, fill_pnpm, section, single_pnpm
+from skill_files import EVALS, all_rules, frontmatter, level, read
+from test_create_steps import CREATE, MONO, SINGLE, check, fenced_blocks, fill_pnpm, section, single_pnpm
 
-SCRIPT = os.path.join(SKILL, "scripts", "check_workflow.py")
 CI, DEP, SEC = ".github/workflows/ci.yml", ".github/dependabot.yml", ".github/workflows/security-audit.yml"
 WRITING = ["create-npm-app", "create-pnpm-library", "create-pnpm-turbo-monorepo", "create-playwright-app"]
 CASES = WRITING + ["create-no-lockfile"]
@@ -37,26 +34,19 @@ def meta(name, grader):
     return frontmatter(os.path.join(case_dir(name), "graders", grader + ".md"))
 
 
-def check(text, *asserts):
-    done = subprocess.run([sys.executable, "-I", SCRIPT, "-", "--assert", *asserts], input=text,
-                          capture_output=True, text=True)
-    return done.returncode, done.stdout.splitlines()
-
-
 def clean_forbid():
     return load("clean", "expect.json")["forbid"]
 
 
 def filled(case):
     """The workflow that the create steps give for a case, made from a template by the fill table values."""
-    template = read(os.path.join(SKILL, "templates", "monorepo.yml" if "monorepo" in case else "single-package.yml"))
+    template = read(MONO if "monorepo" in case else SINGLE)
     if case == "create-pnpm-library":
         return single_pnpm().replace("        node: [26]\n", "        node: [22, 24, 26]\n")
     if case == "create-pnpm-turbo-monorepo":
-        return fill_pnpm(os.path.join(SKILL, "templates", "monorepo.yml")).replace(
-            "        node: [26]\n", "        node: [22, 24, 26]\n")
+        return fill_pnpm(MONO).replace("        node: [26]\n", "        node: [22, 24, 26]\n")
     if case == "create-playwright-app":
-        block = fenced_blocks(section(read(os.path.join(SKILL, "create.md")), "### Playwright steps"))[0]
+        block = fenced_blocks(section(read(CREATE), "### Playwright steps"))[0]
         return template.replace("        run: npm run test\n", "        run: npm run test\n" + block)
     return template
 
@@ -199,7 +189,7 @@ class ExpectFiles(unittest.TestCase):
             self.assertEqual((code, lines), (0, ["PASS"]), name)
 
     def test_the_support_blocks_of_the_create_steps_pass_the_support_asserts(self):
-        create = read(os.path.join(SKILL, "create.md"))
+        create = read(CREATE)
         dependabot = fenced_blocks(section(create, "### Dependabot block"))[0]
         audit = fenced_blocks(section(create, "### Security audit block"))[0]
         for name in ("create-npm-app", "create-pnpm-library", "create-playwright-app"):

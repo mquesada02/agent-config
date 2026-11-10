@@ -132,8 +132,8 @@ def matrix_keys(job):
     for line in job:
         if re.match(r"^      matrix:\s*$", line):
             in_matrix = True
-        elif in_matrix and re.match(r"^        \w+:", line):
-            keys.append(re.match(r"^        (\w+):", line).group(1))
+        elif in_matrix and (key := re.match(r"^        (\w+):", line)):
+            keys.append(key.group(1))
         elif in_matrix and line.strip() and len(line) - len(line.lstrip()) <= 6:
             break
     return [key for key in keys if key not in ("include", "exclude")]
@@ -151,12 +151,6 @@ class Workflow:
     def uses(self):
         return [(m.group(1), (m.group(2) or "").strip()) for line in self.lines
                 if (m := re.match(r"^\s*(?:- )?uses:\s*(\S+)\s*(?:#\s*(.*))?$", line))]
-
-
-def need_args(name, arg):
-    if not arg:
-        raise ValueError(f"{name} needs an argument ({name}=...)")
-    return arg
 
 
 # Each assertion takes the workflow and its argument and returns a list of failure messages.
@@ -308,7 +302,7 @@ def a_matrix_node(wf, arg):
     match = next((m for line in job if (m := re.match(r"^        node:\s*\[(.*)\]\s*$", line))), None)
     actual = [item.strip() for item in match.group(1).split(",")] if match else None
     expected = arg.split(",")
-    if actual is not None and sorted(actual, key=lambda m: (len(m), m)) == sorted(expected, key=lambda m: (len(m), m)):
+    if actual is not None and sorted(actual) == sorted(expected):
         return []
     return [f"test matrix node is {actual}, expected the majors {expected} in any order"]
 
@@ -435,8 +429,8 @@ def a_dependabot(wf, _):
             open_entry = False
         if open_entry:
             entries[-1].append(line)
-    candidates = ["\n".join(lines) for lines in entries
-                  if re.search(checks["a github-actions entry"], "\n".join(lines), re.M)]
+    texts = ["\n".join(lines) for lines in entries]
+    candidates = [text for text in texts if re.search(checks["a github-actions entry"], text, re.M)]
     if not candidates:
         return ["no github-actions entry"]
     missing = [[what for what, pattern in checks.items() if not re.search(pattern, entry, re.M)]
@@ -488,7 +482,8 @@ def parse(spec):
         raise ValueError(f"unknown assertion {name!r}")
     function, needs_arg = ASSERTIONS[name]
     if needs_arg:
-        need_args(name, arg)
+        if not arg:
+            raise ValueError(f"{name} needs an argument ({name}=...)")
     elif arg:
         raise ValueError(f"{name} takes no argument")
     return name, function, arg
