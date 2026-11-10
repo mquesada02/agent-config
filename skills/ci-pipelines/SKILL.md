@@ -9,21 +9,22 @@ Rules and steps for GitHub Actions CI workflows of Node/TypeScript repos.
 
 ## Intake
 
-Before you pick a branch, run the intake script on the repo: `python3 scripts/intake.py <repo path>` (the script path is relative to this skill folder). It prints one JSON object. Read only this JSON for the repo facts. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report.
+Before you pick a branch, run the intake script on the repo: `python3 scripts/intake.py <repo path>` (the script path is relative to this skill folder). It prints one JSON object. Read only this JSON for the repo facts. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report. With no network, the script reads the dated list of supported Node majors from [tools.md](tools.md), and the `installed_tools` fact says which of actionlint, zizmor and pinact are on PATH (see [tools.md](tools.md)).
 
 ## Pick the branch
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md).
 - **Create** (the user asks for a new CI workflow): not built yet. Say so, and offer a review of the existing workflows.
-- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and keep your edit consistent with them. Do not review the whole repo.
+- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and keep your edit consistent with them. Do not review the whole repo.
 
 ## Modules
 
-- [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls.
-- [scripts/node-support-offline.json](scripts/node-support-offline.json): the dated offline list of supported Node majors. The intake script uses it with no network.
+- [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls. It reads the dated offline Node list from [tools.md](tools.md) when it has no network.
+- [tools.md](tools.md): detection and install hints for actionlint, zizmor and pinact, the zizmor-to-SEC mapping, the output merge, the SHA lookup and the dated offline list of supported Node majors (the intake script reads this list with no network).
 - [review.md](review.md): the review steps and the report contract.
 - [rules/naming.md](rules/naming.md): NAME-01 to NAME-09. Each rule has an id, a default severity, the rule, its check and its fix.
 - [rules/job-graph.md](rules/job-graph.md): GRAPH-01 to GRAPH-07 (jobs, `needs:`, matrices, shards, the build artifact, suite matrices).
 - [rules/cost.md](rules/cost.md): COST-01 to COST-08 (triggers, concurrency, path filters, timeouts, installs, workers, runner labels, checkout depth).
+- [rules/security.md](rules/security.md): SEC-01 to SEC-10 (SHA pins, Dependabot, permissions, `${{ }}` in `run:`, checkout credentials, submodule tokens, privileged triggers, `secrets: inherit`, caches, the dependency audit).
 - [rules/monorepo.md](rules/monorepo.md): MONO-01 to MONO-02 (affected packages on PRs). Load it only for a monorepo, that is when the intake `monorepo` fact has `monorepo: true`.
 - [rules/maintainability.md](rules/maintainability.md): MAINT-01 to MAINT-03 (long `run:` blocks, step comments, copied workflows).

@@ -8,7 +8,7 @@ Standard library only, plus `gh` and `git` as subprocesses. Every `gh` call is a
 "default" or "unknown". The script exits 0 when facts are unknown, and 2 on a usage error.
 
 Environment: CI_PIPELINES_NODE_SCHEDULE=<path> reads a local copy of the Node release schedule;
-CI_PIPELINES_OFFLINE=1 uses the dated offline list (scripts/node-support-offline.json) with no network.
+CI_PIPELINES_OFFLINE=1 uses the dated offline list (the json block of tools.md) with no network.
 """
 import datetime
 import glob
@@ -24,8 +24,9 @@ import urllib.request
 from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OFFLINE_NAME = "node-support-offline.json"
-OFFLINE_SOURCE = f"scripts/{OFFLINE_NAME}"
+OFFLINE_NAME = "tools.md"
+OFFLINE_HEADING = "## Offline Node support list"
+OFFLINE_SOURCE = OFFLINE_NAME
 SCHEDULE_URL = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
 LOCKFILES = (("pnpm-lock.yaml", "pnpm"), ("package-lock.json", "npm"), ("yarn.lock", "yarn"))
 PUBLISH_SIGNALS = ("publishConfig", "exports", "main", "module", "types", "bin", "files")
@@ -89,8 +90,10 @@ def github_identity(repo):
 
 
 def offline_list():
-    with open(os.path.join(HERE, OFFLINE_NAME), encoding="utf-8") as handle:
-        data = json.load(handle)
+    with open(os.path.join(os.path.dirname(HERE), OFFLINE_NAME), encoding="utf-8") as handle:
+        text = handle.read()
+    block = re.search(r"```json\n(.*?)\n```", text[text.index(OFFLINE_HEADING):], re.S)
+    data = json.loads(block.group(1))
     return fact({"majors": data["majors"], "newest_lts": data["newest_lts"]}, "default",
                 f"offline list {OFFLINE_SOURCE} dated {data['date']}")
 
