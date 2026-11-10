@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The only path of the sql skill to a database: `pg_run explain` for one SELECT.
+"""The only path of the sql skill to a database: `pg_run explain` for one SELECT, and `pg_run facts`.
 
 Usage: python3 pg_run.py explain --repo <repo root> --service <name> --mode select [--statement <sql>]
+       python3 pg_run.py facts --repo <repo root> --service <name> --names <table.column> [<table.column> ...]
 
 With no `--statement` the statement is read from stdin. The order of work: the
 allowlist check (`allowlist.py`), the select guard (`sql_guard.py`), the server
@@ -9,6 +10,12 @@ version probe, then the explain run: `psql -X -w` with `service=<name>` and the
 session options in the conninfo, `BEGIN READ ONLY`, `EXPLAIN (ANALYZE ...
 FORMAT JSON)`, `ROLLBACK`. It prints one JSON object. Every error text is
 redacted: the output has no key that holds raw `psql` text.
+
+`facts` takes no statement. It checks the allowlist, probes the version, and runs one fixed catalog query
+in one read-only transaction (a script on stdin). The names (`table.column` or `schema.table.column`) reach
+the server only as the value of a psql variable. It prints the nullability and the type of each column,
+or `missing`: catalog metadata only. A name of another shape, or with a character that is not printable
+ASCII, is `missing` and is never sent; when no name is sent there is no `psql` call at all.
 
 Exit code: 0 when `ok` is true, 1 when `ok` is false, 2 for a usage error (one
 line on stderr, nothing on stdout). Needs Python 3.11 or newer (tomllib).
@@ -126,14 +133,14 @@ class Failure(Exception):
         self.result = result
 
 
-def run_psql(service, options, flags, commands):
-    """Stdout of one `psql` run, or a Failure with the redacted error."""
+def run_psql(service, options, flags, commands, stdin=None):
+    """Stdout of one `psql` run, or a Failure with the redacted error. `stdin` is the script of a run with no `-c`."""
     argv = ["psql", "-X", "-w", *flags]
     for command in commands:
         argv += ["-c", command]
     argv.append(f"service={service} options='{options}'")
     try:
-        done = subprocess.run(argv, capture_output=True, text=True, errors="replace", env=psql_env())
+        done = subprocess.run(argv, capture_output=True, text=True, errors="replace", env=psql_env(), input=stdin)
     except FileNotFoundError:
         raise Failure({"ok": False, "error": "psql_failed", "message": "psql was not found on PATH"})
     except (OSError, ValueError):  # ValueError: a NUL byte in an argument
@@ -154,12 +161,17 @@ def bad_output(message):
     return Failure({"ok": False, "error": "bad_output", "message": message})
 
 
-def explain(service, statement, overrides):
+def server_version(service, overrides):
+    """The server version number, from a read-only probe session with the base timeouts."""
     probe_options, _ = session_options(None, overrides)
     probe = run_psql(service, probe_options, ["-At", "-q", "-v", "ON_ERROR_STOP=1"], ["SHOW server_version_num"])
     if not re.fullmatch(r"\d{1,9}", probe.strip()):
         raise bad_output("The server version number is not an integer.")
-    version = int(probe.strip())
+    return int(probe.strip())
+
+
+def explain(service, statement, overrides):
+    version = server_version(service, overrides)
     options, timeouts = session_options(version, overrides)
     buffers = "ANALYZE, BUFFERS" if version < EXPLICIT_BUFFERS_BELOW else "ANALYZE"
     out = run_psql(
@@ -179,12 +191,104 @@ def explain(service, statement, overrides):
     }
 
 
-def run_explain(args):
+def check_allowed(args):
+    """(access, None) when the service is allowlisted, else (None, the `not_allowed` result)."""
     access = allowlist.read_allowlist(args.repo)
     if not access["access"]:
-        return {"ok": False, "error": "not_allowed", "reason": access["reason"]}
+        return None, {"ok": False, "error": "not_allowed", "reason": access["reason"]}
     if args.service not in access["services"]:
-        return {"ok": False, "error": "not_allowed", "reason": "service_not_listed"}
+        return None, {"ok": False, "error": "not_allowed", "reason": "service_not_listed"}
+    return access, None
+
+
+# The fixed catalog query of `facts`. The names reach the server only as the value of the psql variable
+# `names` (a JSON array that psql quotes as a string literal), never as part of this text.
+FACTS_SCRIPT = """BEGIN READ ONLY;
+WITH req AS (
+  SELECT (e->>0)::int AS i, e->>1 AS s, e->>2 AS t, e->>3 AS c
+  FROM json_array_elements(:'names'::json) AS e
+)
+SELECT coalesce(json_agg(json_build_object(
+  'i', req.i,
+  'nullable', CASE WHEN cl.relkind IN ('v', 'm') THEN NULL ELSE NOT a.attnotnull END,
+  'type', format_type(a.atttypid, a.atttypmod)
+) ORDER BY req.i), '[]'::json)
+FROM req
+JOIN pg_class cl ON cl.relname = req.t AND cl.relkind IN ('r', 'p', 'f', 'v', 'm')
+JOIN pg_namespace n ON n.oid = cl.relnamespace
+JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attname = req.c AND a.attnum > 0 AND NOT a.attisdropped
+WHERE CASE WHEN req.s IS NULL THEN pg_table_is_visible(cl.oid) ELSE n.nspname = req.s END;
+ROLLBACK;
+"""
+
+
+def parse_name(name):
+    """(schema or None, table, column) of a `table.column` or `schema.table.column` name, else None."""
+    if any(not 32 <= ord(char) <= 126 for char in name):
+        return None
+    parts = name.split(".")
+    if len(parts) not in (2, 3) or not all(parts):
+        return None
+    return (parts[0] if len(parts) == 3 else None, *parts[-2:])
+
+
+def fact_rows(out, count):
+    """The rows of the facts query as a dict from index to its fact, or a bad_output Failure."""
+    try:
+        rows = json.loads(out)
+    except (ValueError, RecursionError):
+        rows = None
+    found = {}
+    if not isinstance(rows, list):
+        raise bad_output("The facts run did not return one JSON list.")
+    for row in rows:
+        index = row.get("i") if isinstance(row, dict) else None
+        if (
+            type(index) is not int or not 0 <= index < count
+            or row.get("nullable") not in (True, False, None) or not isinstance(row.get("type"), str)
+        ):
+            raise bad_output("The facts run returned a row that is not valid.")
+        found[index] = {"nullable": row["nullable"], "type": row["type"]}
+    return found
+
+
+def facts(service, parsed, overrides):
+    """The facts of the names in `parsed` (a dict name -> parts or None), from one read-only catalog run."""
+    sent = list(dict.fromkeys(parts for parts in parsed.values() if parts))
+    found = {}
+    if sent:
+        version = server_version(service, overrides)
+        options, _ = session_options(version, overrides)
+        payload = json.dumps([[index, *parts] for index, parts in enumerate(sent)])
+        out = run_psql(
+            service, options, ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-v", f"names={payload}"], [],
+            stdin=FACTS_SCRIPT,
+        )
+        found = fact_rows(out, len(sent))
+    return {
+        "ok": True, "action": "facts", "service": service,
+        "facts": {
+            name: found.get(sent.index(parts), {"missing": True}) if parts else {"missing": True}
+            for name, parts in parsed.items()
+        },
+    }
+
+
+def run_facts(args):
+    access, refusal = check_allowed(args)
+    if refusal:
+        return refusal
+    parsed = {name: parse_name(name) for name in args.names}
+    try:
+        return facts(args.service, parsed, access["timeouts"].get(args.service, {}))
+    except Failure as failure:
+        return failure.result
+
+
+def run_explain(args):
+    access, refusal = check_allowed(args)
+    if refusal:
+        return refusal
     statement = args.statement
     if statement is None:
         statement = sys.stdin.buffer.read().decode("utf-8", errors="replace")
@@ -205,12 +309,16 @@ def parser():
     sub.add_argument("--service", required=True)
     sub.add_argument("--mode", required=True, choices=["select"])
     sub.add_argument("--statement")
+    sub = actions.add_parser("facts")
+    sub.add_argument("--repo", required=True)
+    sub.add_argument("--service", required=True)
+    sub.add_argument("--names", required=True, nargs="+")
     return top
 
 
 def main(argv):
     args = parser().parse_args(argv)
-    result = run_explain(args)
+    result = run_facts(args) if args.action == "facts" else run_explain(args)
     print(json.dumps(result))
     return 0 if result["ok"] else 1
 

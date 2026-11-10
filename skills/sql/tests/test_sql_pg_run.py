@@ -31,8 +31,9 @@ import json, os, sys
 argv = sys.argv[1:]
 names = ["PGOPTIONS", "PGPASSWORD", "PGSERVICE", "PGHOST", "PGHOSTADDR", "PGPORT", "PGUSER", "PGDATABASE",
          "PGSERVICEFILE", "PGPASSFILE", "PGCONNECT_TIMEOUT", "PGSSLMODE", "LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"]
+stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") else None
 with open(os.environ["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"argv": argv, "env": {n: os.environ.get(n) for n in names}}) + "\n")
+    log.write(json.dumps({"argv": argv, "stdin": stdin, "env": {n: os.environ.get(n) for n in names}}) + "\n")
 probe = any("SHOW server_version_num" in a for a in argv)
 fail = os.environ.get("FAKE_FAIL_PROBE") if probe else os.environ.get("FAKE_FAIL")
 if fail:
@@ -349,7 +350,7 @@ class AllowlistFirstTest(PgRunTestCase):
 
 
 class UsageTest(PgRunTestCase):
-    def test_write_mode_and_the_later_actions_are_usage_errors(self):
+    def test_write_mode_the_diff_action_and_a_facts_call_with_no_names_are_usage_errors(self):
         cases = [
             ("explain", "--repo", self.repo if False else "r", "--service", "app-dev", "--mode", "write", "--statement", "DELETE FROM t"),
             ("diff", "--repo", "r", "--service", "app-dev"),
@@ -673,6 +674,157 @@ class FailureTest(PgRunTestCase):
         code, data = self.explain("SELECT 1", env={"FAKE_VERSION": "abc"})
         self.assertEqual((code, data["error"]), (1, "bad_output"))
         self.assertEqual(len(self.calls()), 1)
+
+
+class FactsTest(PgRunTestCase):
+    """The `facts` action, through the command line, with the fake `psql` (it records its stdin here)."""
+
+    def run_facts(self, *names, service="app-dev", rows=None, env=None):
+        env = {"FAKE_READ_STDIN": "1", **(env or {})}
+        if rows is not None:
+            env["FAKE_STDOUT"] = json.dumps(rows)
+        done = self.run_pg("facts", "--repo", self.repo, "--service", service, "--names", *names, env=env)
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return done.returncode, json.loads(done.stdout)
+
+    def facts_call(self):
+        return self.explain_call()
+
+    @staticmethod
+    def sent_names(call):
+        argv = call["argv"]
+        value = next(argv[i + 1] for i, a in enumerate(argv) if a == "-v" and argv[i + 1].startswith("names="))
+        return json.loads(value[len("names="):])
+
+    def test_a_service_that_is_not_listed_or_no_allowlist_gives_not_allowed_with_no_psql_run(self):
+        code, data = self.run_facts("t.c", service="other")
+        self.assertEqual((code, data["ok"], data["error"], data["reason"]), (1, False, "not_allowed", "service_not_listed"))
+        os.remove(os.path.join(self.xdg, "sql-skill", "allowlist.toml"))
+        code, data = self.run_facts("t.c")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "not_allowed", "missing_file"))
+        self.assertEqual(self.calls(), [])
+
+    def test_the_probe_runs_first_then_one_run_with_the_read_only_session_options(self):
+        self.write_allowlist('services = ["app-dev"]\n["github.com/o/r".timeouts.app-dev]\nstatement_timeout = "45s"\n')
+        code, data = self.run_facts("users.id", rows=[{"i": 0, "nullable": False, "type": "integer"}])
+        self.assertEqual(code, 0, data)
+        probe, run = self.calls()
+        self.assertEqual(probe["argv"][probe["argv"].index("-c") + 1], "SHOW server_version_num")
+        for call in (probe, run):
+            self.assertIn("-X", call["argv"])
+            self.assertIn("-w", call["argv"])
+        self.assertIn("ON_ERROR_STOP=1", run["argv"])
+        self.assertNotIn("-c", run["argv"])
+        last = run["argv"][-1]
+        self.assertTrue(last.startswith("service=app-dev options='"), last)
+        self.assertIn("-c default_transaction_read_only=on", last)
+        self.assertIn("-c statement_timeout=45s", last)
+        self.assertIn("-c lock_timeout=2s", last)
+        self.assertIn("-c idle_in_transaction_session_timeout=10s", last)
+        self.assertIn("-c transaction_timeout=60s", last)
+
+    def test_the_script_on_stdin_is_constant_and_holds_none_of_the_names(self):
+        hostile = ["t.c'; DROP TABLE secret; --", 'a."b"', "x.y\\z", "s.t.$$c$$"]
+        self.run_facts("users.id", rows=[])
+        self.run_facts(*hostile, rows=[])
+        first, second = [c for c in self.calls() if c["stdin"]]
+        self.assertEqual(first["stdin"], second["stdin"])
+        script = first["stdin"]
+        self.assertTrue(script.startswith("BEGIN READ ONLY;"), script)
+        self.assertTrue(script.rstrip().endswith("ROLLBACK;"), script)
+        self.assertIn(":'names'", script)
+        self.assertNotIn("DROP", script)
+        for call in (first, second):
+            self.assertNotIn("-c", call["argv"])
+        outside = [a for a in second["argv"] if not a.startswith("names=")]
+        self.assertNotIn("DROP TABLE secret", json.dumps(outside))
+        self.assertIn("DROP TABLE secret", json.dumps(second["argv"]))
+
+    def test_the_names_value_holds_the_parsed_parts_and_a_repeated_name_is_sent_once(self):
+        code, data = self.run_facts(
+            "users.id", "shop.orders.total", "users.id",
+            rows=[{"i": 0, "nullable": False, "type": "integer"}, {"i": 1, "nullable": True, "type": "numeric(10,2)"}],
+        )
+        self.assertEqual(code, 0, data)
+        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "id"], [1, "shop", "orders", "total"]])
+        self.assertEqual(list(data["facts"]), ["users.id", "shop.orders.total"])
+
+    def test_a_name_of_an_invalid_shape_is_missing_and_is_not_sent(self):
+        names = ["nodot", "a.b.c.d", "a..b", ".x", "a.", "users.id"]
+        code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": True, "type": "text"}])
+        self.assertEqual(code, 0, data)
+        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "id"]])
+        self.assertEqual(list(data["facts"]), names)
+        for name in names[:-1]:
+            self.assertEqual(data["facts"][name], {"missing": True})
+        self.assertEqual(data["facts"]["users.id"], {"nullable": True, "type": "text"})
+
+    def test_when_no_name_has_a_valid_shape_psql_is_never_called(self):
+        code, data = self.run_facts("nodot", "a.b.c.d")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data, {"ok": True, "action": "facts", "service": "app-dev",
+                                "facts": {"nodot": {"missing": True}, "a.b.c.d": {"missing": True}}})
+        self.assertEqual(self.calls(), [])
+
+    def test_a_name_with_a_non_ascii_or_control_character_is_missing_and_is_not_sent(self):
+        names = ["users.café", "users.i\td", "users.ok"]
+        code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": False, "type": "text"}])
+        self.assertEqual(code, 0, data)
+        self.assertEqual(self.sent_names(self.facts_call()), [[0, None, "users", "ok"]])
+        self.assertEqual(data["facts"]["users.café"], {"missing": True})
+        self.assertEqual(data["facts"]["users.i\td"], {"missing": True})
+
+    def test_the_rows_map_to_nullable_type_and_missing(self):
+        rows = [
+            {"i": 0, "nullable": True, "type": "text"},
+            {"i": 1, "nullable": False, "type": "integer"},
+            {"i": 2, "nullable": None, "type": "date"},
+        ]
+        code, data = self.run_facts("t.a", "t.b", "v.c", "t.gone", rows=rows)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(sorted(data), ["action", "facts", "ok", "service"])
+        self.assertEqual(data["facts"], {
+            "t.a": {"nullable": True, "type": "text"}, "t.b": {"nullable": False, "type": "integer"},
+            "v.c": {"nullable": None, "type": "date"}, "t.gone": {"missing": True},
+        })
+
+    def test_an_empty_row_list_is_every_name_missing_and_not_bad_output(self):
+        code, data = self.run_facts("t.a", rows=[])
+        self.assertEqual((code, data["facts"]), (0, {"t.a": {"missing": True}}))
+
+    def test_a_result_that_is_not_a_list_of_valid_rows_is_bad_output(self):
+        for out in ("", "not json", "{}", "[1]", '[{"i": 5, "nullable": true, "type": "x"}]',
+                    '[{"i": "0", "nullable": true, "type": "x"}]', '[{"i": true, "nullable": true, "type": "x"}]',
+                    '[{"i": -1, "nullable": true, "type": "x"}]', '[{"nullable": true, "type": "x"}]',
+                    '[{"i": 0, "nullable": "yes", "type": "x"}]', '[{"i": 0, "nullable": true, "type": 7}]'):
+            with self.subTest(stdout=out):
+                code, data = self.run_facts("t.a", env={"FAKE_STDOUT": out})
+                self.assertEqual((code, data["ok"], data["error"]), (1, False, "bad_output"))
+                self.assertNotIn("not json", data["message"])
+
+    def test_no_names_is_a_usage_error(self):
+        done = self.run_pg("facts", "--repo", self.repo, "--service", "app-dev")
+        self.assertEqual((done.returncode, done.stdout), (2, ""))
+        self.assertTrue(done.stderr.strip())
+        self.assertEqual(self.calls(), [])
+
+    def test_each_connection_failure_kind_leaks_no_connection_value_in_the_probe_and_the_run(self):
+        for name, stderr in (
+            ("service", SERVICE_STDERR), ("auth", AUTH_STDERR), ("unreachable", UNREACHABLE_STDERR),
+            ("conninfo", CONNINFO_STDERR),
+        ):
+            for stage in ("FAKE_FAIL_PROBE", "FAKE_FAIL"):
+                with self.subTest(kind=name, stage=stage):
+                    code, data = self.run_facts("t.a", env={stage: "1", "FAKE_STDERR": stderr, "FAKE_EXIT": "2"})
+                    self.assertEqual((code, data["error"]), (1, "connection_failed"))
+                    text = json.dumps(data)
+                    for canary in CANARIES:
+                        self.assertNotIn(canary, text)
+                    self.assertIn("app-dev", data["message"])
+
+    def test_the_version_gate_applies_to_the_run(self):
+        self.run_facts("t.a", rows=[], env={"FAKE_VERSION": "130005"})
+        self.assertNotIn("transaction_timeout", self.facts_call()["argv"][-1])
 
 
 if __name__ == "__main__":
