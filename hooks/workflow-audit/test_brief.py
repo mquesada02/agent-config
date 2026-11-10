@@ -37,6 +37,10 @@ class BriefTextTest(unittest.TestCase):
         self.assertIn("S10 results are S results, which you never write", self.full)
         self.assertIn("reason in force", self.variant.split("**L1, pre-dispatch.**", 1)[1])
 
+    def test_l2_allows_the_final_phase_to_review_from_the_rebased_phase_commit(self):
+        l2 = self.full.split("- **L2.**", 1)[1].split("- **L3.**", 1)[0]
+        self.assertIn("After a rebase, it may review the diff from the rebased phase commit.", l2)
+
     def test_the_full_variant_says_a_user_bang_run_does_not_count_for_s2(self):
         sessions = self.full.split("## Reading the sessions", 1)[1].split("## The verdict file", 1)[0]
         for phrase in ("`!` prefix does not count for S2", "no tool result", "do not ask the owner for another `!` run", "overrides a failed audit"):

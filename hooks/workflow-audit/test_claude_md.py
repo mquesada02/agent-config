@@ -80,6 +80,11 @@ class SectionSixTest(RuleTextCase):
                        "(for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) "
                        "and the owner's own words as the quote.")
 
+    def test_the_final_phase_step_has_the_rebase_rule(self):
+        step = re.search(r"^3\. \*\*Final phase\.\*\*.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(step, "If the base branch moves after the quality-phase commit, rebase, record the rebased commit with a new "
+                       "`phase-commit` event, and run one more final round when its patch-id differs.")
+
     def test_the_audit_step_sits_between_the_report_and_the_caps(self):
         steps = re.findall(r"^(\d)\. (?:\*\*([^*]+)\.\*\*)?", self.text, re.MULTILINE)
         self.assertEqual([number for number, _ in steps], list("1234567"))
