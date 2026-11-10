@@ -58,6 +58,8 @@ When the ledger holds a link, one more line follows the own events: `linked from
 - A `sessions unavailable` output makes each item that needs the session blocks `fail` with "evidence unavailable".
 - If the exit status is other than 0 or 2, or the file does not start with a line that is exactly `sessions` or `sessions unavailable: <why>`, each item that needs the session blocks is `fail` with an evidence text that starts with "evidence unavailable" and names the exit status and the stderr text. The stderr text is in the tool output of the command, because the file holds stdout only.
 
+A test run that the owner typed with the `!` prefix does not count for S2. The transcript holds no tool result for it, so S2 cannot see that it passed. If S2 fails for this reason, report it as it is: do not ask the owner for another `!` run, because it cannot help. The owner can still run the PR command (`gh pr create`) with the `!` prefix, which overrides a failed audit.
+
 ## The verdict file
 
 A JSON object with exactly the keys `L1` to `L6`. Each value is an object with exactly two keys: `result` (`pass` or `fail`) and `evidence` (a non-empty string of at most 4000 characters). Anything else is malformed: not JSON, not an object, a missing, extra or unknown key (an S key such as `S8` too), a bad value, or a missing file. `record` then writes nothing and exits with status 2.

@@ -64,6 +64,10 @@ class TranscriptCase(AuditCase):
     def own_edit(self, call_id="e1", seconds=10, **extra):
         return edit_row(os.path.join(self.wt, "a.txt"), call_id, seconds, **extra)
 
+    def run_row(self, command, call_id, seconds, **extra):
+        """A Bash row that ran in the audited worktree, as a run with no `cd` prefix must (S2 reads the row cwd)."""
+        return bash_row(command, call_id, seconds, **{"cwd": self.wt, **extra})
+
 
 class DiscoveryTest(TranscriptCase):
     def test_each_edit_tool_selects_a_session(self):
@@ -237,7 +241,7 @@ class VersionTest(TranscriptCase):
     WARNING = "warning: transcripts from untested Claude Code version 2.1.300"
 
     def test_an_untested_patch_passes_with_one_warning_line_and_no_version_in_the_items(self):
-        run = bash_row("make test", "b1", 20, version="2.1.300")
+        run = self.run_row("make test", "b1", 20, version="2.1.300")
         self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"), run, result_row("b1", 21)])
         tip = self.branch()
         result = self.record()
@@ -251,7 +255,7 @@ class VersionTest(TranscriptCase):
 
     def test_a_failed_s2_names_its_cause_and_the_untested_version_is_a_separate_warning(self):
         self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"),
-                                     bash_row("make test | tail -5", "b1", 20, version="2.1.300"), result_row("b1", 21)])
+                                     self.run_row("make test | tail -5", "b1", 20, version="2.1.300"), result_row("b1", 21)])
         tip = self.branch()
         result = self.record()
         self.assertEqual(result.returncode, 1)
@@ -263,14 +267,14 @@ class VersionTest(TranscriptCase):
         self.assertIn(self.WARNING, result.stdout.decode().splitlines())
 
     def test_the_warning_lists_every_untested_version(self):
-        run = bash_row("make test", "b1", 20, version="2.1.300")
+        run = self.run_row("make test", "b1", 20, version="2.1.300")
         self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.302"), run, result_row("b1", 21)])
         tip = self.branch()
         self.record()
         self.assertEqual(self.read_record(tip)["warning"], "warning: transcripts from untested Claude Code versions 2.1.300, 2.1.302")
 
     def test_no_warning_when_every_version_is_tested(self):
-        run = bash_row("make test", "b1", 20)
+        run = self.run_row("make test", "b1", 20)
         self.register_session("s1", [self.with_row(), self.own_edit("e2", 11), run, result_row("b1", 21)])
         tip = self.branch()
         result = self.record()
@@ -278,7 +282,7 @@ class VersionTest(TranscriptCase):
         self.assertNotIn(b"warning", result.stdout)
 
     def test_check_prints_the_warning_once_before_the_result_line(self):
-        run = bash_row("make test", "b1", 20, version="2.1.300")
+        run = self.run_row("make test", "b1", 20, version="2.1.300")
         self.register_session("s1", [self.with_row(version="2.1.300"), self.own_edit("e2", 11, version="2.1.300"), run, result_row("b1", 21)])
         self.branch()
         result = self.audit("check", "--worktree", self.repo, "--base", "main")
@@ -369,7 +373,7 @@ class FieldsTest(TranscriptCase):
 class DeclarationTest(TranscriptCase):
     def setUp(self):
         super().setUp()
-        self.register_session("s1", [self.own_edit("e1", 1), bash_row("make test", "b1", 2), result_row("b1", 3)])
+        self.register_session("s1", [self.own_edit("e1", 1), self.run_row("make test", "b1", 2), result_row("b1", 3)])
 
     def declared(self, files):
         return self.items(files)
@@ -503,7 +507,7 @@ class S2Test(TranscriptCase):
         return self.items()
 
     def test_the_declared_command_after_the_last_edit_passes(self):
-        self.assert_item(self.run_rows(bash_row("make test", "b1", 20), result_row("b1", 21)), "S2", "pass")
+        self.assert_item(self.run_rows(self.run_row("make test", "b1", 20), result_row("b1", 21)), "S2", "pass")
 
     def aliased_edit(self, tool):
         """An edit call whose input names `path`, and its result with the harness note."""
@@ -516,45 +520,45 @@ class S2Test(TranscriptCase):
         for tool in ("Write", "Edit"):
             with self.subTest(tool=tool):
                 self.setUp()
-                rows = [bash_row("make test", "b0", 20), result_row("b0", 21), *self.aliased_edit(tool)]
+                rows = [self.run_row("make test", "b0", 20), result_row("b0", 21), *self.aliased_edit(tool)]
                 self.assert_item(self.run_rows(*rows), "S2", "fail", "only before the last edit")
 
     def test_a_run_after_an_edit_whose_input_names_path_passes(self):
         for tool in ("Write", "Edit"):
             with self.subTest(tool=tool):
                 self.setUp()
-                rows = [*self.aliased_edit(tool), bash_row("make test", "b1", 40), result_row("b1", 41)]
+                rows = [*self.aliased_edit(tool), self.run_row("make test", "b1", 40), result_row("b1", 41)]
                 self.assert_item(self.run_rows(*rows), "S2", "pass")
 
     def test_no_run_fails(self):
         self.assert_item(self.run_rows(), "S2", "fail", "did not run")
 
     def test_a_run_before_the_last_edit_in_the_same_file_fails(self):
-        rows = [bash_row("make test", "b0", 5), result_row("b0", 6), self.own_edit("e2", 30), bash_row("ls", "b1", 31)]
+        rows = [self.run_row("make test", "b0", 5), result_row("b0", 6), self.own_edit("e2", 30), bash_row("ls", "b1", 31)]
         self.register_session("s1", [self.own_edit("e1", 1), *rows])
         self.assert_item(self.items(), "S2", "fail", "only before the last edit")
 
     def test_equal_timestamps_in_one_file_follow_file_order(self):
-        items = self.run_rows(bash_row("make test", "b1", 10), result_row("b1", 11))
+        items = self.run_rows(self.run_row("make test", "b1", 10), result_row("b1", 11))
         self.assert_item(items, "S2", "pass")
 
     def test_equal_timestamps_across_files_are_not_after(self):
-        self.register_session("s1", [bash_row("make test", "b1", 10), result_row("b1", 11)],
+        self.register_session("s1", [self.run_row("make test", "b1", 10), result_row("b1", 11)],
                               subagents={"a1": [self.own_edit("e2", 10)]})
         self.assert_item(self.items(), "S2", "fail", "only before the last edit")
 
     def test_a_run_in_another_session_after_the_edit_passes_by_timestamp(self):
         self.register_session("s1", [self.own_edit("e1", 10)])
-        self.register_session("s2", [bash_row(f"cd {self.wt} && make test", "b1", 20), result_row("b1", 21)])
+        self.register_session("s2", [self.run_row(f"cd {self.wt} && make test", "b1", 20), result_row("b1", 21)])
         self.assert_item(self.items(), "S2", "pass")
 
     def test_a_run_in_a_subagent_after_the_edit_passes(self):
         self.register_session("s1", [self.own_edit("e1", 10)],
-                              subagents={"a1": [bash_row("make test", "b1", 20), result_row("b1", 21)]})
+                              subagents={"a1": [self.run_row("make test", "b1", 20), result_row("b1", 21)]})
         self.assert_item(self.items(), "S2", "pass")
 
     def test_a_run_with_is_error_fails(self):
-        self.assert_item(self.run_rows(bash_row("make test", "b1", 20), result_row("b1", 21, is_error=True)), "S2", "fail", "failed")
+        self.assert_item(self.run_rows(self.run_row("make test", "b1", 20), result_row("b1", 21, is_error=True)), "S2", "fail", "failed")
 
     def test_a_run_whose_stdout_ends_with_the_redact_pre_failure_line_fails(self):
         # the redact_pre suffix makes a failed call exit 0, so only the printed line shows the failure (#295)
@@ -562,32 +566,53 @@ class S2Test(TranscriptCase):
             for stdout in ("FAILED (failures=1)\ncommand-failed", "x\ncommand-failed\n\n"):
                 with self.subTest(command=command, stdout=stdout):
                     self.setUp()
-                    rows = [bash_row(command, "b1", 20), result_row("b1", 21, stdout=stdout)]
+                    rows = [self.run_row(command, "b1", 20), result_row("b1", 21, stdout=stdout)]
                     self.assert_item(self.run_rows(*rows), "S2", "fail", "failed")
 
     def test_the_command_resent_with_the_redact_pre_suffix_passes_when_its_stdout_is_clean(self):
         for template in ("make test || echo command-failed", "cd {wt} && make test || echo command-failed"):
             with self.subTest(command=template):
                 self.setUp()
-                rows = [bash_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21, stdout="OK")]
+                rows = [self.run_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21, stdout="OK")]
                 self.assert_item(self.run_rows(*rows), "S2", "pass")
 
+    def test_a_run_resent_with_two_or_three_suffixes_is_the_declared_command(self):
+        # auto mode refuses a rewritten call and the model resends it, so redact_pre stacks the suffix (#328)
+        for count in (2, 3):
+            for template in ("make test", "cd {wt} && make test"):
+                with self.subTest(count=count, command=template):
+                    self.setUp()
+                    command = template.format(wt=self.wt) + " || echo command-failed" * count
+                    self.assert_item(self.run_rows(bash_row(command, "b1", 20, cwd=self.wt), result_row("b1", 21, stdout="OK")), "S2", "pass")
+
+    def test_a_run_with_no_cd_prefix_counts_only_when_its_cwd_is_inside_the_worktree(self):
+        for cwd, verdict in (("sub", "pass"), ("/elsewhere", "fail"), (None, "fail")):
+            with self.subTest(cwd=cwd):
+                self.setUp()
+                cwd = os.path.join(self.wt, cwd) if cwd == "sub" else cwd  # self.wt is new after each setUp
+                rows = [bash_row("make test", "b1", 20, cwd=cwd), result_row("b1", 21)]
+                self.assert_item(self.run_rows(*rows), "S2", verdict, *(("did not run",) if verdict == "fail" else ()))
+
+    def test_a_run_with_a_cd_prefix_keeps_its_rule_whatever_its_cwd(self):
+        rows = [bash_row(f"cd {self.wt} && make test", "b1", 20, cwd="/elsewhere"), result_row("b1", 21)]
+        self.assert_item(self.run_rows(*rows), "S2", "pass")
+
     def test_a_failure_line_before_the_last_line_is_not_a_failure(self):
-        rows = [bash_row("make test", "b1", 20), result_row("b1", 21, stdout="command-failed\nOK")]
+        rows = [self.run_row("make test", "b1", 20), result_row("b1", 21, stdout="command-failed\nOK")]
         self.assert_item(self.run_rows(*rows), "S2", "pass")
 
     def test_a_foreground_result_without_stdout_fails(self):
-        rows = [bash_row("make test", "b1", 20), result_row("b1", 21, stdout=None)]
+        rows = [self.run_row("make test", "b1", 20), result_row("b1", 21, stdout=None)]
         self.assert_item(self.run_rows(*rows), "S2", "fail", "failed or did not finish")
 
     def test_a_result_row_with_two_results_has_no_stdout_for_either(self):
         row = result_row("b1", 21)
         row["message"]["content"].append({"type": "tool_result", "tool_use_id": "b2", "content": "x"})
-        self.assert_item(self.run_rows(bash_row("make test", "b1", 20), row), "S2", "fail", "failed or did not finish")
+        self.assert_item(self.run_rows(self.run_row("make test", "b1", 20), row), "S2", "fail", "failed or did not finish")
 
     def test_a_background_run_with_the_redact_pre_suffix_is_not_the_declared_command(self):
         # the suffix would make its notification report exit code 0 whatever the tests did
-        rows = [bash_row("make test || echo command-failed", "b1", 20, background=True), result_row("b1", 21), notification_user_row("b1")]
+        rows = [self.run_row("make test || echo command-failed", "b1", 20, background=True), result_row("b1", 21), notification_user_row("b1")]
         self.assert_item(self.run_rows(*rows), "S2", "fail", "did not run")
 
     def test_the_failure_suffix_is_the_one_that_redact_pre_appends(self):
@@ -606,34 +631,34 @@ class S2Test(TranscriptCase):
         self.assertEqual(audit.FAILED_SUFFIX, redact_pre.SUFFIXES["Bash"])
 
     def test_a_call_with_no_result_did_not_finish(self):
-        self.assert_item(self.run_rows(bash_row("make test", "b1", 20)), "S2", "fail")
+        self.assert_item(self.run_rows(self.run_row("make test", "b1", 20)), "S2", "fail")
 
     def test_a_filtered_or_piped_run_is_not_the_declared_command(self):
         for command in ("make test | tail -4", "make test -k one", "make test 2>&1", "cd /other && make test", "echo make test"):
             with self.subTest(command=command):
                 self.setUp()
-                self.assert_item(self.run_rows(bash_row(command, "b1", 20), result_row("b1", 21)), "S2", "fail", "did not run")
+                self.assert_item(self.run_rows(self.run_row(command, "b1", 20), result_row("b1", 21)), "S2", "fail", "did not run")
 
     def test_outer_spaces_and_a_leading_cd_to_the_worktree_match(self):
         for template in ("  make test  ", "cd {wt} && make test", "cd '{wt}'&&  make test ", 'cd "{wt}" && make test'):
             with self.subTest(command=template):
                 self.setUp()
                 command = template.format(wt=self.wt)
-                self.assert_item(self.run_rows(bash_row(command, "b1", 20), result_row("b1", 21)), "S2", "pass")
+                self.assert_item(self.run_rows(self.run_row(command, "b1", 20), result_row("b1", 21)), "S2", "pass")
 
     def test_a_relative_cd_resolves_against_the_row_cwd_not_the_audit_cwd(self):
         for elsewhere, expected in ((True, "fail"), (False, "pass")):
             with self.subTest(elsewhere=elsewhere):
                 self.setUp()
                 row_cwd = "/elsewhere" if elsewhere else self.wt
-                self.register_session("s1", [self.own_edit("e1", 10), bash_row("cd . && make test", "b1", 20, cwd=row_cwd), result_row("b1", 21)])
+                self.register_session("s1", [self.own_edit("e1", 10), self.run_row("cd . && make test", "b1", 20, cwd=row_cwd), result_row("b1", 21)])
                 tip = self.branch()
                 result = self.audit("record", "--worktree", self.wt, "--base", "main", "--llm", self.llm_path, cwd=self.wt)
                 self.assertIn(result.returncode, (0, 1), result.stderr)
                 self.assertEqual(self.item(tip, "S2")["result"], expected)
 
     def background(self, notice_rows, **kwargs):
-        return self.run_rows(bash_row("make test", "b1", 20, background=True), result_row("b1", 21), *notice_rows, **kwargs)
+        return self.run_rows(self.run_row("make test", "b1", 20, background=True), result_row("b1", 21), *notice_rows, **kwargs)
 
     def test_a_background_run_uses_the_exit_code_of_its_notification(self):
         for name, row in (("user row", notification_user_row("b1")), ("attachment row", notification_attachment_row("b1"))):
@@ -658,7 +683,7 @@ class S2Test(TranscriptCase):
     def test_the_call_id_is_not_copied_into_the_evidence(self):
         row = notification_user_row("SECRET-CALL-ID")
         row["message"]["content"] = row["message"]["content"].replace("<status>completed</status>", "")
-        self.register_session("s1", [self.own_edit("e1", 10), bash_row("make test", "SECRET-CALL-ID", 20, background=True),
+        self.register_session("s1", [self.own_edit("e1", 10), self.run_row("make test", "SECRET-CALL-ID", 20, background=True),
                                      result_row("SECRET-CALL-ID", 21), row])
         items = self.items()
         self.assert_item(items, "S2", "fail", UNAVAILABLE)
@@ -671,7 +696,7 @@ class S2Test(TranscriptCase):
 
     def test_a_subagent_background_run_is_reported_in_the_main_transcript(self):
         self.register_session("s1", [self.own_edit("e1", 10), notification_user_row("b1")],
-                              subagents={"a1": [bash_row("make test", "b1", 20, background=True), result_row("b1", 21)]})
+                              subagents={"a1": [self.run_row("make test", "b1", 20, background=True), result_row("b1", 21)]})
         self.assert_item(self.items(), "S2", "pass")
 
     def test_without_any_edit_a_run_is_needed(self):
