@@ -153,11 +153,11 @@ class WriteAtomicTest(DriverTestCase):
 
 
 class ModuleSurfaceTest(DriverTestCase):
-    def test_public_names_are_the_old_set_plus_create_exclusive_without_the_session_pattern(self):
+    def test_public_names_are_the_old_set_plus_create_exclusive_and_append_line_without_the_session_pattern(self):
         names = self.drive("print(json.dumps(sorted(n for n, v in vars(runtime_dir).items() if not n.startswith('_') and not hasattr(v, '__spec__'))))")  # modules have __spec__
         self.assertEqual(
             set(names),
-            {"FOLDER_NAME", "MAX_READ_BYTES", "LOCK_WAIT_SECONDS", "LOCK_RETRY_SECONDS", "runtime_dir_path", "valid_session_id", "open_runtime_dir", "write_atomic", "create_exclusive", "read_file", "lock_file"},
+            {"FOLDER_NAME", "MAX_READ_BYTES", "LOCK_WAIT_SECONDS", "LOCK_RETRY_SECONDS", "runtime_dir_path", "valid_session_id", "open_runtime_dir", "write_atomic", "create_exclusive", "append_line", "append_lineage", "read_lineage", "LINEAGE_FILE", "LINEAGE_READ_BYTES", "read_file", "lock_file"},
         )
 
 
@@ -302,7 +302,42 @@ class TempNameCollisionTest(InProcessFolderTestCase):
             self.assertEqual(handle.read(), "text")
 
 
+class AppendLineTest(DriverTestCase):
+    def test_appends_in_order_and_creates_a_private_file(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            runtime_dir.append_line(fd, "a.log", "one\\n")
+            runtime_dir.append_line(fd, "a.log", "two\\n")
+            print(json.dumps([runtime_dir.read_file(fd, "a.log"), oct(os.stat("a.log", dir_fd=fd).st_mode & 0o7777)]))
+        """
+        self.assertEqual(self.drive(body), ["one\ntwo\n", "0o600"])
+
+    def test_refuses_a_symlink_and_a_fifo(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            os.symlink("real", "link", dir_fd=fd)
+            os.mkfifo("fifo", 0o600, dir_fd=fd)
+            result = {}
+            for name in ("link", "fifo"):
+                try:
+                    runtime_dir.append_line(fd, name, "x\\n")
+                    result[name] = "wrote"
+                except OSError:
+                    result[name] = "raised"
+            print(json.dumps([result, sorted(os.listdir(fd))]))
+        """
+        self.assertEqual(self.drive(body), [{"link": "raised", "fifo": "raised"}, ["fifo", "link"]])
+
+
 class ReadFileTest(DriverTestCase):
+    def test_a_larger_limit_reads_a_larger_file(self):
+        body = """
+            fd = runtime_dir.open_runtime_dir()
+            runtime_dir.write_atomic(fd, "big", "x" * (64 * 1024 + 1))
+            print(len(runtime_dir.read_file(fd, "big", 128 * 1024)))
+        """
+        self.assertEqual(self.drive(body), 64 * 1024 + 1)
+
     def test_returns_text_and_none_for_a_missing_file(self):
         body = """
             fd = runtime_dir.open_runtime_dir()

@@ -1,6 +1,7 @@
 # Shared runtime folder for the context-handoff scripts (status-line wrapper, hook, launcher).
 # Standard library only. Every script that imports this module under `python3 -I` must first add its own folder to sys.path.
 import fcntl
+import json
 import os
 import re
 import secrets
@@ -10,6 +11,8 @@ import time
 FOLDER_NAME = "claude-context-handoff"
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MAX_READ_BYTES = 64 * 1024
+LINEAGE_FILE = "lineage.jsonl"
+LINEAGE_READ_BYTES = 4 * 1024 * 1024
 LOCK_WAIT_SECONDS = 5
 LOCK_RETRY_SECONDS = 0.01
 
@@ -129,10 +132,60 @@ def _open_regular_file(dir_fd, name, flags, mode=0o600):
     return file_fd
 
 
-def read_file(dir_fd, name):
+def append_line(dir_fd, name, text):
+    """Append text to `name` in the folder (created if needed) on an O_APPEND descriptor.
+
+    Raises OSError for an entry that is not a regular file or a failed write.
+    """
+    file_fd = _open_regular_file(dir_fd, name, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+    try:
+        data = text.encode("utf-8")
+        while data:
+            data = data[os.write(file_fd, data):]
+    finally:
+        os.close(file_fd)
+
+
+def append_lineage(dir_fd, successor, predecessor, predecessor_session, successor_session):
+    """Record one handoff in the lineage file: the launcher writes it, the worktree cleanup reads it with read_lineage.
+
+    Raises OSError like append_line.
+    """
+    line = json.dumps(
+        {"successor": successor, "predecessor": predecessor, "time": time.time(),
+         "predecessor_session": predecessor_session, "successor_session": successor_session}
+    )
+    append_line(dir_fd, LINEAGE_FILE, line + "\n")
+
+
+def read_lineage(dir_fd):
+    """{successor handle: predecessor handle} from the lineage file. None when the file is missing, unreadable, unsafe or
+    malformed, or when a successor has two lines: all of these give no proof."""
+    try:
+        text = read_file(dir_fd, LINEAGE_FILE, LINEAGE_READ_BYTES)
+    except (OSError, ValueError):
+        return None
+    if text is None:
+        return None
+    links = {}
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            return None
+        if not isinstance(entry, dict):
+            return None
+        successor, predecessor = entry.get("successor"), entry.get("predecessor")
+        if not all(isinstance(value, str) and value for value in (successor, predecessor)) or successor in links:
+            return None
+        links[successor] = predecessor
+    return links
+
+
+def read_file(dir_fd, name, limit=MAX_READ_BYTES):
     """Return the UTF-8 text of `name` in the folder, or None when it does not exist.
 
-    Raises for a file that is not a regular file, is over MAX_READ_BYTES, or is not valid UTF-8.
+    Raises for a file that is not a regular file, is over `limit` bytes, or is not valid UTF-8.
     """
     try:
         file_fd = _open_regular_file(dir_fd, name, os.O_RDONLY)
@@ -144,9 +197,9 @@ def read_file(dir_fd, name):
         _close_quietly(file_fd)
         raise
     with handle:
-        data = handle.read(MAX_READ_BYTES + 1)
-    if len(data) > MAX_READ_BYTES:
-        raise OSError(f"{name} is over {MAX_READ_BYTES} bytes")
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise OSError(f"{name} is over {limit} bytes")
     return data.decode("utf-8")
 
 

@@ -13,6 +13,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "context-handoff"))
+import runtime_dir  # noqa: E402  (the shared runtime folder of the context-handoff scripts)
+
 USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
 REMOTE = "origin"
@@ -20,6 +23,7 @@ PROTECTED = ("develop", "main")
 SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 DEFAULT_WAIT_INTERVAL = 1.0
 DEFAULT_WAIT_LIMIT = 60.0
+LINEAGE_MAX_STEPS = 20
 
 
 class ActionFailed(Exception):
@@ -123,12 +127,43 @@ def anchor_worktree(handle):
         return None
 
 
+def read_lineage():
+    """{successor handle: predecessor handle} from the lineage file. None when the file is missing, unreadable, unsafe or
+    malformed, or when a successor has two lines: all of these give no proof."""
+    dir_fd = runtime_dir.open_runtime_dir()
+    if dir_fd is None:
+        return None
+    try:
+        return runtime_dir.read_lineage(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def in_predecessor_chain(creator, handle):
+    """True when `creator` is `handle` or a predecessor of it. No proof past 20 steps or at a repeated handle."""
+    links = read_lineage()
+    if links is None:
+        return False
+    seen = {handle}
+    current = handle
+    for _step in range(LINEAGE_MAX_STEPS + 1):
+        if current == creator:
+            return True
+        current = links.get(current)
+        if current is None or current in seen:
+            return False
+        seen.add(current)
+    return False
+
+
 def check_ownership(record, anchor, handle):
     provenance = record.get("cliProvenance")
     caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
     if anchor and anchor in (record.get("id"), record.get("parentWorktreeId")):
         return []
     if handle and caller == handle:
+        return []
+    if handle and caller and in_predecessor_chain(caller, handle):
         return []
     return ["Ownership: no proof that this session owns the worktree"]
 

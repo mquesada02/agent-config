@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import uuid
 
 OVERALL_SECONDS = 100  # inside the 120 s Bash timeout of the block instruction
 WORK_SECONDS = 85  # work deadline; the rest of the overall time is the cleanup reserve
@@ -176,6 +177,7 @@ class Launch:
         old_handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
         self.old_handle = old_handle if valid_handle(old_handle) else ""
         self.cli = None
+        self.successor_session = str(uuid.uuid4())  # the session ID that the successor is started with
         self.created = None  # the handle of the terminal this launcher created, until the prompt is confirmed
         self.successor = None  # the handle of the successor, from the confirmed prompt on
         self.worktree = self.cwd  # the Orca worktree path for the coordinator commands; the cwd until the worktree is known
@@ -358,7 +360,7 @@ class Launch:
 
         # No CLAUDE_CODE_DISABLE_TERMINAL_TITLE here (thirteenth amendment on #8): Orca reads Claude's title mark for idle detection, so the variable
         # breaks the tui-idle wait and worker-start --terminal after the successor's first turn. The ↻<n> title therefore lasts until that turn.
-        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " " + shlex.join(self.claude)
+        start_command = "env CONTEXT_HANDOFF_SUCCESSOR=" + shlex.quote(self.handoff) + " " + shlex.join(self.claude + ["--session-id", self.successor_session])
         created = self.call(["terminal", "create", "--worktree", "path:" + worktree, "--title=" + self.title(), "--command", start_command])
         handle = created.get("result", "terminal", "handle")
         if not valid_handle(handle):
@@ -378,9 +380,20 @@ class Launch:
             return self.failed(sent.error if not sent.ok else "the successor did not take the prompt", self.close_created())
         self.created = None
         self.successor = handle
+        self.write_lineage()
         if self.worker:
             return self.escalate()
         return "ok", f"context handoff done: successor {handle}"
+
+    def write_lineage(self):
+        """Record the handoff for the worktree cleanup. Only an Orca start with a known predecessor handle writes a line.
+        A failed write is ignored: the successor is live, and a missing line only means that the cleanup finds no lineage proof."""
+        if not self.old_handle:
+            return
+        try:
+            runtime_dir.append_lineage(self.dir_fd, self.successor, self.old_handle, self.session, self.successor_session)
+        except OSError:
+            pass
 
     def escalate(self):
         """Send the escalation from the worker's own terminal, without --to: it goes to the Run mailbox, which survives a coordinator handover."""
