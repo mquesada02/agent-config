@@ -6,6 +6,8 @@
 !hooks/block-aws-credentials.py
 !hooks/context-handoff/
 !hooks/context-handoff/*.py
+!hooks/forked-skills/
+!hooks/forked-skills/*.py
 !hooks/redact-secrets/
 !hooks/redact-secrets/*.py
 !hooks/workflow-audit/
