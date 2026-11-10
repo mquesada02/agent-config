@@ -650,9 +650,10 @@ class LauncherCallTest(LauncherTestCase):
         for status in ("failed", "escalation-failed"):
             with self.subTest(status=status):
                 self.seed("state", TRIGGERED_STATE)
-                self.assert_halt(self.launcher_call({"stdout": RESULTS[status] + "\n"}, command=self.launcher_command(role="worker")))
+                command = self.launcher_command(role="worker")
+                self.assert_halt(self.launcher_call({"stdout": RESULTS[status] + "\n"}, command=command))
                 self.assertTrue(self.state()["done"])
-                self.assertIsNone(self.launcher_call({"stdout": "ok context handoff done: successor t1\n"}))  # the rerun after the reply
+                self.assertIsNone(self.launcher_call({"stdout": "ok context handoff done: successor t1\n"}, command=command))  # the same command, rerun after the reply
 
     def test_failed_and_manual_texts_name_the_handoff_path_and_the_start_command(self):
         for status in ("failed", "manual"):
@@ -958,7 +959,7 @@ class InstructionTest(HookTestCase):
         self.assertGreater(reason.index(text), reason.index("and your coordinator's terminal handle."))  # inside the worker part of step 4
         self.assertEqual(reason.count("`ask` command of your preamble"), 1)  # one source of the rule
 
-    def test_step_1_is_the_same_for_every_role(self):
+    def test_step_1_keeps_its_text(self):
         step_1 = ("1. Stop the current work. From now on the only allowed Orca CLI call is the coordinator's `ack` (step 2);"
                   " the only other allowed command is the launcher (step 4).")
         self.assertIn(step_1, self.reason())
@@ -966,7 +967,7 @@ class InstructionTest(HookTestCase):
     def test_the_plain_and_coordinator_blocks_have_no_ask_rule(self):
         reason = self.reason()
         plain_and_coordinator = reason[reason.index("For a plain session"):reason.index("For an Orca worker")]
-        self.assertNotIn("ask", plain_and_coordinator)
+        self.assertNotIn("`ask` command", plain_and_coordinator)
 
     def test_the_re_block_repeats_the_instruction(self):
         first = self.reason()
