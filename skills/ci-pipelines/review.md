@@ -4,7 +4,7 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 
 ## Steps
 
-1. Load every rule file in `rules/`. Today that is [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md) and [rules/maintainability.md](rules/maintainability.md). Load the monorepo rule file only when the repo is a monorepo (the file does not exist yet).
+1. Load every rule file in `rules/` except the monorepo file. Today that is [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md) and [rules/maintainability.md](rules/maintainability.md). Load [rules/monorepo.md](rules/monorepo.md) only when the `monorepo` fact of the intake has `monorepo: true`. A single package never loads it.
 2. Read the intake JSON (see [SKILL.md](SKILL.md)). It holds every repo fact: do not read `package.json`, the lockfile or the settings yourself, and run no other shell command. Use the Read, Glob and Grep tools for the workflow files. Name every default and every unknown fact in section 2 of the report (see "Intake facts" below).
 3. Take the required checks from the `required_checks` fact (see "Required checks" below). Do this before you propose a rename or a split.
 4. Take the tool status from the `installed_tools` fact (see "Tool status" below).
@@ -16,10 +16,10 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 
 Section 2 of the report lists each fact with its value. A fact with the status `default` reads `default` and names the default that the script used (for example `Node version for apps: 26 (default, newest LTS)`). A fact with the status `unknown` reads `unknown` and says what the review does about it:
 
-- no lockfile (`package_manager` with `lockfile: null`): a COST-05 finding when the cost rules exist;
+- no lockfile (`package_manager` with `lockfile: null`): a COST-05 finding;
 - no test runner (`test_runners` is `[]`): no test job, and the report says so;
 - `required_checks` unreadable: every current job name may be required (NAME-09);
-- `run_history` unknown: there are no measured findings.
+- `run_history` unknown: there are no measured findings, and COST-04 uses the create values.
 
 When `supported_node_majors` has the status `default`, the line says `Node support list from <date>, offline`, with the date of the offline list.
 
@@ -31,6 +31,14 @@ The job graph rules read these facts from the intake JSON. Run no other command 
 
 - GRAPH-03 uses `package_kind` (published or app for each package), `engines` (the `engines.node` range of each package), `supported_node_majors`, `node_version_app` and `os_claims`. Only a test job has a matrix. Lint, typecheck and build run once.
 - GRAPH-05 uses `run_history`. With the status `unknown`, there is no GRAPH-05 row. With the status `detected`, compute `m` and `ceil(m / 8)` as the GRAPH-05 check says. A measured finding is a suggestion.
+
+## Cost and monorepo facts
+
+The cost and monorepo rules read these facts from the intake JSON. Run no other command for them.
+
+- COST-04 uses `run_history`. With the status `unknown`, there is no measured finding and the review uses the create values. With the status `detected`, compute `m` and the proposal as the COST-04 check says. A measured finding is a suggestion, and a missing `timeout-minutes` is required.
+- COST-06 uses `visibility` and `runner_labels` (the `vcpus` of each label). An unreadable visibility is `private` with the status `default`, so 2 vCPU.
+- MONO-01 and MONO-02 use `monorepo` (its `tool`) and `package_manager`. An npm or yarn workspaces monorepo gets no MONO finding.
 
 ## Required checks
 

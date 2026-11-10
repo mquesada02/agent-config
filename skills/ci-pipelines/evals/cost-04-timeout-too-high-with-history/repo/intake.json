@@ -1,0 +1,144 @@
+{
+  "default_branch": {
+    "value": "main",
+    "status": "default",
+    "source": "no default branch found (no gh answer, no origin HEAD)"
+  },
+  "package_manager": {
+    "value": {
+      "manager": "pnpm",
+      "lockfile": "pnpm-lock.yaml"
+    },
+    "status": "detected",
+    "source": "package.json packageManager"
+  },
+  "node_version_app": {
+    "value": ">=22",
+    "status": "detected",
+    "source": "package.json engines.node"
+  },
+  "engines": {
+    "value": [
+      {
+        "path": ".",
+        "value": ">=22",
+        "status": "detected",
+        "source": "./package.json engines.node"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "package_kind": {
+    "value": [
+      {
+        "path": ".",
+        "value": "app",
+        "status": "detected",
+        "source": "./package.json private and publish signals"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "os_claims": {
+    "value": [
+      "linux"
+    ],
+    "status": "default",
+    "source": "no os field in any package.json"
+  },
+  "test_runners": {
+    "value": [
+      "vitest"
+    ],
+    "status": "detected",
+    "source": "dependencies and config files"
+  },
+  "monorepo": {
+    "value": {
+      "monorepo": false,
+      "tool": null
+    },
+    "status": "detected",
+    "source": "no pnpm-workspace.yaml and no workspaces field"
+  },
+  "visibility": {
+    "value": "private",
+    "status": "default",
+    "source": "repository visibility not readable (private, 2 vCPU assumed)"
+  },
+  "runner_labels": {
+    "value": [
+      {
+        "label": "ubuntu-24.04",
+        "kind": "standard",
+        "vcpus": 2,
+        "status": "detected",
+        "source": ".github/workflows/ci.yml"
+      }
+    ],
+    "status": "detected",
+    "source": ".github/workflows runs-on values"
+  },
+  "required_checks": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "run_history": {
+    "value": {
+      "runs": 10,
+      "jobs": {
+        "Lint": {
+          "median_seconds": 120
+        },
+        "Typecheck": {
+          "median_seconds": 180
+        },
+        "Test": {
+          "median_seconds": 420
+        },
+        "Build": {
+          "median_seconds": 180
+        }
+      }
+    },
+    "status": "detected",
+    "source": "last 10 successful runs of ci.yml on the default branch (recorded for the eval)"
+  },
+  "existing_workflows": {
+    "value": [
+      ".github/workflows/ci.yml"
+    ],
+    "status": "detected",
+    "source": ".github/workflows"
+  },
+  "installed_tools": {
+    "value": {
+      "actionlint": {
+        "installed": false
+      },
+      "zizmor": {
+        "installed": false
+      },
+      "pinact": {
+        "installed": false
+      }
+    },
+    "status": "detected",
+    "source": "PATH: actionlint, zizmor, pinact"
+  },
+  "supported_node_majors": {
+    "value": {
+      "majors": [
+        22,
+        24,
+        26
+      ],
+      "newest_lts": 26
+    },
+    "status": "default",
+    "source": "offline list scripts/node-support-offline.json dated 2026-11-09"
+  }
+}

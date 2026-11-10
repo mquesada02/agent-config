@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: cost-04-missing-timeout
+context:
+  scaffold_script: scaffold.sh

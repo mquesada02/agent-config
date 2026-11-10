@@ -9,6 +9,8 @@ FIELDS = ("Severity", "Rule", "Check", "Fix")
 NAME_IDS = [f"NAME-{n:02d}" for n in range(1, 10)]
 GRAPH_IDS = [f"GRAPH-{n:02d}" for n in range(1, 8)]
 MAINT_IDS = [f"MAINT-{n:02d}" for n in range(1, 4)]
+COST_IDS = [f"COST-{n:02d}" for n in range(1, 9)]
+MONO_IDS = ["MONO-01", "MONO-02"]
 
 
 def module_files():
@@ -110,6 +112,94 @@ class JobGraphAndMaintainabilityRules(unittest.TestCase):
             self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
 
 
+class CostAndMonorepoRules(unittest.TestCase):
+    def setUp(self):
+        self.cost = dict(rule_entries(rule_files()["cost"]))
+        self.mono = dict(rule_entries(rule_files()["monorepo"]))
+
+    def test_the_cost_file_holds_cost_01_to_cost_08_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in rule_entries(rule_files()["cost"])], COST_IDS)
+
+    def test_the_monorepo_file_holds_mono_01_and_mono_02_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in rule_entries(rule_files()["monorepo"])], MONO_IDS)
+
+    def test_the_severity_levels_follow_the_spec_table(self):
+        for rule_id, fields in list(self.cost.items()) + list(self.mono.items()):
+            self.assertEqual(level(fields), "required", rule_id)
+
+    def test_cost_04_has_a_required_part_and_a_measured_suggestion_part(self):
+        fields = self.cost["COST-04"]
+        self.assertIn("required (", fields["Severity"])
+        self.assertIn("suggestion (measured", fields["Severity"])
+        text = " ".join(fields.values())
+        self.assertIn("max(5, ceil(3 × m))", text)
+        self.assertIn("2×", text)
+        self.assertIn("`run_history`", text)
+        self.assertIn("`unknown`", fields["Check"])
+        self.assertIn("create values", fields["Check"])
+        self.assertIn("`median_seconds`", fields["Check"])
+        self.assertIn("matrix", fields["Check"])
+        for create_value in ("5", "10", "15"):
+            self.assertIn(create_value, fields["Rule"])
+        self.assertNotIn("gh run", text)
+
+    def test_cost_02_holds_the_exact_concurrency_expressions(self):
+        rule = self.cost["COST-02"]["Rule"]
+        self.assertIn("group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}", rule)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", rule)
+
+    def test_cost_01_and_cost_03_hold_their_trigger_and_paths_text(self):
+        self.assertIn("push: branches: [main]", self.cost["COST-01"]["Rule"])
+        self.assertIn("paths-ignore", self.cost["COST-03"]["Rule"])
+        self.assertIn("dorny/paths-filter", self.cost["COST-03"]["Rule"])
+
+    def test_cost_05_never_caches_node_modules_or_playwright_browsers(self):
+        rule = self.cost["COST-05"]["Rule"]
+        for text in ("pnpm install --frozen-lockfile", "npm ci", "yarn install --immutable", "node_modules", "Playwright"):
+            self.assertIn(text, rule)
+
+    def test_cost_06_uses_the_intake_facts_and_the_default_vcpu_count(self):
+        fields = self.cost["COST-06"]
+        for fact in ("visibility", "runner_labels"):
+            self.assertIn(f"`{fact}`", fields["Check"])
+        self.assertIn("private", fields["Check"])
+        self.assertIn("`default`", fields["Check"])
+        self.assertIn("2 for a private repo and 4 for a public repo", fields["Rule"])
+        self.assertIn("`workers: 1`", fields["Rule"])
+
+    def test_cost_07_pins_the_runner_label(self):
+        self.assertIn("ubuntu-24.04", self.cost["COST-07"]["Rule"])
+
+    def test_cost_08_and_mono_01_name_the_fetch_depth_and_each_other(self):
+        self.assertIn("`fetch-depth: 0`", self.cost["COST-08"]["Rule"])
+        self.assertIn("MONO-01", self.cost["COST-08"]["Rule"])
+        rule = self.mono["MONO-01"]["Rule"]
+        for text in ("turbo run <task> --affected", "nx affected -t <task>", "nrwl/nx-set-shas",
+                     'pnpm --filter "...[origin/<base>]"', "`fetch-depth: 0`", "filter: blob:none"):
+            self.assertIn(text, rule)
+        self.assertIn("`monorepo`", self.mono["MONO-01"]["Check"])
+
+    def test_mono_02_proposes_the_pnpm_filter_and_adds_no_tool(self):
+        fields = self.mono["MONO-02"]
+        self.assertIn("pnpm filter", fields["Rule"])
+        self.assertIn("does not add Turborepo or Nx", fields["Rule"])
+        self.assertIn("pnpm", fields["Check"])
+        self.assertIn("`monorepo`", fields["Check"])
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in list(self.cost.items()) + list(self.mono.items()):
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_each_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No cost rule is critical", read(rule_files()["cost"]))
+        self.assertIn("No monorepo rule is critical", read(rule_files()["monorepo"]))
+
+    def test_the_monorepo_file_says_it_loads_only_for_a_monorepo(self):
+        text = read(rule_files()["monorepo"])
+        self.assertIn("only when", text)
+        self.assertIn("`monorepo`", text)
+
+
 class Router(unittest.TestCase):
     def setUp(self):
         self.text = read(os.path.join(SKILL, "SKILL.md"))
@@ -153,8 +243,16 @@ class Router(unittest.TestCase):
 
     def test_another_edit_points_to_every_rule_file(self):
         bullet = self.text[self.text.index("**Another edit**"):self.text.index("## Modules")]
-        for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/maintainability.md"):
+        for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/cost.md", "rules/maintainability.md"):
             self.assertIn(rule_file, bullet)
+        self.assertIn("rules/monorepo.md", bullet)
+        self.assertIn("when the intake finds a monorepo", bullet)
+
+    def test_the_modules_list_names_the_cost_and_monorepo_rules(self):
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("COST-01 to COST-08", modules)
+        self.assertIn("MONO-01 to MONO-02", modules)
+        self.assertIn("only for a monorepo", modules)
 
     def test_the_router_does_not_link_a_module_that_is_missing(self):
         for target in re.findall(r"\]\(([^)#]+)\)", self.text):
@@ -201,6 +299,28 @@ class ReviewSteps(unittest.TestCase):
             self.assertIn(fact, section)
         self.assertIn("only a test job has a matrix", section)
         self.assertIn("measured finding is a suggestion", section)
+        for banned in ("gh api", "command -v", "interim"):
+            self.assertNotIn(banned, section)
+
+    def test_it_loads_the_cost_file_always_and_the_monorepo_file_only_for_a_monorepo(self):
+        self.assertIn("rules/cost.md", self.text)
+        self.assertIn("rules/monorepo.md", self.text)
+        step = self.text[self.text.index("1. load every rule file"):self.text.index("2. read the intake json")]
+        self.assertIn("only when", step)
+        self.assertIn("`monorepo`", step)
+        self.assertNotIn("does not exist yet", self.text)
+
+    def test_the_no_lockfile_bullet_no_longer_waits_for_the_cost_rules(self):
+        self.assertNotIn("when the cost rules exist", self.text)
+        self.assertIn("a cost-05 finding", self.text)
+
+    def test_the_cost_and_monorepo_facts_section_names_the_facts(self):
+        start = self.text.index("## cost and monorepo facts")
+        section = self.text[start:self.text.index("\n## ", start + 1)]
+        for fact in ("run_history", "visibility", "runner_labels", "monorepo", "package_manager"):
+            self.assertIn(fact, section)
+        self.assertIn("measured finding is a suggestion", section)
+        self.assertIn("create values", section)
         for banned in ("gh api", "command -v", "interim"):
             self.assertNotIn(banned, section)
 
