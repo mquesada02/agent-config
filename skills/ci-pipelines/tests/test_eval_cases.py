@@ -106,7 +106,7 @@ def expect_lists(name):
 
 
 def review_cases():
-    return [n for n in case_names() if not n.startswith(("trigger-", "approve-"))]
+    return [n for n in case_names() if not n.startswith(("trigger-", "approve-", "create-"))]
 
 
 def grader_files(name):
@@ -131,8 +131,10 @@ class EveryCase(unittest.TestCase):
             found = glob.glob(os.path.join(case_dir(name), "repo", "**", "test_*.py"), recursive=True)
             self.assertEqual(found, [], f"{name} holds a file that the coverage test would count")
 
-    def test_every_case_holds_a_workflow_fixture(self):
+    def test_every_case_but_a_create_case_holds_a_workflow_fixture(self):
         for name in case_names():
+            if name.startswith("create-"):
+                continue
             found = glob.glob(os.path.join(case_dir(name), "repo", ".github", "workflows", "*.yml"))
             self.assertTrue(found, f"{name} has no workflow fixture")
 

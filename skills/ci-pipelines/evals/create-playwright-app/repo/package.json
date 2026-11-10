@@ -1,0 +1,13 @@
+{
+  "name": "example-playwright-app",
+  "private": true,
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}
