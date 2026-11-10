@@ -27,7 +27,8 @@ def module_files():
     paths = [p for p in glob.glob(os.path.join(SKILL, "*.md")) if os.path.basename(p) != "SKILL.md"]
     paths += glob.glob(os.path.join(SKILL, "rules", "*.md"))
     paths += glob.glob(os.path.join(SKILL, "templates", "*.yml"))
-    paths += glob.glob(os.path.join(SKILL, "scripts", "intake.py"))
+    for script in ("intake.py", "check_workflow.py", "grade_create_results.py"):
+        paths += glob.glob(os.path.join(SKILL, "scripts", script))
     return sorted(os.path.relpath(p, SKILL) for p in paths)
 
 
@@ -350,9 +351,17 @@ class Router(unittest.TestCase):
         for module in module_files():
             self.assertIn(module, self.text, f"SKILL.md does not point to {module}")
 
-    def test_create_mode_is_not_built_yet_while_create_md_is_missing(self):
-        if not os.path.exists(os.path.join(SKILL, "create.md")):
-            self.assertIn("not built yet", self.text)
+    def test_the_create_branch_points_to_the_create_steps_and_is_not_marked_as_unbuilt(self):
+        self.assertTrue(os.path.exists(os.path.join(SKILL, "create.md")))
+        self.assertNotIn("not built", self.text)
+        create = next(line for line in self.text.splitlines() if line.startswith("- **Create**"))
+        self.assertIn("[create.md](create.md)", create)
+
+    def test_the_modules_list_names_the_create_steps_the_templates_and_the_new_scripts(self):
+        modules = self.text[self.text.index("## Modules"):]
+        for name in ("create.md", "templates/single-package.yml", "templates/monorepo.yml",
+                     "scripts/check_workflow.py", "scripts/grade_create_results.py"):
+            self.assertIn(f"[{name}]({name})", modules)
 
     def test_the_router_runs_the_intake_script_before_it_picks_the_branch(self):
         self.assertIn("scripts/intake.py", self.text)

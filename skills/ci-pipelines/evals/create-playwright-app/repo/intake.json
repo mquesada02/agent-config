@@ -1,0 +1,138 @@
+{
+  "default_branch": {
+    "value": "main",
+    "status": "default",
+    "source": "no default branch found (no gh answer, no origin HEAD)"
+  },
+  "package_manager": {
+    "value": {
+      "manager": "npm",
+      "lockfile": "package-lock.json"
+    },
+    "status": "detected",
+    "source": "package-lock.json"
+  },
+  "node_version_app": {
+    "value": "26",
+    "status": "default",
+    "source": "newest LTS of supported_node_majors (no .nvmrc, .node-version or engines.node)"
+  },
+  "engines": {
+    "value": [
+      {
+        "path": ".",
+        "value": "26",
+        "status": "default",
+        "source": "no engines.node: newest LTS only"
+      }
+    ],
+    "status": "default",
+    "source": "package.json of each package"
+  },
+  "scripts": {
+    "value": [
+      {
+        "path": ".",
+        "value": [
+          "build",
+          "lint",
+          "test",
+          "typecheck"
+        ],
+        "status": "detected",
+        "source": "./package.json scripts"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "package_kind": {
+    "value": [
+      {
+        "path": ".",
+        "value": "app",
+        "status": "detected",
+        "source": "./package.json private and publish signals"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "os_claims": {
+    "value": [
+      "linux"
+    ],
+    "status": "default",
+    "source": "no os field in any package.json"
+  },
+  "test_runners": {
+    "value": [
+      "@playwright/test"
+    ],
+    "status": "detected",
+    "source": "dependencies and config files"
+  },
+  "monorepo": {
+    "value": {
+      "monorepo": false,
+      "tool": null
+    },
+    "status": "detected",
+    "source": "no pnpm-workspace.yaml and no workspaces field"
+  },
+  "visibility": {
+    "value": "private",
+    "status": "default",
+    "source": "repository visibility not readable (private, 2 vCPU assumed)"
+  },
+  "runner_labels": {
+    "value": [],
+    "status": "detected",
+    "source": ".github/workflows runs-on values"
+  },
+  "required_checks": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "run_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "existing_workflows": {
+    "value": [],
+    "status": "detected",
+    "source": ".github/workflows"
+  },
+  "installed_tools": {
+    "value": {
+      "actionlint": {
+        "installed": true,
+        "version": "1.7.7"
+      },
+      "zizmor": {
+        "installed": false,
+        "version": null
+      },
+      "pinact": {
+        "installed": false,
+        "version": null
+      }
+    },
+    "status": "detected",
+    "source": "PATH: actionlint, zizmor, pinact"
+  },
+  "supported_node_majors": {
+    "value": {
+      "majors": [
+        22,
+        24,
+        26
+      ],
+      "newest_lts": 26
+    },
+    "status": "default",
+    "source": "offline list tools.md dated 2026-11-09"
+  }
+}

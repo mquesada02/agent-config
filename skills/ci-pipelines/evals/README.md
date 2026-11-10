@@ -74,6 +74,39 @@ claude plugin eval skills/ci-pipelines --case 'approve-*' --no-publish -j 2 --ru
 
 Then run `python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. It grades the three editing cases from their `expect.json` and skips `approve-none`. The full run of these cases (3 runs each) belongs to the eval ticket, not to the ticket that added them.
 
+## Create cases
+
+`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps. Each case asks "Create CI for this repo." and gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 16 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
+
+| Case | Fixture | What it proves |
+|---|---|---|
+| `create-npm-app` | An npm app with no Node pin. Dependabot and `security-audit.yml` are missing. | The single-package template, `matrix-node=26`, `install=npm ci`, and both support files written. |
+| `create-pnpm-library` | A pnpm library with `engines` `>=22`. Both support files are missing. | `matrix-node=22,24,26` and `install=pnpm install --frozen-lockfile`. |
+| `create-pnpm-turbo-monorepo` | A pnpm and Turborepo monorepo with two published packages (`engines` `>=22` and `>=24`). Both support files exist. | The monorepo template, `affected-run=turbo`, and both support files left unchanged (`max: 0` `Write` and `Edit` graders, and the final message shows `unchanged`). |
+| `create-playwright-app` | An app with `@playwright/test`. Both support files are missing. | The browsers install step, `workers=1`, and no browser cache. |
+| `create-no-lockfile` | A package with no lockfile. | The run writes nothing under `.github/` (`no-write-github.md`) and names `COST-05` (`names-COST-05.md`). It has no section graders, no `wrote-ci` grader and no `asserts`, so both Python graders skip it. |
+
+In-run graders of a writing case: `wrote-ci.md` (one `Write` of `.github/workflows/ci.yml`), `actionlint-after-write.md` (a `Bash` call with `actionlint` after the first `Write`), `actionlint-ran.md`, the six `section-*.md`, one `forbid-<ID>.md` for each id of the forbid list, `gh-api-no-write.md`, and a `wrote-<file>.md` grader (`min: 1`) for each support file that the case must write.
+
+Run the create cases by hand. `Write` and `Edit` are gated tools, so `--allow-tools` grants them, with the actionlint call:
+
+```
+claude plugin eval skills/ci-pipelines --case 'create-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Write Edit "Bash(actionlint*)" --output-dir <results folder> --json <results folder>/result.json
+```
+
+Then run both Python graders on the result:
+
+```
+python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json
+python3 skills/ci-pipelines/scripts/grade_create_results.py <results folder>/result.json
+```
+
+`grade_eval_results.py` scores the report structure and the rule ids of every case that has the `section-summary` grader, so it scores the four writing cases and skips `create-no-lockfile`. `grade_create_results.py` reads the final message of each with-arm run of each case that has the `wrote-ci` grader. It takes each fenced `yaml` block under a `### <path>` heading of the `## Created` section, runs `check_workflow.py` on it with the assertions of that path in `expect.json`, and fails the run when a path that the case asserts is not shown.
+
+- **Real actionlint.** A case cannot control PATH (see the security cases), so the in-run graders prove the attempt and its order, not a real lint pass. `grade_create_results.py` runs the real `actionlint` on each written workflow block when actionlint is on PATH. Without it, the script prints `NOT RUN actionlint: not on PATH` and does not fail the run. An operator who wants the real lint result installs actionlint first, and then runs the script.
+- **Model run.** The model run of these cases belongs to the eval ticket (issue 362), not to the ticket that added them. The unit tests of the cases are in `tests/test_create_cases.py`, and the tests of the two scripts are in `tests/test_check_workflow.py` and `tests/test_grade_create_results.py`.
+- **No session transcript.** A create case has no `history.jsonl`, so a run writes no transcript into the case folder.
+
 ## Graders
 
 - `expect-<ID>.md` and `forbid-<ID>.md`: a `regex` grader that finds the id in the Rule cell of a table row. They are generated from `expect.json`, and a unit test keeps them in step.
@@ -82,4 +115,6 @@ Then run `python3 skills/ci-pipelines/scripts/grade_eval_results.py <results fol
 - `fix-quality.md`: an `llm` judge of the fix text. It is `arm: with-only`, so it is reported and not scored.
 - `skill-fired.md` (trigger case): `tool_used: Skill`. Under `--ablation with-without` it is an indicator of the with-arm, not part of the score.
 - `actionlint-ran.md`, `actionlint-after-edit.md`, `no-actionlint.md`, `diff-in-message.md`, `gh-api-no-write.md`, `diff-scope.md` (approval cases): see "Approval cases". `diff-scope.md` is an `llm` judge with `arm: with-only`, so it is reported and not scored.
+- `wrote-ci.md`, `actionlint-after-write.md`, `wrote-<file>.md`, `no-write-<file>.md`, `no-edit-<file>.md`, `unchanged-<file>.md`, `no-write-github.md`, `names-COST-05.md` (create cases): see "Create cases".
+- `scripts/grade_create_results.py`: runs `check_workflow.py` and the real actionlint on the files that each create run shows in the final message. See "Create cases".
 - `scripts/grade_eval_results.py`: runs `grade_report.py` and `grade_rule_ids.py` on the final message of each with-arm run of each review case. This is the scored check of the whole report contract.
