@@ -243,7 +243,7 @@ class ReadmeApprovalRun(unittest.TestCase):
         for phrase in ("history.jsonl", "context.history_file", "intake.json", "next user turn"):
             self.assertIn(phrase, self.section)
 
-    def test_it_names_option_a_and_the_trade_off(self):
+    def test_it_names_the_trade_off(self):
         self.assertIn("actionlint on PATH", self.section)
         self.assertIn("proves the attempt and the order", self.section)
 

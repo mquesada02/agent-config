@@ -441,9 +441,7 @@ class GradeEvalResultsOnApprovalCases(unittest.TestCase):
         self.assertIn("expect:COST-08", out)
 
     def test_the_all_case_passes_with_no_finding_left(self):
-        message = final_message([]).replace("**Result: 0 critical, 0 required, 0 suggestions.**",
-                                            "**Result: 0 critical, 0 required, 0 suggestions.**")
-        code, out, _ = self.grade("approve-all", message)
+        code, out, _ = self.grade("approve-all", final_message([]))
         self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), out)
 
     def test_the_none_case_has_no_report_grader_and_nothing_to_grade(self):
