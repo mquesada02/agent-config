@@ -161,7 +161,7 @@ class OnlyTargetChangesTest(GraderCase):
 
     def test_a_change_outside_the_target_fails(self):
         self.check(replace_lines(7, 7, "changed\n"), "3-5", expect=False)
-        self.check(replace_lines(1, 1, "changed\n") , "3-5", expect=False)
+        self.check(replace_lines(1, 1, "changed\n"), "3-5", expect=False)
 
     def test_a_line_ending_change_outside_the_target_fails(self):
         self.check(LINES.replace("line 8\n", "line 8\r\n"), "3-5", expect=False)
@@ -190,7 +190,7 @@ class OnlyTargetChangesTest(GraderCase):
         self.grade("only_target_changes.py", "B", before_path, after_path, "--target", "2-2", expect=False)
 
     def test_a_middle_segment_is_matched_in_order(self):
-        after = replace_lines(2, 2, "x\n").replace("line 5\n", "line 5\n")
+        after = replace_lines(2, 2, "x\n")
         self.check(after, "2-2", "4-4", expect=True)
         swapped = "line 1\nline 5\nx\nline 3\ny\nline 6\n"
         self.check(swapped, "2-2", "4-4", expect=False)
@@ -285,9 +285,8 @@ class StyleMatchesTest(GraderCase):
         self.grade("style_matches.py", "C", first, second, "--style", self.style(), expect=True)
 
     def test_the_target_limits_the_statements_that_are_voted(self):
-        text = SECOND_IN_LOWER
-        self.check(text, "--target", "1-4", expect=True)
-        self.check(text, "--target", "6-7", expect=False)
+        self.check(SECOND_IN_LOWER, "--target", "1-4", expect=True)
+        self.check(SECOND_IN_LOWER, "--target", "6-7", expect=False)
 
     def test_a_statement_outside_the_target_is_not_counted(self):
         self.check(FIRST, "--target", "2-4", expect=False)

@@ -21,9 +21,9 @@ import sql_text  # noqa: E402
 
 POSSIBLE = {
     "keyword_case": ["upper", "lower"],
-    "clause_per_line": ["true", "false"],
+    "clause_per_line": [True, False],
     "comma": ["trailing", "leading"],
-    "alias_as": ["true", "false"],
+    "alias_as": [True, False],
 }
 MIN_STATEMENTS = 3
 
@@ -51,10 +51,6 @@ def parse(argv):
     return tags, files
 
 
-def key(value):
-    return str(value).lower() if isinstance(value, bool) else value
-
-
 def collect(files, tags):
     counts = {name: {value: 0 for value in POSSIBLE.get(name, [])} for name in sql_text.PROPERTIES}
     errors = []
@@ -65,12 +61,13 @@ def collect(files, tags):
             errors.append({"file": path, "message": message})
             continue
         for statement in data["statements"]:
-            if not sql_text.is_counted(statement):
+            found = sql_text.counted_votes(statement, data["form"])
+            if found is None:
                 continue
             statements += 1
-            for name, vote in sql_text.votes(statement, data["form"]).items():
+            for name, vote in found.items():
                 if vote is not None:
-                    counts[name][key(vote)] = counts[name].get(key(vote), 0) + 1
+                    counts[name][vote] = counts[name].get(vote, 0) + 1
     return counts, errors, statements
 
 
@@ -79,8 +76,6 @@ def decide(name, counts, statements):
     top = max(counts.values(), default=0)
     leaders = [value for value, count in counts.items() if count == top and top > 0]
     majority = leaders[0] if len(leaders) == 1 else None
-    if name in ("clause_per_line", "alias_as") and majority is not None:
-        majority = majority == "true"
     entry = {"counts": counts, "majority": majority, "value": default, "source": "default"}
     if statements < MIN_STATEMENTS:
         entry["reason"] = "few_statements"
@@ -97,8 +92,7 @@ def main(argv):
     try:
         tags, files = parse(argv)
     except sql_text.UsageError as error:
-        sys.stderr.write(str(error).replace("\n", " ") + "\n")
-        return 2
+        return sql_text.usage_failure(error)
     counts, errors, statements = collect(files, tags)
     properties = {name: decide(name, counts[name], statements) for name in sql_text.PROPERTIES}
     output = {

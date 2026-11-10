@@ -23,13 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import sql_text  # noqa: E402
 
-TYPES = {
-    "keyword_case": str,
-    "indent": str,
-    "clause_per_line": bool,
-    "comma": str,
-    "alias_as": bool,
-}
+TYPES = {name: type(value) for name, value in sql_text.DEFAULT_STYLE.items()}
 
 
 def load_style(path):
@@ -67,7 +61,13 @@ def check(first_path, target, tags, style):
             if found[name] is not None and found[name] != style[name]:
                 failures.append(
                     "statement at lines %d-%d: %s is %s, expected %s"
-                    % (statement["start_line"], statement["end_line"], name, found[name], style[name])
+                    % (
+                        statement["start_line"],
+                        statement["end_line"],
+                        name,
+                        json.dumps(found[name]),
+                        json.dumps(style[name]),
+                    )
                 )
     return failures
 

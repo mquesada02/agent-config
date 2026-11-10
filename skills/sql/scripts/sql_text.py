@@ -147,8 +147,8 @@ def _mask_syntax(text):
             end = _quoted_end(text, index, False)
             out.append(_blank(text[index:end], "q"))
             index = end
-        elif char == "$" and not after_word and DOLLAR_QUOTE.match(text, index):
-            tag = DOLLAR_QUOTE.match(text, index).group()
+        elif char == "$" and not after_word and (opening := DOLLAR_QUOTE.match(text, index)):
+            tag = opening.group()
             close = text.find(tag, index + len(tag))
             end = length if close < 0 else close + len(tag)
             out.append(_blank(text[index:end], "0"))
@@ -184,13 +184,6 @@ def words(masked):
     return found
 
 
-def is_counted(statement):
-    """A statement that is not a nested fragment and that holds a command word."""
-    if statement["parent"] is not None:
-        return False
-    return any(word.upper() in COMMAND_SET for word, _ in words(mask(statement)[0]))
-
-
 def interpolation_clauses(statement):
     """For grader A: `(expression, clause)` of each interpolation, in order."""
     masked, offsets = mask(statement)
@@ -224,7 +217,7 @@ def _leading_width(line):
 def _vote_indent(text, form):
     lines = text.split("\n")
     if form == "js":
-        dropped = bool(lines) and lines[0].strip() == ""
+        dropped = lines[0].strip() == ""
         if dropped:
             lines = lines[1:]
         if len(lines) < 2:
@@ -303,10 +296,7 @@ def _vote_alias_as(masked):
     return explicit > implicit
 
 
-def votes(statement, form):
-    """The vote of one statement for each property: a value, or None for no vote."""
-    masked, _ = mask(statement)
-    found = words(masked)
+def _votes(statement, form, masked, found):
     return {
         "keyword_case": _vote_keyword_case(found),
         "indent": _vote_indent(statement["text"], form),
@@ -314,6 +304,27 @@ def votes(statement, form):
         "comma": _vote_comma(masked),
         "alias_as": _vote_alias_as(masked),
     }
+
+
+def votes(statement, form):
+    """The vote of one statement for each property: a value, or None for no vote."""
+    masked, _ = mask(statement)
+    return _votes(statement, form, masked, words(masked))
+
+
+def counted_votes(statement, form):
+    """The votes of a counted statement, or None when it is not counted.
+
+    A statement counts when it is not a nested fragment and its masked text
+    holds a command word.
+    """
+    if statement["parent"] is not None:
+        return None
+    masked, _ = mask(statement)
+    found = words(masked)
+    if not any(word.upper() in COMMAND_SET for word, _ in found):
+        return None
+    return _votes(statement, form, masked, found)
 
 
 # --- shared command helpers ------------------------------------------------
@@ -382,7 +393,7 @@ def parse_arguments(argv, positional_count, single=(), many=()):
             positional.append(argument)
             index += 1
     if len(positional) != positional_count:
-        raise UsageError("expected %d file arguments, got %d" % (positional_count, len(positional)))
+        raise UsageError("expected %d positional arguments, got %d" % (positional_count, len(positional)))
     return positional, options
 
 
