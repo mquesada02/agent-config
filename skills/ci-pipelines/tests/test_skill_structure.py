@@ -118,10 +118,10 @@ class CostAndMonorepoRules(unittest.TestCase):
         self.mono = dict(rule_entries(rule_files()["monorepo"]))
 
     def test_the_cost_file_holds_cost_01_to_cost_08_in_order(self):
-        self.assertEqual([rule_id for rule_id, _ in rule_entries(rule_files()["cost"])], COST_IDS)
+        self.assertEqual(list(self.cost), COST_IDS)
 
     def test_the_monorepo_file_holds_mono_01_and_mono_02_in_order(self):
-        self.assertEqual([rule_id for rule_id, _ in rule_entries(rule_files()["monorepo"])], MONO_IDS)
+        self.assertEqual(list(self.mono), MONO_IDS)
 
     def test_the_severity_levels_follow_the_spec_table(self):
         for rule_id, fields in list(self.cost.items()) + list(self.mono.items()):

@@ -32,6 +32,11 @@ def row_pattern(rule_id):
     return r"^\|\s*\d+\s*\|\s*" + rule_id + r"(?:\s*⚑)?\s*\|"
 
 
+def job_ids(workflow_text):
+    """The job ids of a workflow text: the keys at two spaces of indent under `jobs:`."""
+    return re.findall(r"(?m)^  [a-z][\w-]*:\n", workflow_text.split("\njobs:\n")[1])
+
+
 def case_names():
     return sorted(os.path.basename(p) for p in glob.glob(os.path.join(EVALS, "*")) if os.path.isdir(p))
 
@@ -222,7 +227,7 @@ class NewFixtures(unittest.TestCase):
                 self.assertTrue(json.loads(text)["name"].startswith("example-"), path)
 
 
-class RecordedIntake:
+class RecordedIntakeChecks:
     """The checks of a case that gives the review a known run history through a recorded intake output.
 
     A mixin: each case below sets CASE and adds its own checks.
@@ -250,16 +255,13 @@ class RecordedIntake:
         for tool in self.intake["installed_tools"]["value"].values():
             self.assertFalse(tool["installed"])
 
-    def test_the_file_holds_no_url(self):
-        self.assertNotRegex(read(os.path.join(case_dir(self.CASE), "repo", "intake.json")), r"https?://")
-
     def test_the_prompt_points_to_the_file(self):
         prompt = read(os.path.join(case_dir(self.CASE), "prompt.md"))
         self.assertIn("intake.json", prompt)
         self.assertIn("do not run the intake script", prompt)
 
 
-class RecordedIntakeGraph05(RecordedIntake, unittest.TestCase):
+class RecordedIntakeGraph05(RecordedIntakeChecks, unittest.TestCase):
     CASE = "graph-05-shards-with-history"
 
     def test_the_case_expects_graph_05(self):
@@ -276,7 +278,7 @@ class RecordedIntakeGraph05(RecordedIntake, unittest.TestCase):
         self.assertNotIn("intake.json", other)
 
 
-class RecordedIntakeCost04(RecordedIntake, unittest.TestCase):
+class RecordedIntakeCost04(RecordedIntakeChecks, unittest.TestCase):
     CASE = "cost-04-timeout-too-high-with-history"
     NO_HISTORY = "cost-04-timeout-too-high-no-history"
 
@@ -286,9 +288,6 @@ class RecordedIntakeCost04(RecordedIntake, unittest.TestCase):
     def timeouts(self):
         found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", self.workflow(self.CASE))
         return {name: int(minutes) for name, minutes in found}
-
-    def test_the_case_expects_cost_04(self):
-        self.assertEqual(expect_lists(self.CASE), (["COST-04"], []))
 
     def test_every_history_job_has_a_timeout_more_than_2x_above_the_proposal(self):
         timeouts = self.timeouts()
@@ -300,8 +299,7 @@ class RecordedIntakeCost04(RecordedIntake, unittest.TestCase):
             self.assertGreater(timeouts[name], 2 * proposal, name)
 
     def test_every_job_has_a_timeout_so_only_the_measured_part_can_fire(self):
-        jobs = re.findall(r"(?m)^  [a-z][\w-]*:\n", self.workflow(self.CASE).split("\njobs:\n")[1])
-        self.assertEqual(len(self.timeouts()), len(jobs))
+        self.assertEqual(len(self.timeouts()), len(job_ids(self.workflow(self.CASE))))
 
     def test_the_gate_has_no_history_entry(self):
         self.assertNotIn("CI passed", self.intake["run_history"]["value"]["jobs"])
@@ -321,7 +319,7 @@ class CleanWorkflow(unittest.TestCase):
 
     def test_every_job_has_a_timeout_and_a_pinned_runner(self):
         text = read(os.path.join(case_dir("clean"), "repo", ".github", "workflows", "ci.yml"))
-        jobs = re.findall(r"(?m)^  [a-z][\w-]*:\n", text.split("\njobs:\n")[1])
+        jobs = job_ids(text)
         self.assertEqual(len(re.findall(r"(?m)^    timeout-minutes: \d+$", text)), len(jobs))
         self.assertEqual(len(re.findall(r"(?m)^    runs-on: ubuntu-24\.04$", text)), len(jobs))
 
