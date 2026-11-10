@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: opt-rewrite-unproven
+description: Static optimize report for a rewrite with no database, shown as unproven.
+tags: [optimize, static]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/counts.ts` on the file `src/counts.ts` (it is in the current folder). Do not change any file.

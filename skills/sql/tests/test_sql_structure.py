@@ -28,11 +28,13 @@ MODULES = {
 }
 
 
-# The modules that are still stubs: MODULES without the source modules that #390 filled.
+# The modules that are still stubs: MODULES without the source modules that #390 filled
+# and the modules that #393 filled (their tickets are asserted by test_sql_optimize_structure.py).
+FILLED = {"optimize.md", "dialects/postgres.md"}
 STUBS = {
     module: tickets
     for module, tickets in MODULES.items()
-    if not module.startswith("sources/")
+    if not module.startswith("sources/") and module not in FILLED
 }
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
