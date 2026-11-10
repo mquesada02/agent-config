@@ -14,7 +14,6 @@ GRADER = os.path.join(SKILL_DIR, "graders", "grade_setup.py")
 SETUP = os.path.join(SKILL_DIR, "setup.md")
 sys.path.insert(0, SCRIPTS)
 
-import setup_scan  # noqa: E402
 
 CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun")
 KEY = "example.com/acme/shop"

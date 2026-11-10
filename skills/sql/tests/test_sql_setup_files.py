@@ -5,7 +5,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from unittest import mock
 
@@ -320,10 +319,8 @@ class SafetyTest(FilesCase):
         import setup_files
 
         proposal = self.proposal()
-        plan = self.plan(proposal)
         with open(proposal, encoding="utf-8") as handle:
             data = json.load(handle)
-        before = self.snapshot()
         real_chmod = os.chmod
 
         def failing_chmod(path, mode, *args, **kwargs):
@@ -639,8 +636,6 @@ class ServicesTest(FilesCase):
         with open(self.env["PGSERVICEFILE"], "w", encoding="utf-8") as handle:
             handle.write("[app-dev]\n")
         proposal = self.proposal()
-        timer = threading.Timer(20, lambda: None)
-        timer.cancel()
         for args in (("services", "app-dev"), ("plan", self.repo, "--proposal", proposal)):
             with self.subTest(args=args[0]):
                 try:

@@ -487,9 +487,9 @@ def plan_allowlist(repo, services, conflicts):
                 probe += 1
             owned.append((index, end))
     new = entry_lines(key, services, kept, file)
-    if len(owned) >= 1 and key in data and not any(c["target"] == "allowlist" for c in conflicts):
+    if owned and key in data and not any(c["target"] == "allowlist" for c in conflicts):
         edits = []  # the entry already equals the proposal: the text stays byte for byte
-    elif len(owned) >= 1 and key in data and (
+    elif owned and key in data and (
         edits := minimal_entry_edits(file, key, services, set(old_services) - set(services))
     ) is not None:
         pass

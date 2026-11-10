@@ -235,7 +235,7 @@ def same_without_order(left, right):
 def check_rules(repo, expect, written):
     path = os.path.join(repo, rules_file.RULES_FILE)
     if not written:
-        return [f"FAIL toml: the rules file exists but written is false"] if os.path.exists(path) else []
+        return ["FAIL toml: the rules file exists but written is false"] if os.path.exists(path) else []
     if not os.path.exists(path):
         return ["FAIL toml: the rules file does not exist"]
     read = rules_file.read_rules(repo)
