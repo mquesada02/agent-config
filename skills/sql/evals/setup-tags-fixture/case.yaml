@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: setup-tags-fixture
+description: Seam 4 setup case. `/sql setup` on a repo whose postgres.js templates use the tags `sql`, `this.sql` and `tx`, with three pitfalls. Setup shows the diff before it writes, keeps one candidate rule, adds one rule, and writes the rules file and the allowlist.
+tags: [setup]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    Run `/sql setup` on the repo in the current folder (the current folder is the repo root). Nobody can answer your questions, so use these answers. Confirm the detected tags as they are. Decline the formatter install. The allowed PG service is `app-dev`. Keep the candidate rule of the id PGJS-01 and drop every other candidate. Add this rule of my own: `Name every column that a report query selects.` Show me the diff, and then confirm it and write the files. In your final message, show the whole rules file as it was written in a code block, and give the setup report: the chosen formatter and the other tools that the detector found, the tags, the services and what was written.

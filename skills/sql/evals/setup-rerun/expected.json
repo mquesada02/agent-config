@@ -1,0 +1,37 @@
+{
+  "settings": {
+    "style": {
+      "keyword_case": "upper",
+      "indent": "4 spaces",
+      "clause_per_line": true,
+      "comma": "trailing",
+      "alias_as": true
+    },
+    "formatter": {
+      "tool": "none"
+    },
+    "sources": {
+      "tags": [
+        "sql"
+      ]
+    },
+    "rules": {
+      "disabled": []
+    }
+  },
+  "contains": [
+    "Use CTEs for any query that joins more than 3 tables.",
+    "Never build SQL with string concatenation."
+  ],
+  "unchanged_lines": [
+    "# hand-written: the team still argues about the case of keywords",
+    "clause_per_line = true",
+    "comma = \"trailing\"",
+    "alias_as = true",
+    "tags = [\"sql\"]",
+    "- Use CTEs for any query that joins more than 3 tables."
+  ],
+  "services": [
+    "app-dev"
+  ]
+}

@@ -31,11 +31,11 @@ MODULES = {
 
 
 # The modules that are still stubs: MODULES without the source modules that #390 filled
-# and the modules that #391, #392, #393 and #394 filled. The "format.md" entry of MODULES keeps
+# and the modules that #391, #392, #393, #394 and #398 filled. The "format.md" entry of MODULES keeps
 # #391 and #392 as an ownership mark that no test reads against the file text; the optimize
 # tickets are asserted by test_sql_optimize_structure.py; db-access.md keeps stub sections for
 # #396 and #397, asserted by test_sql_db_access.py (#400 filled its facts section).
-FILLED = {"style.md", "format.md", "optimize.md", "dialects/postgres.md", "db-access.md"}
+FILLED = {"setup.md", "style.md", "format.md", "optimize.md", "dialects/postgres.md", "db-access.md"}
 STUBS = {
     module: tickets
     for module, tickets in MODULES.items()
@@ -729,7 +729,8 @@ class GraderFilesTest(unittest.TestCase):
             [
                 "grade_db_eval_results.py", "grade_db_unchanged.py", "grade_eval_results.py",
                 "grade_leak_scan.py", "grade_no_change.py", "grade_refusals.py", "grade_report.py",
-                "grade_rule_ids.py", "interpolations_same.py", "only_target_changes.py", "style_matches.py",
+                "grade_rule_ids.py", "grade_setup.py", "interpolations_same.py", "only_target_changes.py",
+                "style_matches.py",
             ],
         )
 

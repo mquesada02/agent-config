@@ -1,0 +1,21 @@
+{
+  "settings": {
+    "style": {
+      "keyword_case": "upper",
+      "indent": "2 spaces",
+      "clause_per_line": true,
+      "comma": "trailing",
+      "alias_as": true
+    },
+    "formatter": {
+      "tool": "none"
+    },
+    "sources": {
+      "tags": []
+    },
+    "rules": {
+      "disabled": []
+    }
+  },
+  "no_allowlist": true
+}
