@@ -487,5 +487,189 @@ class PgRunWriteDockerTest(DockerServers, unittest.TestCase):
         self.assertEqual(self.snapshot(version), before)
 
 
+def read_diff_setup():
+    with open(os.path.join(HERE, "diff_docker_setup.sql")) as handle:
+        return handle.read()
+
+
+DIFF_TABLES = ("t", "dups_a", "dups_b", "ties", "big", "wide")
+
+
+@unittest.skipIf(SKIP, SKIP or "")
+class PgRunDiffDockerTest(DockerServers, unittest.TestCase):
+    """`pg_run diff` against real PostgreSQL servers: its own containers and its own setup SQL (schema `diffs`)."""
+
+    ports = {}
+    SETUP_SQL = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.SETUP_SQL = read_diff_setup()
+        super().setUpClass()
+
+    def diff(self, version, a, b):
+        done = subprocess.run(
+            [sys.executable, "-I", SCRIPT, "diff", "--repo", self.repo, "--service", f"pgrun_{version}", f"--a={a}", f"--b={b}"],
+            capture_output=True, text=True, env=self.env, timeout=180,
+        )
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return json.loads(done.stdout)
+
+    def each_version(self, a, b):
+        """`(version, result)` of the same diff on each server. A failing assertion shows the whole result, which holds the version."""
+        return [(version, self.diff(version, a, b)) for version in VERSIONS]
+
+    def checksum(self, version):
+        parts = [
+            f"SELECT '{t}', count(*), md5(coalesce(string_agg(x::text, ',' ORDER BY x::text), '')) FROM diffs.{t} AS x"
+            for t in DIFF_TABLES
+        ]
+        done = host_psql(self.ports[version], "-c", " UNION ALL ".join(parts) + " ORDER BY 1")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_equal_results(self):
+        for version, data in self.each_version("SELECT id, txt FROM diffs.t", "SELECT id, txt FROM diffs.t WHERE id > 0"):
+            self.assertTrue(data["ok"], data)
+            self.assertEqual((data["equal"], data["order"], data["rows"]), (True, "not_applicable", {"a": 30, "b": 30}), data)
+            self.assertEqual((data["only_a"], data["only_b"]), ({"count": 0, "rows": []}, {"count": 0, "rows": []}))
+            self.assertEqual(data["server_version_num"] // 10000, int(version))
+            self.assertEqual(data["columns"]["a"], [{"name": "id", "type": "integer"}, {"name": "txt", "type": "text"}])
+
+    def test_a_row_only_on_one_side(self):
+        for version, data in self.each_version("SELECT id, txt FROM diffs.t", "SELECT id, txt FROM diffs.t WHERE id <> 5"):
+            self.assertEqual((data["equal"], data["rows"]), (False, {"a": 30, "b": 29}), data)
+            self.assertEqual(data["only_a"], {"count": 1, "rows": [[5, "row 5"]]})
+            self.assertEqual(data["only_b"], {"count": 0, "rows": []})
+
+    def test_a_duplicate_count_difference_is_found_by_except_all(self):
+        for version, data in self.each_version("SELECT v FROM diffs.dups_a", "SELECT v FROM diffs.dups_b"):
+            self.assertEqual(data["equal"], False, data)
+            self.assertEqual(data["only_a"], {"count": 1, "rows": [[1]]})
+            self.assertEqual(data["only_b"], {"count": 1, "rows": [[2]]})
+
+    def test_a_column_type_difference(self):
+        for version, data in self.each_version("SELECT id FROM diffs.t", "SELECT id::numeric AS id FROM diffs.t"):
+            self.assertEqual((data["equal"], data["type_mismatch"]), (False, [{"position": 1, "name": "id"}]), data)
+            self.assertEqual(data["columns"]["b"], [{"name": "id", "type": "numeric"}])
+            self.assertEqual((data["only_a"]["count"], data["only_b"]["count"], data["casts"]), (0, 0, []))
+
+    def test_a_column_count_difference_is_a_shape_result(self):
+        for version, data in self.each_version("SELECT id, txt FROM diffs.t", "SELECT id FROM diffs.t"):
+            self.assertEqual((data["equal"], data["reason"]), (False, "shape"), data)
+            self.assertEqual(data["column_names"], {"a": ["id", "txt"], "b": ["id"]})
+            self.assertNotIn("only_a", data)
+
+    def test_a_json_column_is_cast_to_text_and_named_in_casts(self):
+        for version, data in self.each_version("SELECT doc FROM diffs.t", "SELECT doc FROM diffs.t"):
+            self.assertEqual((data["equal"], data["casts"], data["type_mismatch"]), (True, ["doc"], []), data)
+            self.assertEqual(data["columns"]["a"], [{"name": "doc", "type": "json"}])
+        for version, data in self.each_version("SELECT doc FROM diffs.t", "SELECT doc FROM diffs.t WHERE id <> 7"):
+            self.assertEqual((data["equal"], data["only_a"]["count"]), (False, 1), data)
+
+    def test_the_catalog_rule_for_equality_on_other_types(self):
+        a = (
+            "SELECT id, ARRAY[doc] AS docs, '[1]'::json AS j, 'x'::varchar AS vc, ARRAY[1.5::float8] AS fs, 1 AS n, "
+            "'<a/>'::xml AS x FROM diffs.t"
+        )
+        for version, data in self.each_version(a, a):
+            self.assertTrue(data["ok"], data)
+            self.assertEqual(data["casts"], ["docs", "j", "x"], data)
+            self.assertEqual(data["floats"], ["fs"], data)
+            self.assertTrue(data["equal"], data)
+
+    def test_a_float_column_is_named_in_floats_and_compared_exactly(self):
+        for version, data in self.each_version("SELECT f FROM diffs.t", "SELECT f FROM diffs.t"):
+            self.assertEqual((data["equal"], data["floats"], data["casts"]), (True, ["f"], []), data)
+        for version, data in self.each_version("SELECT f FROM diffs.t", "SELECT f + 1e-9 AS f FROM diffs.t"):
+            self.assertEqual((data["equal"], data["floats"]), (False, ["f"]), data)
+
+    def test_more_than_twenty_rows_only_on_one_side_give_twenty_rows_and_the_full_count(self):
+        for version, data in self.each_version("SELECT id FROM diffs.big", "SELECT id FROM diffs.big WHERE false"):
+            self.assertEqual((data["only_a"]["count"], len(data["only_a"]["rows"])), (100, 20), data)
+            self.assertEqual((data["only_b"]["count"], data["rows"]), (0, {"a": 100, "b": 0}))
+
+    def test_the_same_rows_in_another_order_are_checked_and_equal_and_with_no_order_by_not_applicable(self):
+        for version, data in self.each_version(
+            "SELECT id FROM diffs.t ORDER BY id", "SELECT id FROM diffs.t ORDER BY id DESC"
+        ):
+            self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+            self.assertEqual(data["order_mismatch"], {"count_a": 0, "count_b": 0, "a": [], "b": []})
+        for version, data in self.each_version("SELECT id FROM diffs.t", "SELECT id FROM diffs.t ORDER BY id DESC"):
+            self.assertEqual((data["order"], data["equal"]), ("not_applicable", True), data)
+
+    def test_a_rewrite_that_changes_the_rank_of_a_row(self):
+        a = "SELECT id FROM diffs.t ORDER BY id LIMIT 3"
+        b = "SELECT id FROM diffs.t ORDER BY id LIMIT 3 OFFSET 1"
+        for version, data in self.each_version(a, b):
+            self.assertEqual(data["equal"], False, data)
+            self.assertEqual((data["only_a"]["rows"], data["only_b"]["rows"]), ([[1]], [[4]]))
+            self.assertEqual(data["order"], "checked")
+            self.assertEqual((data["order_mismatch"]["count_a"], data["order_mismatch"]["count_b"]), (3, 3))
+            self.assertEqual(data["order_mismatch"]["a"], [[1, 1], [2, 2], [3, 3]])
+
+    def test_an_order_by_with_ties_is_partial(self):
+        for version, data in self.each_version("SELECT id, k FROM diffs.ties ORDER BY k", "SELECT id, k FROM diffs.ties ORDER BY k, id"):
+            self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "ties", True), data)
+            self.assertNotIn("order_mismatch", data)
+
+    def test_an_order_by_only_in_a_subquery_is_not_applicable(self):
+        for version, data in self.each_version("SELECT id FROM (SELECT id FROM diffs.t ORDER BY id) AS s", "SELECT id FROM diffs.t"):
+            self.assertEqual((data["order"], data["equal"]), ("not_applicable", True), data)
+
+    def test_an_expression_key_and_an_input_column_key_are_partial_with_sort_keys(self):
+        for a in ("SELECT id FROM diffs.t ORDER BY id + 1", "SELECT txt FROM diffs.t ORDER BY id"):
+            for version, data in self.each_version(a, a):
+                self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "sort_keys", True), data)
+
+    def test_a_position_beyond_the_columns_is_a_statement_error_of_the_server(self):
+        for version, data in self.each_version("SELECT id FROM diffs.t ORDER BY 5", "SELECT id FROM diffs.t"):
+            self.assertEqual((data["ok"], data["error"]), (False, "statement_failed"), data)
+            self.assertIn("ORDER BY position 5 is not in select list", data["message"])
+
+    def test_a_position_key_and_a_quoted_name_key_are_checked(self):
+        for key in ("1", '"My Id"'):
+            a = f'SELECT id AS "My Id" FROM diffs.t ORDER BY {key}'
+            for version, data in self.each_version(a, a):
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+
+    def test_a_table_with_101_columns_builds_its_samples_with_no_argument_limit(self):
+        columns = ", ".join(f"c{i}" for i in range(1, 102))
+        changed = ", ".join(["c1 + 1 AS c1"] + [f"c{i}" for i in range(2, 102)])
+        for version, data in self.each_version(f"SELECT {columns} FROM diffs.wide", f"SELECT {changed} FROM diffs.wide"):
+            self.assertEqual(data["equal"], False, data)
+            self.assertEqual((data["only_a"]["count"], len(data["only_a"]["rows"][0])), (3, 101), data)
+
+    def test_a_statement_that_writes_fails_as_read_only_and_the_tables_are_unchanged(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                before = self.checksum(version)
+                data = self.diff(version, "SELECT nextval('diffs.seq') AS n", "SELECT 1 AS n")
+                self.assertEqual((data["ok"], data["error"]), (False, "statement_failed"), data)
+                self.assertIn("read-only", data["message"])
+                self.assertEqual(self.checksum(version), before)
+
+    def test_the_tables_are_unchanged_after_a_run_although_the_service_entry_says_read_only_off(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                before = self.checksum(version)
+                self.diff(version, "SELECT id FROM diffs.t ORDER BY id", "SELECT id FROM diffs.t ORDER BY id DESC")
+                self.assertEqual(self.checksum(version), before)
+
+    def test_the_proof_session_has_the_read_only_flag_and_the_version_gated_timeouts(self):
+        expected = {"13": "ro=on st=30s lt=2s idle=10s tt=unset", "18": "ro=on st=30s lt=2s idle=10s tt=1min"}
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.diff(version, "SELECT diffs.probe() AS x", "SELECT 1::text AS x")
+                self.assertEqual(data["error"], "statement_failed", data)
+                self.assertIn(expected[version], data["message"])
+
+    def test_a_per_service_timeout_override_cancels_a_slow_diff(self):
+        self.write_allowlist(f'["{REPO_KEY}".timeouts.pgrun_18]\nstatement_timeout = "300ms"\n')
+        data = self.diff("18", "SELECT pg_sleep(5)::text AS x", "SELECT 'a' AS x")
+        self.assertEqual((data["ok"], data["error"]), (False, "statement_failed"), data)
+        self.assertIn("statement timeout", data["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

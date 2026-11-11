@@ -1,6 +1,6 @@
 # Database access module
 
-This module holds the only way that the skill reads a plan from a real database, and the catalog facts of the `facts` action. It runs `EXPLAIN` for one `SELECT` (select mode) or for one `INSERT`, `UPDATE`, `DELETE` or `MERGE` (write mode), and `facts` takes no statement. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
+This module holds the only way that the skill reads a plan from a real database, the catalog facts of the `facts` action, and the `diff` action that compares two `SELECT` statements. It runs `EXPLAIN` for one `SELECT` (select mode) or for one `INSERT`, `UPDATE`, `DELETE` or `MERGE` (write mode), `facts` takes no statement, and `diff` takes two `SELECT` statements. The wrapper `scripts/pg_run.py` is the only path to a database. Both scripts need Python 3.11 or newer (`tomllib`).
 
 ## Rules
 
@@ -41,11 +41,11 @@ In the optimize flow the command is piped into `scripts/plan_findings.py -` (see
 What Claude does for each `error`:
 
 - `not_allowed`: the allowlist does not allow the call. The `reason` is a reader reason or `service_not_listed`. Claude makes no connection and keeps to the no-database path.
-- `refused`: the guard of the mode refused the statement before any connection. Claude reads the `reason` below, and reviews the statement by reading only.
+- `refused`: the guard of the mode (or, for `diff`, the diff guard) refused the statement before any connection. Claude reads the `reason` below, and reviews the statement by reading only. A `diff` refusal also has `statement` (`a` or `b`).
 - `connection_failed`: `psql` could not connect (service, password file, host or role problem). Claude does not retry and does not look for the cause in a file. Claude names the failure in one line with the `message`, and goes on with the static report.
 - `statement_failed`: the server refused or cancelled the statement (a missing relation, a timeout, a read-only error). Claude reports the `message` and goes on with the static report.
 - `psql_failed`: `psql` failed in another way, or it is not installed. Claude names the `message`, and does not try to install anything.
-- `bad_output`: the run gave no usable version number or plan. Claude names the `message`, and goes on with the static report.
+- `bad_output`: the run gave no usable version number, plan or `diff` result. Claude names the `message`, and goes on with the static report.
 
 What Claude does for each guard `reason` of `refused`:
 
@@ -56,8 +56,9 @@ What Claude does for each guard `reason` of `refused`:
 - `not_select`: the first word is not `SELECT` or `WITH`. Claude reviews the statement by reading only. See the section about statements that `EXPLAIN` cannot take.
 - `data_modifying`: the statement holds `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `INTO`, as a data-modifying CTE, `SELECT ... INTO` or `FOR UPDATE`. Claude sends a `WITH ... INSERT|UPDATE|DELETE|MERGE` statement to `--mode write`, and reviews `INTO`, `FOR UPDATE` and a data-modifying CTE with a `SELECT` main statement by reading only.
 - `not_write`: write mode only. The statement is not exactly one `INSERT`, `UPDATE`, `DELETE` or `MERGE` (with an optional `WITH` list). When `static_review_only` is false and the first word is `SELECT` or `WITH`, Claude calls `pg_run` again with `--mode select`. Otherwise Claude reviews the statement by reading only.
-- `forbidden_function`: select mode names `set_config`, `pg_notify`, `lo_export`, and every function that starts with `pg_advisory`, `pg_try_advisory` or `dblink`; write mode names `set_config` only (the other names give a downgrade). Claude reviews the statement by reading only.
+- `forbidden_function`: select mode names `set_config`, `pg_notify`, `lo_export`, and every function that starts with `pg_advisory`, `pg_try_advisory` or `dblink`; write mode names `set_config` only (the other names give a downgrade); `diff` names the select-mode names and also `query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby` and `setval`. Claude reviews the statement by reading only.
 - `unicode_identifier`: the statement holds `U&"`, which can hide a function name. Claude reviews it by reading only.
+- `unbalanced_parentheses`: `diff` only. The parentheses of the statement do not balance, so the statement could change the structure of the proof query. Claude fixes the text, or asks the user.
 
 For a failure of the allowlist, the `reason` `service_not_listed` means that the service is not on the list. Claude names the services that the reader printed, and asks which one to use.
 
@@ -73,7 +74,7 @@ A statement with `static_review_only` true (DDL, `VACUUM`, `CREATE INDEX CONCURR
 
 ## No full result
 
-`pg_run explain` returns a plan only. `pg_run facts` returns catalog metadata only. Neither returns result rows. Claude never runs a statement to read its rows.
+`pg_run explain` returns a plan only. `pg_run facts` returns catalog metadata only. Neither returns result rows. `pg_run diff` returns at most 20 rows of each difference (see the Diff section). Claude never runs a statement to read its rows.
 
 ## Timeouts and versions
 
@@ -104,6 +105,16 @@ In write mode the guard and the forced `ROLLBACK` are the barrier, and `ROLLBACK
 - a write on a foreign table (the effect on the remote side depends on the foreign data wrapper, and the check does not read foreign servers);
 - a sequence that a user function (also one in a column `DEFAULT`) or a `DEFAULT` change moves with no warning (an `UPDATE` or an `ON CONFLICT DO UPDATE` that sets a column to `DEFAULT` with a `nextval` default);
 - the guard reads the case of a word with ASCII rules only (the server rejects a word with a non-ASCII letter that looks like a keyword, which is the safe direction).
+
+`diff` runs the user's `SELECT` statements, so the select guard is its barrier, and its own refusals close the string-SQL functions. These risks stay open:
+
+- the guard lexer is hand written: it can differ from the server lexer in rare cases (a Unicode blank that `str.strip` cuts, a vertical tab, the case fold of a letter), and the select-mode function list is partial (a string-SQL function that is not in the list; select mode, which `explain` uses, still accepts the string-SQL ones: they are tracked in issue #476);
+- a user function with an external effect that the guard cannot see;
+- the three sessions of `diff` are not one transaction: a schema change between them makes the proof fail or compare the new types;
+- the order proof does not read the output order of B (see the Diff section);
+- the proof runs A and B: a volatile function can give a false difference, and a large result is cut by the 30 second `statement_timeout`;
+- a composite or a multirange column is compared as `text` (a conservative reading of "no equality operator");
+- `diff` returns up to 80 rows of the user's data to Claude (20 in each of `only_a`, `only_b` and the two lists of `order_mismatch`).
 
 ## Write mode
 
@@ -136,9 +147,31 @@ What Claude does:
 - A `sequence` warning is named in the `Note:` line of the optimize module.
 - Claude never runs a write statement by hand, and never calls write mode for a statement that is not a write.
 
-## Diff (stub)
+## Diff
 
-Stub. Ticket #397 fills this section with the `diff` action. It holds no behavior yet.
+`diff` compares the result of a `SELECT` A with the result of a rewrite B of it, on an allowlisted service. The optimize module uses it for the proof of a rewrite (the section Rewrite proof). Run it:
+
+```
+python3 <skill folder>/scripts/pg_run.py diff --repo <repo root> --service <name> --a=<sql> --b=<sql>
+```
+
+`--a` and `--b` are both required. Write each as `--a=<sql>`, one argument with an equals sign: a separate value that starts with `-` and holds no space is read as an option, and gives a usage error (exit code 2). Write a single quote of the SQL as `'\''`. Each statement must be one `SELECT` or `WITH ... SELECT`. Both statements pass the guard of `diff` before any connection. The command exits with 0 when `ok` is true, 1 when `ok` is false and 2 for a usage error.
+
+The guard of `diff` has the select-mode reasons with its own messages: a write statement is `write_statement` (a rewrite of a write statement is unproven, so Claude makes no `diff` call for it). It adds two refusals. `unbalanced_parentheses`: the `(` and `)` of the statement do not balance. `forbidden_function`: the statement calls `query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby` or `setval`, or a function that select mode refuses. Such a function runs SQL from a string that the guard cannot read. A refusal has `statement` (`a` or `b`), `reason`, `message` and `static_review_only`, and no connection is made. Claude reviews the statement by reading only.
+
+The comparison runs in one read-only transaction (`BEGIN READ ONLY`, one `SELECT`, `ROLLBACK`), after two read-only sessions that only describe the statements (the output column names with the version, then the column types). A schema change between the sessions can make the proof fail with `statement_failed`. Every user statement runs once.
+
+With `ok` true, every result has `action` (`diff`), `service`, `server_version_num`, `timeouts` (the timeouts that were sent), `equal` and the fields below.
+
+- A shape result has `reason` `shape` and `column_names` (`{"a": [...], "b": [...]}`), and `equal` is false. A and B differ in column count or in a column name, so nothing was compared.
+- A full result has `columns` (`{"a": [{"name", "type"}], "b": [...]}`), `rows` (`{"a": <count>, "b": <count>}`), `only_a` and `only_b` (`{"count": <full count>, "rows": [...]}`: at most 20 rows, as arrays in column order), `type_mismatch` (a list of `{"position", "name"}`), `casts`, `floats` (lists of column names) and `order`.
+- `equal` is true when the shape matches, `type_mismatch` is empty, both counts are 0, and the order check (when `order` is `checked`) found no difference.
+
+Types and casts. Rows are compared as a multiset (`EXCEPT ALL`: a duplicate count counts). A column whose type differs between A and B is in `type_mismatch` and is compared as `text`. A column of a type with no equality operator that `EXCEPT` can use (for example `json` or `xml`) is compared as `text` and named in `casts`. A column of type `real` or `double precision` is compared exactly and named in `floats`: a difference there can be a rounding difference, so say so.
+
+Order. `order` is `not_applicable` when A has no top-level `ORDER BY`. When A has one with keys that are output column names or positions, both sides are numbered by those keys and the numbered rows are compared: `order` is `checked`, and `order_mismatch` has `count_a`, `count_b` and the samples `a` and `b` (arrays that start with the rank). `checked` means that both sides have the same rows at the same ranks. It does not read the output order of B. `order` is `partial` with `reason` `ties` (a sort key repeats, so the order is not fixed) or `sort_keys` (a key is an expression, a qualified name, `USING`, `COLLATE`, an input column that is not an output column, or a column with a type mismatch).
+
+`diff` is the only action that returns rows of the user's data, and it returns samples only: at most 20 rows in each of `only_a` and `only_b`, and the same cap in each list of `order_mismatch`. A statement with a volatile function (`random()`, `now()`) can give a false difference.
 
 ## Facts
 

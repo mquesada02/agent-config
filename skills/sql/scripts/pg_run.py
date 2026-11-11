@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""The only path of the sql skill to a database: `pg_run explain` for one SELECT or one write statement, and `pg_run facts`.
+"""The only path of the sql skill to a database: `pg_run explain` for one SELECT or one write statement, `pg_run facts`
+and `pg_run diff`.
 
 Usage: python3 pg_run.py explain --repo <repo root> --service <name> --mode select|write [--statement <sql>]
        python3 pg_run.py facts --repo <repo root> --service <name> --names <table.column> [<table.column> ...]
+       python3 pg_run.py diff --repo <repo root> --service <name> --a=<sql> --b=<sql>
 
 With no `--statement` the statement is read from stdin. The order of work: the
 allowlist check (`allowlist.py`), the guard of the mode (`sql_guard.py`), the server
@@ -25,10 +27,20 @@ the server only as the value of a psql variable. It prints the nullability and t
 or `missing`: catalog metadata only. A name of another shape, or with a character that is not printable
 ASCII, is `missing` and is never sent; when no name is sent there is no `psql` call at all.
 
+`diff` compares the result of SELECT A with the result of SELECT B (a rewrite of A) and returns capped row samples (at
+most 20 rows in each list), never a full result. Both statements pass `sql_guard.check_diff` before any connection. Write
+`--a=<sql>` with an equals sign (a value that starts with `-` and holds no space is read as an option otherwise). Every
+user statement reaches the server only in a `-c` argument. Three read-only sessions: the names of the output columns and
+the version (`psql --csv`, `LIMIT 0`), the column types and catalog flags (`pg_typeof` through a join that is never
+true, so the statements are planned and not run), and the proof (one `SELECT` with `MATERIALIZED` CTEs named `pgrun_*`:
+`EXCEPT ALL` both ways and, for a top-level `ORDER BY` of A with resolvable keys, the same over `row_number()`).
+
 Exit code: 0 when `ok` is true, 1 when `ok` is false, 2 for a usage error (one
 line on stderr, nothing on stdout). Needs Python 3.11 or newer (tomllib).
 """
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -470,6 +482,267 @@ def facts(service, parsed, overrides):
     }
 
 
+# The type session of `diff`. `{a}` and `{b}` are `(SELECT ARRAY[pg_typeof(...)...] ...)` scalar subqueries that read the
+# column types of A and B without running them (`LEFT JOIN ... ON false`). The catalog part strips domains, arrays and ranges
+# down to a leaf type and reads, for each type, its name, whether its leaf is `float4` or `float8`, and whether its leaf has an
+# equality that `EXCEPT` can use (an enum, or a default btree or hash operator class whose input type is the leaf or a type
+# that the leaf casts to in an implicit, binary-coercible way: an `xml` cast to `text` is binary but not implicit, and `xml` has no
+# equality operator). Oids leave the server as `bigint`: the JSON of an `oid` is a string.
+TYPES_SQL = """WITH RECURSIVE arrs AS (SELECT {a} AS av, {b} AS bv),
+roots AS (SELECT DISTINCT unnest(av || bv)::oid AS o FROM arrs),
+chain(root, cur) AS (
+  SELECT o, o FROM roots
+  UNION
+  SELECT chain.root,
+    CASE WHEN ty.typtype = 'd' THEN ty.typbasetype WHEN ty.typtype = 'r' THEN rg.rngsubtype ELSE ty.typelem END
+  FROM chain
+  JOIN pg_type ty ON ty.oid = chain.cur
+  LEFT JOIN pg_range rg ON rg.rngtypid = ty.oid
+  WHERE ty.typtype IN ('d', 'r') OR ty.typcategory = 'A'
+),
+leaves AS (
+  SELECT c.root, c.cur AS leaf FROM chain c JOIN pg_type ty ON ty.oid = c.cur
+  WHERE ty.typtype NOT IN ('d', 'r') AND ty.typcategory <> 'A'
+),
+info AS (SELECT DISTINCT c.cur AS oid, l.leaf FROM chain c JOIN leaves l ON l.root = c.root)
+SELECT json_build_object(
+  'a', (SELECT av FROM arrs),
+  'b', (SELECT bv FROM arrs),
+  'types', (SELECT coalesce(json_object_agg(info.oid::text, json_build_object(
+    'name', format_type(info.oid, NULL),
+    'float', info.leaf IN (700, 701),
+    'equality', EXISTS (
+      SELECT 1 FROM pg_type lt
+      WHERE lt.oid = info.leaf AND (lt.typtype = 'e' OR EXISTS (
+        SELECT 1 FROM pg_opclass oc JOIN pg_am am ON am.oid = oc.opcmethod
+        WHERE oc.opcdefault AND am.amname IN ('btree', 'hash')
+          AND (oc.opcintype = lt.oid OR EXISTS (
+            SELECT 1 FROM pg_cast pc WHERE pc.castsource = lt.oid AND pc.casttarget = oc.opcintype AND pc.castmethod = 'b' AND pc.castcontext = 'i'
+          ))
+      ))
+    ),
+    'leaf', info.leaf::bigint
+  )), '{{}}'::json) FROM info)
+)"""
+SAMPLE_LIMIT = 20
+
+
+def csv_records(out):
+    """The records of CSV text, with the empty ones (a statement with no output column prints an empty header)."""
+    return list(csv.reader(io.StringIO(out)))
+
+
+def describe_names(service, sql_a, sql_b, overrides):
+    """Session 1: `(version, names of A, names of B)` from one read-only session with the base timeouts."""
+    options, _ = session_options(None, overrides)
+    out = run_psql(
+        service, options, ["--csv", "-q", "-v", "ON_ERROR_STOP=1"],
+        ["SHOW server_version_num", "BEGIN READ ONLY", f"SELECT * FROM ({sql_a}\n) AS t LIMIT 0",
+         f"SELECT * FROM ({sql_b}\n) AS t LIMIT 0", "ROLLBACK"],
+    )
+    records = csv_records(out)
+    if len(records) != 4 or len(records[1]) != 1 or not re.fullmatch(r"\d{1,9}", records[1][0].strip()):
+        raise bad_output("The describe run did not return the version and two header records.")
+    return int(records[1][0].strip()), records[2], records[3]
+
+
+def type_array_sql(sql, count):
+    """The scalar subquery that reads `pg_typeof` of each of `count` columns of `sql` as a `bigint` array, without running it."""
+    columns = ", ".join(f"c{i}" for i in range(1, count + 1))
+    types = ", ".join(f"pg_typeof(x.c{i})::oid::bigint" for i in range(1, count + 1))
+    return f"(SELECT ARRAY[{types}] FROM (SELECT 1) AS d LEFT JOIN ({sql}\n) AS x({columns}) ON false)"
+
+
+def valid_oid_list(value, count):
+    return isinstance(value, list) and len(value) == count and all(type(item) is int for item in value)
+
+
+def parse_types(out, count):
+    """`(oids of A, oids of B, types)` of the type session, or a bad_output Failure. `types` maps an oid to its entry."""
+    try:
+        data = json.loads(out)
+    except (ValueError, RecursionError):
+        data = None
+    message = "The type run did not return one valid result."
+    if not isinstance(data, dict) or not isinstance(data.get("types"), dict):
+        raise bad_output(message)
+    if not valid_oid_list(data.get("a"), count) or not valid_oid_list(data.get("b"), count):
+        raise bad_output(message)
+    types = {}
+    for key, entry in data["types"].items():
+        if (
+            not re.fullmatch(r"\d{1,10}", key) or not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
+            or type(entry.get("float")) is not bool or type(entry.get("equality")) is not bool
+            or type(entry.get("leaf")) is not int or str(entry["leaf"]) not in data["types"]
+        ):
+            raise bad_output(message)
+        types[int(key)] = entry
+    if any(oid not in types for oid in data["a"] + data["b"]):
+        raise bad_output(message)
+    return data["a"], data["b"], types
+
+
+def resolve_order(order, names, mismatch):
+    """`(state, reason, key columns)` for the order proof: `not_applicable`, or `partial` with a reason, or `checked` with
+    the 1-based key positions and their direction text. A key must name one output column of A, or be a position in range,
+    and its column must have the same type in A and B."""
+    if order is None:
+        return "not_applicable", None, None
+    if "keys" not in order:
+        return "partial", "sort_keys", None
+    keys = []
+    for key in order["keys"]:
+        if key["operand"] == "position":
+            position = key["value"] if 1 <= key["value"] <= len(names) else None
+        else:
+            found = [index + 1 for index, name in enumerate(names) if name == key["value"]]
+            position = found[0] if len(found) == 1 else None
+        if position is None or position - 1 in mismatch:
+            return "partial", "sort_keys", None
+        text = f"c{position}" + (" DESC" if key["descending"] else "")
+        keys.append((position, text + (f" NULLS {key['nulls'].upper()}" if key["nulls"] else "")))
+    return "checked", None, keys
+
+
+def proof_sql(sql_a, sql_b, count, text_columns, keys):
+    """The proof `SELECT` of `diff`: all CTEs are `MATERIALIZED` (each statement runs once), the names start with `pgrun_`, and
+    every user statement is followed by a newline before its closing parenthesis. `keys` is None or the resolved sort keys."""
+    names = [f"c{i}" for i in range(1, count + 1)]
+    columns = ", ".join(names)
+    compared = ", ".join(f"{name}::text AS {name}" if index in text_columns else name for index, name in enumerate(names))
+    parts = [
+        f"pgrun_ra AS MATERIALIZED (SELECT * FROM ({sql_a}\n) AS t({columns}))",
+        f"pgrun_rb AS MATERIALIZED (SELECT * FROM ({sql_b}\n) AS t({columns}))",
+        f"pgrun_a AS MATERIALIZED (SELECT {compared} FROM pgrun_ra)",
+        f"pgrun_b AS MATERIALIZED (SELECT {compared} FROM pgrun_rb)",
+        "pgrun_oa AS MATERIALIZED (SELECT * FROM pgrun_a EXCEPT ALL SELECT * FROM pgrun_b)",
+        "pgrun_ob AS MATERIALIZED (SELECT * FROM pgrun_b EXCEPT ALL SELECT * FROM pgrun_a)",
+    ]
+    sample = "(SELECT coalesce(json_agg(to_json(s)), '[]'::json) FROM (SELECT * FROM {name} LIMIT %d) AS s)" % SAMPLE_LIMIT
+    fields = [
+        "'ra', (SELECT count(*) FROM pgrun_ra)", "'rb', (SELECT count(*) FROM pgrun_rb)",
+        "'oa_count', (SELECT count(*) FROM pgrun_oa)", "'ob_count', (SELECT count(*) FROM pgrun_ob)",
+        "'oa', " + sample.format(name="pgrun_oa"), "'ob', " + sample.format(name="pgrun_ob"),
+    ]
+    if keys:
+        order = ", ".join(text for _, text in keys)
+        group = ", ".join(f"c{position}" for position, _ in keys)
+        for side, source in (("a", "ra"), ("b", "rb")):
+            parts.append(
+                f"pgrun_n{side} AS MATERIALIZED (SELECT row_number() OVER (ORDER BY {order}) AS rn, * FROM pgrun_{source})"
+            )
+        numbered = ", ".join(f"{name}::text AS {name}" if index in text_columns else name for index, name in enumerate(names))
+        parts.append(
+            f"pgrun_xa AS MATERIALIZED (SELECT rn, {numbered} FROM pgrun_na EXCEPT ALL SELECT rn, {numbered} FROM pgrun_nb)"
+        )
+        parts.append(
+            f"pgrun_xb AS MATERIALIZED (SELECT rn, {numbered} FROM pgrun_nb EXCEPT ALL SELECT rn, {numbered} FROM pgrun_na)"
+        )
+        fields += [
+            f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)",
+            "'xa_count', (SELECT count(*) FROM pgrun_xa)", "'xb_count', (SELECT count(*) FROM pgrun_xb)",
+            "'xa', " + sample.format(name="pgrun_xa"), "'xb', " + sample.format(name="pgrun_xb"),
+        ]
+    return "WITH " + ",\n".join(parts) + "\nSELECT json_build_object(" + ", ".join(fields) + ")"
+
+
+def sample_rows(value, count, numbered):
+    """The sample rows of the proof as arrays in column order (`rn` first for a numbered row), or a bad_output Failure."""
+    names = (["rn"] if numbered else []) + [f"c{i}" for i in range(1, count + 1)]
+    if not isinstance(value, list) or len(value) > SAMPLE_LIMIT:
+        raise bad_output("The proof run returned a sample that is not valid.")
+    rows = []
+    for row in value:
+        if not isinstance(row, dict) or set(row) != set(names):
+            raise bad_output("The proof run returned a sample row that is not valid.")
+        rows.append([row[name] for name in names])
+    return rows
+
+
+def parse_proof(out, count, keyed):
+    """The proof result as a dict, or a bad_output Failure. Every count is an integer; every sample is checked."""
+    try:
+        data = json.loads(out)
+    except (ValueError, RecursionError):
+        data = None
+    counts = ["ra", "rb", "oa_count", "ob_count"] + (["ties", "xa_count", "xb_count"] if keyed else [])
+    if not isinstance(data, dict) or any(type(data.get(name)) is not int or data[name] < 0 for name in counts):
+        raise bad_output("The proof run did not return one valid result.")
+    proof = {name: data[name] for name in counts}
+    for name in ("oa", "ob"):
+        proof[name] = sample_rows(data.get(name), count, False)
+    if keyed:
+        for name in ("xa", "xb"):
+            proof[name] = sample_rows(data.get(name), count, True)
+    return proof
+
+
+def diff(service, checked_a, checked_b, overrides):
+    """The `diff` action: three read-only sessions (names and version, types, the proof). See the module docstring."""
+    sql_a, sql_b = checked_a["sql"], checked_b["sql"]
+    version, names_a, names_b = describe_names(service, sql_a, sql_b, overrides)
+    options, timeouts = session_options(version, overrides)
+    head = {"ok": True, "action": "diff", "service": service, "server_version_num": version, "timeouts": timeouts}
+    if not names_a or names_a != names_b:
+        return {**head, "equal": False, "reason": "shape", "column_names": {"a": names_a, "b": names_b}}
+    count = len(names_a)
+    flags = ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"]
+    types_text = TYPES_SQL.format(a=type_array_sql(sql_a, count), b=type_array_sql(sql_b, count))
+    oids_a, oids_b, types = parse_types(
+        run_psql(service, options, flags, ["BEGIN READ ONLY", types_text, "ROLLBACK"]), count
+    )
+    mismatch = [i for i in range(count) if oids_a[i] != oids_b[i]]
+    casts = [i for i in range(count) if i not in mismatch and not types[oids_a[i]]["equality"]]
+    floats = [i for i in range(count) if types[oids_a[i]]["float"] or types[oids_b[i]]["float"]]
+    state, reason, keys = resolve_order(checked_a["order"], names_a, mismatch)
+    proof_text = proof_sql(sql_a, sql_b, count, set(mismatch) | set(casts), keys)
+    proof = parse_proof(
+        run_psql(service, options, flags, ["BEGIN READ ONLY", proof_text, "ROLLBACK"]), count, keys is not None
+    )
+    result = {
+        **head,
+        "columns": {
+            "a": [{"name": names_a[i], "type": types[oids_a[i]]["name"]} for i in range(count)],
+            "b": [{"name": names_b[i], "type": types[oids_b[i]]["name"]} for i in range(count)],
+        },
+        "rows": {"a": proof["ra"], "b": proof["rb"]},
+        "only_a": {"count": proof["oa_count"], "rows": proof["oa"]},
+        "only_b": {"count": proof["ob_count"], "rows": proof["ob"]},
+        "type_mismatch": [{"position": i + 1, "name": names_a[i]} for i in mismatch],
+        "casts": [names_a[i] for i in casts],
+        "floats": [names_a[i] for i in floats],
+    }
+    order_equal = True
+    if state == "checked" and proof["ties"] >= 1:
+        state, reason = "partial", "ties"
+    if state == "checked":
+        result["order_mismatch"] = {
+            "count_a": proof["xa_count"], "count_b": proof["xb_count"], "a": proof["xa"], "b": proof["xb"],
+        }
+        order_equal = proof["xa_count"] == 0 and proof["xb_count"] == 0
+    result["order"] = state
+    if state == "partial":
+        result["reason"] = reason
+    result["equal"] = not mismatch and proof["oa_count"] == 0 and proof["ob_count"] == 0 and order_equal
+    return result
+
+
+def run_diff(args):
+    access, refusal = check_allowed(args)
+    if refusal:
+        return refusal
+    checked = {}
+    for side in ("a", "b"):
+        result, refusal = sql_guard.check_diff(getattr(args, side))
+        if refusal:
+            return {"ok": False, "error": "refused", "statement": side, **refusal}
+        checked[side] = result
+    try:
+        return diff(args.service, checked["a"], checked["b"], access["timeouts"].get(args.service, {}))
+    except Failure as failure:
+        return failure.result
+
+
 def run_facts(args):
     access, refusal = check_allowed(args)
     if refusal:
@@ -517,12 +790,18 @@ def parser():
     sub.add_argument("--repo", required=True)
     sub.add_argument("--service", required=True)
     sub.add_argument("--names", required=True, nargs="+")
+    sub = actions.add_parser("diff")
+    sub.add_argument("--repo", required=True)
+    sub.add_argument("--service", required=True)
+    sub.add_argument("--a", required=True)
+    sub.add_argument("--b", required=True)
     return top
 
 
 def main(argv):
     args = parser().parse_args(argv)
-    result = run_facts(args) if args.action == "facts" else run_explain(args)
+    runners = {"facts": run_facts, "diff": run_diff, "explain": run_explain}
+    result = runners[args.action](args)
     print(json.dumps(result))
     return 0 if result["ok"] else 1
 

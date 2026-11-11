@@ -18,6 +18,11 @@ Its reasons, in this order: `empty`, `unterminated`, `multiple_statements`, `not
 `forbidden_function` (`set_config` only), `unicode_identifier`. The names in `scan` are functions
 whose effect `ROLLBACK` cannot undo, or that run SQL from a string argument, so the run goes down
 to a plain `EXPLAIN`. The tokens are the only input: the guard never connects.
+
+`check_diff(text)` is the guard of one statement of `pg_run diff`. It runs `check_select`, then refuses the
+names of the scan lists below (string-SQL functions and effects that `ROLLBACK` cannot undo) and unbalanced
+parentheses, and returns `(result, None)` with `sql` and `order` (the sort keys of a top-level `ORDER BY`), or
+`(None, refusal)` with the messages of `DIFF_MESSAGES`.
 """
 import collections
 import re
@@ -399,3 +404,125 @@ def check_write(text):
         "scan": sorted({name for name in map(_scan_name, tokens) if name}),
         "targets": _write_targets(body),
     }, None
+
+
+# `diff` has no mode, so its refusals have their own message table (as write mode has).
+DIFF_MESSAGES = {
+    "empty": MESSAGES["empty"],
+    "unterminated": MESSAGES["unterminated"],
+    "multiple_statements": "diff accepts one statement for each of --a and --b.",
+    "write_statement": "diff takes a SELECT only. A rewrite of a write statement is unproven (story 61).",
+    "not_select": "diff accepts only SELECT or WITH ... SELECT.",
+    "data_modifying": MESSAGES["data_modifying"],
+    "forbidden_function": (
+        "The statement calls a function that runs SQL from a string or has an effect that a rollback cannot undo, "
+        "which diff refuses."
+    ),
+    "unicode_identifier": MESSAGES["unicode_identifier"],
+    "unbalanced_parentheses": "The parentheses of the statement are not balanced.",
+}
+ORDER_END_WORDS = frozenset("LIMIT OFFSET FETCH".split())
+DIGITS = re.compile(r"[0-9]+")
+
+
+def _diff_refuse(reason, static_review_only=False):
+    return None, {"reason": reason, "message": DIFF_MESSAGES[reason], "static_review_only": static_review_only}
+
+
+def _balanced(tokens):
+    """True when the `(` and `)` tokens balance and no `)` comes before its `(`. A string or a quoted name is one token."""
+    depth = 0
+    for token in tokens:
+        if _is_punct(token, "("):
+            depth += 1
+        elif _is_punct(token, ")"):
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _ascii_lower(text):
+    return "".join(char.lower() if "A" <= char <= "Z" else char for char in text)
+
+
+def _sort_key(tokens):
+    """The key dict of one `ORDER BY` key (one operand, then ASC or DESC, then NULLS FIRST or LAST), or None."""
+    if not tokens:
+        return None
+    operand, rest = tokens[0], tokens[1:]
+    if operand.kind == "number" and DIGITS.fullmatch(operand.value):
+        found = ("position", int(operand.value))
+    elif operand.kind == "word":
+        found = ("name", _ascii_lower(operand.value))
+    elif operand.kind == "qident":
+        found = ("name", operand.value)
+    else:
+        return None
+    descending = False
+    if rest and (_is_word(rest[0], "ASC") or _is_word(rest[0], "DESC")):
+        descending = _is_word(rest[0], "DESC")
+        rest = rest[1:]
+    nulls = None
+    if len(rest) == 2 and _is_word(rest[0], "NULLS") and (_is_word(rest[1], "FIRST") or _is_word(rest[1], "LAST")):
+        nulls = rest[1].value.lower()
+        rest = []
+    if rest:
+        return None
+    return {"operand": found[0], "value": found[1], "descending": descending, "nulls": nulls}
+
+
+def _order_keys(body):
+    """None when the statement has no top-level `ORDER BY`, else `{"keys": [...]}` or `{"unextractable": why}`."""
+    depth = 0
+    starts = []
+    for index, token in enumerate(body):
+        if _is_punct(token, "("):
+            depth += 1
+        elif _is_punct(token, ")"):
+            depth -= 1
+        elif depth == 0 and _is_word(token, "ORDER") and index + 1 < len(body) and _is_word(body[index + 1], "BY"):
+            starts.append(index + 2)
+    if not starts:
+        return None
+    if len(starts) > 1:
+        return {"unextractable": "the statement has more than one top-level ORDER BY"}
+    parts, current, depth = [], [], 0
+    for token in body[starts[0]:]:
+        if _is_punct(token, "("):
+            depth += 1
+        elif _is_punct(token, ")"):
+            depth -= 1
+        elif depth == 0 and token.kind == "word" and token.value.upper() in ORDER_END_WORDS:
+            break
+        elif depth == 0 and _is_punct(token, ","):
+            parts.append(current)
+            current = []
+            continue
+        current.append(token)
+    parts.append(current)
+    keys = [_sort_key(part) for part in parts]
+    if None in keys:
+        return {"unextractable": "a sort key is not an output column name or a position"}
+    return {"keys": keys}
+
+
+def check_diff(text):
+    """The guard of one statement of `pg_run diff`: `(result, None)` with `sql` and `order`, or `(None, refusal)`.
+    It runs `check_select` (its reasons pass through with the `diff` messages), refuses the string-SQL functions
+    of the write-mode scan lists and unbalanced parentheses, and extracts the sort keys of a top-level `ORDER BY`.
+    `order` is None (no such `ORDER BY`), `{"keys": [...]}` or `{"unextractable": why}`."""
+    sql, refusal = check_select(text)
+    if refusal:
+        return _diff_refuse(refusal["reason"], refusal["static_review_only"])
+    tokens, _ = tokenize(text)
+    semicolons = [i for i, t in enumerate(tokens) if _is_semicolon(t)]
+    body = tokens[:semicolons[0]] if semicolons else tokens
+    for token in body:
+        if token.kind in ("word", "qident"):
+            name = token.value.lower()
+            if name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
+                return _diff_refuse("forbidden_function")
+    if not _balanced(body):
+        return _diff_refuse("unbalanced_parentheses")
+    return {"sql": sql, "order": _order_keys(body)}, None
