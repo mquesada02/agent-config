@@ -30,7 +30,11 @@ class Unavailable(Exception):
 
 
 def get(path):
-    """The parsed JSON of `gh api <path>`, or None on HTTP 404 (GitHub answers 422 "No commit found" for a SHA that is not in the repo). Any other failure raises Unavailable."""
+    """The parsed JSON of `gh api <path>`, or None when the answer is "not found".
+
+    That is HTTP 404, or the HTTP 422 "No commit found" of a SHA that is not in the repo.
+    Any other failure raises Unavailable.
+    """
     try:
         done = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
@@ -53,12 +57,15 @@ def get(path):
 
 def tag_commit(repo, tag):
     """The commit SHA of a tag (an annotated tag is dereferenced), or None when the tag does not exist."""
-    ref = get(f"repos/{repo}/git/ref/tags/{tag}")
-    obj = ref["object"] if ref else None
-    while obj and obj["type"] == "tag":
-        annotated = get(f"repos/{repo}/git/tags/{obj['sha']}")
-        obj = annotated["object"] if annotated else None
-    return obj["sha"] if obj else None
+    try:
+        ref = get(f"repos/{repo}/git/ref/tags/{tag}")
+        obj = ref["object"] if ref else None
+        while obj and obj["type"] == "tag":
+            annotated = get(f"repos/{repo}/git/tags/{obj['sha']}")
+            obj = annotated["object"] if annotated else None
+        return obj["sha"] if obj else None
+    except (KeyError, TypeError):
+        raise Unavailable("gh-error")
 
 
 def verify(repo, sha, tag, cache):
@@ -74,7 +81,9 @@ def verify(repo, sha, tag, cache):
         found = cache[(repo, tag)]
     if found == sha:
         return "ok", None
-    if get(f"repos/{repo}/commits/{sha}") is None:
+    if (repo, sha) not in cache:
+        cache[(repo, sha)] = get(f"repos/{repo}/commits/{sha}") is not None
+    if not cache[(repo, sha)]:
         return "unknown-commit", None
     if not tag:
         return "ok", None
@@ -82,6 +91,7 @@ def verify(repo, sha, tag, cache):
 
 
 def find_pins(repo):
+    """Every SHA-pinned `uses:` line of the workflow files of a repo, as pin dicts without a result."""
     pins = []
     for path in sorted(glob.glob(os.path.join(repo, ".github", "workflows", "*.y*ml"))):
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -100,13 +110,15 @@ def main(argv):
         return 2
     pins, cache, stopped = find_pins(argv[1]), {}, None
     for pin in pins:
-        try:
-            if stopped:
-                raise Unavailable(stopped)
-            pin["result"], reason = verify("/".join(pin["uses"].split("/")[:2]), pin["sha"], pin["tag"], cache)
-        except (Unavailable, KeyError, TypeError) as error:
-            stopped = stopped or (str(error) if isinstance(error, Unavailable) else "gh-error")
-            pin["result"], reason = "unverified", stopped
+        reason = stopped
+        if stopped:
+            pin["result"] = "unverified"
+        else:
+            try:
+                pin["result"], reason = verify("/".join(pin["uses"].split("/")[:2]), pin["sha"], pin["tag"], cache)
+            except Unavailable as error:
+                pin["result"], stopped = "unverified", str(error)
+                reason = stopped
         if reason:
             pin["reason"] = reason
     reasons = sorted({pin["reason"] for pin in pins if "reason" in pin})

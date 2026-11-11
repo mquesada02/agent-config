@@ -581,7 +581,8 @@ class EvalReadme(unittest.TestCase):
 
     def test_the_allowed_tools_are_the_intake_call_and_no_gh_api(self):
         text = read(os.path.join(SKILL, "evals", "README.md"))
-        self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)"', text)
+        self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)" '
+                      '"Bash(python3 *scripts/check_pins.py*)"', text)
         self.assertNotIn("Bash(gh api", text)
 
 

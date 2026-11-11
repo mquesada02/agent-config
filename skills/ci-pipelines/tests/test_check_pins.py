@@ -103,13 +103,22 @@ class CheckPins(unittest.TestCase):
         }
         for reason, message in cases.items():
             with self.subTest(reason=reason):
+                open(self.box.log, "w").close()
                 self.box.route(REPO, "", exit=4, stderr=message)
                 out = self.check(f"acme/setup@{GOOD} # v1", f"acme/other@{GOOD} # v1")
                 self.assertEqual(out["status"], "unverified")
                 self.assertEqual(out["unverified_reasons"], [reason])
                 self.assertEqual({p["result"] for p in out["pins"]}, {"unverified"})
                 self.assertEqual(len(self.box.calls()), 1)
-                open(self.box.log, "w").close()
+
+    def test_an_answer_of_an_unexpected_shape_is_unverified_and_the_same_commit_is_looked_up_once(self):
+        self.box.route(f"{REPO}/git/ref/tags/v1", {"unexpected": True})
+        out = self.check(f"acme/setup@{GOOD} # v1")
+        self.assertEqual((out["status"], out["unverified_reasons"]), ("unverified", ["gh-error"]))
+        self.tag("v2", OTHER)
+        self.commit(GOOD)
+        self.check(f"acme/setup@{GOOD} # v2", f"acme/setup@{GOOD} # v3")
+        self.assertEqual(self.box.calls().count(["api", f"{REPO}/commits/{GOOD}"]), 1)
 
     def test_a_missing_gh_is_unverified(self):
         box = Sandbox(gh=False)
