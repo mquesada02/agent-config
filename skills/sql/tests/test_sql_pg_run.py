@@ -34,10 +34,19 @@ names = ["PGOPTIONS", "PGPASSWORD", "PGSERVICE", "PGHOST", "PGHOSTADDR", "PGPORT
 stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") or any(a.startswith("targets=") for a in argv) else None
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "stdin": stdin, "env": {n: os.environ.get(n) for n in names}}) + "\n")
-probe = any("SHOW server_version_num" in a for a in argv)
+# The three sessions of `diff` are told apart by their argv: the describe session has `LIMIT 0`, the type session
+# `pg_typeof`, the proof session its first CTE.
+describe = any("LIMIT 0" in a for a in argv)
+probe = any("SHOW server_version_num" in a for a in argv) and not describe
 # The kind of a write-mode run, from its argv: the catalog script has the `targets=` variable, the others
 # are told apart by the start of their EXPLAIN text.
 kind = "probe" if probe else "run"
+if describe:
+    kind = "describe"
+if any("pg_typeof" in a for a in argv):
+    kind = "types"
+if any("pgrun_ra AS MATERIALIZED" in a for a in argv):
+    kind = "proof"
 if any(a.startswith("targets=") for a in argv):
     kind = "catalog"
 for a in argv:
@@ -61,6 +70,12 @@ else:
         out = json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Schema": "public", "Relation Name": "t"}}])
     if out is None and kind == "catalog":
         out = json.dumps({"hits": [], "sequence": False})
+    if out is None and kind == "describe":
+        out = "server_version_num\n" + os.environ.get("FAKE_VERSION", "180000") + "\n" + os.environ.get("FAKE_HEADERS", "id\nid\n")
+    if out is None and kind == "types":
+        out = json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True, "leaf": 23}}})
+    if out is None and kind == "proof":
+        out = json.dumps({"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []})
     if out is None:
         out = json.dumps([{"Plan": {"Node Type": "Result", "Shared Hit Blocks": 0}}], indent=2)
     sys.stdout.write(out)
@@ -377,10 +392,15 @@ class AllowlistFirstTest(PgRunTestCase):
 
 
 class UsageTest(PgRunTestCase):
-    def test_an_unknown_mode_the_diff_action_and_a_facts_call_with_no_names_are_usage_errors(self):
+    def test_an_unknown_mode_a_diff_or_facts_call_with_a_missing_argument_and_other_bad_calls_are_usage_errors(self):
         cases = [
             ("explain", "--repo", "r", "--service", "app-dev", "--mode", "rewrite", "--statement", "DELETE FROM t"),
             ("diff", "--repo", "r", "--service", "app-dev"),
+            ("diff", "--repo", "r", "--service", "app-dev", "--a=SELECT 1"),
+            ("diff", "--repo", "r", "--service", "app-dev", "--b=SELECT 1"),
+            ("diff", "--repo", "r", "--a=SELECT 1", "--b=SELECT 1"),
+            ("diff", "--service", "app-dev", "--a=SELECT 1", "--b=SELECT 1"),
+            ("diff", "--repo", "r", "--service", "app-dev", "--a", "--x", "--b=SELECT 1"),
             ("facts", "--repo", "r", "--service", "app-dev"),
             ("bogus",),
             (),
@@ -1321,6 +1341,432 @@ class WriteRunTest(PgRunTestCase):
                     text = json.dumps(data)
                     for canary in CANARIES:
                         self.assertNotIn(canary, text)
+
+
+INT_TYPES = {"23": {"name": "integer", "float": False, "equality": True, "leaf": 23}}
+
+
+def types_json(a, b, **entries):
+    """A canned type session: `a` and `b` are lists of oids; `entries` adds or replaces entries by oid."""
+    types = {**INT_TYPES, **{str(oid): entry for oid, entry in entries.items()}}
+    return json.dumps({"a": a, "b": b, "types": types})
+
+
+def entry(name, equality=True, float_=False, leaf=None, oid=None):
+    return {"name": name, "float": float_, "equality": equality, "leaf": leaf if leaf is not None else oid}
+
+
+class DiffTestCase(PgRunTestCase):
+    def diff(self, a="SELECT 1 AS id", b="SELECT 1 AS id", service="app-dev", env=None):
+        done = self.run_pg("diff", "--repo", self.repo, "--service", service, f"--a={a}", f"--b={b}", env=env, stdin="")
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return done.returncode, json.loads(done.stdout)
+
+    def sessions(self):
+        """The three calls of a diff run, by kind: describe, types and proof."""
+        found = {}
+        for call in self.calls():
+            text = "\n".join(commands_of(call))
+            kind = "describe" if "LIMIT 0" in text else "types" if "pg_typeof" in text else "proof"
+            found[kind] = call
+        return found
+
+    def proof_text(self):
+        return commands_of(self.sessions()["proof"])[1]
+
+
+class DiffGuardTest(DiffTestCase):
+    def test_a_statement_that_fails_the_guard_is_refused_before_any_psql_call_and_names_its_side(self):
+        for a, b, side, reason in (
+            ("SELECT 1", "DELETE FROM t", "b", "write_statement"),
+            ("UPDATE t SET a = 1", "SELECT 1", "a", "write_statement"),
+            ("SELECT 1", "SELECT ts_stat('x')", "b", "forbidden_function"),
+            ("SELECT crosstab('x')", "SELECT 1", "a", "forbidden_function"),
+            ("SELECT query_to_xml('x', true, true, '')", "SELECT 1", "a", "forbidden_function"),
+            ("SELECT cursor_to_xml('x', 1, true, true, '')", "SELECT 1", "a", "forbidden_function"),
+            ("SELECT connectby('x')", "SELECT 1", "a", "forbidden_function"),
+            ("SELECT 1", "SELECT (1", "b", "unbalanced_parentheses"),
+            ("SELECT 1)", "SELECT 1", "a", "unbalanced_parentheses"),
+            ("SELECT 1", "SELECT 1; SELECT 2", "b", "multiple_statements"),
+            ("SELECT 1", "", "b", "empty"),
+            ("--x", "SELECT 1", "a", "empty"),
+        ):
+            with self.subTest(a=a, b=b):
+                self.reset_log()
+                code, data = self.diff(a, b)
+                self.assertEqual(code, 1)
+                self.assertEqual((data["ok"], data["error"], data["statement"], data["reason"]), (False, "refused", side, reason))
+                self.assertEqual(sorted(data), ["error", "message", "ok", "reason", "statement", "static_review_only"])
+                self.assertEqual(self.calls(), [])
+        code, data = self.diff("SELECT 1", "VACUUM t")
+        self.assertTrue(data["static_review_only"])
+
+    def test_the_allowlist_is_checked_before_the_guard_and_no_connection_follows_not_allowed(self):
+        code, data = self.diff("DELETE FROM t", "DELETE FROM t", service="other")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "not_allowed", "service_not_listed"))
+        self.assertEqual(self.calls(), [])
+
+    def test_the_equals_form_takes_a_statement_that_starts_with_a_comment_or_a_dash_value(self):
+        code, data = self.diff("-- why\nSELECT 1 AS id", "SELECT 1 AS id")
+        self.assertEqual((code, data["ok"]), (0, True), data)
+        self.reset_log()
+        code, data = self.diff("--x", "SELECT 1")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "refused", "empty"))
+
+
+class DiffSessionTest(DiffTestCase):
+    def test_every_call_has_x_and_w_and_the_user_text_only_in_c_arguments_and_nothing_on_stdin(self):
+        marker_a, marker_b = "SELECT 7 AS id /* marker_a */", "SELECT 7 AS id /* marker_b */"
+        code, data = self.diff(marker_a, marker_b, env={"FAKE_READ_STDIN": "1"})
+        self.assertEqual(code, 0, data)
+        calls = self.calls()
+        self.assertEqual(len(calls), 3)
+        for call in calls:
+            self.assertIn("-X", call["argv"])
+            self.assertIn("-w", call["argv"])
+            self.assertEqual(call["stdin"], "")
+            self.assertNotIn("-f", call["argv"])
+            self.assertNotIn("marker_a", call["argv"][-1])
+        text = json.dumps([c["argv"] for c in calls])
+        self.assertIn("marker_a", text)
+        self.assertIn("marker_b", text)
+
+    def test_the_describe_session(self):
+        self.diff("SELECT 1 AS id", "SELECT 2 AS id")
+        call = self.sessions()["describe"]
+        self.assertEqual(call["argv"][:5], ["-X", "-w", "--csv", "-q", "-v"])
+        self.assertIn("ON_ERROR_STOP=1", call["argv"])
+        self.assertEqual(
+            commands_of(call),
+            ["SHOW server_version_num", "BEGIN READ ONLY", "SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0",
+             "SELECT * FROM (SELECT 2 AS id\n) AS t LIMIT 0", "ROLLBACK"],
+        )
+        base = (
+            "-c default_transaction_read_only=on -c standard_conforming_strings=on "
+            "-c statement_timeout=30s -c lock_timeout=2s -c idle_in_transaction_session_timeout=10s"
+        )
+        self.assertEqual(call["argv"][-1], f"service=app-dev options='{base}'")
+
+    def test_the_type_and_proof_sessions_are_read_only_and_use_the_flags_of_explain(self):
+        self.diff()
+        for kind in ("types", "proof"):
+            call = self.sessions()[kind]
+            self.assertEqual(call["argv"][:7], ["-X", "-w", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
+            commands = commands_of(call)
+            self.assertEqual((commands[0], commands[2], len(commands)), ("BEGIN READ ONLY", "ROLLBACK", 3))
+            self.assertIn("-c default_transaction_read_only=on", call["argv"][-1])
+
+    def test_the_version_gates_the_transaction_timeout_in_the_type_and_proof_sessions_only(self):
+        for version, expected in (("130000", False), ("160013", False), ("170000", True), ("180000", True)):
+            with self.subTest(version=version):
+                self.reset_log()
+                code, data = self.diff(env={"FAKE_VERSION": version})
+                self.assertEqual(code, 0, data)
+                sessions = self.sessions()
+                self.assertNotIn("transaction_timeout", sessions["describe"]["argv"][-1])
+                for kind in ("types", "proof"):
+                    self.assertEqual("transaction_timeout=60s" in sessions[kind]["argv"][-1], expected)
+                self.assertEqual(data["server_version_num"], int(version))
+                self.assertEqual("transaction_timeout" in data["timeouts"], expected)
+
+    def test_a_per_service_timeout_override_applies_to_every_session(self):
+        self.write_allowlist(
+            'services = ["app-dev", "app-test"]\n["github.com/o/r".timeouts.app-dev]\nstatement_timeout = "45s"\n'
+        )
+        code, data = self.diff()
+        self.assertEqual(data["timeouts"]["statement_timeout"], "45s")
+        for call in self.calls():
+            self.assertIn("-c statement_timeout=45s", call["argv"][-1])
+
+    def test_a_final_line_comment_cannot_swallow_the_closing_parenthesis(self):
+        self.diff("SELECT 1 AS id -- last", "SELECT 1 AS id -- also last")
+        sessions = self.sessions()
+        describe = commands_of(sessions["describe"])
+        self.assertIn("-- last\n) AS t LIMIT 0", describe[2])
+        self.assertIn("-- also last\n) AS t LIMIT 0", describe[3])
+        self.assertIn("-- last\n) AS x(c1) ON false", commands_of(sessions["types"])[1])
+        proof = self.proof_text()
+        self.assertIn("-- last\n) AS t(c1)", proof)
+        self.assertIn("-- also last\n) AS t(c1)", proof)
+
+    def test_the_proof_has_materialized_pgrun_ctes_and_an_alias_on_every_subquery_in_from(self):
+        self.diff("SELECT id FROM t ORDER BY id", "SELECT id FROM t ORDER BY id")
+        proof = self.proof_text()
+        for name in ("ra", "rb", "a", "b", "oa", "ob", "na", "nb", "xa", "xb"):
+            self.assertIn(f"pgrun_{name} AS MATERIALIZED (", proof, name)
+        self.assertIn("EXCEPT ALL", proof)
+        self.assertIn(") AS k)", proof)
+        self.assertIn(") AS s)", proof)
+        self.assertEqual(proof.count("WITH "), 1)
+
+    def test_a_statement_with_a_trailing_semicolon_is_cut(self):
+        self.diff("SELECT 1 AS id;", "SELECT 1 AS id ; -- x")
+        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", commands_of(self.sessions()["describe"])[2])
+        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", commands_of(self.sessions()["describe"])[3])
+
+
+class DiffShapeTest(DiffTestCase):
+    def test_a_column_count_or_name_mismatch_is_a_shape_result_and_only_the_describe_session_runs(self):
+        for headers in ("id\nid,name\n", "id,name\nid\n", "id\nname\n", "id,name\nname,id\n", "id,id\nid,x\n"):
+            with self.subTest(headers=headers):
+                self.reset_log()
+                code, data = self.diff(env={"FAKE_HEADERS": headers})
+                self.assertEqual(code, 0, data)
+                self.assertEqual(len(self.calls()), 1)
+                self.assertEqual(
+                    sorted(data),
+                    ["action", "column_names", "equal", "ok", "reason", "server_version_num", "service", "timeouts"],
+                )
+                self.assertEqual((data["equal"], data["reason"]), (False, "shape"))
+                a, b = headers.strip("\n").split("\n")
+                self.assertEqual(data["column_names"], {"a": a.split(","), "b": b.split(",")})
+
+    def test_a_statement_with_no_output_column_is_a_shape_result(self):
+        for headers in ("\nid\n", "\n\n"):
+            with self.subTest(headers=headers):
+                self.reset_log()
+                code, data = self.diff(env={"FAKE_HEADERS": headers})
+                self.assertEqual((code, data["reason"], data["equal"]), (0, "shape", False), data)
+                self.assertEqual(len(self.calls()), 1)
+
+    def test_equal_duplicate_column_names_are_allowed(self):
+        types = types_json([23, 23], [23, 23])
+        code, data = self.diff(env={"FAKE_HEADERS": "id,id\nid,id\n", "FAKE_STDOUT_TYPES": types})
+        self.assertEqual((code, data["equal"]), (0, True), data)
+
+    def test_a_describe_output_with_other_than_four_records_is_bad_output(self):
+        for out in ("server_version_num\n180000\nid\n", "server_version_num\n180000\nid\nid\nid\n", "x\ny\n", "",
+                    "server_version_num\nabc\nid\nid\n"):
+            with self.subTest(out=out):
+                code, data = self.diff(env={"FAKE_STDOUT_DESCRIBE": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+
+    def test_a_quoted_header_with_a_comma_is_one_name(self):
+        code, data = self.diff(env={"FAKE_HEADERS": '"a,b"\n"a,b"\n'})
+        self.assertEqual((code, data["columns"]["a"][0]["name"]), (0, "a,b"), data)
+
+
+class DiffResultTest(DiffTestCase):
+    def test_an_equal_result_has_exactly_the_full_result_keys(self):
+        code, data = self.diff()
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            sorted(data),
+            sorted(["ok", "action", "service", "server_version_num", "timeouts", "equal", "columns", "rows", "only_a",
+                    "only_b", "type_mismatch", "casts", "floats", "order"]),
+        )
+        self.assertEqual((data["ok"], data["action"], data["service"], data["equal"]), (True, "diff", "app-dev", True))
+        self.assertEqual(data["columns"], {"a": [{"name": "id", "type": "integer"}], "b": [{"name": "id", "type": "integer"}]})
+        self.assertEqual(data["rows"], {"a": 0, "b": 0})
+        self.assertEqual((data["only_a"], data["only_b"]), ({"count": 0, "rows": []}, {"count": 0, "rows": []}))
+        self.assertEqual((data["type_mismatch"], data["casts"], data["floats"], data["order"]), ([], [], [], "not_applicable"))
+
+    def test_a_row_only_on_one_side_gives_equal_false_with_its_count_and_samples(self):
+        proof = json.dumps({"ra": 3, "rb": 2, "oa_count": 1, "ob_count": 0, "oa": [{"c1": 5}], "ob": []})
+        code, data = self.diff(env={"FAKE_STDOUT_PROOF": proof})
+        self.assertEqual((code, data["equal"]), (0, False))
+        self.assertEqual(data["only_a"], {"count": 1, "rows": [[5]]})
+        self.assertEqual(data["rows"], {"a": 3, "b": 2})
+
+    def test_the_count_is_the_full_count_and_the_samples_are_capped_at_twenty(self):
+        rows = [{"c1": i} for i in range(20)]
+        proof = json.dumps({"ra": 90, "rb": 0, "oa_count": 90, "ob_count": 0, "oa": rows, "ob": []})
+        code, data = self.diff(env={"FAKE_STDOUT_PROOF": proof})
+        self.assertEqual((data["only_a"]["count"], len(data["only_a"]["rows"])), (90, 20))
+        too_many = json.dumps({"ra": 90, "rb": 0, "oa_count": 90, "ob_count": 0, "oa": rows + [{"c1": 20}], "ob": []})
+        code, data = self.diff(env={"FAKE_STDOUT_PROOF": too_many})
+        self.assertEqual((code, data["error"]), (1, "bad_output"))
+
+    def test_a_type_mismatch_casts_both_sides_to_text_and_is_not_in_casts(self):
+        types = types_json([23], [1700], **{"1700": entry("numeric", oid=1700)})
+        code, data = self.diff(env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((code, data["equal"]), (0, False))
+        self.assertEqual(data["type_mismatch"], [{"position": 1, "name": "id"}])
+        self.assertEqual(data["casts"], [])
+        self.assertEqual(data["columns"]["b"], [{"name": "id", "type": "numeric"}])
+        self.assertEqual(self.proof_text().count("c1::text AS c1"), 2)
+
+    def test_a_type_mismatch_lists_each_position_so_duplicate_names_are_told_apart(self):
+        types = types_json([23, 23, 23], [23, 1700, 1700], **{"1700": entry("numeric", oid=1700)})
+        code, data = self.diff(env={"FAKE_HEADERS": "x,x,y\nx,x,y\n", "FAKE_STDOUT_TYPES": types})
+        self.assertEqual(data["type_mismatch"], [{"position": 2, "name": "x"}, {"position": 3, "name": "y"}])
+
+    def test_a_type_with_no_equality_is_cast_to_text_on_both_sides_and_named_in_casts(self):
+        types = types_json([114], [114], **{"114": entry("json", equality=False, oid=114)})
+        code, data = self.diff(env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((code, data["equal"], data["casts"], data["type_mismatch"]), (0, True, ["id"], []))
+        self.assertEqual(self.proof_text().count("c1::text AS c1"), 2)
+
+    def test_a_float_column_is_named_in_floats_and_is_compared_exactly(self):
+        types = types_json([701], [701], **{"701": entry("double precision", float_=True, oid=701)})
+        code, data = self.diff(env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((code, data["floats"], data["casts"]), (0, ["id"], []))
+        self.assertNotIn("::text", self.proof_text())
+
+    def test_a_float_on_either_side_is_named(self):
+        types = types_json([23], [701], **{"701": entry("double precision", float_=True, oid=701)})
+        code, data = self.diff(env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((data["floats"], data["equal"]), (["id"], False))
+
+    def test_a_leaf_that_is_a_float_marks_an_array_of_floats(self):
+        types = types_json([1022], [1022], **{"1022": entry("double precision[]", float_=True, leaf=701, oid=1022),
+                                              "701": entry("double precision", float_=True, oid=701)})
+        code, data = self.diff(env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((code, data["floats"]), (0, ["id"]))
+
+    def test_the_rows_of_a_sample_are_arrays_in_column_order(self):
+        types = types_json([23, 23], [23, 23])
+        proof = json.dumps({"ra": 1, "rb": 0, "oa_count": 1, "ob_count": 0, "oa": [{"c2": 2, "c1": 1}], "ob": []})
+        code, data = self.diff(env={"FAKE_HEADERS": "x,y\nx,y\n", "FAKE_STDOUT_TYPES": types, "FAKE_STDOUT_PROOF": proof})
+        self.assertEqual(data["only_a"]["rows"], [[1, 2]])
+
+
+class DiffOrderTest(DiffTestCase):
+    ORDERED = "SELECT id FROM t ORDER BY id"
+
+    def proof(self, **extra):
+        data = {"ra": 2, "rb": 2, "oa_count": 0, "ob_count": 0, "oa": [], "ob": [], "ties": 0,
+                "xa_count": 0, "xb_count": 0, "xa": [], "xb": []}
+        data.update(extra)
+        return json.dumps(data)
+
+    def test_no_order_by_in_a_is_not_applicable_and_builds_no_numbered_cte(self):
+        code, data = self.diff("SELECT id FROM t", "SELECT id FROM t ORDER BY id")
+        self.assertEqual((data["order"], "order_mismatch" in data, "reason" in data), ("not_applicable", False, False))
+        self.assertNotIn("pgrun_na", self.proof_text())
+
+    def test_an_order_by_only_in_a_subquery_is_not_applicable(self):
+        code, data = self.diff("SELECT id FROM (SELECT id FROM t ORDER BY id) AS s", "SELECT id FROM t")
+        self.assertEqual(data["order"], "not_applicable")
+
+    def test_resolved_keys_with_no_repeated_key_are_checked(self):
+        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": self.proof()})
+        self.assertEqual((code, data["order"], data["equal"]), (0, "checked", True), data)
+        self.assertEqual(data["order_mismatch"], {"count_a": 0, "count_b": 0, "a": [], "b": []})
+        self.assertNotIn("reason", data)
+        proof = self.proof_text()
+        self.assertIn("row_number() OVER (ORDER BY c1) AS rn", proof)
+        self.assertIn("GROUP BY c1 HAVING count(*) > 1", proof)
+
+    def test_the_keys_are_built_on_the_output_columns_with_their_direction_and_nulls(self):
+        a = 'SELECT x, "Y z" FROM t ORDER BY 2 DESC NULLS LAST, X ASC NULLS FIRST'
+        code, data = self.diff(a, a, env={
+            "FAKE_HEADERS": 'x,Y z\nx,Y z\n', "FAKE_STDOUT_TYPES": types_json([23, 23], [23, 23]),
+            "FAKE_STDOUT_PROOF": self.proof(),
+        })
+        self.assertEqual(data["order"], "checked", data)
+        self.assertIn("ORDER BY c2 DESC NULLS LAST, c1 NULLS FIRST) AS rn", self.proof_text())
+
+    def test_a_nonzero_order_mismatch_count_makes_equal_false_and_zero_counts_make_it_true(self):
+        for extra, expected in (
+            ({"xa_count": 1, "xa": [{"rn": 1, "c1": 1}]}, False), ({"xb_count": 2, "xb": [{"rn": 2, "c1": 1}]}, False), ({}, True),
+        ):
+            with self.subTest(extra=extra):
+                code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": self.proof(**extra)})
+                self.assertEqual((code, data["order"], data["equal"]), (0, "checked", expected), data)
+        self.assertEqual(data["only_a"]["count"], 0)
+
+    def test_the_order_mismatch_samples_are_arrays_with_the_rank_first(self):
+        proof = self.proof(xa_count=1, xa=[{"rn": 3, "c1": 9}])
+        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
+        self.assertEqual(data["order_mismatch"], {"count_a": 1, "count_b": 0, "a": [[3, 9]], "b": []})
+
+    def test_a_repeated_key_makes_the_order_partial_with_reason_ties_and_the_numbered_diff_is_not_used(self):
+        proof = self.proof(ties=2, xa_count=5, xa=[{"rn": 1, "c1": 1}])
+        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
+        self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "ties", True), data)
+        self.assertNotIn("order_mismatch", data)
+
+    def test_keys_that_cannot_be_extracted_or_resolved_make_the_order_partial_with_reason_sort_keys(self):
+        for a, headers in (
+            ("SELECT id FROM t ORDER BY id + 1", "id\nid\n"),
+            ("SELECT id FROM t ORDER BY t.id", "id\nid\n"),
+            ("SELECT id FROM t ORDER BY 5", "id\nid\n"),
+            ("SELECT id FROM t ORDER BY 0", "id\nid\n"),
+            ("SELECT id AS x FROM t ORDER BY id", "x\nx\n"),
+            ("SELECT id, id FROM t ORDER BY id", "id,id\nid,id\n"),
+            ("SELECT id FROM t ORDER BY ID", "Id\nId\n"),
+        ):
+            with self.subTest(a=a):
+                self.reset_log()
+                env = {"FAKE_HEADERS": headers}
+                if "," in headers:
+                    env["FAKE_STDOUT_TYPES"] = types_json([23, 23], [23, 23])
+                code, data = self.diff(a, a, env=env)
+                self.assertEqual((code, data["order"], data["reason"], data["equal"]), (0, "partial", "sort_keys", True), data)
+                self.assertNotIn("pgrun_na", self.proof_text())
+                self.assertNotIn("order_mismatch", data)
+
+    def test_a_sort_key_column_with_a_type_mismatch_is_partial_and_builds_no_numbered_cte(self):
+        types = types_json([23], [1700], **{"1700": entry("numeric", oid=1700)})
+        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_TYPES": types})
+        self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "sort_keys", False))
+        self.assertNotIn("pgrun_na", self.proof_text())
+
+    def test_a_mismatch_in_another_column_does_not_stop_the_order_proof(self):
+        types = types_json([23, 23], [23, 1700], **{"1700": entry("numeric", oid=1700)})
+        env = {"FAKE_HEADERS": "id,v\nid,v\n", "FAKE_STDOUT_TYPES": types, "FAKE_STDOUT_PROOF": self.proof()}
+        code, data = self.diff("SELECT id, v FROM t ORDER BY id", "SELECT id, v FROM t ORDER BY id", env=env)
+        self.assertEqual((data["order"], data["equal"]), ("checked", False))
+        self.assertIn("pgrun_na", self.proof_text())
+
+    def test_a_proof_without_the_numbered_fields_is_bad_output_when_the_keys_resolved(self):
+        proof = json.dumps({"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []})
+        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
+        self.assertEqual((code, data["error"]), (1, "bad_output"))
+
+
+class DiffFailureTest(DiffTestCase):
+    def test_each_connection_failure_kind_leaks_no_connection_value_in_each_session(self):
+        for failing in ("describe", "types", "proof"):
+            for name, stderr in (("auth", AUTH_STDERR), ("unreachable", UNREACHABLE_STDERR)):
+                with self.subTest(failing=failing, kind=name):
+                    code, data = self.diff(env={"FAKE_FAIL_KIND": failing, "FAKE_STDERR": stderr, "FAKE_EXIT": "2"})
+                    self.assertEqual((code, data["error"]), (1, "connection_failed"))
+                    text = json.dumps(data)
+                    for canary in CANARIES:
+                        self.assertNotIn(canary, text)
+
+    def test_a_statement_error_is_statement_failed_and_no_later_session_runs(self):
+        stderr = 'ERROR:  relation "nope" does not exist\nLINE 1: SELECT * FROM (SELECT * FROM nope\n'
+        code, data = self.diff(env={"FAKE_FAIL_KIND": "describe", "FAKE_STDERR": stderr, "FAKE_EXIT": "1"})
+        self.assertEqual((code, data["error"]), (1, "statement_failed"))
+        self.assertIn('relation "nope" does not exist', data["message"])
+        self.assertEqual(len(self.calls()), 1)
+        self.reset_log()
+        code, data = self.diff(env={"FAKE_FAIL_KIND": "types", "FAKE_STDERR": stderr, "FAKE_EXIT": "1"})
+        self.assertEqual((data["error"], len(self.calls())), ("statement_failed", 2))
+
+    def test_a_type_output_that_is_not_valid_is_bad_output_and_the_proof_never_runs(self):
+        bad = [
+            "not json", "[]", "{}", json.dumps({"a": [23], "b": [23]}),
+            json.dumps({"a": [23, 23], "b": [23], "types": INT_TYPES}),
+            json.dumps({"a": [23], "b": [99], "types": INT_TYPES}),
+            json.dumps({"a": ["23"], "b": [23], "types": INT_TYPES}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": 0, "equality": True, "leaf": 23}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True, "leaf": 77}}}),
+        ]
+        for out in bad:
+            with self.subTest(out=out):
+                self.reset_log()
+                code, data = self.diff(env={"FAKE_STDOUT_TYPES": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+                self.assertEqual(len(self.calls()), 2)
+
+    def test_a_proof_output_that_is_not_valid_is_bad_output(self):
+        good = {"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []}
+        for out in ("not json", "[]", json.dumps({**good, "ra": "0"}), json.dumps({**good, "oa_count": -1}),
+                    json.dumps({**good, "oa": {}}), json.dumps({**good, "oa": [{"c1": 1, "c2": 2}]}),
+                    json.dumps({**good, "oa": [[1]]}), json.dumps({**good, "ob": None})):
+            with self.subTest(out=out):
+                code, data = self.diff(env={"FAKE_STDOUT_PROOF": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+        for name in ("ra", "rb", "oa_count", "ob_count", "oa", "ob"):
+            partial = {k: v for k, v in good.items() if k != name}
+            code, data = self.diff(env={"FAKE_STDOUT_PROOF": json.dumps(partial)})
+            self.assertEqual(data["error"], "bad_output", name)
+
 
 if __name__ == "__main__":
     unittest.main()

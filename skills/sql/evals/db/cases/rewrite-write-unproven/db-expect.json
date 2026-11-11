@@ -1,0 +1,8 @@
+{
+  "expect": ["analyzed:app-pg13", "analyzed:app-pg18"],
+  "sequences_may_differ": false,
+  "final": {
+    "contains": ["Rewrite (unproven: write statement, no database diff):"],
+    "absent": ["proven by the database diff"]
+  }
+}

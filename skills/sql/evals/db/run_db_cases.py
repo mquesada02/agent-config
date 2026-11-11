@@ -11,8 +11,12 @@ the leak scan (grade_leak_scan.py) and grader G (grade_db_unchanged.py) on each 
 loads the skill folder as a plugin, with no user or project settings, no CLAUDE.md and no MCP server
 (`--setting-sources ""`, CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, `--strict-mcp-config`), no session file, and
 the tools Skill, Read and Bash limited to python3 on five scripts of the skill (rules_file.py, extract.py,
-allowlist.py, pg_run.py, plan_findings.py). The environment sets PGSERVICEFILE, PGPASSFILE and XDG_CONFIG_HOME
-to the state folder and drops every other PG* variable. Optional keys of db-expect.json: `rules` (grader E on
+allowlist.py, pg_run.py, plan_findings.py), and, for a case with a `bash` key, the exact full commands of that
+key (an exact rule: the same command with an added argument is not allowed). The environment sets PGSERVICEFILE,
+PGPASSFILE and XDG_CONFIG_HOME to the state folder and drops every other PG* variable. Optional keys of
+db-expect.json: `bash` (a list of exact commands that the case may run), `final` (an object with the lists
+`contains` and `absent` of literal strings that must or must not be in the final message; a failure line is
+`FAIL <case>#<n> final: missing "<string>"` or `FAIL <case>#<n> final: unexpected "<string>"`), `rules` (grader E on
 the final message), `report` (true: grader I on the final message), `disabled` (rule ids, passed to grader I
 as --disabled) and `judge` (the file name of a rubric in this folder: one `claude -p` call with no tools scores
 the explanation and the fix text of the final message, and prints "JUDGE <case>#<n>: <score>/5 <reason>", or
@@ -20,6 +24,8 @@ the explanation and the fix text of the final message, and prints "JUDGE <case>#
 no login); the driver writes nothing there. The teardown runs once, in a finally block, on every exit path
 (also SIGTERM and Ctrl-C). Needs docker and psql on PATH (pg_run runs psql on the host).
 The default of --out is a new temp folder, printed at the start; it holds the transcripts and snapshots.
+Before it starts anything, the driver reads the db-expect.json of every selected case: a malformed `bash` or
+`final` key is one line on stderr (`run_db_cases: <case>: <message>`) and exit code 2.
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failure, one line "<case>#<n>: PASS|FAIL"
 for each run, then PASS or FAIL. Exit code: 0 pass, 1 fail or a stop (a message on stderr), 2 usage error.
 """
@@ -49,11 +55,14 @@ JUDGE_SECONDS = 300
 JUDGE_SCORE = re.compile(r"(?m)^SCORE:\s*([0-5])\s*/\s*5\b[ \t:.-]*(.*)$")
 
 
-def allowed_tools():
-    return ["Skill", "Read"] + [f"Bash(python3 {SKILL_DIR}/scripts/{name}.py:*)" for name in SCRIPTS]
+def allowed_tools(bash=()):
+    """The allowed tools of a case: the global list, then one rule for each exact command of the case's `bash` key.
+    A rule with no `:*` and no wildcard matches only that command, so the same command with an added argument is refused."""
+    return (["Skill", "Read"] + [f"Bash(python3 {SKILL_DIR}/scripts/{name}.py:*)" for name in SCRIPTS]
+            + [f"Bash({command})" for command in bash])
 
 
-def claude_argv(prompt, budget):
+def claude_argv(prompt, budget, bash=()):
     argv = [
         "claude", "-p", prompt, "--model", "sonnet", "--output-format", "stream-json", "--verbose",
         "--no-session-persistence", "--plugin-dir", SKILL_DIR, "--setting-sources", "", "--strict-mcp-config",
@@ -61,7 +70,38 @@ def claude_argv(prompt, budget):
     ]
     if budget:
         argv += ["--max-budget-usd", budget]
-    return argv + ["--allowedTools", *allowed_tools()]
+    return argv + ["--allowedTools", *allowed_tools(bash)]
+
+
+def string_list_problem(value, name):
+    """The message for a value that is not a list of non-empty strings, else None."""
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        return f"{name} must be a list of non-empty strings"
+    return None
+
+
+def expectation_problem(case_folder):
+    """The message for a case whose db-expect.json cannot be read, or whose `bash` or `final` key is malformed, else None."""
+    try:
+        with open(os.path.join(case_folder, "db-expect.json"), encoding="utf-8") as handle:
+            expectation = json.load(handle)
+    except (OSError, ValueError):
+        return "db-expect.json cannot be read as JSON"
+    if not isinstance(expectation, dict):
+        return "db-expect.json must hold one object"
+    if "bash" in expectation:
+        problem = string_list_problem(expectation["bash"], "bash")
+        if problem:
+            return problem
+    if "final" in expectation:
+        final = expectation["final"]
+        if not isinstance(final, dict) or not set(final) <= {"contains", "absent"}:
+            return "final must be an object whose only keys are contains and absent"
+        for key in final:
+            problem = string_list_problem(final[key], f"final.{key}")
+            if problem:
+                return problem
+    return None
 
 
 def claude_env(state):
@@ -80,20 +120,24 @@ def grader(script, *args, stdin=None):
 
 
 def grade_final_message(label, trace, expectation):
-    """The failure lines of grader E (the `rules` key) and grader I (the `report` key, with `disabled`) on the
-    final message of the transcript. A missing final message is one failure line."""
+    """The failure lines of grader E (the `rules` key), grader I (the `report` key, with `disabled`) and the `final`
+    key (strings that must or must not appear) on the final message of the transcript. A missing final message is
+    one failure line."""
+    final = expectation.get("final", {})
+    strings = bool(final.get("contains") or final.get("absent"))
     checks = []
     if "rules" in expectation:
         rules = expectation["rules"]
         checks.append(("grade_rule_ids.py", ["-", "--expect", *rules["expect"], "--forbid", *rules["forbid"]]))
     if expectation.get("report"):
         checks.append(("grade_report.py", ["-", *(["--disabled", *expectation["disabled"]] if expectation.get("disabled") else [])]))
-    if not checks:
+    if not checks and not strings:
         return []
     message = results.final_message(trace)
     if message is None:
         return [f"FAIL {label} trace: no final message in {trace}"]
-    lines = []
+    lines = [f'FAIL {label} final: missing "{text}"' for text in final.get("contains", []) if text not in message]
+    lines += [f'FAIL {label} final: unexpected "{text}"' for text in final.get("absent", []) if text in message]
     for script, args in checks:
         code, found, error = grader(script, *args, stdin=message)
         lines += [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
@@ -174,7 +218,7 @@ def run_case(state, case_folder, number, out, budget):
     failures = []
     try:
         with open(trace, "w", encoding="utf-8") as handle:
-            done = subprocess.run(claude_argv(prompt, budget), cwd=work, env=claude_env(state), stdout=handle,
+            done = subprocess.run(claude_argv(prompt, budget, expectation.get("bash", [])), cwd=work, env=claude_env(state), stdout=handle,
                                   stderr=subprocess.PIPE, text=True, timeout=CLAUDE_SECONDS)
         if done.returncode != 0:
             failures.append(f"FAIL {label} claude: exit code {done.returncode}")
@@ -198,6 +242,11 @@ def main(argv):
     cases = sorted(os.path.join(CASES, name) for name in os.listdir(CASES) if fnmatch.fnmatch(name, args.case))
     if not cases:
         parser.error(f"no case matches {args.case}")
+    for case_folder in cases:
+        problem = expectation_problem(case_folder)
+        if problem:
+            print(f"run_db_cases: {os.path.basename(case_folder)}: {problem}", file=sys.stderr)
+            return 2
     missing = [tool for tool in ("docker", "psql") if shutil.which(tool) is None]
     if missing:
         print(f"run_db_cases: {', '.join(missing)} not found on PATH", file=sys.stderr)

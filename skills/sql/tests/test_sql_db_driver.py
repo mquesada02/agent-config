@@ -88,6 +88,8 @@ if mode in REPORTS or mode == "plan02-nofinal":
         events.append(result(call_id, checked))
     if mode != "plan02-nofinal":
         events.append({"type": "result", "result": REPORTS[mode]})
+if os.environ.get("FAKE_FINAL"):
+    events.append({"type": "result", "result": os.environ["FAKE_FINAL"]})
 for event in events:
     print(json.dumps(event))
 '''
@@ -329,12 +331,112 @@ class DriverTest(base.TempTest):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL plan-02-seq-scan#1 expect:PLAN-02: not found in the Rule column", proc.stdout)
 
+    BASH = "node --test --test-concurrency=2"
+
+    def keyed_driver(self, **keys):
+        """The driver of a copy of the skill folder that has a case `keyed` (a copy of plan-select with `keys` added
+        to its db-expect.json). The driver finds its cases from its own path, so the real cases stay untouched."""
+        self.copies = getattr(self, "copies", 0) + 1
+        skill = os.path.join(self.root, f"skill-copy-{self.copies}")
+        for folder in ("evals", "graders", "scripts"):
+            shutil.copytree(os.path.join(SKILL_DIR, folder), os.path.join(skill, folder))
+        keyed = os.path.join(skill, "evals", "db", "cases", "keyed")
+        shutil.copytree(os.path.join(skill, "evals", "db", "cases", "plan-select"), keyed)
+        path = os.path.join(keyed, "db-expect.json")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        data.update(keys)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        return os.path.join(skill, "evals", "db", "run_db_cases.py")
+
+    def run_keyed(self, driver, case, env=None):
+        return subprocess.run([sys.executable, "-I", driver, "--out", self.out, "--case", case, "--runs", "1"],
+                              capture_output=True, text=True, env={**self.env, **(env or {})}, cwd=self.root)
+
+    def allowed(self):
+        argv = self.claude()["argv"]
+        return argv[argv.index("--allowedTools") + 1:]
+
+    def test_the_bash_key_adds_each_exact_command_to_the_allowed_tools_of_that_case_only(self):
+        driver = self.keyed_driver(bash=[self.BASH, "node --version"])
+        proc = self.run_keyed(driver, "keyed")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        skill = os.path.dirname(os.path.dirname(os.path.dirname(driver)))
+        base_tools = ["Skill", "Read"] + [
+            f"Bash(python3 {skill}/scripts/{name}.py:*)" for name in ("rules_file", "extract", "allowlist", "pg_run", "plan_findings")]
+        self.assertEqual(self.allowed(), base_tools + [f"Bash({self.BASH})", "Bash(node --version)"])
+        self.run_keyed(driver, "plan-select")
+        self.assertEqual(self.allowed(), base_tools)
+
+    def test_the_rule_of_a_bash_command_is_exact_so_the_same_command_with_an_added_argument_does_not_match(self):
+        driver = self.keyed_driver(bash=[self.BASH])
+        self.run_keyed(driver, "keyed")
+        rules = [rule for rule in self.allowed() if rule.startswith("Bash(node")]
+        self.assertEqual(rules, [f"Bash({self.BASH})"])
+        self.assertNotIn("*", rules[0])
+        self.assertNotIn(":", rules[0])
+        # The rule text ends at the closing parenthesis of the command: an added argument is a different text.
+        self.assertTrue(rules[0].endswith(f"{self.BASH})"))
+
+    def test_the_final_key_fails_a_missing_string_and_a_forbidden_string_with_the_case_label(self):
+        driver = self.keyed_driver(final={"contains": ["alpha", "beta"], "absent": ["gamma", "delta"]})
+        proc = self.run_keyed(driver, "keyed", env={"FAKE_FINAL": "alpha and gamma are here"})
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertEqual(proc.stdout.splitlines(), [
+            'FAIL keyed#1 final: missing "beta"', 'FAIL keyed#1 final: unexpected "gamma"', "keyed#1: FAIL", "FAIL"])
+
+    def test_the_final_key_passes_when_every_string_is_there_and_none_is_forbidden(self):
+        driver = self.keyed_driver(final={"contains": ["alpha"], "absent": ["gamma"]})
+        proc = self.run_keyed(driver, "keyed", env={"FAKE_FINAL": "alpha only"})
+        self.assertEqual(proc.stdout.splitlines(), ["keyed#1: PASS", "PASS"])
+
+    def test_the_final_key_fails_when_there_is_no_final_message(self):
+        driver = self.keyed_driver(final={"contains": ["alpha"]})
+        proc = self.run_keyed(driver, "keyed")
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(any(line.startswith("FAIL keyed#1 trace: no final message") for line in proc.stdout.splitlines()), proc.stdout)
+
+    def test_a_case_with_an_empty_final_object_needs_no_final_message(self):
+        driver = self.keyed_driver(final={})
+        proc = self.run_keyed(driver, "keyed")
+        self.assertEqual(proc.stdout.splitlines(), ["keyed#1: PASS", "PASS"])
+
+    def test_a_malformed_bash_or_final_key_is_refused_with_exit_2_before_anything_starts(self):
+        bad = [
+            ({"bash": "node --test"}, "bash must be a list of non-empty strings"),
+            ({"bash": [""]}, "bash must be a list of non-empty strings"),
+            ({"bash": [1]}, "bash must be a list of non-empty strings"),
+            ({"bash": None}, "bash must be a list of non-empty strings"),
+            ({"final": []}, "final must be an object whose only keys are contains and absent"),
+            ({"final": {"must": ["a"]}}, "final must be an object whose only keys are contains and absent"),
+            ({"final": {"contains": "a"}}, "final.contains must be a list of non-empty strings"),
+            ({"final": {"absent": [""]}}, "final.absent must be a list of non-empty strings"),
+            ({"final": {"contains": ["a", 2]}}, "final.contains must be a list of non-empty strings"),
+        ]
+        for keys, message in bad:
+            with self.subTest(keys=keys):
+                driver = self.keyed_driver(**keys)
+                proc = self.run_keyed(driver, "keyed")
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertEqual(proc.stdout, "")
+                self.assertEqual(proc.stderr.strip(), f"run_db_cases: keyed: {message}")
+                self.assertEqual(self.verbs("run"), [])
+
+    def test_only_the_selected_cases_are_read(self):
+        driver = self.keyed_driver(bash="bad")
+        proc = self.run_keyed(driver, "plan-select")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_the_real_case_names_and_their_expectations(self):
         plans = ["plan:app-pg13", "plan:app-pg18"]
         expected = {"plan-select": plans, "facts-pg-02": ["facts:app-pg13", "facts:app-pg18"],
                     "plan-01-estimate": plans, "plan-02-seq-scan": plans, "plan-03-spill": plans,
                     "plan-04-nested-loop": plans, "plan-05-cache": plans, "plan-clean": plans,
                     "plan-disabled": plans,
+                    "rewrite-proven": ["diff:app-pg13", "diff:app-pg18"],
+                    "rewrite-no-tests": ["diff:app-pg13", "diff:app-pg18"],
+                    "rewrite-write-unproven": ["analyzed:app-pg13", "analyzed:app-pg18"],
                     "write-analyze": ["analyzed:app-pg13", "analyzed:app-pg18"],
                     "write-sequence": ["analyzed:app-pg13", "analyzed:app-pg18",
                                        "sequence_warning:app-pg13", "sequence_warning:app-pg18"],

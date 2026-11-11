@@ -1,0 +1,9 @@
+{
+  "expect": ["diff:app-pg13", "diff:app-pg18"],
+  "sequences_may_differ": false,
+  "bash": ["node --test --test-concurrency=2"],
+  "final": {
+    "contains": ["Rewrite (proven: database diff and repo tests):", "rewrite-proof-ok"],
+    "absent": ["Rewrite (unproven"]
+  }
+}

@@ -21,7 +21,16 @@ SEVERITIES = list(HEADINGS)
 APPROVE_HEADING = "## Approve"
 APPROVE_FINDINGS = "Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`."
 APPROVE_ZERO = "There is nothing to approve."
-REWRITE_LABEL = "Rewrite (unproven: no database):"
+REWRITE_LABELS = (
+    "Rewrite (proven: database diff and repo tests):",
+    "Rewrite (proven by the database diff only: no repo tests ran):",
+    "Rewrite (partial proof by the database diff: order not checked, ties):",
+    "Rewrite (partial proof by the database diff: order not checked, sort keys):",
+    "Rewrite (unproven: no database):",
+    "Rewrite (unproven: the database diff failed):",
+    "Rewrite (unproven: write statement, no database diff):",
+    "Rewrite (unproven: statement not complete, no database diff):",
+)
 RULE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 PLACE = re.compile(r"^(\S+):([1-9][0-9]*)(?:-([1-9][0-9]*))?$")
 DISABLED_LINE = re.compile(r"^Disabled rules: (.*)\.$")
@@ -170,14 +179,14 @@ def grade(text, disabled_flag):
             if not found or (found.group(3) and int(found.group(3)) < int(found.group(2))):
                 fail("where", f"{cells[1]}: {place!r} is not <path>:<line> or <path>:<line>-<line>")
 
-    # rewrite: a Fix cell with the word Rewrite starts with the label and holds `database diff`
+    # rewrite: a Fix cell with the word Rewrite starts with one of the labels of the module and holds `database diff`
     for cells in all_rows:
         fix = cells[4]
         if re.search(r"\bRewrite\b", fix):
-            if not fix.startswith(REWRITE_LABEL):
-                fail("rewrite", f"{cells[1]}: the Fix cell does not start with `{REWRITE_LABEL}`")
+            if not fix.startswith(REWRITE_LABELS):
+                fail("rewrite", f"{cells[1]}: the Fix cell does not start with one of the rewrite labels of the module")
             if "database diff" not in fix:
-                fail("rewrite", f"{cells[1]}: the Fix cell does not name the missing `database diff`")
+                fail("rewrite", f"{cells[1]}: the Fix cell does not hold the words `database diff`")
 
     # approve: the text of the contract
     if approve_at is not None and headings[-1][1] == APPROVE_HEADING:

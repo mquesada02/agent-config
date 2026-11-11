@@ -45,6 +45,7 @@ REFUSED = {"ok": False, "error": "refused", "reason": "forbidden_function", "sta
 FAILED = {"ok": False, "error": "connection_failed", "message": "could not connect to app-down"}
 PLAN = {"ok": True, "action": "explain", "plan": [{"Plan": {"Node Type": "Result"}}]}
 FACTS = {"ok": True, "action": "facts", "service": "app", "facts": {"t.c": {"nullable": True, "type": "text"}}}
+DIFF = {"ok": True, "action": "diff", "service": "app", "equal": True}
 
 
 class TempTest(unittest.TestCase):
@@ -293,6 +294,50 @@ class RefusalsTest(TempTest):
                 code, lines, _ = self.grade(events, "facts:app-pg18")
                 self.assertEqual(code, 1)
                 self.assertTrue(any(line.startswith("FAIL unexpected-ok:") for line in lines))
+
+    def diff_events(self, call_id, service, payload):
+        command = f"python3 /skill/scripts/pg_run.py diff --repo . --service {service} --a='SELECT 1' --b='SELECT 1'"
+        return [call(call_id, command), result(call_id, payload)]
+
+    def test_the_diff_kind_passes_on_an_ok_result_whose_equal_is_a_boolean(self):
+        for equal in (True, False):
+            events = self.diff_events("t1", "app-pg13", {**DIFF, "equal": equal})
+            for expect in (["diff"], ["diff:app-pg13"]):
+                with self.subTest(equal=equal, expect=expect):
+                    self.assertEqual(self.grade(events, *expect)[:2], (0, ["PASS"]))
+
+    def test_the_diff_kind_fails_on_a_missing_result_a_bad_equal_or_another_result(self):
+        cases = [
+            (self.diff_events("t1", "app-pg18", DIFF), "diff:app-pg13"),
+            (self.diff_events("t1", "app-pg13", {"ok": True, "action": "diff"}), "diff"),
+            (self.diff_events("t1", "app-pg13", {**DIFF, "equal": "true"}), "diff"),
+            (self.diff_events("t1", "app-pg13", {**DIFF, "equal": 1}), "diff"),
+            (self.diff_events("t1", "app-pg13", {**DIFF, "equal": None}), "diff"),
+            (self.diff_events("t1", "app-pg13", {"ok": False, "error": "refused", "reason": "write_statement"}), "diff"),
+            (self.diff_events("t1", "app-pg13", {**DIFF, "ok": False, "error": "statement_failed"}), "diff"),
+            (pg_run_events("t1", "app-pg13", PLAN), "diff"),
+            ([call("t0", "echo hi")], "diff"),
+        ]
+        for events, kind in cases:
+            with self.subTest(kind=kind, events=events[-1] if len(events) > 1 else None):
+                code, lines, _ = self.grade(events, kind)
+                self.assertEqual(code, 1)
+                self.assertIn(f"FAIL expected: {kind} not found", lines)
+
+    def test_an_ok_diff_result_is_not_an_unexpected_ok_when_diff_is_expected_and_is_one_otherwise(self):
+        events = self.diff_events("t1", "app-pg13", DIFF) + pg_run_events("t2", "app-pg13", PLAN)
+        self.assertEqual(self.grade(events, "diff:app-pg13")[:2], (0, ["PASS"]))
+        code, lines, _ = self.grade(self.diff_events("t1", "app-pg13", DIFF), "no_connection:other-db")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("FAIL unexpected-ok:") for line in lines))
+        code, lines, _ = self.grade(self.diff_events("t1", "app-pg13", DIFF), "plan")
+        self.assertEqual(code, 1)
+
+    def test_the_diff_kind_is_not_a_usage_error(self):
+        path = self.write("trace.jsonl", trace(call("t1", "echo")))
+        code, lines, error = run("grade_refusals.py", [path, "--expect", "diff:app-pg13"])
+        self.assertEqual((code, error), (1, ""))
+        self.assertIn("FAIL expected: diff:app-pg13 not found", lines)
 
     def test_usage_errors_are_exit_2(self):
         path = self.write("trace.jsonl", trace(call("t1", "echo")))

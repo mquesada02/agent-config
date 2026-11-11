@@ -8,16 +8,14 @@ DB_ACCESS = os.path.join(SKILL_DIR, "db-access.md")
 OPTIMIZE = os.path.join(SKILL_DIR, "optimize.md")
 ROUTER = os.path.join(SKILL_DIR, "SKILL.md")
 
-# The stub sections that db-access.md keeps: heading -> the ticket that fills it.
-STUB_SECTIONS = {"Diff (stub)": "#397"}
 SECTIONS = (
     "Rules", "Allowlist", "pg_run", "Read-only path", "Statements that EXPLAIN cannot take",
-    "No full result", "Timeouts and versions", "Residual risk", "Write mode", "Facts",
+    "No full result", "Timeouts and versions", "Residual risk", "Write mode", "Diff", "Facts",
 )
 ERROR_KINDS = ("not_allowed", "refused", "connection_failed", "statement_failed", "psql_failed", "bad_output")
 GUARD_REASONS = (
     "empty", "unterminated", "multiple_statements", "write_statement", "not_select", "data_modifying",
-    "not_write", "forbidden_function", "unicode_identifier",
+    "not_write", "forbidden_function", "unicode_identifier", "unbalanced_parentheses",
 )
 ALLOWLIST_REASONS = ("no_repo", "missing_file", "unreadable_file", "malformed_file", "no_entry", "service_not_listed")
 
@@ -64,21 +62,46 @@ class DbAccessModuleTest(unittest.TestCase):
         self.assertRegex(section(self.text, "No full result"), r"(?i)`pg_run facts` returns catalog metadata only")
         self.assertIn("The only write path is `pg_run explain --mode write`, which always rolls back", self.text)
 
-    def test_it_is_not_a_stub_outside_its_stub_sections(self):
-        body = self.text
-        for heading in STUB_SECTIONS:
-            body = body.replace(section(self.text, heading), "")
-        self.assertNotRegex(body.replace("(stub)", ""), r"(?i)\bstub\b")
-        self.assertNotRegex(self.text.split("\n## ", 1)[0], r"(?i)\bstub\b")
+    def test_it_is_not_a_stub(self):
+        self.assertNotRegex(self.text, r"(?i)\bstub\b")
+        self.assertNotIn("#397", self.text)
 
-    def test_it_has_each_required_section_and_one_stub_for_each_later_ticket(self):
+    def test_it_has_each_required_section(self):
         for heading in SECTIONS:
             with self.subTest(heading=heading):
                 self.assertIn(heading, self.headings)
-        for heading, ticket in STUB_SECTIONS.items():
-            with self.subTest(heading=heading):
-                self.assertIn(heading, self.headings)
-                self.assertIn(ticket, section(self.text, heading))
+
+    def test_the_diff_section_holds_the_command_the_guard_the_output_keys_and_the_rules(self):
+        body = section(self.text, "Diff")
+        self.assertIn("pg_run.py diff --repo <repo root> --service <name> --a=<sql> --b=<sql>", body)
+        self.assertIn("`--a=<sql>`", body)
+        for reason in ("unbalanced_parentheses", "forbidden_function", "write_statement"):
+            with self.subTest(reason=reason):
+                self.assertIn(f"`{reason}`", body)
+        for name in ("query_to_xml*", "cursor_to_xml*", "ts_stat", "crosstab*", "connectby", "setval"):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", body)
+        for key in (
+            "action", "service", "server_version_num", "timeouts", "equal", "reason", "column_names", "columns", "rows",
+            "only_a", "only_b", "type_mismatch", "casts", "floats", "order", "order_mismatch", "count_a", "count_b",
+            "statement", "static_review_only",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(f"`{key}`", body)
+        self.assertIn('"count"', body)
+        for value in ("checked", "partial", "not_applicable", "ties", "sort_keys", "shape"):
+            with self.subTest(value=value):
+                self.assertIn(f"`{value}`", body)
+        self.assertRegex(body, r"(?i)at most 20 rows")
+        self.assertRegex(body, r"(?i)only action that returns rows")
+        self.assertRegex(body, r"(?i)one read-only transaction")
+        self.assertRegex(body, r"(?i)does not read the output order of B")
+
+    def test_the_residual_risk_section_names_the_diff_risks(self):
+        body = section(self.text, "Residual risk")
+        for text in ("#476", "not one transaction", "output order of B", "80 rows", "volatile", "multirange"):
+            with self.subTest(text=text):
+                self.assertIn(text, body)
 
     def test_the_rules_say_what_claude_never_does(self):
         body = section(self.text, "Rules")
@@ -133,6 +156,7 @@ class DbAccessModuleTest(unittest.TestCase):
         body = section(self.text, "No full result")
         self.assertRegex(body, r"(?i)plan only")
         self.assertRegex(body, r"(?i)never.*(result rows|rows)")
+        self.assertRegex(body, r"(?i)`pg_run diff` returns at most 20 rows of each difference")
 
     def test_the_timeouts_and_version_table(self):
         body = section(self.text, "Timeouts and versions")
@@ -249,7 +273,7 @@ class OptimizeDatabasePathTest(unittest.TestCase):
 
     def test_pg_run_and_psql_appear_nowhere_else(self):
         self.assertNotRegex(self.text, r"\bpsql\b")
-        outside = self.text.replace(self.path, "")
+        outside = self.text.replace(self.path, "").replace(section(self.text, "Rewrite proof"), "")
         self.assertNotRegex(outside, r"\bpg_run\b")
 
     def test_the_first_paragraph_names_both_paths(self):
@@ -259,8 +283,9 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertIn("## Database path", self.text)
         self.assertIn("Database path", first)
 
-    def test_the_other_stubs_are_kept(self):
-        self.assertIn("#397", self.text)
+    def test_the_diff_stub_is_gone(self):
+        self.assertNotIn("Diff (stub)", self.text)
+        self.assertNotIn("#397", self.text)
         self.assertNotIn("#396", self.text)
 
 

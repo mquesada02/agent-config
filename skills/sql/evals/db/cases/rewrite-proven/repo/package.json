@@ -1,0 +1,7 @@
+{
+  "name": "rewrite-proven-fixture",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

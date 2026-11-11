@@ -319,6 +319,41 @@ class ReportGraderTest(unittest.TestCase):
     def test_a_rewrite_with_no_database_diff_fails(self):
         self.assert_check(GOOD.replace("Run a database diff.", "Check it."), "rewrite")
 
+    # Each label of `Rewrite proof` in optimize.md.
+    LABELS = [
+        "Rewrite (proven: database diff and repo tests):",
+        "Rewrite (proven by the database diff only: no repo tests ran):",
+        "Rewrite (partial proof by the database diff: order not checked, ties):",
+        "Rewrite (partial proof by the database diff: order not checked, sort keys):",
+        "Rewrite (unproven: no database):",
+        "Rewrite (unproven: the database diff failed):",
+        "Rewrite (unproven: write statement, no database diff):",
+        "Rewrite (unproven: statement not complete, no database diff):",
+    ]
+
+    def test_each_label_of_the_module_passes_with_the_words_database_diff_after_the_sql(self):
+        for label in self.LABELS:
+            with self.subTest(label=label):
+                self.assert_pass(GOOD.replace(f"{LABEL} SELECT 1 FROM t. Run a database diff.",
+                                              f"{label} SELECT 1 FROM t. Run a database diff."))
+
+    def test_a_label_that_holds_the_words_database_diff_passes_with_nothing_after_the_sql(self):
+        for label in self.LABELS:
+            if "database diff" in label:
+                with self.subTest(label=label):
+                    self.assert_pass(GOOD.replace(f"{LABEL} SELECT 1 FROM t. Run a database diff.", f"{label} SELECT 1 FROM t."))
+
+    def test_the_label_with_no_database_diff_words_fails_with_nothing_after_the_sql(self):
+        self.assert_check(GOOD.replace(f"{LABEL} SELECT 1 FROM t. Run a database diff.", f"{LABEL} SELECT 1 FROM t."), "rewrite")
+
+    def test_a_label_that_is_not_one_of_the_module_labels_fails_even_with_database_diff(self):
+        for label in ("Rewrite (proven):", "Rewrite (proven by the database diff):", "Rewrite (unproven: no database)",
+                      "Rewrite (proven: database diff and repo tests)",
+                      "Rewrite (unproven: write statement):", "Rewrite (partial proof: order not checked, ties):"):
+            with self.subTest(label=label):
+                self.assert_check(GOOD.replace(f"{LABEL} SELECT 1 FROM t. Run a database diff.",
+                                               f"{label} SELECT 1 FROM t. Run a database diff."), "rewrite")
+
     def test_a_lower_case_rewrite_word_is_not_matched(self):
         self.assert_pass(GOOD.replace("List the columns.", "You can rewrite it as a list."))
 
