@@ -162,6 +162,14 @@ When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
 - if not, create a merge commit 
 
+Before you give the owner the merge command, check that the CI result of the PR is still valid. Skip this check when the PR has no CI checks.
+1. Compare the time of the last CI run of the PR with the last commit of the base branch.
+2. If the base moved after that run, merge the base into the PR branch: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`, or `git merge` of the base and a push. `gh pr update-branch` may not exist in the installed `gh`.
+3. Wait for a green CI run on the new head.
+4. Give the merge command only after that run is green.
+
+Never rebase and force-push a PR branch for this. It rewrites audited commits.
+
 After merging, run `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>`. It is the only cleanup path: it deletes the remote branch (unless the branch is protected), switches the main checkout to the **base** branch, pulls, and removes the worktree and the local branch. For the session's own worktree, finish the report and the memory update first, because the session ends at the last step. On a refusal, fix the cause or ask the user.
 
 ## 9. Model selection
