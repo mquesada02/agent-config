@@ -39,6 +39,12 @@ print({version!r})
 """
 
 
+RAW_SCRIPT = """#!{python}
+import sys
+sys.stdout.buffer.write({data!r})
+"""
+
+
 class Sandbox:
     """A temporary folder with a fake `gh`, fake tools and fixture repos."""
 
@@ -81,6 +87,10 @@ class Sandbox:
     def tool(self, name, version="1.0.0", fail=False):
         """Put a fake tool on PATH. It prints `version` as its only line, or exits 3 when `fail`."""
         self._executable(name, TOOL_SCRIPT.format(python=sys.executable, version=version, fail=fail))
+
+    def raw_output(self, name, data):
+        """Replace the program `name` on PATH by a fake that prints the bytes `data` and exits 0."""
+        self._executable(name, RAW_SCRIPT.format(python=sys.executable, data=data))
 
     def repo(self, files, remote="https://github.com/acme/widget.git"):
         """Create a git repo with `files` (a map of path to text) and an `origin` remote (None for no remote)."""
