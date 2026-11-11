@@ -226,14 +226,90 @@ def _join_as_bash(text):
             frames[-1][2].append(joined)
 
 
+def _squeeze(text):
+    return " ".join(text.replace("'", "").replace('"', "").split())
+
+
 def _normalise(text):
     """The text as the gate counts it: continued lines joined, quote characters removed (so a quoted gated command still counts), and
     a whitespace run is one space."""
-    return " ".join(_join_continued(text).replace("'", "").replace('"', "").split())
+    return _squeeze(_join_continued(text))
 
 
 def _occurrences(text, needle):
     return _normalise(text).count(needle)
+
+
+GLUE = "\x00"  # stands for the whitespace of a quoted value in `_flatten`; it is no whitespace and no quote for the count patterns.
+# Bash cannot pass a NUL in a command, so no command text holds one that this could be mistaken for.
+WHITESPACE = re.compile(r"\s+")
+DOUBLE_QUOTE_ESCAPE = re.compile(r"\\([$`\"\\])")  # the backslashes that bash removes inside double quotes
+
+
+def _flatten(text, level, start=0):
+    """(the text, the deepest nesting of a quoted unit in it). In the text, each whitespace run inside a quoted unit at nesting `level` is
+    GLUE, so that a quoted value that holds a space stays one word once `_squeeze` removes the quote characters. Nesting 1 is a unit that
+    is in no other unit; the body of a unit is the text that a nested shell reads (`bash -c '...'`), so a unit in it is one level deeper;
+    a substitution body is no nesting. `start` is the nesting of `text` itself: 1 for a word that is already unquoted, which is a unit.
+    The frames are a list and not recursive calls, as in `_join_as_bash`, so that deeply nested text cannot overflow the stack."""
+    deepest = start
+    # The scan reads each text as bash does (`in_body`): a quote in `"$(...)"` is inside the substitution and does not end the double quote.
+    frames = [(iter(_units(text, in_body=True, tolerant=True)), text, start, start > 0, [], "", "")]  # units, text, nesting, quoted, pieces, opener, closer
+    while True:
+        units, source, depth, quoted, out, opener, closer = frames[-1]
+        for kind, begin, end, closed in units:
+            piece = source[begin:end]
+            if kind in ("single", "double", "backtick", "paren"):
+                size = 2 if kind == "paren" else 1
+                tail = piece[-1] if closed else ""
+                body = source[begin + size:end - len(tail)]
+                if kind == "double":
+                    body = DOUBLE_QUOTE_ESCAPE.sub(r"\1", body)
+                inner = depth + 1 if kind in ("single", "double") else depth
+                deepest = max(deepest, inner)
+                frames.append((iter(_units(body, in_body=True, tolerant=True)), body, inner, kind in ("single", "double"), [], piece[:size], tail))
+                break
+            out.append(piece)
+        else:
+            frames.pop()
+            flat = opener + "".join(out) + closer
+            if quoted and depth == level:
+                flat = WHITESPACE.sub(GLUE, flat)
+            if not frames:
+                return flat, deepest
+            frames[-1][4].append(flat)
+
+
+def _normal_forms(text):
+    """The texts that the gated-form counts read: `_normalise(text)` first, then one text for each nesting level of quotes, where the
+    quoted units of that level are one word each. `bash -c 'git >"my f" branch -D x'` has the unit `"my f"` at level 2: the plain text
+    splits it into two words and a count pattern misses the form, and only the text of level 2 reads it as one word. Which level holds
+    the value is not known from the text, so every level is read; a count over any of the texts can only add to the plain count."""
+    forms = [_normalise(text)]
+    if "'" in text or '"' in text:
+        joined, level = _join_continued(text), 1
+        while True:
+            flat, deepest = _flatten(joined, level)
+            forms.append(_squeeze(flat))
+            if level >= deepest:
+                return forms
+            level += 1
+    return forms
+
+
+def _word_forms(words, levels=0):
+    """The same for the parsed words of a segment: the word is a unit at level 1, and a quote in it is one level deeper. There are at least
+    `levels` texts after the plain one, so that the forms of the head words line up with those of the whole segment."""
+    forms = [_normalise(" ".join(words))]
+    if not any(WHITESPACE.search(word) or "'" in word or '"' in word for word in words):
+        return forms * (levels + 1)  # every level reads the same words
+    joined, level = [_join_continued(word) for word in words], 1
+    while True:
+        flats = [_flatten(word, level, 1) for word in joined]
+        forms.append(_squeeze(" ".join(flat for flat, _ in flats)))
+        if level >= max(levels, *(deepest for _, deepest in flats)):
+            return forms
+        level += 1
 
 
 # ---- S8: conventional commits without attribution ----
@@ -2834,7 +2910,7 @@ GATED_FORMS = (PR_FORM, DISPATCH_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_F
 def _raw_match(text, form):
     """Whether the gated text of `form` is in a text that cannot be parsed."""
     if form.pattern is not None:
-        return form.pattern.search(_normalise(text)) is not None
+        return any(form.pattern.search(normal) for normal in _normal_forms(text))
     return bool(_occurrences(text, form.raw_text))
 
 
@@ -2982,8 +3058,8 @@ def _body_is_checked(body, segments):
     return bool(parts) and all(part in segments for part in parts)
 
 
-def _segment_text(segment, segments):
-    """The normalised text of a segment, without the substitution bodies that the gate has checked as segments."""
+def _segment_forms(segment, segments):
+    """The `_word_forms` of a segment, without the substitution bodies that the gate has checked as segments."""
     words = []
     for word in segment:
         for start, end in reversed(_substitution_bodies(word)):
@@ -2991,14 +3067,15 @@ def _segment_text(segment, segments):
             if _body_is_checked(word[start + opening:end - 1], segments):
                 word = word[:start] + word[end:]
         words.append(word)
-    return _normalise(" ".join(words))
+    return _word_forms(words)
 
 
-def _has_unaccounted_text(form, segment, segments):
-    """Whether a segment holds more of the form's text than it accounts for: its head, when the pattern sees it, accounts for one."""
+def _has_unaccounted_text(form, segment, texts):
+    """Whether a segment holds more of the form's text than it accounts for: its head, when the pattern sees it, accounts for one.
+    `texts` is `_segment_forms` of the segment; each reading of the quotes (see `_normal_forms`) is compared with the same reading of the head."""
     head = form.head(segment) if form.head else None
-    accounted = 1 if head is not None and form.pattern.search(_normalise(" ".join(head))) else 0
-    return len(form.pattern.findall(_segment_text(segment, segments))) > accounted
+    heads = _word_forms(head, len(texts) - 1) if head is not None else [""] * len(texts)
+    return any(len(form.pattern.findall(text)) > (1 if form.pattern.search(head_text) else 0) for text, head_text in zip(texts, heads))
 
 
 def _form_reason(form):
@@ -3007,7 +3084,8 @@ def _form_reason(form):
 
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
-    normalised = _normalise(command)
+    forms = _normal_forms(command)
+    segment_forms = [_segment_forms(segment, segments) for segment in segments]
     for form in GATED_FORMS:
         reason = _form_reason(form)
         matching = sum(form.segment(segment) for segment in segments)
@@ -3015,9 +3093,9 @@ def _unchecked_reason(command, segments):
             if _occurrences(command, form.count_text) > matching:
                 return reason
             continue
-        if len(form.pattern.findall(normalised)) > matching:  # whole text
+        if any(len(form.pattern.findall(normal)) > matching for normal in forms):  # whole text
             return reason
-        if any(_has_unaccounted_text(form, segment, segments) for segment in segments):  # per segment
+        if any(_has_unaccounted_text(form, segment, texts) for segment, texts in zip(segments, segment_forms)):  # per segment
             return reason
     return None
 
