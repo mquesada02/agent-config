@@ -65,7 +65,7 @@ def run(args, timeout=30):
     """(ok, stdout, stderr) of a subprocess. A missing program or a timeout is not ok."""
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as error:
         return False, "", f"{args[0]}: {error}"
     return done.returncode == 0, done.stdout, done.stderr
 
@@ -288,7 +288,11 @@ def detect_runners(repo, packages):
             deps = (data or {}).get(section)
             found |= {name for name in RUNNERS if isinstance(deps, dict) and name in deps}
         folder = os.path.join(repo, path)
-        for entry in os.listdir(folder):
+        try:
+            entries = os.listdir(folder)
+        except OSError:
+            continue
+        for entry in entries:
             found |= {runner for prefix, runner in CONFIGS if entry.startswith(prefix)}
     if found:
         return fact(sorted(found), "detected", "dependencies and config files")

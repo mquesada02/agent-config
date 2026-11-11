@@ -403,6 +403,33 @@ class GitHubFacts(IntakeCase):
         self.assertIn("no GitHub remote", foreign["required_checks"]["source"])
 
 
+class UnreadableInput(IntakeCase):
+    def test_non_utf8_output_of_gh_makes_the_facts_that_need_it_unknown(self):
+        self.box.raw_output("gh", b"\xff\xfe not utf-8")
+        facts = self.facts({"package.json": {}})
+        self.assertEqual(list(facts), KEYS)
+        self.assertEqual((facts["required_checks"]["value"], facts["required_checks"]["status"]), (None, "unknown"))
+        self.assertEqual((facts["run_history"]["value"], facts["run_history"]["status"]), (None, "unknown"))
+        self.assertFact(facts["default_branch"], "main", "default")
+        self.assertFact(facts["visibility"], "private", "default")
+
+    def test_non_utf8_output_of_git_falls_back_to_the_default_branch(self):
+        repo = self.box.repo({"package.json": {}}, remote=None)
+        os.remove(os.path.join(self.box.bin, "git"))
+        self.box.raw_output("git", b"origin/\xff\xfe\n")
+        self.assertFact(self.box.facts(repo)["default_branch"], "main", "default")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads every folder")
+    def test_a_package_folder_without_read_permission_does_not_stop_the_script(self):
+        repo = self.box.repo({"package.json": {"workspaces": ["packages/*"]}, "packages/a/package.json": {},
+                              "jest.config.js": ""})
+        folder = os.path.join(repo, "packages", "a")
+        os.chmod(folder, 0o100)
+        self.addCleanup(os.chmod, folder, 0o700)
+        facts = self.box.facts(repo)
+        self.assertFact(facts["test_runners"], ["jest"], "detected")
+
+
 class RequiredChecks(IntakeCase):
     def checks(self, remote="https://github.com/acme/widget.git"):
         return self.facts({"package.json": {}}, remote=remote)["required_checks"]
