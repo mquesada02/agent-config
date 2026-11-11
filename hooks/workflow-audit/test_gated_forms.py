@@ -28,7 +28,7 @@ GATED_FORMS = _gated_forms()
 
 class ListTest(unittest.TestCase):
     def test_the_list_holds_the_pr_gate_the_dispatch_gate_and_the_cleanup_gate(self):
-        self.assertEqual([form.count_text for form in GATED_FORMS], ["gh pr create", "orchestration worker-start", "git branch", "git push",
+        self.assertEqual([form.count_text for form in GATED_FORMS], ["gh pr create", "orchestration worker-start", "gh api pulls", "gh alias set", "git branch", "git push",
                                                                       "worktree remove", "worktree rm", "--skip-ownership"])
 
     def test_every_raw_text_is_inside_its_count_text_and_survives_the_normalisation(self):

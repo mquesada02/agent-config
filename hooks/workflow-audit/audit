@@ -2668,31 +2668,89 @@ def _is_orca(word):
     return os.path.basename(word) in ORCA_COMMANDS
 
 
+# The options of `gh` and `orca` that take a value. `gh api` has more of its own: they matter only to find its endpoint.
+GH_VALUE_OPTIONS = frozenset(("-R", "--repo"))
+# The value options of `orca` (the global ones and those of the dispatch command, from `orca agent-context --json`): orca may read them anywhere.
+ORCA_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
+    "environment", "pairing-code", "task", "spec", "spec-file", "task-title", "deps", "parent", "on", "worktree", "name", "repo", "base-branch",
+    "display-name", "comment", "setup", "agent", "model", "effort", "terminal", "retry-of", "timeout-ms", "run", "from", "retry-request"))
+GH_API_VALUE_OPTIONS = frozenset(("-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "-q", "--jq", "-t", "--template",
+                                  "--cache", "--hostname", "--input", "-p", "--preview"))
+
+
+def _positionals(pairs, value_options, limit):
+    """The first `limit` of the (index, word) pairs that are no option and no option value: the options before and between them are
+    skipped. Only a name in `value_options` takes the next word; `--flag=value` and `-Rvalue` are one word. A lone `-` is a word, and
+    `--` ends the options."""
+    found, position, options = [], 0, True
+    while position < len(pairs) and len(found) < limit:
+        word = pairs[position][1]
+        if options and word == "--":
+            options = False
+            position += 1
+        elif options and word.startswith("-") and len(word) > 1:
+            position += 2 if word in value_options else 1
+        else:
+            found.append(pairs[position])
+            position += 1
+    return found
+
+
+def _cli_head(is_program, value_options, *commands):
+    """The one parse of the gated `gh` and `orca` commands: the PR, dispatch, `gh api` and `gh alias set` gates read it, for the parsed
+    check and for the text counts. It gives a function of a segment: the command words from the program through the last word of one of
+    `commands` (lists of the same length), with options allowed before and between the words; None when the segment is no such command."""
+    def head(segment):
+        words = _command_words(segment)
+        pairs = _significant(words)
+        if not pairs or not is_program(pairs[0][1]):
+            return None
+        found = _positionals(pairs[1:], value_options, len(commands[0]))
+        return words[:found[-1][0] + 1] if _words(found) in commands else None
+    return head
+
+
+_pr_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["pr", "create"], ["pr", "new"])  # `new` is the built-in alias of `create`
+_dispatch_head = _cli_head(_is_orca, ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
+_api_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["api"])
+_alias_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["alias", "set"])
+
+
+def _arguments(segment, head):
+    """The command words after the head of a segment that `head` matches."""
+    return _command_words(segment)[len(head(segment)):]
+
+
 def _is_pr_create(segment):
-    words = _command_words(segment)
-    return len(words) >= 3 and _is_gh(words[0]) and words[1:3] == ["pr", "create"]
+    return _pr_head(segment) is not None
 
 
 def _is_worker_start(segment):
-    words = _command_words(segment)
-    return len(words) >= 3 and _is_orca(words[0]) and words[1:3] == ["orchestration", "worker-start"]
+    return _dispatch_head(segment) is not None
 
 
-def _is_help(segment):
+def _is_help(arguments):
     """A gated command whose only argument is `--help` or `-h`: it prints its help text and runs nothing."""
-    return _command_words(segment)[3:] in (["--help"], ["-h"])
+    return arguments in (["--help"], ["-h"])
 
 
 def _is_gated_pr_create(segment):
-    """A `gh pr create` that needs a passing record: one that is not a help-only command."""
-    return _is_pr_create(segment) and not _is_help(segment)
+    """A `gh pr create` that needs a passing record: one that is not a help-only command. A redirection in the head is no help-only
+    command: the old gate did not match it and denied it as an unchecked form (`2>/dev/null gh pr create --help`)."""
+    head = _pr_head(segment)
+    return head is not None and not (_is_help(_arguments(segment, _pr_head)) and not any(REDIRECTION.fullmatch(word) for word in head))
 
 
 def _is_dispatch(segment):
     """A `worker-start` that needs a pre-dispatch record: one that is not a help-only command and has no `--retry-of` (the
-    flag at any word position), which can only restart a Task that was dispatched before."""
-    return _is_worker_start(segment) and not _is_help(segment) and not any(
-        word == "--retry-of" or word.startswith("--retry-of=") for word in _command_words(segment)[3:])
+    flag at any word position), which can only restart a Task that was dispatched before. The two exemptions are for the plain form
+    only (`orca orchestration worker-start`, three words): the old gate denied a form with an option in it, and they do not allow it."""
+    head = _dispatch_head(segment)
+    if head is None:
+        return False
+    arguments = _arguments(segment, _dispatch_head)
+    exempt = _is_help(arguments) or any(word == "--retry-of" or word.startswith("--retry-of=") for word in arguments)
+    return not (exempt and len(head) == 3)
 
 
 REDIRECTION = re.compile(r"(?:\{\w+\}|\d+|&)?[<>]+[|&]?(.*)", re.DOTALL)
@@ -2705,9 +2763,22 @@ REDIRECTION_START = r"(?:\{\w+\}|\d+|&)?[<>]"
 REDIRECTION_TEXT = rf"(?>(?:\{{\w+\}}|\d+|&)?[<>]+[|&]?(?:\S+|(?: (?!-|{REDIRECTION_START})\S+)?))"
 # A value option takes a value that is no option and no redirection (bash reads `-C 2> f` as the flag and a redirection). Every token has one
 # parse, and the runs are atomic, so a failing match never tries the others: a long run of option words cannot take exponential time.
-GIT_OPTION_TEXT = rf"(?>(?:{'|'.join(map(re.escape, sorted(GIT_VALUE_OPTIONS)))}) (?!-|{REDIRECTION_START})\S+|-\S+)"
-BETWEEN_GIT_WORDS = rf"(?>(?: (?:{GIT_OPTION_TEXT}|{REDIRECTION_TEXT}))*)"
+def _between_options(value_options):
+    """The count pattern of the options and redirections between the words of a command, each with the space before it."""
+    option = rf"(?>(?:{'|'.join(map(re.escape, sorted(value_options)))}) (?!-|{REDIRECTION_START})\S+|-\S+)"
+    return rf"(?>(?: (?:{option}|{REDIRECTION_TEXT}))*)"
+
+
+BETWEEN_GIT_WORDS = _between_options(GIT_VALUE_OPTIONS)
 BETWEEN_WORDS = rf"(?>(?: {REDIRECTION_TEXT})*)"
+
+
+def _cli_pattern(first, value_options, *words):
+    """The count pattern of a `gh` or `orca` command, as `_cli_head` parses it: `first`, then `words`, with options between. Each match
+    is the `first` word: a lookahead reads the rest, so that an option value never hides one. There is no boundary before `first`, and
+    none after the last word unless the caller adds it: the plain text of the form always matches, as the literal text did."""
+    between = _between_options(value_options)
+    return re.compile(rf"{first}(?={between} {f'{between} '.join(words)})")
 
 
 def _git_pattern(subcommand):
@@ -2875,9 +2946,76 @@ def _denies_push_delete(segment):
 # and pointer is the text that their reasons append.
 GatedForm = namedtuple("GatedForm", ("segment", "count_text", "raw_text", "unparsable_reason", "pattern", "head", "denied",
                                      "deny_reason", "pointer"), defaults=(None, None, None, "", ""))
-PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed")
-DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed")
+PR_FORM = GatedForm(_is_pr_create, "gh pr create", "gh pr create", "no branch to check: the command cannot be parsed",
+                    _cli_pattern("gh", GH_VALUE_OPTIONS, "pr", r"(?:create|new(?![\w.-]))"), _pr_head)
+# raw_text stays "worker-start": a command that cannot be parsed is denied by that word alone (see `_raw_match`).
+DISPATCH_FORM = GatedForm(_is_worker_start, "orchestration worker-start", "worker-start", "no pre-dispatch record: the command cannot be parsed",
+                          _cli_pattern("orchestration", ORCA_VALUE_OPTIONS, "worker-start"), _dispatch_head)
 CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
+PR_POINTER = ". Open the pull request with `gh pr create` as a plain command, after the audit"
+# `gh api` can open a pull request with no `gh pr create`. A wrapped `gh api` is denied whatever it does, as every wrapped form is.
+API_PULLS = re.compile(r"(?:^|/)pulls/?(?:[?#].*)?$", re.IGNORECASE)
+
+
+def _api_method(arguments):
+    """The HTTP method of the `gh api` arguments: the last --method/-X, else POST when a field or an input is given, else GET."""
+    method = implied = None
+    for index, word in enumerate(arguments):
+        if word == "--":
+            break
+        if word in ("-X", "--method"):
+            method = arguments[index + 1] if index + 1 < len(arguments) else ""
+        elif word.startswith("--method="):
+            method = word[len("--method="):]
+        elif word.startswith("-X"):
+            method = word[2:].removeprefix("=")
+        elif word.startswith(("-f", "-F", "--field", "--raw-field", "--input")):
+            implied = "POST"
+    return (method or implied or "GET").upper()
+
+
+def _denies_api_pull(segment):
+    """A `gh api` call that sends a request that is not a GET to a `.../pulls` endpoint (which opens a pull request), or a GraphQL call
+    that holds the `createPullRequest` mutation, or whose query or endpoint cannot be read here (a variable, `--input`, `=@file`)."""
+    head = _api_head(segment)
+    if head is None:
+        return False
+    arguments = _command_words(segment)[len(head):]
+    if _api_method(arguments) == "GET":
+        return False
+    found = _words(_positionals(_significant(arguments), GH_API_VALUE_OPTIONS, 1))
+    endpoint = found[0] if found else ""
+    if re.search(r"[$`]", endpoint) or API_PULLS.search(endpoint):
+        return True
+    return endpoint.endswith("graphql") and any(
+        re.search(r"[$`]|=@", word) or word.startswith("--input") or "createpullrequest" in word.lower() for word in arguments)
+
+
+def _denies_alias_pull(segment):
+    """A `gh alias set` whose arguments hold `pr create` or `pr new` (any `gh` spelling, a shell expansion too), or whose expansion
+    cannot be read here (`-` reads it from stdin; a variable or a substitution builds it). All arguments are read, not only the second
+    positional one: an expansion that starts with `-` (`-R o/r pr create`) is no positional word for a parse of options."""
+    head = _alias_head(segment)
+    if head is None:
+        return False
+    arguments = [word for word in _command_words(segment)[len(head):] if word not in ("--", "--clobber", "-s", "--shell")]
+    return "-" in arguments or any(re.search(r"[$`]", word) for word in arguments) or any(
+        PR_FORM.pattern.search(normal) for word in arguments for found in (word, f"gh {word}") for normal in _normal_forms(found))
+
+
+# The text count of `gh api` reads only a call whose text can reach the pulls endpoint or GraphQL (or holds a `$` or a backtick); the head
+# of a plain call is the whole segment, so that this text is its own and a wrapped call is the unchecked one.
+API_FORM = GatedForm(_has_head(_api_head), "gh api pulls", "gh api pulls",
+                     "unchecked command form: the command cannot be parsed; run gh api pulls as a plain command",
+                     # The reach is 300 characters, so that many starts cannot make the count slow; a call with 300 more that cannot be read is counted.
+                     # The reach does not stop at a `;`, `&` or `|`: the text cannot tell one in a quote from a separator.
+                     _cli_pattern("gh", GH_VALUE_OPTIONS, "api(?![\\w.-])(?:.{0,300}?(?i:pulls|graphql|createpullrequest|[$`])|.{300})"),
+                     lambda segment: _command_words(segment) if _api_head(segment) else None, _denies_api_pull,
+                     "gh api that opens a pull request is denied" + PR_POINTER, PR_POINTER)
+ALIAS_FORM = GatedForm(_has_head(_alias_head), "gh alias set", "gh alias set",
+                       "unchecked command form: the command cannot be parsed; run gh alias set as a plain command",
+                       _cli_pattern("gh", GH_VALUE_OPTIONS, "alias", "set(?![\\w.-])"), _alias_head, _denies_alias_pull,
+                       "gh alias set with an expansion that opens a pull request, or that cannot be read, is denied" + PR_POINTER, PR_POINTER)
 
 
 def _cleanup_form(segment, count_text, pattern, head, denied, deny_reason):
@@ -2904,14 +3042,17 @@ SKIP_OWNERSHIP_FORM = _cleanup_form(
     f"--skip-ownership is denied: only the user runs `! {CLEANUP_COMMAND} --skip-ownership <worktree path>`, for a worktree that the session "
     "cannot prove it owns")
 # The PR reason wins when a command has an unchecked form of both; the new forms follow.
-GATED_FORMS = (PR_FORM, DISPATCH_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_FORM, WORKTREE_RM_FORM, SKIP_OWNERSHIP_FORM)
+GATED_FORMS = (PR_FORM, DISPATCH_FORM, API_FORM, ALIAS_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_FORM, WORKTREE_RM_FORM, SKIP_OWNERSHIP_FORM)
 
 
 def _raw_match(text, form):
     """Whether the gated text of `form` is in a text that cannot be parsed."""
-    if form.pattern is not None:
-        return any(form.pattern.search(normal) for normal in _normal_forms(text))
-    return bool(_occurrences(text, form.raw_text))
+    if form.raw_text != form.count_text or form.pattern is None:  # a short raw text (the dispatch form) is read as it is: the pattern needs the whole form
+        if _occurrences(text, form.raw_text):
+            return True
+        if form.pattern is None:
+            return False
+    return any(form.pattern.search(normal) for normal in _normal_forms(text))
 
 
 def _branch_option(arguments, long, short):
@@ -3164,7 +3305,7 @@ def gate_reason(command, cwd, session_id=None):
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
-    unfollowed = ("$(" in command or "`" in command) and _occurrences(command, PR_FORM.count_text) > pr_matches
+    unfollowed = ("$(" in command or "`" in command) and max(len(PR_FORM.pattern.findall(normal)) for normal in _normal_forms(command)) > pr_matches
     if not pr_creates and not dispatches:
         return _final_reason(command, segments, unfollowed)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
@@ -3199,7 +3340,7 @@ def gate_reason(command, cwd, session_id=None):
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
                     moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
-                reason = _gate_reason(runtime_dir, dir_fd, current, words[3:])
+                reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head))
                 if reason:
                     return reason
             elif _is_dispatch(item):
