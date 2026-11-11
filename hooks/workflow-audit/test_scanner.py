@@ -106,5 +106,35 @@ class MaskSubstitutionsTest(unittest.TestCase):
         self.assertEqual(audit.split_command("x \\\n#c"), [["x"], "\n"])
 
 
+class NormalFormsTest(unittest.TestCase):
+    def test_the_first_form_is_the_plain_normalisation(self):
+        for text in ("git  branch", "bash -c 'git >\"my f\" branch'", "echo \"a b\" 'c d' \\\nx"):
+            self.assertEqual(audit._normal_forms(text)[0], audit._normalise(text))
+
+    def test_a_text_without_quotes_has_one_form(self):
+        self.assertEqual(audit._normal_forms("git  branch -D x"), ["git branch -D x"])
+
+    def test_each_level_of_quotes_is_read_as_words(self):
+        forms = audit._normal_forms('bash -c \'git >"my f" branch\'')
+        self.assertEqual(forms, ["bash -c git >my f branch", "bash -c git\0>my\0f\0branch", "bash -c git >my\0f branch"])
+
+    def test_a_quote_in_a_substitution_in_double_quotes_is_a_level_deeper(self):
+        self.assertEqual(audit._normal_forms('echo "$(git -C "my dir" branch)"')[-1], "echo $(git -C my\0dir branch)")
+
+    def test_escaped_quotes_in_double_quotes_are_the_quotes_of_the_nested_shell(self):
+        self.assertEqual(audit._normal_forms('bash -c "git >\\"my f\\" branch"')[-1], "bash -c git >my\0f branch")
+
+    def test_an_unclosed_quote_runs_to_the_end(self):
+        self.assertEqual(audit._normal_forms('git -C "my dir')[1], "git -C my\0dir")
+
+    def test_the_forms_of_words_match_the_forms_of_the_text_for_a_word_that_was_quoted(self):
+        self.assertEqual(audit._word_forms(["git", "-C", "my dir", "branch"])[1], "git -C my\0dir branch")
+        self.assertEqual(audit._word_forms(["git", "branch"], 2), ["git branch"] * 3)
+
+    def test_deeply_nested_quotes_do_not_overflow_the_stack(self):
+        text = "bash -c '" * 3000 + "git branch" + "'" * 3000
+        self.assertEqual(audit._normal_forms(text)[0], audit._normalise(text))
+
+
 if __name__ == "__main__":
     unittest.main()

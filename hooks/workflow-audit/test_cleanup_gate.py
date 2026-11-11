@@ -97,9 +97,8 @@ class AllowedFormsTest(GateTestCase):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
-    def test_the_known_limit_of_a_spaced_redirection_target_is_allowed_in_a_wrapped_form(self):
-        # Known limit, owner-approved: issue #192 tracks the fix. The pin changes on purpose when #192 lands.
-        self.assert_allowed(self.gate('bash -c \'git >"my f" branch -D x\''))
+    def test_a_spaced_redirection_target_is_denied_in_a_wrapped_form(self):
+        self.assert_denied(self.gate('bash -c \'git >"my f" branch -D x\''), UNCHECKED % "git branch")
 
     def test_an_unparsable_command_without_a_gated_form_is_allowed(self):
         self.assert_allowed(self.gate('echo "unbalanced'))
@@ -119,6 +118,37 @@ class WrappedFormsTest(GateTestCase):
         for command, form in cases:
             with self.subTest(command=command):
                 self.assert_denied(self.gate(command), UNCHECKED % form)
+
+    def test_a_quoted_value_that_holds_a_space_does_not_hide_a_wrapped_form(self):
+        cases = (
+            ('bash -c \'git -C "my dir" branch -D x\'', "git branch"), ('bash -c "git -C \'my dir\' branch -D x"', "git branch"),
+            ('bash -c "git >\\"my f\\" branch -D x"', "git branch"), ('bash -c "bash -c \'git >\\"my f\\" branch -D x\'"', "git branch"),
+            ('bash -c \'git -c "a b=c" push origin --delete x\'', "git push"), ('bash -c \'git >"my f" push origin :x\'', "git push"),
+            ('bash -c \'git -C "my dir" worktree remove x\'', "worktree remove"), ('bash -c \'git worktree >"my f" remove x\'', "worktree remove"),
+            ('bash -c \'orca worktree >"my f" rm x\'', "worktree rm"), ('bash -c \'orca >"my f" worktree rm x\'', "worktree rm"),
+            ('echo "$(git -C "my dir" branch -D x)"', "git branch"), ('git -C "my dir" status; bash -c \'git >"my f" branch -D x\'', "git branch"),
+        )
+        for command, form in cases:
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), UNCHECKED % form)
+
+    def test_a_quoted_value_that_holds_a_space_does_not_hide_a_form_in_an_unparsable_command(self):
+        for command, phrase in (('git -C "my dir" branch -D x \'', "unchecked command form: the command cannot be parsed; run git branch"),
+                                ('git >"my f" worktree remove x \'', "unchecked command form: the command cannot be parsed; run worktree remove")):
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), phrase)
+
+    def test_a_quoted_value_that_holds_a_space_does_not_hide_a_form_when_the_hook_input_is_not_json(self):
+        for text in ('not json: git -C "my dir" branch -D x', 'not json: bash -c \'git >"my f" branch -D x\''):
+            with self.subTest(text=text):
+                self.assert_denied(self.audit("hook", "pre-tool-use", stdin=text), "hook input unreadable: the hook input is not JSON")
+
+    def test_a_plain_form_with_a_quoted_value_that_holds_a_space_keeps_its_result(self):
+        for command in ('git -C "my dir" branch -d x', 'git >"my f" branch -d x', 'git -c "a b=c" push origin x', 'git -C "my dir" worktree list',
+                        'git -C "my dir" branch -d x; git -C "my dir" push origin y'):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+        self.assert_denied(self.gate('git -C "my dir" branch -D x'), "force delete of a branch")
 
     def test_a_wrapped_help_is_denied(self):
         self.assert_denied(self.gate('bash -c "git worktree remove --help"'), UNCHECKED % "worktree remove")
