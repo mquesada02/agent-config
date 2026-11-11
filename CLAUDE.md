@@ -183,12 +183,26 @@ Always work inside a git worktree, for every task, including one-line fixes, non
   - /mattpocock-skills:code-review runs and their verifier subagents: section 6 and section 7, step 5.5.
   - The auditor subagent: section 6 step 5 and section 7.
 - Subagents are read-only toward remote state, whatever their prompt says. The hook `~/.claude/hooks/subagent-readonly/block_subagent_writes.py` enforces it for the calls that carry an `agent_id`. It does not cover main sessions or Orca workers, or a write hidden in a script that a subagent runs. Say "read-only" in the prompt of every review subagent anyway.
+- Say in the prompt of every subagent that it must not stop or suggest a fresh session for context, and that it must finish the task. Size each brief for one subagent: one review axis, one finding to verify, or one audit.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.
   - A worker never ends its turn while an `ask`, a background test run or a CI watch is open (section 7).
   - /orca-cli: full handoffs, spawning agents in child worktrees, reading or sending to terminals.
 - Outside a git repository, ask the user before delegating to Orca workers.
+- Context is never a reason to stop:
+  - Context size is never a reason to stop, to end a session, or to suggest a fresh session.
+  - Only the context-handoff hook ends a session for context. Main sessions (plain and coordinator) and Orca workers keep working until it blocks them.
+  - One session may resolve several `/mattpocock-skills:wayfinder` tickets in a row.
+  - Charting a map does not end the session. The same session may go on to work the frontier.
+  - These plugin rules are cancelled, so a plugin update cannot bring them back:
+    - the `/mattpocock-skills:wayfinder` sentence "never resolve more than one ticket per session" (the whole sentence, with its research-ticket exception)
+    - the `/mattpocock-skills:wayfinder` charting step "Stop — charting is one session's work; it hand-resolves nothing"
+    - the `/mattpocock-skills:ask-matt` advice to `/handoff` and continue in a fresh thread
+    - any other skill text that says to stop, end a session or start a fresh session for context reasons
+  - `/mattpocock-skills:to-tickets` sizes each slice for one fresh context window. That is ticket sizing, not a reason to stop.
+  - Every stop that is not about context keeps working: caps, questions for the owner, a failed audit, confirmation before a destructive action, and any stop defined for a reason other than context.
+  - Headless sessions are covered too. The hook skips them; auto-compact is their backstop.
 
 ## 12. No polling
 

@@ -166,6 +166,63 @@ class SectionsEightAndElevenTest(RuleTextCase):
         self.assert_in(section(read(ROOT_CLAUDE_MD), 11), "- The auditor subagent: section 6 step 5 and section 7.")
 
 
+class ContextStopRuleTest(RuleTextCase):
+    """Ticket #489: section 11 bans context as a reason to stop. One test per required line."""
+
+    def setUp(self):
+        self.text = section(read(ROOT_CLAUDE_MD), 11)
+
+    def test_the_narrow_ban(self):
+        self.assert_in(self.text, "Context size is never a reason to stop, to end a session, or to suggest a fresh session.")
+
+    def test_only_the_context_handoff_hook_ends_a_session_for_context(self):
+        self.assert_in(self.text, "Only the context-handoff hook ends a session for context. "
+                                  "Main sessions (plain and coordinator) and Orca workers keep working until it blocks them.")
+
+    def test_one_session_may_resolve_several_wayfinder_tickets_in_a_row(self):
+        self.assert_in(self.text, "One session may resolve several `/mattpocock-skills:wayfinder` tickets in a row.")
+
+    def test_charting_a_map_does_not_end_the_session(self):
+        self.assert_in(self.text, "Charting a map does not end the session. The same session may go on to work the frontier.")
+
+    def test_the_wayfinder_one_ticket_sentence_is_cancelled_with_its_research_exception(self):
+        self.assert_in(self.text, "the `/mattpocock-skills:wayfinder` sentence \"never resolve more than one ticket per session\" "
+                                  "(the whole sentence, with its research-ticket exception)")
+
+    def test_the_wayfinder_charting_stop_is_cancelled(self):
+        self.assert_in(self.text, "the `/mattpocock-skills:wayfinder` charting step "
+                                  "\"Stop — charting is one session's work; it hand-resolves nothing\"")
+
+    def test_the_ask_matt_fresh_thread_advice_is_cancelled(self):
+        self.assert_in(self.text, "the `/mattpocock-skills:ask-matt` advice to `/handoff` and continue in a fresh thread")
+
+    def test_a_general_clause_cancels_any_other_skill_text(self):
+        self.assert_in(self.text, "any other skill text that says to stop, end a session or start a fresh session for context reasons")
+
+    def test_to_tickets_sizing_stays_as_sizing(self):
+        self.assert_in(self.text, "`/mattpocock-skills:to-tickets` sizes each slice for one fresh context window. "
+                                  "That is ticket sizing, not a reason to stop.")
+
+    def test_every_stop_that_is_not_about_context_keeps_working(self):
+        self.assert_in(self.text, "Every stop that is not about context keeps working: caps, questions for the owner, a failed audit, "
+                                  "confirmation before a destructive action, and any stop defined for a reason other than context.")
+
+    def test_every_subagent_prompt_says_not_to_stop_for_context_and_to_finish_the_task(self):
+        self.assert_in(self.text, "Say in the prompt of every subagent that it must not stop or suggest a fresh session for context, "
+                                  "and that it must finish the task.")
+
+    def test_the_subagent_prompt_line_sits_in_the_bullet_after_the_read_only_line(self):
+        lines = self.text.splitlines()
+        read_only = next(i for i, line in enumerate(lines) if "Say \"read-only\" in the prompt" in line)
+        self.assertIn("must not stop or suggest a fresh session for context", lines[read_only + 1])
+
+    def test_briefs_stay_sized_for_one_subagent(self):
+        self.assert_in(self.text, "Size each brief for one subagent: one review axis, one finding to verify, or one audit.")
+
+    def test_headless_sessions_are_covered_with_auto_compact_as_the_backstop(self):
+        self.assert_in(self.text, "Headless sessions are covered too. The hook skips them; auto-compact is their backstop.")
+
+
 class WorktreeCleanupRuleTest(RuleTextCase):
     """Ticket #166: sections 8, 10 and 13 name the cleanup command as the only cleanup path."""
 
