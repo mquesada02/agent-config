@@ -263,6 +263,11 @@ class SecurityRules(unittest.TestCase):
     def test_sec_01_fix_points_to_the_sha_lookup_in_tools_md(self):
         self.assertIn("tools.md", self.sec["SEC-01"]["Fix"])
 
+    def test_sec_01_checks_the_form_of_the_pin_and_not_whether_the_sha_is_a_real_commit(self):
+        rule = self.sec["SEC-01"]["Rule"]
+        self.assertIn("The check is the form of the pin", rule)
+        self.assertIn("Do not judge whether the SHA is a real commit", rule)
+
     def test_the_file_says_which_rules_have_critical_parts(self):
         text = read(rule_files()["security"])
         self.assertIn("SEC-04, SEC-06 and SEC-07", text)
@@ -373,6 +378,18 @@ class Router(unittest.TestCase):
         self.assertIn("tools.md", intake)
         self.assertNotIn("node-support-offline", self.text)
 
+    def test_the_router_runs_the_intake_as_one_plain_command_with_the_full_script_path(self):
+        intake = self.text[self.text.index("## Intake"):self.text.index("## Pick the branch")]
+        self.assertIn("python3 <skill folder>/scripts/intake.py <repo path>", intake)
+        for word in ("`cd`", "`;`", "`&&`"):
+            self.assertIn(word, intake)
+        self.assertIn("one plain command", intake)
+
+    def test_the_router_says_to_read_the_whole_branch_file_and_not_a_part_of_it(self):
+        branches = self.text[self.text.index("## Pick the branch"):self.text.index("## Modules")]
+        self.assertIn("Read the whole branch file with the Read tool", branches)
+        self.assertIn("never only a part of it with a search", branches)
+
     def test_the_router_points_to_the_tools_module_and_the_security_rules(self):
         modules = self.text[self.text.index("## Modules"):]
         self.assertIn("[tools.md](tools.md)", modules)
@@ -421,6 +438,43 @@ class ReviewSteps(unittest.TestCase):
 
     def test_it_puts_the_version_of_a_tool_on_path_in_its_bullet(self):
         self.assertIn("on path (", self.text)
+
+    def test_the_tool_bullet_follows_the_intake_fact_even_when_a_run_of_the_tool_fails(self):
+        section = self.text[self.text.index("## tool status"):self.text.index("## report contract")]
+        self.assertIn("the bullet always follows the `installed_tools` fact", section)
+        self.assertIn("even when a run of the tool fails", section)
+        self.assertIn("never in the bullet", section)
+
+    def test_the_contract_fixes_the_exact_text_of_the_tool_bullets_and_the_approval_line(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        self.assertIn("a bullet has no other text than one of these two forms", contract)
+        self.assertIn("copy this sentence exactly", contract)
+        self.assertIn("never change its examples", contract)
+
+    def test_the_fix_flow_opens_with_the_rule_that_the_final_message_has_the_parts_of_step_9(self):
+        opening = self.text[self.text.index("## fix on approval"):self.text.index("1. **read the reply.**")]
+        self.assertIn("never end with a prose note", opening)
+        self.assertIn("step 9", opening)
+
+    def test_a_failed_actionlint_run_does_not_end_the_fix_flow(self):
+        step = self.text[self.text.index("6. **actionlint.**"):self.text.index("7. **diff.**")]
+        self.assertIn("a failed run of actionlint", step)
+        self.assertIn("does not end the fix flow", step)
+        self.assertIn("steps 7 to 9", step)
+
+    def test_the_intake_line_starts_with_the_word_and_the_colon(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        self.assertIn("starts exactly with `intake:`", contract)
+
+    def test_the_post_fix_report_is_the_whole_contract_and_never_a_prose_summary(self):
+        step = self.text[self.text.index("9. **final message.**"):self.text.index("**admin steps.**")]
+        self.assertIn("never a prose summary", step)
+        self.assertIn("all 8 sections", step)
+
+    def test_the_approval_line_is_the_last_text_of_the_report(self):
+        section = self.text[self.text.index("8. `## approve`"):]
+        self.assertIn("write no text after the approval line", section)
+        self.assertIn("`tools:`", section)
 
     def test_it_takes_its_facts_from_the_intake_and_runs_no_gh_or_tool_calls(self):
         for fact in ("required_checks", "installed_tools", "runner_labels"):
