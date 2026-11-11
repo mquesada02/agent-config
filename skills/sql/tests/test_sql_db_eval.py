@@ -47,7 +47,7 @@ elif verb == "exec":
     if "psql" in args:
         sql = args[args.index("-c") + 1]
         if "information_schema.tables" in sql:
-            print("customers\norders")
+            print("customers\norders\nevents")
         elif "md5(" in sql:
             print(read("checksum", "m1"))
         elif "pg_sequences" in sql:
@@ -126,10 +126,12 @@ class SetupTest(TempTest):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         runs = [entry for entry in self.log() if entry["args"][0] == "run"]
         self.assertEqual([entry["state_exists"] for entry in runs], [True, True])
-        images = [entry["args"][-1] for entry in runs]
+        images = [next(a for a in entry["args"] if a.startswith("postgres:")) for entry in runs]
         self.assertEqual(images, ["postgres:13", "postgres:18"])
-        for entry in runs:
+        for entry, image in zip(runs, images):
             args = entry["args"]
+            # The server flag follows the image name: the plan cases need a table larger than the shared buffers.
+            self.assertEqual(args[args.index(image) + 1:], ["-c", "shared_buffers=2MB"])
             for flag in ("--rm", "-d", "127.0.0.1::5432"):
                 self.assertIn(flag, args)
             self.assertTrue(args[args.index("--name") + 1].startswith("sqlskill-dbeval-"))
@@ -246,7 +248,7 @@ class SnapshotTest(TempTest):
     def test_a_snapshot_holds_the_table_checksums_and_the_sequence_values(self):
         self.db_eval("setup", "--state", self.state)
         data = self.snapshot()
-        self.assertEqual(data["tables"], {"shop.customers": "m1", "shop.orders": "m1"})
+        self.assertEqual(data["tables"], {"shop.customers": "m1", "shop.orders": "m1", "shop.events": "m1"})
         self.assertEqual(data["sequences"], {"shop.orders_id_seq": 7, "shop.customers_id_seq": None})
         queries = [args[args.index("-c") + 1] for args in self.verbs("exec") if "psql" in args]
         self.assertTrue(any("information_schema" in query for query in queries))

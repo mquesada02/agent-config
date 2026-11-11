@@ -1,0 +1,15 @@
+{
+  "expect": [
+    "plan:app-pg13",
+    "plan:app-pg18"
+  ],
+  "sequences_may_differ": false,
+  "rules": {
+    "expect": [
+      "PLAN-04"
+    ],
+    "forbid": []
+  },
+  "report": true,
+  "judge": "rubric-plan.md"
+}

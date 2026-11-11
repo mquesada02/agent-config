@@ -1,0 +1,1 @@
+[{"Plan": {"Node Type": "Seq Scan", "Relation Name": "events", "Plan Rows": 1500, "Actual Rows": 1500, "Actual Loops": 1, "Shared Hit Blocks": 100, "Shared Read Blocks": 1500}}]

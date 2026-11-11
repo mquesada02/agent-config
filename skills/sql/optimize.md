@@ -8,7 +8,7 @@
 2. Pick the source module by the file form (the router's source module rule). Run its extractor and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
 3. Apply every enabled rule of [dialects/postgres.md](dialects/postgres.md) (the `PG-*` rules) to each statement. For a postgres.js template, also apply the `PGJS-*` rules of [sources/postgres-js.md](sources/postgres-js.md).
 4. A rule that needs a fact fires only when the repo shows the fact. Read the repo files for it (a schema file, a migration, a type). When the repo does not show the fact, the rule does not fire. With an allowlisted database, the section Database path reads the fact from the catalog instead (this also holds for a statement with an interpolation). When the catalog gives no answer, the rule uses the repo fact as before.
-5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` as the section Database path says. A failed call gives a `Note:` line, and the run goes on.
+5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` as the section Database path says, and turn each plan into `PLAN-*` findings as the section Plan findings says. A failed call gives a `Note:` line, and the run goes on.
 6. Write the report as the final message, as described below. Then stop.
 
 One finding is one row. A rule id has at most one row in the whole report. When a rule matches in many places, write all places in the Where cell of its one row, separated by `, `.
@@ -74,10 +74,10 @@ Load [db-access.md](db-access.md) when the run reaches this section. A plan come
 3. With no rules file (the router's rules file reader prints `found` false), stay on the no-database path: make no connection.
 4. Pick the statements: each `SELECT` or `WITH ... SELECT` that is complete SQL. A `.sql` statement is complete. A template is complete when it has no `${...}` interpolation and no `$n` placeholder outside a string or a comment. A statement with an interpolation or a placeholder has no values, so it gets no plan call and stays on the no-database path (the catalog facts step below still reads its column facts).
 5. Pick the service. When the allowlist names several, use the service that the user named, or ask which one to use. The module does not run `--check-services`: setup does.
-6. For each picked statement, run `python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <name> --mode select` and read its JSON, as [db-access.md](db-access.md) says.
-7. A call with `ok` false is named in one `Note:` line: `Note: the database call for <file>:<start_line>-<end_line> failed (<error>), so that statement has only static findings.` Write the redacted `message` in the line when it helps. Then go on with the static report.
+6. For each picked statement, run one command: `python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <name> --mode select --statement '<sql>'`, then a pipe (`|`), then `python3 <skill folder>/scripts/plan_findings.py -`. Write each single quote of the SQL as `'\''`. The plan goes from one script to the other: copy no plan, use no heredoc and no file. Read the JSON of `plan_findings.py` (it holds the plan too), as [db-access.md](db-access.md) says for the plan call.
+7. A result with `ok` false is named in one `Note:` line. When `error` is `pg_run_failed`, the plan call failed: `Note: the database call for <file>:<start_line>-<end_line> failed (<source_error>), so that statement has only static findings.` Read the `source` object as [db-access.md](db-access.md) says for that `error` (its `reason`, `service` and redacted `message`), and write the `message` in the line when it helps. When `error` is `bad_input` (this also holds when the plan call printed nothing): `Note: the plan call or the plan findings call failed (bad_input), so that statement has only static findings.` When a tool hook denies the command (the SQL holds `<<` or a space followed by `#`), do not retry with a heredoc or a file: write `Note: the database call for <file>:<start_line>-<end_line> was denied by a tool hook (the SQL holds << or #), so that statement has only static findings.` Then go on with the static report.
 
-The plan is not turned into findings here (a later ticket does it, see Plan findings): write no `PLAN-*` row. The `ok` plan changes no finding of the static rules.
+An `ok` plan changes no finding of the static rules. A statement with a failed call gives no `PLAN-*` row.
 
 Catalog facts: PG-02 and PGJS-02 need a fact that is not in the SQL text. After the gates of steps 1 to 3 and the service of step 5, read these facts from the catalog with the `facts` action.
 - Collect the column names that the two rules need from every statement of the run, also from a statement with an interpolation (`facts` runs no statement). A name is `table.column` or `schema.table.column`. Resolve each table alias to its table in the same statement: from the `FROM` or `JOIN` clause, from the `UPDATE <table>` target, or from the `INSERT INTO <table>` target (so `INSERT INTO t (col) VALUES (...)` gives `t.col`, and `UPDATE t SET col = ...` gives `t.col`). An unqualified column gets the table of the statement only when the statement has exactly one table. Do not send a name that you cannot build or resolve.
@@ -87,9 +87,16 @@ Catalog facts: PG-02 and PGJS-02 need a fact that is not in the SQL text. After 
 - PGJS-02: the name is the column that the JS value is compared with or assigned to. A `type` that is exactly `date` makes the date fact true. The `Date` value fact still comes from the repo (a TypeScript type, `new Date(...)` or a `Date` variable). Any other answer (`missing`, another type such as `timestamp`, `date[]` or a domain over `date`, no name, a failed call) uses the repo-fact rule, so a `::date` cast in the SQL still counts there.
 - A failed call is one line: `Note: the facts call failed (<error>), so the rules use only the facts that the repo shows.` Then go on with the static report.
 
-## Plan findings (stub)
+## Plan findings
 
-Stub. Ticket #395 fills this section with the `PLAN-*` plan findings. It holds no behavior yet.
+The `PLAN-*` rules are in the section Plan reading of [dialects/postgres.md](dialects/postgres.md). Apply them to each statement that got an `ok` plan from the Database path. The findings come from `plan_findings.py` (step 6 of the Database path), never from your own reading of the plan JSON. Use the `findings` list of its result:
+
+1. A finding of a rule that the repo disables is dropped (the ids of the `Disabled rules:` line). The report holds no row of a disabled rule.
+2. A rule id has at most one row in the report. When one plan has the finding at many nodes, or many statements have it, the one row covers all of them. The Where cell lists the place of each statement that has the finding.
+3. A finding is a row of the severity that the rule entry gives. The Problem cell is one line. It holds one entry for each finding of that rule, in the order of the script output (statement order, then plan order), separated by `; `. An entry is `<place> <node>: <measured values> against <threshold values>`, taken from `measured` and `threshold`. The cell ends with one sentence that explains the cause. Use the node details of the plan in `plan` for the explanation.
+4. The Fix cell proposes the fix in words (an index, an `ANALYZE`, a smaller select list, a filter earlier). It holds no replacement SQL and never the capitalised word `Rewrite`: a `PLAN-*` fix is advice, and the proof of a rewrite is a later ticket.
+5. With `analyze` false, write the line `Note: the plan of <file>:<start_line>-<end_line> has no actual values, so no PLAN-* rule applies.` and no row.
+6. A `PLAN-*` rule never fires without a database. A statement with no plan gets no `PLAN-*` row.
 
 ## Write path (stub)
 

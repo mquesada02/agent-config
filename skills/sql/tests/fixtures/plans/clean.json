@@ -1,0 +1,1 @@
+[{"Plan": {"Node Type": "Index Scan", "Relation Name": "customers", "Plan Rows": 1, "Actual Rows": 1, "Actual Loops": 1, "Shared Hit Blocks": 1000, "Shared Read Blocks": 0}}]

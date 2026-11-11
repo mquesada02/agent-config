@@ -36,6 +36,8 @@ With no `--statement`, the statement comes from stdin. Use stdin for a statement
 
 With `ok` true, the object has `action`, `service`, `mode`, `server_version_num`, `ran` (`analyze`), `reason`, `timeouts` (the timeouts that were sent), `warnings` and `plan` (the parsed plan list). With `ok` false, it has `error`, and the fields of that kind. The only text field is `message`, and it is redacted: every connection value is replaced with the service name.
 
+In the optimize flow the command is piped into `scripts/plan_findings.py -` (see the optimize module). A plan call that fails then comes back from that script as `error` `pg_run_failed`, with `source_error` (the `error` of the plan call) and `source` (the object below, unchanged). Read `source` for the kinds and reasons below.
+
 What Claude does for each `error`:
 
 - `not_allowed`: the allowlist does not allow the call. The `reason` is a reader reason or `service_not_listed`. Claude makes no connection and keeps to the no-database path.

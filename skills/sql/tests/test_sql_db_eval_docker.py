@@ -118,6 +118,14 @@ class DbEvalDockerTest(unittest.TestCase):
                 self.assertTrue(data["ok"], data)
                 self.assertTrue(data["plan"])
 
+    def test_both_servers_run_with_the_small_cache_and_the_snapshot_holds_the_events_table(self):
+        for version in ("13", "18"):
+            with self.subTest(version=version):
+                shown = docker("exec", self.names[version], "psql", "-U", CANARIES["user"], "-d", CANARIES["dbname"],
+                               "-tA", "-c", "SHOW shared_buffers")
+                self.assertEqual((shown.returncode, shown.stdout.strip()), (0, "2MB"), shown.stderr)
+                self.assertIn("shop.events", self.snapshot(version, f"e-{version}.json")["tables"])
+
     def test_a_bad_password_and_a_wrong_host_give_connection_failed_and_leak_no_canary(self):
         for service in ("app-badpw", "app-wronghost"):
             with self.subTest(service=service):

@@ -10,9 +10,13 @@ the stream-json transcript with grader H (grade_refusals.py, the `expect` list o
 the leak scan (grade_leak_scan.py) and grader G (grade_db_unchanged.py) on each version. The session
 loads the skill folder as a plugin, with no user or project settings, no CLAUDE.md and no MCP server
 (`--setting-sources ""`, CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, `--strict-mcp-config`), no session file, and
-the tools Skill, Read and Bash limited to python3 on four scripts of the skill (rules_file.py, extract.py,
-allowlist.py, pg_run.py). The environment sets PGSERVICEFILE, PGPASSFILE and XDG_CONFIG_HOME to the state
-folder and drops every other PG* variable. The login of `claude` comes from the real HOME (a temp HOME has
+the tools Skill, Read and Bash limited to python3 on five scripts of the skill (rules_file.py, extract.py,
+allowlist.py, pg_run.py, plan_findings.py). The environment sets PGSERVICEFILE, PGPASSFILE and XDG_CONFIG_HOME
+to the state folder and drops every other PG* variable. Optional keys of db-expect.json: `rules` (grader E on
+the final message), `report` (true: grader I on the final message), `disabled` (rule ids, passed to grader I
+as --disabled) and `judge` (the file name of a rubric in this folder: one `claude -p` call with no tools scores
+the explanation and the fix text of the final message, and prints "JUDGE <case>#<n>: <score>/5 <reason>", or
+"JUDGE <case>#<n>: not scored (<reason>)"; a JUDGE line never changes a PASS or FAIL line or the exit code). The login of `claude` comes from the real HOME (a temp HOME has
 no login); the driver writes nothing there. The teardown runs once, in a finally block, on every exit path
 (also SIGTERM and Ctrl-C). Needs docker and psql on PATH (pg_run runs psql on the host).
 The default of --out is a new temp folder, printed at the start; it holds the transcripts and snapshots.
@@ -23,6 +27,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,8 +43,10 @@ sys.path.insert(0, os.path.join(SKILL_DIR, "graders"))
 
 import grade_eval_results as results  # noqa: E402
 CASES = os.path.join(HERE, "cases")
-SCRIPTS = ("rules_file", "extract", "allowlist", "pg_run")
+SCRIPTS = ("rules_file", "extract", "allowlist", "pg_run", "plan_findings")
 CLAUDE_SECONDS = 900
+JUDGE_SECONDS = 300
+JUDGE_SCORE = re.compile(r"(?m)^SCORE:\s*([0-5])\s*/\s*5\b[ \t:.-]*(.*)$")
 
 
 def allowed_tools():
@@ -72,17 +79,59 @@ def grader(script, *args, stdin=None):
     return results.run_grader(script, list(args), stdin=stdin)
 
 
-def grade_rules(label, trace, rules):
-    """The failure lines of grader E (grade_rule_ids.py) on the final message of the transcript."""
+def grade_final_message(label, trace, expectation):
+    """The failure lines of grader E (the `rules` key) and grader I (the `report` key, with `disabled`) on the
+    final message of the transcript. A missing final message is one failure line."""
+    checks = []
+    if "rules" in expectation:
+        rules = expectation["rules"]
+        checks.append(("grade_rule_ids.py", ["-", "--expect", *rules["expect"], "--forbid", *rules["forbid"]]))
+    if expectation.get("report"):
+        checks.append(("grade_report.py", ["-", *(["--disabled", *expectation["disabled"]] if expectation.get("disabled") else [])]))
+    if not checks:
+        return []
     message = results.final_message(trace)
     if message is None:
         return [f"FAIL {label} trace: no final message in {trace}"]
-    args = ["-", "--expect", *rules["expect"], "--forbid", *rules["forbid"]]
-    code, found, error = grader("grade_rule_ids.py", *args, stdin=message)
-    lines = [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
-    if code == 2:
-        lines.append(f"FAIL {label} grade_rule_ids.py: cannot grade ({error})")
+    lines = []
+    for script, args in checks:
+        code, found, error = grader(script, *args, stdin=message)
+        lines += [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
+        if code == 2:
+            lines.append(f"FAIL {label} {script}: cannot grade ({error})")
     return lines
+
+
+def judge_argv(prompt):
+    return ["claude", "-p", prompt, "--model", "sonnet", "--no-session-persistence", "--setting-sources", "",
+            "--strict-mcp-config", "--tools", ""]
+
+
+def judge_env():
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
+    env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
+    return env
+
+
+def judge_line(label, trace, rubric_name, cwd):
+    """One JUDGE line: the score of the explanation and the fix text of the final message against the rubric.
+    It is reported, never scored. The call has no tools, no session file and no database file or variable."""
+    message = results.final_message(trace)
+    if message is None:
+        return f"JUDGE {label}: not scored (no final message)"
+    try:
+        with open(os.path.join(HERE, rubric_name), encoding="utf-8") as handle:
+            rubric = handle.read()
+        done = subprocess.run(judge_argv(f"{rubric}\n\n---\nThe final message to score:\n\n{message}"), cwd=cwd,
+                              env=judge_env(), capture_output=True, text=True, timeout=JUDGE_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"JUDGE {label}: not scored ({type(error).__name__})"
+    if done.returncode != 0:
+        return f"JUDGE {label}: not scored (exit code {done.returncode})"
+    found = JUDGE_SCORE.search(done.stdout)
+    if not found:
+        return f"JUDGE {label}: not scored (no score line)"
+    return f"JUDGE {label}: {found.group(1)}/5 {found.group(2).strip()}".rstrip()
 
 
 def grade_run(label, trace, expectation, before, after):
@@ -96,8 +145,7 @@ def grade_run(label, trace, expectation, before, after):
         lines += [f"FAIL {label} {line[len('FAIL '):]}" for line in found]
         if code == 2:
             lines.append(f"FAIL {label} {script}: cannot grade ({error})")
-    if "rules" in expectation:
-        lines += grade_rules(label, trace, expectation["rules"])
+    lines += grade_final_message(label, trace, expectation)
     for version in db_eval.VERSIONS:
         args = [before[version], after[version]]
         if expectation.get("sequences_may_differ"):
@@ -134,7 +182,8 @@ def run_case(state, case_folder, number, out, budget):
         failures.append(f"FAIL {label} claude: no answer in {CLAUDE_SECONDS} seconds")
     for version in db_eval.VERSIONS:
         db_eval.snapshot(state, version, after[version])
-    return failures + grade_run(label, trace, expectation, before, after)
+    judges = [judge_line(label, trace, expectation["judge"], out)] if expectation.get("judge") else []
+    return failures + grade_run(label, trace, expectation, before, after), judges
 
 
 def main(argv):
@@ -163,9 +212,9 @@ def main(argv):
         db_eval.setup(state)
         for case_folder in cases:
             for number in range(1, args.runs + 1):
-                failures = run_case(state, case_folder, number, out, args.max_budget_usd)
+                failures, judges = run_case(state, case_folder, number, out, args.max_budget_usd)
                 label = f"{os.path.basename(case_folder)}#{number}"
-                output += failures + [f"{label}: {'FAIL' if failures else 'PASS'}"]
+                output += failures + [f"{label}: {'FAIL' if failures else 'PASS'}"] + judges
     except db_eval.Stopped as stopped:
         code = stopped.code
         print("run_db_cases: stopped", file=sys.stderr)
