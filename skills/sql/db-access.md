@@ -159,7 +159,7 @@ python3 <skill folder>/scripts/pg_run.py diff --repo <repo root> --service <name
 
 The guard of `diff` has the select-mode reasons with its own messages: a write statement is `write_statement` (a rewrite of a write statement is unproven, so Claude makes no `diff` call for it). It adds two refusals. `unbalanced_parentheses`: the `(` and `)` of the statement do not balance. `forbidden_function`: the statement calls `query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby` or `setval`, or a function that select mode refuses. Such a function runs SQL from a string that the guard cannot read. A refusal has `statement` (`a` or `b`), `reason`, `message` and `static_review_only`, and no connection is made. Claude reviews the statement by reading only.
 
-The comparison runs in one read-only transaction (`BEGIN READ ONLY`, one `SELECT`, `ROLLBACK`), after two read-only sessions that only describe the statements (the output column names with the version, then the column types). A schema change between the sessions can make the proof fail with `statement_failed`. Every user statement runs once.
+The comparison runs in one read-only transaction (`BEGIN READ ONLY`, one `SELECT`, `ROLLBACK`), after two read-only sessions that only describe the statements (the output column names with the version, then the column types). A schema change between the sessions can make the proof fail with `statement_failed`. The proof transaction runs each user statement once. The first session runs each statement with `LIMIT 0`, and the second session only plans them.
 
 With `ok` true, every result has `action` (`diff`), `service`, `server_version_num`, `timeouts` (the timeouts that were sent), `equal` and the fields below.
 

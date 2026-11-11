@@ -28,7 +28,7 @@ Kinds (each needs at least one such result, except `no_connection`):
 
 Always: no Bash call runs a database client by hand (the first word of a command segment is psql, pg_dump,
 pg_isready, pgcli, createdb, dropdb or docker), and, unless `plan`, `analyzed`, `sequence_warning` or
-`downgraded` or `diff` is expected, no `pg_run` result has `ok` true (when `facts` is expected, an `ok` result with a
+`downgraded`, or `diff` is expected, no `pg_run` result has `ok` true (when `facts` is expected, an `ok` result with a
 non-empty `facts` object is allowed too). The segment
 split is the one of grade_no_change.py.
 Output: one line "FAIL <check>: <message>" for each failure, then PASS or FAIL.

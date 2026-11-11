@@ -377,7 +377,6 @@ class DriverTest(base.TempTest):
         self.assertNotIn("*", rules[0])
         self.assertNotIn(":", rules[0])
         # The rule text ends at the closing parenthesis of the command: an added argument is a different text.
-        self.assertNotEqual(rules[0], f"Bash({self.BASH} --extra)")
         self.assertTrue(rules[0].endswith(f"{self.BASH})"))
 
     def test_the_final_key_fails_a_missing_string_and_a_forbidden_string_with_the_case_label(self):
