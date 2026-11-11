@@ -85,6 +85,17 @@ class CreateSteps(unittest.TestCase):
             self.assertIn(needle, step)
         self.assertEqual(step.count("write nothing"), 2)
 
+    def test_a_null_lockfile_names_the_rule_id_in_the_sentence(self):
+        step = section(self.text, "## Steps").split("\n2. ")[0]
+        self.assertIn("name the rule id `COST-05` in that sentence", step)
+
+    def test_the_final_message_shows_each_written_file_whole_and_nothing_after_the_approval_line(self):
+        step = section(self.text, "## Steps").split("\n7. ")[1]
+        self.assertIn("the whole file, line by line", step)
+        self.assertIn("never a summary", step)
+        self.assertIn("Write no text after the approval line", step)
+        self.assertIn("say so in `## Created`", step)
+
     def test_a_dependabot_file_with_no_entry_gets_only_the_entry(self):
         step = section(self.text, "## Steps").split("\n5. ")[1].split("\n6. ")[0]
         self.assertIn("has no `github-actions` entry, add only that entry", step)

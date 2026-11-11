@@ -9,7 +9,7 @@ How a workflow handles actions, tokens, permissions, untrusted input, privileged
 
 ### SEC-01
 - **Severity:** required
-- **Rule:** Every `uses:` pins a full 40-character commit SHA with a bare version comment: `@<sha> # v5.0.0`. This applies to `actions/*` and to reusable workflows from other repos too. Local `./` actions are exempt. To get the SHA for a tag, the skill uses `pinact run` when pinact is installed. Otherwise it uses `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, and it dereferences annotated tags to their commit.
+- **Rule:** Every `uses:` pins a full 40-character commit SHA with a bare version comment: `@<sha> # v5.0.0`. This applies to `actions/*` and to reusable workflows from other repos too. Local `./` actions are exempt. The check is the form of the pin: a 40-character hexadecimal SHA and a version comment. Do not judge whether the SHA is a real commit of that action: the review has no way to check it. To get the SHA for a tag, the skill uses `pinact run` when pinact is installed. Otherwise it uses `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, and it dereferences annotated tags to their commit.
 - **Check:** mechanical
 - **Fix:** Replace each tag in `uses:` with the full commit SHA and a bare version comment, getting the SHA as the "Pin a SHA" section of tools.md says.
 

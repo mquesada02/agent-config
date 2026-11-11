@@ -9,9 +9,11 @@ Rules and steps for GitHub Actions CI workflows of Node/TypeScript repos.
 
 ## Intake
 
-Before you pick a branch, run the intake script on the repo: `python3 scripts/intake.py <repo path>` (the script path is relative to this skill folder). It prints one JSON object. Read only this JSON for the repo facts. On the reply to a review report, you reuse the intake facts of the review in this conversation, and you run the intake script again only when none are in the conversation. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report. With no network, the script reads the dated list of supported Node majors from [tools.md](tools.md), and the `installed_tools` fact says which of actionlint, zizmor and pinact are on PATH (see [tools.md](tools.md)).
+Before you pick a branch, run the intake script on the repo as one plain command: `python3 <skill folder>/scripts/intake.py <repo path>`, where `<skill folder>` is the full path of this skill folder. Add no `cd`, no `;`, no `&&` and no pipe to this command, and never put another command in the same call (a permission rule for the script matches only a command that starts with `python3` and the script path). It prints one JSON object. Read only this JSON for the repo facts. On the reply to a review report, you reuse the intake facts of the review in this conversation, and you run the intake script again only when none are in the conversation. Each fact has `value`, `status` (`detected`, `default` or `unknown`) and `source`. Name every fact with the status `default` or `unknown` in the report. With no network, the script reads the dated list of supported Node majors from [tools.md](tools.md), and the `installed_tools` fact says which of actionlint, zizmor and pinact are on PATH (see [tools.md](tools.md)).
 
 ## Pick the branch
+
+Read the whole branch file with the Read tool, never only a part of it with a search: the parts that you need are at its end too.
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md). When the user replies to a review report with a selection (`all`, `none`, a list or a range), follow "Fix on approval" in [review.md](review.md).
 - **Create** (the user asks for a new CI workflow): follow [create.md](create.md). It picks a template, fills it from the intake facts and ends with a self-review report.
