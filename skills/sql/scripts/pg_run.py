@@ -631,12 +631,11 @@ def proof_sql(sql_a, sql_b, count, text_columns, keys):
             parts.append(
                 f"pgrun_n{side} AS MATERIALIZED (SELECT row_number() OVER (ORDER BY {order}) AS rn, * FROM pgrun_{source})"
             )
-        numbered = ", ".join(f"{name}::text AS {name}" if index in text_columns else name for index, name in enumerate(names))
         parts.append(
-            f"pgrun_xa AS MATERIALIZED (SELECT rn, {numbered} FROM pgrun_na EXCEPT ALL SELECT rn, {numbered} FROM pgrun_nb)"
+            f"pgrun_xa AS MATERIALIZED (SELECT rn, {compared} FROM pgrun_na EXCEPT ALL SELECT rn, {compared} FROM pgrun_nb)"
         )
         parts.append(
-            f"pgrun_xb AS MATERIALIZED (SELECT rn, {numbered} FROM pgrun_nb EXCEPT ALL SELECT rn, {numbered} FROM pgrun_na)"
+            f"pgrun_xb AS MATERIALIZED (SELECT rn, {compared} FROM pgrun_nb EXCEPT ALL SELECT rn, {compared} FROM pgrun_na)"
         )
         fields += [
             f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)",

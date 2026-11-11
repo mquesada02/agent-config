@@ -1362,21 +1362,17 @@ class DiffTestCase(PgRunTestCase):
         self.assertIn(done.returncode, (0, 1), done.stderr)
         return done.returncode, json.loads(done.stdout)
 
-    @staticmethod
-    def commands(call):
-        return [call["argv"][i + 1] for i, arg in enumerate(call["argv"]) if arg == "-c"]
-
     def sessions(self):
         """The three calls of a diff run, by kind: describe, types and proof."""
         found = {}
         for call in self.calls():
-            text = "\n".join(self.commands(call))
+            text = "\n".join(commands_of(call))
             kind = "describe" if "LIMIT 0" in text else "types" if "pg_typeof" in text else "proof"
             found[kind] = call
         return found
 
     def proof_text(self):
-        return self.commands(self.sessions()["proof"])[1]
+        return commands_of(self.sessions()["proof"])[1]
 
 
 class DiffGuardTest(DiffTestCase):
@@ -1441,7 +1437,7 @@ class DiffSessionTest(DiffTestCase):
         self.assertEqual(call["argv"][:5], ["-X", "-w", "--csv", "-q", "-v"])
         self.assertIn("ON_ERROR_STOP=1", call["argv"])
         self.assertEqual(
-            self.commands(call),
+            commands_of(call),
             ["SHOW server_version_num", "BEGIN READ ONLY", "SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0",
              "SELECT * FROM (SELECT 2 AS id\n) AS t LIMIT 0", "ROLLBACK"],
         )
@@ -1456,7 +1452,7 @@ class DiffSessionTest(DiffTestCase):
         for kind in ("types", "proof"):
             call = self.sessions()[kind]
             self.assertEqual(call["argv"][:7], ["-X", "-w", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
-            commands = self.commands(call)
+            commands = commands_of(call)
             self.assertEqual((commands[0], commands[2], len(commands)), ("BEGIN READ ONLY", "ROLLBACK", 3))
             self.assertIn("-c default_transaction_read_only=on", call["argv"][-1])
 
@@ -1485,10 +1481,10 @@ class DiffSessionTest(DiffTestCase):
     def test_a_final_line_comment_cannot_swallow_the_closing_parenthesis(self):
         self.diff("SELECT 1 AS id -- last", "SELECT 1 AS id -- also last")
         sessions = self.sessions()
-        describe = self.commands(sessions["describe"])
+        describe = commands_of(sessions["describe"])
         self.assertIn("-- last\n) AS t LIMIT 0", describe[2])
         self.assertIn("-- also last\n) AS t LIMIT 0", describe[3])
-        self.assertIn("-- last\n) AS x(c1) ON false", self.commands(sessions["types"])[1])
+        self.assertIn("-- last\n) AS x(c1) ON false", commands_of(sessions["types"])[1])
         proof = self.proof_text()
         self.assertIn("-- last\n) AS t(c1)", proof)
         self.assertIn("-- also last\n) AS t(c1)", proof)
@@ -1505,8 +1501,8 @@ class DiffSessionTest(DiffTestCase):
 
     def test_a_statement_with_a_trailing_semicolon_is_cut(self):
         self.diff("SELECT 1 AS id;", "SELECT 1 AS id ; -- x")
-        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", self.commands(self.sessions()["describe"])[2])
-        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", self.commands(self.sessions()["describe"])[3])
+        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", commands_of(self.sessions()["describe"])[2])
+        self.assertIn("SELECT * FROM (SELECT 1 AS id\n) AS t LIMIT 0", commands_of(self.sessions()["describe"])[3])
 
 
 class DiffShapeTest(DiffTestCase):
