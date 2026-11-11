@@ -25,7 +25,8 @@ COORDINATOR = "term_coord"
 
 # A stand-in for the Orca CLI. It logs each call (with a snapshot of the launch and manual files at that moment) and
 # answers from a scenario file: {"<command words>": {"out": <json or raw text>, "sleep": s, "exit": n, "grandchild": bool, "dir_over": path,
-# "done_file": path (created after the sleep, so a test can tell that the call ran to its end)}}.
+# "done_file": path (created after the sleep, so a test can tell that the call ran to its end), "sequence": [entries] (the n-th call
+# of the key gets the n-th entry; the last repeats)}}.
 STUB = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys, time
 argv = sys.argv[1:]
@@ -40,6 +41,11 @@ with open(os.environ["STUB_LOG"], "a") as handle:
 scenario = json.load(open(os.environ["STUB_SCENARIO"]))
 key = " ".join(argv[:2]) if argv[0] in ("terminal", "worktree", "orchestration") else argv[0]
 entry = scenario.get(key, {"out": {"ok": False, "error": {"code": "unexpected", "message": "unexpected call " + key}}, "exit": 1})
+if "sequence" in entry:  # one entry per call of this key; the last entry repeats
+    counter = os.environ["STUB_LOG"] + "." + key.replace(" ", "_") + ".count"
+    index = int(open(counter).read()) if os.path.exists(counter) else 0
+    open(counter, "w").write(str(index + 1))
+    entry = entry["sequence"][min(index, len(entry["sequence"]) - 1)]
 if entry.get("dir_over"):
     if os.path.exists(entry["dir_over"]):
         os.remove(entry["dir_over"])
@@ -1347,14 +1353,10 @@ class WorkerEscalationFailureTest(WorkerTestCase):
 
 class WorkerPreCheckTest(WorkerTestCase):
     def test_worker_show_failures_create_nothing(self):
-        wrong = lambda **change: reply({"dispatch": {"id": DISPATCH, "taskId": TASK, "assigneeHandle": OLD_HANDLE, **change}})
+        # A record that does not match is read again for about 10 s, so each such case takes that long; the field cases are in the retry tests.
         cases = {
             "call failed": failure("no such thing"),
             "not found": failure("Worker Dispatch ctx_abc123 was not found.", "dispatch_not_found"),
-            "other dispatch": wrong(id="ctx_other"),
-            "other task": wrong(taskId="task_other"),
-            "other assignee": wrong(assigneeHandle="term_other"),
-            "missing assignee": reply({"dispatch": {"id": DISPATCH, "taskId": TASK}}),
             "wrong shape": reply("x"),
             "garbage": {"out": "garbage"},
         }
@@ -1363,7 +1365,8 @@ class WorkerPreCheckTest(WorkerTestCase):
                 self.scenario["orchestration worker-show"] = entry
                 status, text = self.worker_launch()
                 self.assert_early_failure(status, text)
-                self.assertEqual(self.names(), ["status", "worktree list", "orchestration worker-show"])
+                self.assertEqual(self.names()[:2], ["status", "worktree list"])
+                self.assertEqual(set(self.names()[2:]), {"orchestration worker-show"})
                 self.assertEqual(self.read("launch"), f"started\n{status} {text}\n")
                 os.remove(self.log_path)
 
@@ -1374,13 +1377,8 @@ class WorkerPreCheckTest(WorkerTestCase):
         self.assert_early_failure(status, text, "no such thing")
         self.assertEqual(shlex.split(text.rsplit("; the handoff file is at ", 1)[1]), [self.handoff])
 
-    def test_the_mismatch_text(self):
-        self.scenario["orchestration worker-show"] = reply({"dispatch": {"id": "ctx_other", "taskId": TASK, "assigneeHandle": OLD_HANDLE}})
-        status, text = self.worker_launch()
-        self.assertEqual(text, self.early_failed_text("the Dispatch does not match the worker handle and Task"))
-
     def test_the_terminal_handle_must_be_this_terminal(self):
-        for handle in (None, "term_other", "-bad", "bad\nhandle"):
+        for handle in (None, "-bad", "bad\nhandle"):  # a variable that names no terminal: no Orca call
             with self.subTest(handle=handle):
                 status, text = self.launch(self.worker_arguments(), handle=handle)
                 self.assert_early_failure(status, text, "worker handle is not this terminal")
@@ -1405,6 +1403,89 @@ class WorkerPreCheckTest(WorkerTestCase):
         os.remove(self.handoff)
         self.assertEqual(self.worker_launch()[1], "successor failed: the handoff file is missing or empty")
         self.assertEqual(self.calls(), [])
+
+
+class WorkerRetryTest(WorkerTestCase):
+    # The retry window is a constant (no test-only switch): a lasting mismatch takes about 10 s of wall time and no CPU.
+    def record(self, **change):
+        return reply({"dispatch": {"id": DISPATCH, "taskId": TASK, "assigneeHandle": OLD_HANDLE, **change}})
+
+    def test_a_record_that_matches_on_a_later_try_gives_a_normal_launch(self):
+        self.scenario["orchestration worker-show"] = {"sequence": [self.record(assigneeHandle="term_other"), self.record(id="ctx_other"), self.record()]}
+        self.assertEqual(self.worker_launch(), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        self.assertEqual(self.names().count("orchestration worker-show"), 3)
+
+    def test_a_lasting_mismatch_fails_and_names_each_field_with_both_values(self):
+        self.scenario["orchestration worker-show"] = reply({"dispatch": {"id": "ctx_other", "taskId": "task_other"}})
+        status, text = self.worker_launch()
+        self.assert_early_failure(
+            status, text,
+            "the Dispatch does not match the worker handle and Task: id passed ctx_abc123, Orca ctx_other; taskId passed task_abc123, Orca task_other;"
+            " assigneeHandle passed term_old, Orca none",
+        )
+        self.assertGreater(self.names().count("orchestration worker-show"), 1)
+
+    def test_a_lasting_mismatch_names_only_the_fields_that_differ_and_cleans_the_value(self):
+        self.scenario["orchestration worker-show"] = self.record(assigneeHandle="term\nother")
+        status, text = self.worker_launch()
+        self.assert_early_failure(
+            status, text, "the Dispatch does not match the worker handle and Task: assigneeHandle passed term_old, Orca term other"
+        )
+
+
+class WorkerStaleHandleTest(WorkerTestCase):
+    STALE = "term_stale"
+
+    def stale(self, passed=None):
+        """The first `terminal show` (the variable) is stale; the next ones (the passed handle, then the title lookup) get `passed`."""
+        passed = passed or reply({"terminal": {"handle": OLD_HANDLE, "worktreePath": self.worktree, "title": "◐ Fix the thing"}})
+        self.scenario["terminal show"] = {"sequence": [failure("terminal_handle_stale", "terminal_handle_stale"), passed]}
+
+    def assert_both_handles_named(self, text, reason):
+        self.assertEqual(text, self.early_failed_text(f"worker handle is not this terminal (passed {OLD_HANDLE}, $ORCA_TERMINAL_HANDLE {self.STALE}): {reason}"))
+        self.assertNotIn("terminal create", self.names())
+
+    def test_a_stale_variable_whose_passed_handle_orca_confirms_launches(self):
+        self.stale()
+        self.assertEqual(self.launch(self.worker_arguments(), handle=self.STALE), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        shows = [self.option(call, "--terminal") for call in self.calls() if call["argv"][:2] == ["terminal", "show"]]
+        self.assertEqual(shows[:2], [self.STALE, OLD_HANDLE])
+        self.assertEqual(self.lineage()[0]["predecessor"], OLD_HANDLE)  # the confirmed terminal, not the stale variable
+
+    def test_a_handle_that_orca_does_not_confirm_fails_and_names_both_handles(self):
+        cases = {
+            "passed handle is stale too": (failure("terminal_handle_stale", "terminal_handle_stale"), "terminal_handle_stale"),
+            "other handle returned": (reply({"terminal": {"handle": "term_other", "worktreePath": self.worktree}}), "Orca does not place the passed handle in this worktree"),
+            "other worktree": (reply({"terminal": {"handle": OLD_HANDLE, "worktreePath": self.root}}), "Orca does not place the passed handle in this worktree"),
+            "no worktree path": (reply({"terminal": {"handle": OLD_HANDLE}}), "Orca does not place the passed handle in this worktree"),
+        }
+        for name, (entry, reason) in cases.items():
+            with self.subTest(name=name):
+                self.stale(entry)
+                status, text = self.launch(self.worker_arguments(), handle=self.STALE)
+                self.assertEqual(status, "failed")
+                self.assert_both_handles_named(text, reason)
+                self.assertNotIn("orchestration worker-show", self.names())
+                os.remove(self.log_path)
+                os.remove(self.log_path + ".terminal_show.count")  # the stub's call counter of the sequence
+
+    def test_a_variable_that_orca_still_knows_fails(self):
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE)  # the default `terminal show` answers ok for any handle
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "Orca still knows $ORCA_TERMINAL_HANDLE as another terminal")
+
+    def test_a_failed_check_of_the_variable_fails(self):
+        self.scenario["terminal show"] = failure("boom")
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE)
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "boom")
+
+    def test_orca_that_does_not_run_cannot_confirm_the_handle(self):
+        self.scenario["status"] = reply({"app": {"running": False}, "runtime": {"reachable": True}})
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE)
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "Orca is not running or does not manage this worktree, so it cannot confirm the passed handle")
+        self.assertIsNone(self.read("manual"))
 
 
 class WorkerFailureTest(WorkerTestCase):
