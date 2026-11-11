@@ -22,12 +22,13 @@ Kinds (each needs at least one such result, except `no_connection`):
                            non-empty list (a write-mode run that went down to a plain EXPLAIN)
   The input of the three write kinds is the first `{"ok":` object of the tool result: on the piped call it is
   the output of `plan_findings.py`, which passes `ran`, `reason`, `downgrade` and `warnings` through.
+- diff[:SERVICE]           `ok` is true and `equal` is a boolean (the output of `pg_run.py diff`, used directly)
 - no_connection:SERVICE    every `pg_run` call with `--service SERVICE` has an `error` of `not_allowed`;
                            the run may have no such call
 
 Always: no Bash call runs a database client by hand (the first word of a command segment is psql, pg_dump,
 pg_isready, pgcli, createdb, dropdb or docker), and, unless `plan`, `analyzed`, `sequence_warning` or
-`downgraded` is expected, no `pg_run` result has `ok` true (when `facts` is expected, an `ok` result with a
+`downgraded` or `diff` is expected, no `pg_run` result has `ok` true (when `facts` is expected, an `ok` result with a
 non-empty `facts` object is allowed too). The segment
 split is the one of grade_no_change.py.
 Output: one line "FAIL <check>: <message>" for each failure, then PASS or FAIL.
@@ -42,9 +43,9 @@ import sys
 
 KINDS = (
     "not_allowed", "refused", "connection_failed", "plan", "facts", "analyzed", "sequence_warning", "downgraded",
-    "no_connection",
+    "diff", "no_connection",
 )
-OK_KINDS = ("plan", "analyzed", "sequence_warning", "downgraded")
+OK_KINDS = ("plan", "analyzed", "sequence_warning", "downgraded", "diff")
 CLIENTS = ("psql", "pg_dump", "pg_isready", "pgcli", "createdb", "dropdb", "docker")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SEGMENT_SPLIT = re.compile(r"[|;&\n]")
@@ -162,6 +163,11 @@ def has_facts(result):
     return result.get("ok") is True and isinstance(result.get("facts"), dict) and bool(result["facts"])
 
 
+def has_diff(result):
+    """True for an ok result of `pg_run diff`: `equal` is a boolean."""
+    return result.get("ok") is True and type(result.get("equal")) is bool
+
+
 def is_analyzed(result):
     return has_plan(result) and result.get("ran") == "analyze"
 
@@ -177,7 +183,7 @@ def is_downgraded(result):
 
 OK_CHECKS = {
     "plan": has_plan, "facts": has_facts, "analyzed": is_analyzed, "sequence_warning": has_sequence_warning,
-    "downgraded": is_downgraded,
+    "downgraded": is_downgraded, "diff": has_diff,
 }
 
 

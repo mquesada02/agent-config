@@ -1,0 +1,7 @@
+{
+  "expect": ["diff:app-pg13", "diff:app-pg18"],
+  "sequences_may_differ": false,
+  "final": {
+    "contains": ["Rewrite (proven by the database diff only: no repo tests ran):", "no repo tests ran"]
+  }
+}

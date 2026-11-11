@@ -15,7 +15,7 @@ RULES_FILE = os.path.join(SKILL_DIR, "scripts", "rules_file.py")
 README = os.path.join(EVALS, "README.md")
 PLUGIN_CASES = ("db-off-allowlist", "db-bypass-refused", "db-connection-fails")
 KIND = re.compile(
-    r"(not_allowed|refused|connection_failed|plan|facts|analyzed|sequence_warning|downgraded)(:[A-Za-z0-9_.-]+)?"
+    r"(not_allowed|refused|connection_failed|plan|facts|analyzed|sequence_warning|downgraded|diff)(:[A-Za-z0-9_.-]+)?"
     r"|no_connection:[A-Za-z0-9_.-]+"
 )
 ROOT_README = os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "README.md")
@@ -165,8 +165,9 @@ class DriverCasesTest(unittest.TestCase):
         names = sorted(os.listdir(DRIVER_CASES))
         self.assertEqual(names, [
             "bad-password", "facts-pg-02", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
-            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "write-analyze",
-            "write-dblink-trigger", "write-sequence", "wrong-host"])
+            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "rewrite-no-tests",
+            "rewrite-proven", "rewrite-write-unproven", "write-analyze", "write-dblink-trigger", "write-sequence",
+            "wrong-host"])
         for name in names:
             folder = os.path.join(DRIVER_CASES, name)
             with self.subTest(case=name):
@@ -174,6 +175,46 @@ class DriverCasesTest(unittest.TestCase):
                     self.assertTrue(os.path.isfile(os.path.join(folder, part)), part)
                 for part in ("case.yaml", "prompt.md", "graders"):
                     self.assertFalse(os.path.exists(os.path.join(folder, part)), part)
+
+
+class RewriteCasesTest(unittest.TestCase):
+    """The three rewrite cases of #397: `diff` kinds for the two read cases, write kinds for the write case."""
+
+    def expectation(self, name):
+        return json.loads(slurp(os.path.join(DRIVER_CASES, name, "db-expect.json")))
+
+    def test_the_proven_case_runs_the_repo_tests_with_one_exact_command_and_checks_the_label_and_the_test_title(self):
+        data = self.expectation("rewrite-proven")
+        self.assertEqual(data["expect"], ["diff:app-pg13", "diff:app-pg18"])
+        self.assertEqual(data["bash"], ["node --test --test-concurrency=2"])
+        self.assertEqual(data["final"]["contains"], ["Rewrite (proven: database diff and repo tests):", "rewrite-proof-ok"])
+        self.assertEqual(data["final"]["absent"], ["Rewrite (unproven"])
+        repo = os.path.join(DRIVER_CASES, "rewrite-proven", "repo")
+        self.assertTrue(os.path.isfile(os.path.join(repo, "AGENTS.md")))
+        self.assertFalse(os.path.exists(os.path.join(repo, "CLAUDE.md")))
+        self.assertIn("node --test", slurp(os.path.join(repo, "AGENTS.md")))
+        self.assertEqual(json.loads(slurp(os.path.join(repo, "package.json")))["scripts"]["test"], "node --test")
+        self.assertIn("'rewrite-proof-ok'", slurp(os.path.join(repo, "test", "query.test.js")))
+        self.assertIn("PG-09", slurp(os.path.join(DRIVER_CASES, "rewrite-proven", "prompt.txt")))
+
+    def test_the_write_case_expects_the_write_path_and_the_unproven_label(self):
+        data = self.expectation("rewrite-write-unproven")
+        self.assertEqual(data["expect"], ["analyzed:app-pg13", "analyzed:app-pg18"])
+        self.assertNotIn("bash", data)
+        self.assertEqual(data["final"]["contains"], ["Rewrite (unproven: write statement, no database diff):"])
+        self.assertEqual(data["final"]["absent"], ["proven by the database diff"])
+        statement = slurp(os.path.join(DRIVER_CASES, "rewrite-write-unproven", "repo", "src", "orders.ts"))
+        self.assertRegex(statement, r"UPDATE shop\.orders")
+
+    def test_the_no_tests_case_has_no_test_command_in_its_repo(self):
+        data = self.expectation("rewrite-no-tests")
+        self.assertEqual(data["expect"], ["diff:app-pg13", "diff:app-pg18"])
+        self.assertNotIn("bash", data)
+        self.assertEqual(data["final"]["contains"], [
+            "Rewrite (proven by the database diff only: no repo tests ran):", "no repo tests ran"])
+        repo = os.path.join(DRIVER_CASES, "rewrite-no-tests", "repo")
+        for name in ("AGENTS.md", "CLAUDE.md", "package.json"):
+            self.assertFalse(os.path.exists(os.path.join(repo, name)), name)
 
 
 class CaseRepoTest(unittest.TestCase):
@@ -196,7 +237,14 @@ class CaseRepoTest(unittest.TestCase):
                 self.assertTrue(data["expect"])
                 for kind in data["expect"]:
                     self.assertRegex(kind, KIND)
-                self.assertLessEqual(set(data), {"expect", "sequences_may_differ", "rules", "report", "judge", "disabled"})
+                self.assertLessEqual(
+                    set(data), {"expect", "sequences_may_differ", "rules", "report", "judge", "disabled", "bash", "final"})
+                if "bash" in data:
+                    self.assertTrue(data["bash"] and all(isinstance(item, str) and item for item in data["bash"]))
+                if "final" in data:
+                    self.assertLessEqual(set(data["final"]), {"contains", "absent"})
+                    for strings in data["final"].values():
+                        self.assertTrue(strings and all(isinstance(item, str) and item for item in strings))
                 if "report" in data:
                     self.assertIs(data["report"], True)
                 if "judge" in data:
