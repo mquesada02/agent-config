@@ -230,13 +230,10 @@ def main(argv):
     parser.add_argument("--server-version-num", type=int)
     try:
         args = parser.parse_args(argv)
-    except Usage as error:
-        print(f"plan_findings.py: {error}", file=sys.stderr)
-        return 2
-    try:
         text = read_text(args.plan)
     except Usage as error:
-        print(f"plan_findings.py: {error}", file=sys.stderr)
+        # A line break inside an echoed argument or path would make a second stderr line.
+        print("plan_findings.py: " + " ".join(str(error).splitlines()), file=sys.stderr)
         return 2
     result, line = run(text, args.server_version_num)
     print(line)

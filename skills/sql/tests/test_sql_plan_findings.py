@@ -425,6 +425,13 @@ class ContractTest(unittest.TestCase):
                 self.assertEqual((proc.returncode, proc.stdout), (2, ""))
                 self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
 
+    def test_a_newline_in_a_usage_error_does_not_add_a_stderr_line(self):
+        for args in (["/nonexistent/a\nb.json"], ["--unknown=a\nb"]):
+            with self.subTest(args=args):
+                proc = run(args, "")
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
+
     def test_it_writes_no_file_and_opens_no_connection(self):
         with open(SCRIPT, encoding="utf-8") as handle:
             text = handle.read()
