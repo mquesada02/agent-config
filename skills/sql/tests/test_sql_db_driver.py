@@ -335,6 +335,10 @@ class DriverTest(base.TempTest):
                     "plan-01-estimate": plans, "plan-02-seq-scan": plans, "plan-03-spill": plans,
                     "plan-04-nested-loop": plans, "plan-05-cache": plans, "plan-clean": plans,
                     "plan-disabled": plans,
+                    "write-analyze": ["analyzed:app-pg13", "analyzed:app-pg18"],
+                    "write-sequence": ["analyzed:app-pg13", "analyzed:app-pg18",
+                                       "sequence_warning:app-pg13", "sequence_warning:app-pg18"],
+                    "write-dblink-trigger": ["downgraded:app-pg13", "downgraded:app-pg18"],
                     "bad-password": ["connection_failed:app-badpw"],
                     "wrong-host": ["connection_failed:app-wronghost"]}
         rules = {"facts-pg-02": {"expect": ["PG-02"], "forbid": []},

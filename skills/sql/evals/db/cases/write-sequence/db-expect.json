@@ -1,0 +1,4 @@
+{
+  "expect": ["analyzed:app-pg13", "analyzed:app-pg18", "sequence_warning:app-pg13", "sequence_warning:app-pg18"],
+  "sequences_may_differ": true
+}
