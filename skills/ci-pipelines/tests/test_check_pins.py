@@ -120,6 +120,18 @@ class CheckPins(unittest.TestCase):
         self.check(f"acme/setup@{GOOD} # v2", f"acme/setup@{GOOD} # v3")
         self.assertEqual(self.box.calls().count(["api", f"{REPO}/commits/{GOOD}"]), 1)
 
+    def test_a_200_answer_that_is_not_an_object_is_unverified_and_never_a_finding(self):
+        for body in ("null", "[]"):
+            with self.subTest(body=body):
+                self.box.route(f"{REPO}/commits/{GOOD}", body)
+                self.assertEqual(self.result(f"acme/setup@{GOOD}"), ("unverified", "unverified"))
+        for body in ({"object": None}, {"object": {}}):
+            with self.subTest(body=body):
+                self.tag("v1", OTHER)
+                self.box.route(f"{REPO}/git/ref/tags/v1", body)
+                self.commit(GOOD)
+                self.assertEqual(self.result(f"acme/setup@{GOOD} # v1"), ("unverified", "unverified"))
+
     def test_a_missing_gh_is_unverified(self):
         box = Sandbox(gh=False)
         self.addCleanup(box.cleanup)

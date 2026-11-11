@@ -30,10 +30,10 @@ class Unavailable(Exception):
 
 
 def get(path):
-    """The parsed JSON of `gh api <path>`, or None when the answer is "not found".
+    """The parsed JSON object of `gh api <path>`, or None when the answer is "not found".
 
     That is HTTP 404, or the HTTP 422 "No commit found" of a SHA that is not in the repo.
-    Any other failure raises Unavailable.
+    Any other failure, and a 200 answer that is not a JSON object, raises Unavailable.
     """
     try:
         done = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=30)
@@ -45,9 +45,12 @@ def get(path):
         raise Unavailable("gh-error")
     if done.returncode == 0:
         try:
-            return json.loads(done.stdout)
+            answer = json.loads(done.stdout)
         except ValueError:
             raise Unavailable("gh-error")
+        if not isinstance(answer, dict):
+            raise Unavailable("gh-error")
+        return answer
     error = done.stderr.lower()
     reason = next((name for words, name in ERRORS if any(word in error for word in words)), "gh-error")
     if reason == "not-found":
@@ -58,12 +61,10 @@ def get(path):
 def tag_commit(repo, tag):
     """The commit SHA of a tag (an annotated tag is dereferenced), or None when the tag does not exist."""
     try:
-        ref = get(f"repos/{repo}/git/ref/tags/{tag}")
-        obj = ref["object"] if ref else None
-        while obj and obj["type"] == "tag":
-            annotated = get(f"repos/{repo}/git/tags/{obj['sha']}")
-            obj = annotated["object"] if annotated else None
-        return obj["sha"] if obj else None
+        answer = get(f"repos/{repo}/git/ref/tags/{tag}")
+        while answer is not None and answer["object"]["type"] == "tag":
+            answer = get(f"repos/{repo}/git/tags/{answer['object']['sha']}")
+        return answer["object"]["sha"] if answer is not None else None
     except (KeyError, TypeError):
         raise Unavailable("gh-error")
 
