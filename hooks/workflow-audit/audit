@@ -197,6 +197,8 @@ def _join_as_bash(text):
     """The text with each continued line joined where bash joins it: not inside single quotes, and not in a comment (a comment ends at
     the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs. It reads the text
     with `_units`, and never raises: a quote, substitution or backtick that is not closed runs to the end of the text."""
+    if "\\\n" not in text:  # nothing to join: every unit below would be written back as it is
+        return text
     # A substitution body is joined as text of its own, up to its closing character. The frames are a list and not recursive calls, so that
     # deeply nested text cannot overflow the stack here: the callers read the join outside their guards.
     frames = [(_units(text, tolerant=True), text, [], "", "")]  # the units, their text, the joined pieces, and the opener and closer around them
@@ -207,11 +209,12 @@ def _join_as_bash(text):
             if kind == "escape":
                 out.append("" if piece == "\\\n" else piece)
             elif kind == "double":
-                out.append(re.sub(r"\\.?", lambda pair: "" if pair.group() == "\\\n" else pair.group(), piece, flags=re.DOTALL))
+                out.append(_join_continued(piece))
             elif kind in ("paren", "backtick"):
                 size = 2 if kind == "paren" else 1
-                body = source[start + size:end - closed]
-                frames.append((_units(body, tolerant=True), body, [], piece[:size], piece[len(piece) - closed:]))
+                closer = piece[-1] if closed else ""
+                body = source[start + size:end - len(closer)]
+                frames.append((_units(body, tolerant=True), body, [], piece[:size], closer))
                 break
             else:
                 out.append(piece)
@@ -2389,7 +2392,7 @@ def _units(text, index=0, in_body=False, tolerant=False):
             kind = "double"
         elif char == "`":
             kind = "backtick"
-        elif text.startswith("$(", index):
+        elif char == "$" and text.startswith("$(", index):
             kind = "paren"
         elif char == "#" and starts_word:
             kind = "comment"

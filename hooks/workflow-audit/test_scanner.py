@@ -102,6 +102,7 @@ class MaskSubstitutionsTest(unittest.TestCase):
 
     def test_case_a_a_continued_line_before_a_hash_leaves_it_a_comment(self):
         # Changed by #209 (owner decision): the old scan kept `#c` as plain text.
+        self.assertEqual(audit._mask_substitutions("x \\\n#c")[0], "x \\\n")
         self.assertEqual(audit.split_command("x \\\n#c"), [["x"], "\n"])
 
 
