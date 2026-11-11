@@ -656,5 +656,62 @@ class ServicesTest(FilesCase):
         self.assertEqual(plan["warnings"], [])
 
 
+class RoundThreeFilesTest(FilesCase):
+    def proposal_with(self, data):
+        path = os.path.join(self.work, "round3.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        return path
+
+    def test_a_lone_surrogate_is_a_usage_error_and_not_a_traceback(self):
+        for name, data in (
+            ("rule", {"prose_rules": ["a \ud800 b"]}),
+            ("setting", {"settings": {"style": {"indent": "\ud800"}}}),
+        ):
+            with self.subTest(name=name):
+                code, out, err = self.run_script("plan", self.repo, "--proposal", self.proposal_with(data))
+                self.assertEqual(code, 2, (out, err))
+                self.assertNotIn("Traceback", err)
+
+    def test_a_changed_services_line_keeps_its_inline_comment(self):
+        self.write_allowlist('["example.com/acme/shop"]\nservices = ["old"]  # why\n')
+        new = self.plan()["allowlist"]["text"]
+        self.assertEqual(new, '["example.com/acme/shop"]\nservices = ["app-dev"]  # why\n')
+
+    def test_a_hash_inside_a_service_value_is_not_a_comment(self):
+        self.write_allowlist('["example.com/acme/shop"]\nservices = ["old"] # a # b\n')
+        new = self.plan()["allowlist"]["text"]
+        self.assertEqual(new, '["example.com/acme/shop"]\nservices = ["app-dev"] # a # b\n')
+
+    def test_an_unterminated_code_fence_refuses_instead_of_a_second_heading(self):
+        self.write_rules("# SQL rules\n\n```\nunclosed\n\n## Repo rules\n\n- old rule\n")
+        before = self.snapshot()
+        out = self.plan(code=1)
+        self.assertEqual(out["reason"], "malformed_rules_file")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_failed_replace_does_not_report_a_file_that_was_never_replaced(self):
+        import setup_files
+
+        self.write_rules(OLD_RULES)
+        real = os.replace
+        calls = []
+
+        def failing(source, target):
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(source, target)
+
+        proposal = self.proposal()
+        plan = self.plan(proposal)
+        with open(proposal, encoding="utf-8") as handle:
+            data = json.load(handle)
+        with mock.patch("setup_files.os.replace", failing):
+            out = setup_files.write(self.repo, data, plan["digest"])
+        self.assertEqual(out["reason"], "write_failed")
+        self.assertNotIn("stayed changed", out["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

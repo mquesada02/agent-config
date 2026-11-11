@@ -84,8 +84,19 @@ def toml_value(value):
     return repr(value)
 
 
+def utf8(text):
+    """True when the text can be written as UTF-8 (a lone surrogate cannot)."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def scalar(value):
-    return isinstance(value, (str, bool, int)) or (isinstance(value, float) and math.isfinite(value))
+    if isinstance(value, str):
+        return utf8(value)
+    return isinstance(value, (bool, int)) or (isinstance(value, float) and math.isfinite(value))
 
 
 def parse_proposal(data):
@@ -106,7 +117,7 @@ def parse_proposal(data):
             if not (scalar(value) or (isinstance(value, list) and all(scalar(item) for item in value))):
                 raise sql_text.UsageError("settings.%s.%s must be a string, boolean, number or a list of them" % (section, key))
     rules = data.get("prose_rules", [])
-    if not isinstance(rules, list) or not all(isinstance(r, str) and r.strip() and "\n" not in r and "\r" not in r for r in rules):
+    if not isinstance(rules, list) or not all(isinstance(r, str) and r.strip() and "\n" not in r and "\r" not in r and utf8(r) for r in rules):
         raise sql_text.UsageError("prose_rules must be a list of one-line texts")
     services = data.get("services")
     if services is not None:
@@ -203,6 +214,18 @@ def value_span(content, start):
     return start
 
 
+def trailing_comment(content, start, last):
+    """The comment (with the space before it) after the value that spans `content[start:last + 1]`, or ''."""
+    line = content[last]
+    for position in (m.start() for m in re.finditer("#", line)):
+        try:
+            tomllib.loads("\n".join(content[start:last] + [line[:position]]) + "\n")
+        except tomllib.TOMLDecodeError:
+            continue
+        return line[len(line[:position].rstrip()):]
+    return ""
+
+
 def scan_block(content):
     """The `[name]` tables of a block: header line, keys (line span) and the line of the last key."""
     sections = {}
@@ -290,6 +313,8 @@ def structural_lines(file):
             comment = "-->" not in line
         else:
             found.add(index)
+    if fence:
+        raise Refusal("malformed_rules_file", "%s: a code fence is never closed" % rules_file.RULES_FILE)
     return found
 
 
@@ -447,7 +472,8 @@ def minimal_entry_edits(file, key, services, dropped):
         match = KEY_LINE.match(lines[index])
         if match and match.group(2) == "services":
             last = value_span(lines, index)
-            edits.append((index, last - index + 1, [file.make(match.group(1) + "services = " + toml_value(services))], 0))
+            comment = trailing_comment(lines, index, last)
+            edits.append((index, last - index + 1, [file.make(match.group(1) + "services = " + toml_value(services) + comment)], 0))
             return edits
     return None
 
@@ -594,8 +620,8 @@ def write(repo, proposal, confirm):
             temps.append(write_temp(entry["path"], entry["text"], bom, mode))
         for (entry, _, _), temp in zip(jobs, temps):
             old = read_raw(entry["path"])
-            replaced.append((entry["path"], old))
             os.replace(temp, entry["path"])
+            replaced.append((entry["path"], old))
     except OSError as error:
         stayed = []
         for path, old in reversed(replaced):

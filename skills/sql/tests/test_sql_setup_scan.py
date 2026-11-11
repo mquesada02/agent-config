@@ -249,5 +249,11 @@ class UnsafeTest(ScanCase):
         self.assertIsNone(self.candidate(out, "PGJS-04"))
 
 
+class RoundThreeScanTest(ScanCase):
+    def test_a_huge_offset_number_is_a_pg_10_hit_and_not_a_crash(self):
+        self.write("q.sql", "select id from t offset " + "1" * 5000 + ";\n")
+        self.assertIsNotNone(self.candidate(self.scan(), "PG-10"))
+
+
 if __name__ == "__main__":
     unittest.main()

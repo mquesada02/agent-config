@@ -83,7 +83,8 @@ def statement_hits(statement, form, tags):
             if not EXISTS_BEFORE.search(text[: match.start()]):
                 hits.append(("PG-08", line_of(start, text, match.start())))
     for match in OFFSET.finditer(text):
-        if int(match.group(1)) > MAX_OFFSET:
+        digits = match.group(1).lstrip("0")
+        if len(digits) > len(str(MAX_OFFSET)) or (digits and int(digits) > MAX_OFFSET):  # no int() of a huge run
             hits.append(("PG-10", line_of(start, text, match.start())))
     return hits
 

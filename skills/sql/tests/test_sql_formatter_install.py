@@ -393,5 +393,36 @@ class ApplyTest(InstallCase):
         self.assertEqual(out["reason"], "no_offer")
 
 
+class RoundThreeInstallTest(InstallCase):
+    def test_the_dump_follows_the_first_line_end_of_the_old_text(self):
+        sys.path.insert(0, os.path.dirname(SCRIPT))
+        import formatter_install
+
+        mixed = formatter_install.dump({"a": 1, "b": 2}, '{\n  "a": 1,\r\n  "b": 2\n}\n')
+        self.assertNotIn("\r", mixed)
+        crlf = formatter_install.dump({"a": 1, "b": 2}, '{\r\n  "a": 1,\n  "b": 2\r\n}\r\n')
+        self.assertTrue(crlf.startswith("{\r\n"))
+        self.assertNotIn("\n", crlf.replace("\r\n", ""))
+
+    def test_a_put_back_that_fails_after_a_failed_install_is_ok_false_and_names_the_file(self):
+        from unittest import mock
+
+        sys.path.insert(0, os.path.dirname(SCRIPT))
+        import formatter_install
+
+        self.package()
+        self.write("yarn.lock", "")
+        self.write(".prettierrc.json", '{ "semi": false }\n')
+        self.fake("yarn")
+        self.env["FAKE_FAIL"] = "1"
+        offer = self.offer()
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(formatter_install, "put_back", side_effect=OSError("denied")):
+            out = formatter_install.apply(self.repo, offer["digest"], None)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["reason"], "install_failed")
+        self.assertIn(".prettierrc.json", out["message"])
+        self.assertIn("denied", out["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

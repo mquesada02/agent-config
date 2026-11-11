@@ -68,7 +68,8 @@ def dump(data, old_text=None):
         if found:
             indent = found.group(1)
     text = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
-    return text.replace("\n", "\r\n") if old_text and "\r\n" in old_text else text
+    first_end = re.search(r"\r?\n", old_text or "")
+    return text.replace("\n", "\r\n") if first_end and first_end.group() == "\r\n" else text
 
 
 def unified(name, old, new):
@@ -241,9 +242,12 @@ def apply(root, digest, tags):
         except OSError as error:
             failed, stderr = True, str(error)
         if failed:
-            put_back(path, old)
-            tail = "\n".join(stderr.strip().splitlines()[-STDERR_LINES:])
-            return {"ok": False, "reason": "install_failed", "message": tail or "the install command failed"}
+            tail = "\n".join(stderr.strip().splitlines()[-STDERR_LINES:]) or "the install command failed"
+            try:
+                put_back(path, old)
+            except OSError as error:
+                tail += "\n%s may still be changed: cannot put it back: %s" % (plan["config"]["file"], error)
+            return {"ok": False, "reason": "install_failed", "message": tail}
     detected = detect_formatter.detect(root, "template", tags, None)
     if detected["chosen"] == "none":
         return {"ok": False, "reason": detected["reason"] or "the detector still chooses none", "chosen": "none"}
