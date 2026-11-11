@@ -62,7 +62,7 @@ def read_json(path):
 
 
 def run(args, timeout=30):
-    """(ok, stdout, stderr) of a subprocess. A missing program or a timeout is not ok."""
+    """(ok, stdout, stderr) of a subprocess. A missing program, a timeout or output that is not UTF-8 is not ok."""
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as error:
