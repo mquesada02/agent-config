@@ -990,6 +990,7 @@ class InstructionTest(HookTestCase):
                  "   - Built: each file, function or artifact that this session created or changed, with its path or link, or none",
                  "   - Done: each step or ticket that is finished, with its evidence (a test result, a commit or a link), or none",
                  "   - Remaining: each step that is not done, in order, with the next action first, or none",
+                 "   - Depends on: every scratchpad file and tracker item that the open work depends on, each with its full path or link, or none",
                  "No assumptions: in every section of the handoff, write only what you saw in this session: the conversation, a tool output or a file."
                  " Do not guess and do not fill a gap. Write unknown for what you did not see. Mark each claim that you did not verify as unverified.")
         position = reason.index("the next CLAUDE.md section-7 step per ticket")
@@ -1002,7 +1003,7 @@ class InstructionTest(HookTestCase):
         reason = self.reason()
         self.assertIn('under the heading "Successor steps"', reason)
         self.assertIn("check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`)", reason)
-        self.assertIn("if any takeover step fails, keep the old terminal open, tell the user what failed, and stop", reason)
+        self.assertIn("if any takeover step fails, except the close of the old terminal, keep the old terminal open, tell the user what failed, and stop", reason)
         self.assertIn("The takeover is done when you have read the handoff (and, for a coordinator, bound the Run).", reason)
         self.assertIn("Plain session only:\n   1. Read the handoff.", reason)
         self.assertIn("then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.", reason)
@@ -1042,7 +1043,7 @@ class InstructionTest(HookTestCase):
         for part in parts:
             self.assertIn(part, steps[position:])
             position = steps.index(part, position)
-        self.assertLess(reason.index("if any takeover step fails, keep the old terminal open"), reason.index(label))
+        self.assertLess(reason.index("if any takeover step fails, except the close of the old terminal, keep the old terminal open"), reason.index(label))
 
     def test_step_3_has_the_coordinator_fields_after_the_core_and_before_the_steps(self):
         reason = self.reason()
@@ -1075,7 +1076,27 @@ class InstructionTest(HookTestCase):
             self.assertIn(part, steps[position:])
             position = steps.index(part, position)
         self.assertLess(steps.index("`run-use --id"), steps.index("close that terminal"))  # the close comes after the bind
-        self.assertLess(reason.index("if any takeover step fails, keep the old terminal open"), reason.index(label))
+        self.assertLess(reason.index("if any takeover step fails, except the close of the old terminal, keep the old terminal open"), reason.index(label))
+
+    def test_the_new_line_comes_after_the_opening_line_and_before_step_1(self):
+        lines = self.reason().splitlines()
+        self.assertTrue(lines[0].startswith("The context is at 40% of the window."))
+        self.assertEqual(lines[1], "The successor continues this work. Do not tell the user to start a session, and do not stop the work for any other context reason.")
+        self.assertTrue(lines[2].startswith("1. Stop the current work."))
+
+    def test_the_close_failure_sentence_is_in_the_plain_and_coordinator_steps_and_not_the_worker_steps(self):
+        reason = self.reason()
+        sentence = "If the close of the old terminal fails, tell the owner which terminal to close and continue the work; never wait on it."
+        plain = reason[reason.index("Plain session only:"):reason.index("Coordinator (use these steps")]
+        coordinator = reason[reason.index("Coordinator (use these steps"):reason.index("Worker (use these steps")]
+        worker = reason[reason.index("Worker (use these steps"):reason.index("4. Run this command")]
+        self.assertEqual(plain.count(sentence), 1)
+        self.assertEqual(coordinator.count(sentence), 1)
+        self.assertEqual(reason.count(sentence), 2)
+        self.assertNotIn("close of the old terminal fails", worker)
+
+    def test_the_common_rule_still_stops_for_every_other_failure(self):
+        self.assertIn("keep the old terminal open, tell the user what failed, and stop. The takeover is done when you have read the handoff", self.reason())
 
     def test_the_state_layout_comes_before_step_4_and_the_command_is_last(self):
         reason = self.reason()

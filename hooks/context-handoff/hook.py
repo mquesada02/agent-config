@@ -3,6 +3,7 @@
 # ignored instruction, and halts the session after 3 re-blocks. It runs on Stop and PostToolUse and must never break a
 # session: any internal error gives no output and exit 0 (auto-compact stays the backstop).
 #
+# Expected behavior, not gaps: a successor reloads its skills (a handoff cannot hold skill text), and an ignored block is re-blocked before the launcher runs.
 # Two maintenance points:
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
@@ -78,22 +79,23 @@ PROGRESS_BLOCK = """
    - Built: each file, function or artifact that this session created or changed, with its path or link, or none
    - Done: each step or ticket that is finished, with its evidence (a test result, a commit or a link), or none
    - Remaining: each step that is not done, in order, with the next action first, or none
+   - Depends on: every scratchpad file and tracker item that the open work depends on, each with its full path or link, or none
    No assumptions: in every section of the handoff, write only what you saw in this session: the conversation, a tool output or a file. Do not guess and do not fill a gap. Write unknown for what you did not see. Mark each claim that you did not verify as unverified."""  # appended after the coordinator block, before the successor steps
 SUCCESSOR_STEPS_INTRO = """
    Then copy these successor steps word for word into the handoff, under the heading "Successor steps":"""
 SUCCESSOR_COMMON_STEPS = """
    Every role: check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`). A worker does this after its new Dispatch arrives.
-   Every role: if any takeover step fails, keep the old terminal open, tell the user what failed, and stop. The takeover is done when you have read the handoff (and, for a coordinator, bound the Run)."""
+   Every role: if any takeover step fails, except the close of the old terminal, keep the old terminal open, tell the user what failed, and stop. The takeover is done when you have read the handoff (and, for a coordinator, bound the Run)."""
 PLAIN_SUCCESSOR_STEPS = """
    Plain session only:
    1. Read the handoff.
-   2. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.
+   2. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead. If the close of the old terminal fails, tell the owner which terminal to close and continue the work; never wait on it.
    3. Continue the work."""
 COORDINATOR_SUCCESSOR_STEPS = """
    Coordinator (use these steps instead of the plain steps):
    1. Read the handoff. It holds the Run ID.
    2. Check the Run ID with `run-show --id <Run ID>`. Then bind the Run with `run-use --id <Run ID>`. This fences the predecessor: its `check --wait` ends with `consumer_fenced`, and its `task-create` and `worker-start` fail.
-   3. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead.
+   3. Check the old terminal handle that your first prompt names (the prompt wins over the handoff) with `terminal show --terminal <handle>`, then close that terminal. If your first prompt names no Orca terminal, tell the user to close the old session instead. If the close of the old terminal fails, tell the owner which terminal to close and continue the work; never wait on it.
    4. Run `check`. Unacked deliveries return under new delivery IDs. Check each Task and Dispatch ID from the handoff with `task-list` and `worker-show` before you act on it. If such a check fails, tell the user and do not act on that ID.
    5. Skip the messages that the handoff marks as done. Match them by message ID. Ack each delivery once all of its messages are done or handled."""  # appended after the plain steps
 WORKER_SUCCESSOR_STEPS = """
@@ -246,6 +248,7 @@ def block(state, data):
     command, handoff = state["command"], state["handoff"]
     reason = "\n".join([
         f"The context is at {THRESHOLD_PERCENT}% of the window. Hand over to a successor session now. Follow these steps in order.",
+        "The successor continues this work. Do not tell the user to start a session, and do not stop the work for any other context reason.",
         "1. Stop the current work. From now on the only allowed Orca CLI call is the coordinator's `ack` (step 2); the only other allowed command is the launcher (step 4).",
         "2. If you are an Orca coordinator, ack only the deliveries that you fully handled.",
         f"3. Run /mattpocock-skills:handoff. Write the handoff to exactly this path: {handoff} . Put the State section first.{state_layout(data)}",
