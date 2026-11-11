@@ -85,7 +85,7 @@ Finding types:
 The loop session decides the final type.
 
 Roles. The agent that reports a finding never fixes it, so a second agent checks each finding first:
-- **Reviewers** (the /mattpocock-skills:code-review subagents) report findings. They do not fix.
+- **Reviewers** (the /mattpocock-skills:code-review subagents) report findings. They do not fix. They are read-only toward remote state: the hook `~/.claude/hooks/subagent-readonly/block_subagent_writes.py` denies their remote-write commands (`gh` writes, `git push`, `terraform apply`, `aws` writes). A reviewer that needs such a command reports the need as a finding.
 - **Verifier**: one Sonnet subagent per Blocking finding. It confirms the failure from the code (a failing test, a traced path, or a quoted line), or it rejects the finding. The loop session marks a rejected finding as rejected in the ledger.
 - **Fixer**: the loop session. For each confirmed Blocking finding:
   1. Write a test that reproduces it, where the change can be tested.
@@ -182,6 +182,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
   - /plan-review runs: section 7, steps 3, 4.1 and 5.3.
   - /mattpocock-skills:code-review runs and their verifier subagents: section 6 and section 7, step 5.5.
   - The auditor subagent: section 6 step 5 and section 7.
+- Subagents are read-only toward remote state, whatever their prompt says. The hook `~/.claude/hooks/subagent-readonly/block_subagent_writes.py` enforces it for the calls that carry an `agent_id`. It does not cover main sessions or Orca workers, or a write hidden in a script that a subagent runs. Say "read-only" in the prompt of every review subagent anyway.
 - Skills that start their own subagents (for example /mattpocock-skills:research or /simplify) may do so. This rule covers subagents you spawn yourself.
 - Use Orca for all other delegation:
   - /orchestration: coordinating workers and waiting for results (task DAGs, ask/reply, worker_done, escalations). The section 7 coordinator uses this.

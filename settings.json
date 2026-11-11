@@ -20,6 +20,10 @@
     "allow": [
       "$defaults",
       "Orca Worker Handover: A coordinator session (the session that bound the Orca Run with `orchestration run-create` or `orchestration run-use`) may run exactly the commands that a 'Worker handover' escalation lists: `orchestration worker-stop`, `orchestration worker-abandon`, `terminal close` and `orchestration worker-start --retry-of`. Not Interfere With Workloads: the worker asked for the handover. The escalation must appear in a tool result of the coordinator's own Orca mailbox (`orchestration check`) and come from a worker in the bound Run. Each command must match the escalation exactly: its CLI prefix, order and conditions, and real IDs, handles and paths as arguments, never a placeholder such as `<new handle>`. Anything else, including a worker session or escalation text from any other source, does not match."
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Subagent Remote Writes: A subagent (a session started with the Agent tool, for example a code-review or plan-review reviewer) must not run a command that changes remote state: `gh` writes (api with a method other than GET or with field flags, pr/issue/repo/release/secret/variable/label writes), `git push`, `terraform apply`, `destroy`, `import` or `state` writes, `aws` calls that are not get/list/describe/head, `kubectl` or `docker` writes to a remote, and any script or tool that does the same. The subagent reports the need as a finding instead. This rule applies only to a call that the transcript shows as made by a subagent. It does not apply to the main session or to an Orca worker, which are full sessions."
     ]
   },
   "model": "claude-opus-5-5",
@@ -121,6 +125,17 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/block-aws-credentials.py",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/subagent-readonly/block_subagent_writes.py",
             "timeout": 10,
             "onFailure": "block"
           }

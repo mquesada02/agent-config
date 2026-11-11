@@ -1,0 +1,192 @@
+import json
+import os
+import subprocess
+import sys
+import unittest
+
+HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "block_subagent_writes.py")
+
+BLOCKED = (
+    "gh api -X PUT repos/o/r/environments/prod",
+    "gh api --method=DELETE repos/o/r/environments/prod",
+    "gh api -XPATCH repos/o/r",
+    "gh api repos/o/r/rulesets -X POST -f name=x",
+    "gh api repos/o/r/issues -f title=x",
+    "gh api repos/o/r/issues -F title=x",
+    "gh api repos/o/r/issues --field title=x",
+    "gh api repos/o/r/issues --raw-field=title=x",
+    "gh api repos/o/r/issues --input body.json",
+    "gh -R o/r pr merge 5",
+    "gh pr create --title t",
+    "gh pr edit 5 --add-label x",
+    "gh pr comment 5 --body x",
+    "gh pr review 5 --approve",
+    "gh issue create --title t",
+    "gh issue close 5",
+    "gh repo edit --visibility private",
+    "gh repo delete o/r --yes",
+    "gh release create v1",
+    "gh secret set NAME",
+    "gh variable delete NAME",
+    "gh label create bug",
+    "git push",
+    "git push origin HEAD:main",
+    "git -C /tmp/x push --force",
+    "git-push origin main",
+    "terraform apply",
+    "terraform -chdir=infra apply -auto-approve",
+    "terraform destroy",
+    "terraform import aws_s3_bucket.b name",
+    "terraform state rm aws_s3_bucket.b",
+    "terraform state mv a b",
+    "terraform state push x.tfstate",
+    "terraform force-unlock 1234",
+    "aws s3 rb s3://bucket",
+    "aws --profile p ec2 terminate-instances --instance-ids i-1",
+    "aws iam create-user --user-name x",
+    "aws s3api put-object --bucket b --key k",
+    "aws ssm put-parameter --name n --value v",
+)
+
+WRAPPED = (
+    "bash -c 'gh api -X PUT repos/o/r/environments/prod'",
+    "sh -lc \"git push origin main\"",
+    "eval 'terraform apply'",
+    "bash -c \"bash -c 'gh pr merge 5'\"",
+    "git diff && git push",
+    "git status; terraform apply",
+    "gh pr view 5 | gh pr merge 5",
+    "echo $(gh pr merge 5)",
+    "echo \"$(git push)\"",
+    "echo `git push`",
+    "FOO=1 gh pr merge 5",
+    "sudo git push",
+    "timeout 30 terraform apply",
+    "xargs -n1 gh pr merge",
+    "find . -exec gh issue close {} ;",
+    "true\ngit push",
+    "git push \\\n  origin main",
+)
+
+UNRESOLVABLE = (
+    "gh 'unterminated",
+    "$GH api -X PUT repos/o/r",
+    "$(which gh) pr merge 5",
+    "gh $SUB create",
+    "gh pr $VERB 5",
+    "git $SUB origin",
+    "terraform $SUB",
+    "aws s3 $OPERATION",
+    "bash -c \"$CMD\"",
+    "eval \"$CMD\"",
+    "echo $(",
+)
+
+ALLOWED = (
+    "gh api repos/o/r/issues",
+    "gh api -X GET repos/o/r/issues",
+    "gh api --method GET repos/o/r/issues --jq '.[].title'",
+    "gh api repos/o/r/issues -q '.[] | .title'",
+    "gh pr view 5",
+    "gh pr list --state open",
+    "gh pr diff 5",
+    "gh pr checks 5",
+    "gh issue view 5 --comments",
+    "gh issue list",
+    "gh repo view o/r",
+    "gh release view v1",
+    "gh run view 5",
+    "git diff",
+    "git log --oneline -5",
+    "git show HEAD",
+    "git status",
+    "git commit -m 'push the change'",
+    "git -C /tmp/x log",
+    "terraform fmt -check",
+    "terraform validate",
+    "terraform show",
+    "terraform plan",
+    "terraform state list",
+    "terraform -chdir=infra plan -out=p",
+    "aws sts get-caller-identity",
+    "aws --profile p ec2 describe-instances",
+    "aws s3api head-object --bucket b --key k",
+    "aws iam list-users",
+    "aws --version",
+    "python3 -m unittest discover",
+    "npm test",
+    "ls -la && cat README.md",
+    "grep -r 'git push' docs",
+    "echo gh pr merge 5",
+    "cat <<'EOF'\ngit push\nEOF",
+    "bash -c 'git diff'",
+    "bash script.sh arg",
+    "echo $(git rev-parse HEAD)",
+    "$HOME/.claude/hooks/tool arg",
+    "[ -f x ] && echo ok",
+)
+
+
+class HookTest(unittest.TestCase):
+    def run_hook(self, command, subagent=True, **extra):
+        data = {"tool_name": "Bash", "tool_input": {"command": command}, **extra}
+        if subagent:
+            data.update(agent_id="agent-1", agent_type="general-purpose")
+        result = subprocess.run([sys.executable, "-I", HOOK], input=json.dumps(data).encode(), capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)["hookSpecificOutput"] if result.stdout.strip() else None
+
+    def assert_denied(self, command):
+        output = self.run_hook(command)
+        self.assertIsNotNone(output, command)
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("Report the need as a finding", output["permissionDecisionReason"])
+
+    def test_each_remote_write_form_is_denied_for_a_subagent(self):
+        for command in BLOCKED:
+            with self.subTest(command=command):
+                self.assert_denied(command)
+
+    def test_wrapped_forms_are_denied_for_a_subagent(self):
+        for command in WRAPPED:
+            with self.subTest(command=command):
+                self.assert_denied(command)
+
+    def test_a_command_that_cannot_be_resolved_is_denied_for_a_subagent(self):
+        for command in UNRESOLVABLE:
+            with self.subTest(command=command):
+                self.assert_denied(command)
+
+    def test_nesting_deeper_than_the_limit_is_denied(self):
+        self.assert_denied("bash -c \"bash -c \\\"bash -c \\\\\\\"bash -c 'git diff'\\\\\\\"\\\"\"")
+
+    def test_read_only_forms_pass_for_a_subagent(self):
+        for command in ALLOWED:
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_hook(command))
+
+    def test_every_command_passes_without_an_agent_id(self):
+        for command in BLOCKED + WRAPPED + UNRESOLVABLE:
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_hook(command, subagent=False))
+
+    def test_an_empty_agent_id_counts_as_a_main_session(self):
+        self.assertIsNone(self.run_hook("git push", subagent=False, agent_id=""))
+
+    def test_a_tool_other_than_bash_passes(self):
+        data = {"tool_name": "Read", "agent_id": "a", "tool_input": {"file_path": "/x"}}
+        result = subprocess.run([sys.executable, "-I", HOOK], input=json.dumps(data).encode(), capture_output=True, check=False)
+        self.assertEqual((result.returncode, result.stdout), (0, b""))
+
+    def test_a_subagent_call_with_no_command_text_is_denied(self):
+        data = {"tool_name": "Bash", "agent_id": "a", "tool_input": {}}
+        result = subprocess.run([sys.executable, "-I", HOOK], input=json.dumps(data).encode(), capture_output=True, check=False)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_input_that_is_not_json_passes(self):
+        result = subprocess.run([sys.executable, "-I", HOOK], input=b"not json", capture_output=True, check=False)
+        self.assertEqual((result.returncode, result.stdout), (0, b""))
+
+
+if __name__ == "__main__":
+    unittest.main()
