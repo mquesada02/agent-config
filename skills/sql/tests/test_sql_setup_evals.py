@@ -167,6 +167,27 @@ class ScaffoldTest(unittest.TestCase):
                 self.assertEqual(os.listdir(self.home), [])
                 self.assertEqual(os.listdir(self.xdg), [])
 
+    def shim_env(self, home, xdg=None):
+        shim = os.path.join(self.tmp, "bin")
+        os.makedirs(shim, exist_ok=True)
+        path = os.path.join(shim, "python3")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\necho " + self.home + "\n")
+        os.chmod(path, 0o755)
+        return dict(self.env, HOME=home, XDG_CONFIG_HOME=xdg or self.xdg, PATH=shim + os.pathsep + os.environ["PATH"])
+
+    def test_a_symlink_or_dot_dot_path_to_the_real_home_is_refused(self):
+        link = os.path.join(self.tmp, "link")
+        os.symlink(self.home, link)
+        dotted = os.path.join(self.tmp, "work", "..", "home")
+        for case in ("setup-tags-fixture", "setup-rerun"):
+            for kind, home, xdg in (("symlink", link, None), ("dot-dot", dotted, None), ("xdg symlink", self.home + "x", os.path.join(link, ".config"))):
+                with self.subTest(case=case, kind=kind):
+                    os.makedirs(self.home + "x", exist_ok=True)
+                    done = self.scaffold(case, env=self.shim_env(home, xdg), check=False)
+                    self.assertEqual(done.returncode, 1, done.stderr)
+                    self.assertEqual(os.listdir(self.home), [])
+
 
 class FixtureProofTest(unittest.TestCase):
     """The expected.json of each case is what the scripts produce for the replies of the case prompt."""

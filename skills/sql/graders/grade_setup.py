@@ -45,7 +45,7 @@ import rules_file  # noqa: E402
 EDIT_TOOLS = ("Write", "Edit", "NotebookEdit")
 RULES_SUFFIX = "docs/agents/sql.md"
 ALLOWLIST_NAME = "allowlist.toml"
-SEGMENT_SPLIT = re.compile(r"[|;&\n]")
+SEGMENT_SPLIT = re.compile(r"(?<!>)\||[;&\n]")
 FILE_NAMED = re.compile(r"docs/agents/sql\.md|allowlist\.toml")
 DEV_NULL = re.compile(r"\d?>>?\s*/dev/null\b")
 REDIRECT = re.compile(r">>?\s*[^\s&>]")

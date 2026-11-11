@@ -291,5 +291,15 @@ class UsageTest(GraderCase):
         self.assertEqual(done.returncode, 0, done.stdout)
 
 
+class RoundThreeGraderTest(GraderCase):
+    def test_a_clobber_redirect_naming_the_file_is_a_change_call(self):
+        for command in ("echo x >| docs/agents/sql.md", "echo x >|allowlist.toml"):
+            with self.subTest(command=command):
+                lines = [assistant(call("b", "Bash", command=command))]
+                code, out, err = self.grade(lines)
+                self.assertEqual(code, 1, (out, err))
+                self.assertTrue(out.strip().splitlines()[0].startswith("FAIL order"), out)
+
+
 if __name__ == "__main__":
     unittest.main()
