@@ -87,10 +87,9 @@ GENERATED_WITH = re.compile(r"generated with.*claude", re.IGNORECASE)
 ROBOT = "\U0001F916"
 
 SEPARATOR_CHARS = frozenset("&|;()\n")
-# A character after which a word starts, so a `#` there starts a comment. `_join_as_bash`, `_paren_end` and `_mask_substitutions` share it;
-# the last two also start a word after `(` and `)` (WORD_STARTS), and the join tracks its parentheses with a stack. Keep the three scans in step.
-WORD_BREAKS = " \t\n;&|"
-WORD_STARTS = WORD_BREAKS + "()"
+# A character after which a word starts, so a `#` there starts a comment. `_units` is the one scan of the bash rules for it, for
+# `_join_as_bash`, `_paren_end` and `_mask_substitutions`.
+WORD_STARTS = " \t\n;&|()"
 PIPE_OPERATORS = frozenset(("|", "|&"))
 # Commands that copy their input to a file or to the output and never run it: the body of a quoted heredoc they read is data.
 DATA_COMMANDS = frozenset(("cat", "tee"))
@@ -196,56 +195,35 @@ def _join_continued(text):
 
 def _join_as_bash(text):
     """The text with each continued line joined where bash joins it: not inside single quotes, and not in a comment (a comment ends at
-    the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs."""
-    out, index, quote, comment, word_start = [], 0, None, False, True
-    opens_substitution, backtick, dollar = [], False, False  # one entry for each open `(`: is it the `(` of a `$(`?
-    while index < len(text):
-        char = text[index]
-        if comment or quote == "'":
-            if comment and backtick and char == "`":  # the closing backtick ends the body and its comment
-                comment, backtick, word_start, dollar = False, False, False, False
-                out.append(char)
-                index += 1
-                continue
-            if comment and backtick and char == "\\" and text[index + 1:index + 2] in ("`", "\\"):  # as `_backtick_end`
-                out.append(text[index:index + 2])
-                index += 2
-                continue
-            out.append(char)
-            comment = comment and char != "\n"
-            quote = None if quote == "'" and char == "'" else quote
-            word_start, dollar = char in WORD_BREAKS, False
-        elif char == "\\":
-            pair = text[index:index + 2]
-            if pair != "\\\n":  # a joined pair is not there for bash, so it leaves word_start as it was
-                out.append(pair)
-                word_start = False
-            dollar = False
-            index += len(pair)
-            continue
-        elif quote == '"':
-            quote = None if char == '"' else quote
-            out.append(char)
-            word_start, dollar = False, False  # a substitution in double quotes is quoted text, as for the splitter
-        else:
-            if char in "'\"":
-                quote, word_start = char, False
-            elif char == "#" and word_start:
-                comment, word_start = True, False
-            elif char == "(":
-                opens_substitution.append(dollar)
-                word_start = True
-            elif char == ")":  # the word goes on after the `)` of a substitution
-                word_start = not (opens_substitution.pop() if opens_substitution else False)
-            elif char == "`":
-                backtick = not backtick
-                word_start = backtick  # an opening backtick starts a word, a closing one does not
+    the newline, so the next line is another command). The gate splits this text, so it reads the words that bash runs. It reads the text
+    with `_units`, and never raises: a quote, substitution or backtick that is not closed runs to the end of the text."""
+    if "\\\n" not in text:  # nothing to join: every unit below would be written back as it is
+        return text
+    # A substitution body is joined as text of its own, up to its closing character. The frames are a list and not recursive calls, so that
+    # deeply nested text cannot overflow the stack here: the callers read the join outside their guards.
+    frames = [(_units(text, tolerant=True), text, [], "", "")]  # the units, their text, the joined pieces, and the opener and closer around them
+    while True:
+        units, source, out, opener, closer = frames[-1]
+        for kind, start, end, closed in units:
+            piece = source[start:end]
+            if kind == "escape":
+                out.append("" if piece == "\\\n" else piece)
+            elif kind == "double":
+                out.append(_join_continued(piece))
+            elif kind in ("paren", "backtick"):
+                size = 2 if kind == "paren" else 1
+                closer = piece[-1] if closed else ""
+                body = source[start + size:end - len(closer)]
+                frames.append((_units(body, tolerant=True), body, [], piece[:size], closer))
+                break
             else:
-                word_start = char in WORD_BREAKS
-            out.append(char)
-            dollar = char == "$"
-        index += 1
-    return "".join(out)
+                out.append(piece)
+        else:
+            frames.pop()
+            joined = opener + "".join(out) + closer
+            if not frames:
+                return joined
+            frames[-1][2].append(joined)
 
 
 def _normalise(text):
@@ -2395,32 +2373,66 @@ def _line_end(text, index):
     return len(text) if end < 0 else end
 
 
-def _paren_end(text, index):
-    """The index after the `)` that closes the `$(` whose body starts at `index`, following parentheses, substitutions, quotes and comments."""
-    depth, word_start = 0, True
+def _units(text, index=0, in_body=False, tolerant=False):
+    """The one scan of the bash rules for word starts, comments, quotes and substitutions: it yields (kind, start, end, closed) for each unit
+    of the text from `index`. The kinds are "escape" (a backslash and the character after it), "single", "double", "backtick" and "paren"
+    (a `$(` substitution), each with its closing character, "comment" (up to the newline, which is not in it) and "char" (any other
+    character). A `#` starts a comment at the start of a word, and a word starts at the beginning, after WORD_STARTS and after a
+    continued line that leaves it as it was; a unit that is not a "char" ends the word. `in_body` is for the text inside a substitution
+    body (see `_double_end`). A unit that is not closed raises ValueError; with `tolerant` it runs to the end of the text, with `closed`
+    False."""
+    word_start = True
     while index < len(text):
         char, starts_word, word_start = text[index], word_start, False
         if char == "\\":
-            index += 2
+            kind = "escape"
         elif char == "'":
-            index = _single_end(text, index)
+            kind = "single"
         elif char == '"':
-            index = _double_end(text, index, True)
+            kind = "double"
         elif char == "`":
-            index = _backtick_end(text, index + 1) + 1
-        elif text.startswith("$(", index):
-            index = _paren_end(text, index + 2)
+            kind = "backtick"
+        elif char == "$" and text.startswith("$(", index):
+            kind = "paren"
         elif char == "#" and starts_word:
-            index = _line_end(text, index)
+            kind = "comment"
         else:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    return index + 1
-                depth -= 1
-            index += 1
-            word_start = char in WORD_STARTS
+            kind = "char"
+        end, closed = index + 1, True
+        try:
+            if kind == "escape":
+                end = min(index + 2, len(text))
+                word_start = starts_word and text[index:end] == "\\\n"  # bash removes a continued line, so the word start is as it was
+            elif kind == "single":
+                end = _single_end(text, index)
+            elif kind == "double":
+                end = _double_end(text, index, in_body)
+            elif kind == "backtick":
+                end = _backtick_end(text, index + 1) + 1
+            elif kind == "paren":
+                end = _paren_end(text, index + 2)
+            elif kind == "comment":
+                end = _line_end(text, index)
+            else:
+                word_start = char in WORD_STARTS
+        except (ValueError, RecursionError):  # nesting too deep to follow counts as not closed: the splitter fails closed on it
+            if not tolerant:
+                raise
+            end, closed = len(text), False
+        yield kind, index, end, closed
+        index = end
+
+
+def _paren_end(text, index):
+    """The index after the `)` that closes the `$(` whose body starts at `index`, following parentheses, substitutions, quotes and comments."""
+    depth = 0
+    for kind, start, end, _ in _units(text, index, in_body=True):
+        if kind == "char" and text[start] == "(":
+            depth += 1
+        elif kind == "char" and text[start] == ")":
+            if depth == 0:
+                return end
+            depth -= 1
     raise ValueError("No closing parenthesis")
 
 
@@ -2431,33 +2443,19 @@ def _mask_substitutions(command):
     marker = next((chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command), None)  # a private-use character that the command lacks
     if marker is None:
         raise ValueError("No free placeholder character")
-    masked, substitutions, index, word_start = [], [], 0, True
-    while index < len(command):
-        char, body = command[index], None
-        if char == "#" and word_start:
-            index = _line_end(command, index)
+    masked, substitutions = [], []
+    for kind, start, end, _ in _units(command):
+        if kind == "comment":
             continue
-        if char == "\\":
-            end = index + 2
-        elif char == "'":
-            end = _single_end(command, index)
-        elif char == '"':
-            end = _double_end(command, index, False)
-        elif command.startswith("$(", index):
-            end = _paren_end(command, index + 2)
-            body = command[index + 2:end - 1]
-        elif char == "`":
-            end = _backtick_end(command, index + 1) + 1
-            body = re.sub(r"\\([`\\$])", r"\1", command[index + 1:end - 1])
+        if kind == "paren":
+            body = command[start + 2:end - 1]
+        elif kind == "backtick":
+            body = re.sub(r"\\([`\\$])", r"\1", command[start + 1:end - 1])
         else:
-            end = index + 1
-        if body is None:
-            masked.append(command[index:end])
-        else:
-            masked.append(f"{marker}{len(substitutions)}{marker}")
-            substitutions.append((command[index:end], body))
-        word_start = body is None and char in WORD_STARTS
-        index = end
+            masked.append(command[start:end])
+            continue
+        masked.append(f"{marker}{len(substitutions)}{marker}")
+        substitutions.append((command[start:end], body))
     return "".join(masked), marker, substitutions
 
 
