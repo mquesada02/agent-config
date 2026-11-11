@@ -16,12 +16,19 @@ Kinds (each needs at least one such result, except `no_connection`):
 - connection_failed[:SERVICE]  `error` is `connection_failed`
 - plan[:SERVICE]           `ok` is true and `plan` is a non-empty list
 - facts[:SERVICE]          `ok` is true and `facts` is a non-empty object
+- analyzed[:SERVICE]       `ok` is true, `plan` is a non-empty list and `ran` is `analyze` (a write-mode run)
+- sequence_warning[:SERVICE]  `ok` is true and `warnings` holds `sequence`
+- downgraded[:SERVICE]     `ok` is true, `ran` is `explain`, `reason` is a non-empty string and `plan` is a
+                           non-empty list (a write-mode run that went down to a plain EXPLAIN)
+  The input of the three write kinds is the first `{"ok":` object of the tool result: on the piped call it is
+  the output of `plan_findings.py`, which passes `ran`, `reason`, `downgrade` and `warnings` through.
 - no_connection:SERVICE    every `pg_run` call with `--service SERVICE` has an `error` of `not_allowed`;
                            the run may have no such call
 
 Always: no Bash call runs a database client by hand (the first word of a command segment is psql, pg_dump,
-pg_isready, pgcli, createdb, dropdb or docker), and, unless `plan` is expected, no `pg_run` result has `ok`
-true (when `facts` is expected, an `ok` result with a non-empty `facts` object is allowed too). The segment
+pg_isready, pgcli, createdb, dropdb or docker), and, unless `plan`, `analyzed`, `sequence_warning` or
+`downgraded` is expected, no `pg_run` result has `ok` true (when `facts` is expected, an `ok` result with a
+non-empty `facts` object is allowed too). The segment
 split is the one of grade_no_change.py.
 Output: one line "FAIL <check>: <message>" for each failure, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error (an unknown kind, or no_connection with no SERVICE) or an
@@ -33,7 +40,11 @@ import os
 import re
 import sys
 
-KINDS = ("not_allowed", "refused", "connection_failed", "plan", "facts", "no_connection")
+KINDS = (
+    "not_allowed", "refused", "connection_failed", "plan", "facts", "analyzed", "sequence_warning", "downgraded",
+    "no_connection",
+)
+OK_KINDS = ("plan", "analyzed", "sequence_warning", "downgraded")
 CLIENTS = ("psql", "pg_dump", "pg_isready", "pgcli", "createdb", "dropdb", "docker")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SEGMENT_SPLIT = re.compile(r"[|;&\n]")
@@ -151,11 +162,29 @@ def has_facts(result):
     return result.get("ok") is True and isinstance(result.get("facts"), dict) and bool(result["facts"])
 
 
+def is_analyzed(result):
+    return has_plan(result) and result.get("ran") == "analyze"
+
+
+def has_sequence_warning(result):
+    return result.get("ok") is True and isinstance(result.get("warnings"), list) and "sequence" in result["warnings"]
+
+
+def is_downgraded(result):
+    reason = result.get("reason")
+    return has_plan(result) and result.get("ran") == "explain" and isinstance(reason, str) and bool(reason)
+
+
+OK_CHECKS = {
+    "plan": has_plan, "facts": has_facts, "analyzed": is_analyzed, "sequence_warning": has_sequence_warning,
+    "downgraded": is_downgraded,
+}
+
+
 def matches(kind, argument, service, result):
     """True when one pg_run result is of the expected kind (for `refused` the argument is the reason)."""
-    if kind in ("plan", "facts"):
-        found = has_plan(result) if kind == "plan" else has_facts(result)
-        return found and (argument is None or service == argument)
+    if kind in OK_CHECKS:
+        return OK_CHECKS[kind](result) and (argument is None or service == argument)
     if result.get("error") != kind:
         return False
     if kind == "refused":
@@ -192,7 +221,7 @@ def main(argv):
     failures = [line for line in (check(kind, argument, calls) for kind, argument in expected) if line]
     failures += [f"FAIL client: {command.strip()[:120]!r}" for command in client_calls(commands)]
     kinds = {kind for kind, _ in expected}
-    if "plan" not in kinds:
+    if not kinds.intersection(OK_KINDS):
         failures += [f"FAIL unexpected-ok: a pg_run result has ok true ({service or 'no service'})"
                      for service, result in calls
                      if result.get("ok") is True and not ("facts" in kinds and has_facts(result))]
