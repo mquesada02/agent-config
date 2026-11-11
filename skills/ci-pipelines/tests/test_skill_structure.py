@@ -472,7 +472,7 @@ class ReviewSteps(unittest.TestCase):
         self.assertIn("all 8 sections", step)
 
     def test_the_approval_line_is_the_last_text_of_the_report(self):
-        section = self.text[self.text.index("8. `## approve`"):]
+        section = self.text[self.text.index("8. `## approve`"):self.text.index("## fix on approval")]
         self.assertIn("write no text after the approval line", section)
         self.assertIn("`tools:`", section)
 

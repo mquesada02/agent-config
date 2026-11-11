@@ -94,7 +94,7 @@ class CreateSteps(unittest.TestCase):
         self.assertIn("the whole file, line by line", step)
         self.assertIn("never a summary", step)
         self.assertIn("Write no text after the approval line", step)
-        self.assertIn("in `## Created`", step)
+        self.assertIn("say so in `## Created`", step)
 
     def test_a_dependabot_file_with_no_entry_gets_only_the_entry(self):
         step = section(self.text, "## Steps").split("\n5. ")[1].split("\n6. ")[0]
