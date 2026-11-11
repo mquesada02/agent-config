@@ -8,7 +8,7 @@
 2. Pick the source module by the file form (the router's source module rule). Run its extractor and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
 3. Apply every enabled rule of [dialects/postgres.md](dialects/postgres.md) (the `PG-*` rules) to each statement. For a postgres.js template, also apply the `PGJS-*` rules of [sources/postgres-js.md](sources/postgres-js.md).
 4. A rule that needs a fact fires only when the repo shows the fact. Read the repo files for it (a schema file, a migration, a type). When the repo does not show the fact, the rule does not fire. With an allowlisted database, the section Database path reads the fact from the catalog instead (this also holds for a statement with an interpolation). When the catalog gives no answer, the rule uses the repo fact as before.
-5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` or write statement (`INSERT`, `UPDATE`, `DELETE` or `MERGE`) as the section Database path says, and turn each plan into `PLAN-*` findings as the section Plan findings says. A write statement follows the section Write path. A failed call gives a `Note:` line, and the run goes on.
+5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` or write statement (`INSERT`, `UPDATE`, `DELETE` or `MERGE`) as the section Database path says, and turn each plan into `PLAN-*` findings as the section Plan findings says. A write statement follows the section Write path. A failed call gives a `Note:` line, and the run goes on. For a proposed rewrite, follow the section Rewrite proof.
 6. Write the report as the final message, as described below. Then stop.
 
 One finding is one row. A rule id has at most one row in the whole report. When a rule matches in many places, write all places in the Where cell of its one row, separated by `, `.
@@ -59,7 +59,7 @@ With no finding it is exactly `There is nothing to approve.`
 
 A rewrite is a fix of a `PG-*` finding that replaces the SQL text of a statement. A fix of a `PGJS-*` finding repairs how the template is composed, and is not a rewrite.
 
-With no database, every rewrite is unproven. Write it in the Fix cell. The cell starts with the exact label `Rewrite (unproven: no database):`, then the rewritten SQL, then the words `database diff` (the proof that is missing, so the cell names it). The Fix cell of a finding that is not a rewrite never holds the capitalised word `Rewrite`. This holds for every `PGJS-*` finding and for a `PG-*` finding that gives advice with no replacement SQL.
+With no database, every rewrite is unproven. Write it in the Fix cell. The cell starts with the exact label `Rewrite (unproven: no database):`, then the rewritten SQL, then the words `database diff` (the proof that is missing, so the cell names it). For a proposed rewrite on a run with a database, follow the section Rewrite proof: it gives the other labels. The Fix cell of a finding that is not a rewrite never holds the capitalised word `Rewrite`. This holds for every `PGJS-*` finding and for a `PG-*` finding that gives advice with no replacement SQL.
 
 ## Approval
 
@@ -94,7 +94,7 @@ The `PLAN-*` rules are in the section Plan reading of [dialects/postgres.md](dia
 1. A finding of a rule that the repo disables is dropped (the ids of the `Disabled rules:` line). The report holds no row of a disabled rule.
 2. A rule id has at most one row in the report. When one plan has the finding at many nodes, or many statements have it, the one row covers all of them. The Where cell lists the place of each statement that has the finding.
 3. A finding is a row of the severity that the rule entry gives. The Problem cell is one line. It holds one entry for each finding of that rule, in the order of the script output (statement order, then plan order), separated by `; `. An entry is `<place> <node>: <measured values> against <threshold values>`, taken from `measured` and `threshold`. The cell ends with one sentence that explains the cause. Use the node details of the plan in `plan` for the explanation.
-4. The Fix cell proposes the fix in words (an index, an `ANALYZE`, a smaller select list, a filter earlier). It holds no replacement SQL and never the capitalised word `Rewrite`: a `PLAN-*` fix is advice, and the proof of a rewrite is a later ticket.
+4. The Fix cell proposes the fix in words (an index, an `ANALYZE`, a smaller select list, a filter earlier). It holds no replacement SQL and never the capitalised word `Rewrite`: a `PLAN-*` fix is advice, and a rewrite is proven as the section Rewrite proof says.
 5. With `analyze` false, write the line `Note: the plan of <file>:<start_line>-<end_line> has no actual values, so no PLAN-* rule applies.` and no row. This also holds for a write statement that ran as a plain `EXPLAIN` (a downgrade).
 6. A `PLAN-*` rule never fires without a database. A statement with no plan gets no `PLAN-*` row.
 
@@ -106,8 +106,28 @@ A statement whose command is `INSERT`, `UPDATE`, `DELETE` or `MERGE` (also with 
 - `warnings` holds `sequence`: write `Note: <file>:<start_line>-<end_line> writes to a table with a sequence, so the analysis moved the sequence counter (a ROLLBACK does not undo it).`
 - A statement that the guard refuses (`error` `pg_run_failed` with a `source_error` of `refused`) gets the `Note:` line of step 7 of the section Database path and only its static findings.
 
-A rewrite of a write statement stays unproven: the proof is a later ticket (see the section Rewrite proof).
+A rewrite of a write statement stays unproven: it gets no `diff` call and a label of the section Rewrite proof.
 
-## Rewrite proof (stub)
+## Rewrite proof
 
-Stub. Ticket #397 fills this section with the proof of a rewrite on a database. It holds no behavior yet.
+A faster query must also be a correct one. This section proves a rewrite of a `SELECT` with the `diff` action of `pg_run` and the repo tests. Claude proposes the rewrite B of the statement A. This section only proves it.
+
+1. A rewrite is proven only for a complete `SELECT` or `WITH ... SELECT` and an allowlisted service (the same gates as the section Database path: the allowlist, the rules file and the completeness rule). Make one call: `python3 <skill folder>/scripts/pg_run.py diff --repo <repo root> --service <name> --a='<A>' --b='<B>'`. Write each as `--a=<sql>`, one argument with an equals sign. Write each single quote of the SQL as `'\''`.
+2. Read the result.
+   - A result with `ok` false (`refused`, `not_allowed`, `connection_failed`, `statement_failed`, `psql_failed`, `bad_output`) gives the label `Rewrite (unproven: the database diff failed):` and a `Note:` line, as step 7 of the section Database path says. A call that a tool hook denies (the SQL of A or B holds `<<` or a space followed by `#`, so there is no JSON result) or that prints no JSON gets the same label and the hook `Note:` line of that step. Do not retry with a heredoc or a file.
+   - `reason` `shape`, or `equal` false: the rewrite changes the result, so it is not offered. For `shape`, the `Note:` line names `column_names` of both sides. Otherwise it names `type_mismatch`, the counts of `only_a` and `only_b`, `order_mismatch` when present, and `casts` and `floats`. A difference in a column named in `floats` is possibly a rounding difference: say so.
+   - `order` `partial` makes the proof partial: the label names the reason (`ties` or `sort_keys`).
+   - `order` `checked` means that both sides, numbered by the sort keys of A, have the same rows at the same ranks. It does not mean that B returns its rows in that order: when B must keep the order, B needs the same `ORDER BY`.
+3. The repo tests, after an `equal` diff. Find the test command in the repo's own instructions (`CLAUDE.md` or `AGENTS.md`, read with the `Read` tool), else in the `test` script of `package.json`. Run it with at most 2 workers: add the limit that the runner takes (`--test-concurrency=2` for `node --test`, `--maxWorkers=2` for `jest`); when the declared command already sets a lower limit, add nothing. For any other runner, whose limit flag this module does not name, do not run the command (the limit of 2 workers would not hold): the rewrite is proven by the database diff only, item 4 applies, and the `Note:` line says `Note: the repo tests were not run: the limit of 2 workers cannot be set for <command>.` Run the command once, as declared plus the worker limit, with no pipe and no redirect. When the tests fail, the rewrite is not offered, and a `Note:` line names the failed command.
+4. No test command found: the rewrite is proven by the database diff only, with the warning `Note: no repo tests ran for <place>, so the rewrite is proven by the database diff only.`
+5. A rewrite of a write statement (`INSERT`, `UPDATE`, `DELETE` or `MERGE`) is unproven: `diff` takes a `SELECT` only, so make no `diff` call for it.
+6. A statement that is not complete SQL (a template with an interpolation or a `$n` placeholder) has no values to diff: its rewrite is unproven.
+7. Labels. The Fix cell of a rewrite starts with exactly one of these labels, then the rewritten SQL on one line, and it holds the words `database diff` (in the label, or after the SQL):
+   - `Rewrite (proven: database diff and repo tests):`
+   - `Rewrite (proven by the database diff only: no repo tests ran):`
+   - `Rewrite (partial proof by the database diff: order not checked, ties):` and `Rewrite (partial proof by the database diff: order not checked, sort keys):` (a `Note:` line names the tests: they passed, or the warning of item 4)
+   - `Rewrite (unproven: no database):` (with the words `database diff` after the SQL)
+   - `Rewrite (unproven: the database diff failed):` (item 2)
+   - `Rewrite (unproven: write statement, no database diff):`
+   - `Rewrite (unproven: statement not complete, no database diff):`
+8. Approval: a proven, partial or unproven rewrite is applied only when the user names its number, as the section Approval says. A reply of `all` covers no rewrite. The report has no new section: the `Note:` lines go in the place that the section Report gives.

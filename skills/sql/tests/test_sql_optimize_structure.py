@@ -286,17 +286,13 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertTrue(any("`all`" in s and "does not cover" in s for s in self.sentences()), "all")
         self.assertTrue(self.has_sentence("Fix cell", "capitalised"), "capitalised Rewrite")
 
-    def test_it_names_a_stub_section_for_each_later_ticket(self):
-        parts = re.split(r"(?m)^## ", self.text)
-        for ticket in ("#397",):
-            with self.subTest(ticket=ticket):
-                self.assertTrue(
-                    any(ticket in part and re.search(r"(?i)stub|later|not yet", part) for part in parts[1:]),
-                    ticket,
-                )
-        self.assertNotIn("#396", self.text)
+    def test_it_names_no_stub_section_and_no_later_ticket(self):
+        self.assertNotRegex(self.text, r"(?m)^## .*\(stub\)")
+        self.assertNotRegex(self.text, r"(?i)\bstub\b")
+        for ticket in ("#396", "#397"):
+            self.assertNotIn(ticket, self.text)
 
-    def test_the_plan_findings_section_is_filled_and_keeps_the_later_stubs(self):
+    def test_the_plan_findings_section_is_filled_and_points_to_the_rewrite_proof(self):
         self.assertNotRegex(self.text, r"(?m)^## Plan findings \(stub\)")
         plan = section(self.text, "Plan findings")
         self.assertNotRegex(plan, r"(?i)\bstub\b")
@@ -305,7 +301,8 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertIn("actual values", plan)
         self.assertNotRegex(plan, r"\bpg_run\b")
         self.assertRegex(plan, r"never the capitalised word `Rewrite`|never.*capitalised word `Rewrite`")
-        self.assertIn("#397", self.text)
+        self.assertIn("section Rewrite proof", plan)
+        self.assertNotIn("#397", self.text)
 
     def test_the_write_path_section_is_filled(self):
         self.assertNotIn("Write path (stub)", self.text)
@@ -352,8 +349,39 @@ class OptimizeModuleTest(unittest.TestCase):
     def test_it_names_no_database_call(self):
         self.assertNotRegex(self.text, r"\bpsql\b")
         database_path = section(self.text, "Database path")
+        rewrite_proof = section(self.text, "Rewrite proof")
         self.assertIn("pg_run", database_path)
-        self.assertNotRegex(self.text.replace(database_path, ""), r"\bpg_run\b")
+        self.assertIn("pg_run.py diff", rewrite_proof)
+        self.assertNotRegex(self.text.replace(database_path, "").replace(rewrite_proof, ""), r"\bpg_run\b")
+
+    def test_the_rewrite_proof_section_is_filled_and_holds_each_label_and_rule(self):
+        self.assertNotIn("Rewrite proof (stub)", self.text)
+        proof = section(self.text, "Rewrite proof")
+        self.assertNotRegex(proof, r"(?i)\bstub\b")
+        for label in (
+            "Rewrite (proven: database diff and repo tests):",
+            "Rewrite (proven by the database diff only: no repo tests ran):",
+            "Rewrite (partial proof by the database diff: order not checked, ties):",
+            "Rewrite (partial proof by the database diff: order not checked, sort keys):",
+            "Rewrite (unproven: no database):",
+            "Rewrite (unproven: the database diff failed):",
+            "Rewrite (unproven: write statement, no database diff):",
+            "Rewrite (unproven: statement not complete, no database diff):",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(f"`{label}`", proof)
+        for needle in (
+            "pg_run.py diff --repo <repo root> --service <name> --a='<A>' --b='<B>'", "`--a=<sql>`",
+            "`CLAUDE.md` or `AGENTS.md`", "`test` script of `package.json`", "at most 2 workers",
+            "`--test-concurrency=2`", "`--maxWorkers=2`", "no pipe and no redirect",
+            "Note: no repo tests ran for <place>, so the rewrite is proven by the database diff only.",
+            "Note: the repo tests were not run: the limit of 2 workers cannot be set for <command>.",
+            "`column_names`", "`type_mismatch`", "`order_mismatch`", "`casts`", "`floats`", "`ties`", "`sort_keys`",
+            "It does not mean that B returns its rows in that order", "`INSERT`, `UPDATE`, `DELETE` or `MERGE`",
+            "make no `diff` call", "tool hook", "`all` covers no rewrite",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, proof)
 
     def test_it_never_connects(self):
         self.assertRegex(self.text, r"(?i)never connect|no connection|does not connect")
