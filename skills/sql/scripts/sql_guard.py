@@ -381,9 +381,7 @@ def check_write(text):
         return _write_refuse("multiple_statements")
     first_word = tokens[0].value.upper() if tokens[0].kind == "word" else None
     body = tokens[:semicolons[0]] if semicolons else tokens
-    if first_word in WRITE_WORDS or (first_word == "WITH" and _is_write_main(body)):
-        pass
-    else:
+    if not (first_word in WRITE_WORDS or (first_word == "WITH" and _is_write_main(body))):
         static = _write_static_review_only(tokens)
         select_form = first_word in SELECT_WORDS and not static
         return _write_refuse("not_write", static, "not_write_select" if select_form else "not_write_other")

@@ -310,12 +310,16 @@ def discovery_targets(out):
             if node.get("Node Type") != "ModifyTable":
                 continue
             operation = node.get("Operation")
-            relations = [relation_of(node)] if relation_of(node) else []
+            own = relation_of(node)
+            relations = [own] if own else []
             tables = node.get("Target Tables")
             if tables is not None:
-                if not isinstance(tables, list) or not tables or any(relation_of(t) is None for t in tables):
+                if not isinstance(tables, list) or not tables:
                     raise bad_output(message)
-                relations += [relation_of(t) for t in tables]
+                listed = [relation_of(t) for t in tables]
+                if None in listed:
+                    raise bad_output(message)
+                relations += listed
             if not isinstance(operation, str) or not relations:
                 raise bad_output(message)
             found += [[operation, schema, name] for schema, name in relations]
