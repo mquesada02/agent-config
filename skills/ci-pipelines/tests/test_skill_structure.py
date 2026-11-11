@@ -19,7 +19,7 @@ ZIZMOR_MAPPING = {
     "cache-poisoning": "SEC-09",
 }
 TOOLS_SECTIONS = ["Detection", "Install hints", "Running the tools", "Merging the output",
-                  "zizmor to SEC mapping", "Pin a SHA", "Offline Node support list"]
+                  "zizmor to SEC mapping", "Pin a SHA", "Check the pins", "Offline Node support list"]
 
 
 def module_files():
@@ -263,10 +263,22 @@ class SecurityRules(unittest.TestCase):
     def test_sec_01_fix_points_to_the_sha_lookup_in_tools_md(self):
         self.assertIn("tools.md", self.sec["SEC-01"]["Fix"])
 
-    def test_sec_01_checks_the_form_of_the_pin_and_not_whether_the_sha_is_a_real_commit(self):
+    def test_sec_01_checks_the_form_and_the_commit_of_the_pin_with_the_pin_check(self):
         rule = self.sec["SEC-01"]["Rule"]
-        self.assertIn("The check is the form of the pin", rule)
-        self.assertIn("Do not judge whether the SHA is a real commit", rule)
+        self.assertIn("The check has two parts", rule)
+        for result in ("tag-mismatch", "unknown-tag", "unknown-commit"):
+            self.assertIn(f"`{result}`", rule)
+        self.assertIn("`unverified` is never a finding", rule)
+        self.assertNotIn("Do not judge whether the SHA is a real commit", rule)
+
+    def test_tools_md_and_review_md_wire_the_pin_check(self):
+        tools = read(os.path.join(SKILL, "tools.md"))
+        section = tools[tools.index("## Check the pins"):tools.index("## Offline Node support list")]
+        self.assertIn("python3 <skill folder>/scripts/check_pins.py <repo path>", section)
+        self.assertIn("SEC-01 pins not verified (<reason>)", section)
+        review = read(os.path.join(SKILL, "review.md"))
+        self.assertIn('"Check the pins"', review)
+        self.assertIn("SEC-01 pins not verified (<reason>)", review)
 
     def test_the_file_says_which_rules_have_critical_parts(self):
         text = read(rule_files()["security"])
@@ -569,7 +581,7 @@ class EvalReadme(unittest.TestCase):
 
     def test_the_allowed_tools_are_the_intake_call_and_no_gh_api(self):
         text = read(os.path.join(SKILL, "evals", "README.md"))
-        self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)"', text)
+        self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)"', text)
         self.assertNotIn("Bash(gh api", text)
 
 

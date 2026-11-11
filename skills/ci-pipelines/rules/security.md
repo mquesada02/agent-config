@@ -9,9 +9,9 @@ How a workflow handles actions, tokens, permissions, untrusted input, privileged
 
 ### SEC-01
 - **Severity:** required
-- **Rule:** Every `uses:` pins a full 40-character commit SHA with a bare version comment: `@<sha> # v5.0.0`. This applies to `actions/*` and to reusable workflows from other repos too. Local `./` actions are exempt. The check is the form of the pin: a 40-character hexadecimal SHA and a version comment. Do not judge whether the SHA is a real commit of that action: the review has no way to check it. To get the SHA for a tag, the skill uses `pinact run` when pinact is installed. Otherwise it uses `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, and it dereferences annotated tags to their commit.
+- **Rule:** Every `uses:` pins a full 40-character commit SHA with a bare version comment: `@<sha> # v5.0.0`. This applies to `actions/*` and to reusable workflows from other repos too. Local `./` actions are exempt. The check has two parts. The form: a 40-character hexadecimal SHA and a version comment. The commit: the SHA is the commit that the tag of the version comment points to. The commit part is the `check_pins.py` script (see "Check the pins" in tools.md). A pin with the result `tag-mismatch`, `unknown-tag` or `unknown-commit` is a finding. A pin with the result `unverified` is never a finding. To get the SHA for a tag, the skill uses `pinact run` when pinact is installed. Otherwise it uses `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, and it dereferences annotated tags to their commit.
 - **Check:** mechanical
-- **Fix:** Replace each tag in `uses:` with the full commit SHA and a bare version comment, getting the SHA as the "Pin a SHA" section of tools.md says.
+- **Fix:** Replace each tag in `uses:` with the full commit SHA and a bare version comment, and replace each SHA that is not the commit of its version comment tag, getting the SHA as the "Pin a SHA" section of tools.md says.
 
 ### SEC-02
 - **Severity:** required

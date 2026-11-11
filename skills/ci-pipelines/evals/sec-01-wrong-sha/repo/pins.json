@@ -1,0 +1,9 @@
+{
+ "status": "verified",
+ "unverified_reasons": [],
+ "pins": [
+  {"file": ".github/workflows/ci.yml", "line": 17, "uses": "actions/checkout", "sha": "1111111111111111111111111111111111111111", "tag": "v4.2.2", "result": "ok"},
+  {"file": ".github/workflows/ci.yml", "line": 20, "uses": "pnpm/action-setup", "sha": "2222222222222222222222222222222222222222", "tag": "v4.1.0", "result": "unknown-commit"},
+  {"file": ".github/workflows/ci.yml", "line": 21, "uses": "actions/setup-node", "sha": "3333333333333333333333333333333333333333", "tag": "v4.4.0", "result": "tag-mismatch"}
+ ]
+}
