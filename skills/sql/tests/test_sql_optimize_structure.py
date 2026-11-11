@@ -379,6 +379,7 @@ class OptimizeModuleTest(unittest.TestCase):
             "`column_names`", "`type_mismatch`", "`order_mismatch`", "`casts`", "`floats`", "`ties`", "`sort_keys`",
             "It does not mean that B returns its rows in that order", "`INSERT`, `UPDATE`, `DELETE` or `MERGE`",
             "make no `diff` call", "tool hook", "`all` covers no rewrite",
+            "When the tests pass, the `Note:` line quotes the passing test line of the runner output verbatim",
         ):
             with self.subTest(needle=needle):
                 self.assertIn(needle, proof)
