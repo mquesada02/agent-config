@@ -132,6 +132,11 @@ class CheckPins(unittest.TestCase):
                 self.commit(GOOD)
                 self.assertEqual(self.result(f"acme/setup@{GOOD} # v1"), ("unverified", "unverified"))
 
+    def test_an_annotated_tag_whose_object_cannot_be_read_is_unverified(self):
+        self.tag("v1.2.0", TAG_OBJECT, "tag")
+        self.commit(GOOD)
+        self.assertEqual(self.result(f"acme/setup@{GOOD} # v1.2.0"), ("unverified", "unverified"))
+
     def test_a_missing_gh_is_unverified(self):
         box = Sandbox(gh=False)
         self.addCleanup(box.cleanup)

@@ -62,9 +62,13 @@ def tag_commit(repo, tag):
     """The commit SHA of a tag (an annotated tag is dereferenced), or None when the tag does not exist."""
     try:
         answer = get(f"repos/{repo}/git/ref/tags/{tag}")
-        while answer is not None and answer["object"]["type"] == "tag":
+        if answer is None:
+            return None
+        while answer["object"]["type"] == "tag":
             answer = get(f"repos/{repo}/git/tags/{answer['object']['sha']}")
-        return answer["object"]["sha"] if answer is not None else None
+            if answer is None:  # the ref exists, so a missing tag object is an answer that cannot be read
+                raise Unavailable("gh-error")
+        return answer["object"]["sha"]
     except (KeyError, TypeError):
         raise Unavailable("gh-error")
 
