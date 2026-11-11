@@ -417,11 +417,13 @@ class ContractTest(unittest.TestCase):
         self.assertEqual((proc.returncode, result["error"]), (1, "bad_input"))
 
     def test_a_usage_error_exits_2_with_one_line_on_stderr(self):
-        for args in (["--server-version-num", "abc", "-"], ["--unknown"], ["/nonexistent/plan.json"]):
+        # -h is a usage error: the spec defines no help output.
+        for args in (["--server-version-num", "abc", "-"], ["--unknown"], ["-h"], ["--help"], ["a", "b"],
+                     ["/nonexistent/plan.json"]):
             with self.subTest(args=args):
                 proc = run(args, "")
                 self.assertEqual((proc.returncode, proc.stdout), (2, ""))
-                self.assertEqual(len(proc.stderr.strip().splitlines()) >= 1, True)
+                self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
 
     def test_it_writes_no_file_and_opens_no_connection(self):
         with open(SCRIPT, encoding="utf-8") as handle:

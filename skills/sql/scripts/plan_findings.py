@@ -217,11 +217,22 @@ def read_text(path):
         raise Usage(f"cannot read {path}: {error.strerror}")
 
 
+class OneLineParser(argparse.ArgumentParser):
+    """A usage error is one line on stderr and exit 2; there is no help output (-h is a usage error)."""
+
+    def error(self, message):
+        raise Usage(message)
+
+
 def main(argv):
-    parser = argparse.ArgumentParser(prog="plan_findings.py")
+    parser = OneLineParser(prog="plan_findings.py", add_help=False)
     parser.add_argument("plan", nargs="?")
     parser.add_argument("--server-version-num", type=int)
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except Usage as error:
+        print(f"plan_findings.py: {error}", file=sys.stderr)
+        return 2
     try:
         text = read_text(args.plan)
     except Usage as error:
