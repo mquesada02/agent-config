@@ -240,7 +240,8 @@ def _occurrences(text, needle):
     return _normalise(text).count(needle)
 
 
-GLUE = "\x00"  # stands for the whitespace of a quoted value in `_flatten`; it is no whitespace and no quote for the count patterns
+GLUE = "\x00"  # stands for the whitespace of a quoted value in `_flatten`; it is no whitespace and no quote for the count patterns.
+# Bash cannot pass a NUL in a command, so no command text holds one that this could be mistaken for.
 WHITESPACE = re.compile(r"\s+")
 DOUBLE_QUOTE_ESCAPE = re.compile(r"\\([$`\"\\])")  # the backslashes that bash removes inside double quotes
 
@@ -302,9 +303,9 @@ def _word_forms(words, levels=0):
     forms = [_normalise(" ".join(words))]
     if not any(WHITESPACE.search(word) or "'" in word or '"' in word for word in words):
         return forms * (levels + 1)  # every level reads the same words
-    level = 1
+    joined, level = [_join_continued(word) for word in words], 1
     while True:
-        flats = [_flatten(_join_continued(word), level, 1) for word in words]
+        flats = [_flatten(word, level, 1) for word in joined]
         forms.append(_squeeze(" ".join(flat for flat, _ in flats)))
         if level >= max(levels, *(deepest for _, deepest in flats)):
             return forms
@@ -3069,11 +3070,10 @@ def _segment_forms(segment, segments):
     return _word_forms(words)
 
 
-def _has_unaccounted_text(form, segment, segments):
+def _has_unaccounted_text(form, segment, texts):
     """Whether a segment holds more of the form's text than it accounts for: its head, when the pattern sees it, accounts for one.
-    Each reading of the quotes (see `_normal_forms`) is compared with the same reading of the head."""
+    `texts` is `_segment_forms` of the segment; each reading of the quotes (see `_normal_forms`) is compared with the same reading of the head."""
     head = form.head(segment) if form.head else None
-    texts = _segment_forms(segment, segments)
     heads = _word_forms(head, len(texts) - 1) if head is not None else [""] * len(texts)
     return any(len(form.pattern.findall(text)) > (1 if form.pattern.search(head_text) else 0) for text, head_text in zip(texts, heads))
 
@@ -3084,7 +3084,8 @@ def _form_reason(form):
 
 def _unchecked_reason(command, segments):
     """The deny reason when a gate finds more of its text in the command than it matched as segments, else None. The PR gate comes first."""
-    normalised = _normal_forms(command)
+    forms = _normal_forms(command)
+    segment_forms = [_segment_forms(segment, segments) for segment in segments]
     for form in GATED_FORMS:
         reason = _form_reason(form)
         matching = sum(form.segment(segment) for segment in segments)
@@ -3092,9 +3093,9 @@ def _unchecked_reason(command, segments):
             if _occurrences(command, form.count_text) > matching:
                 return reason
             continue
-        if any(len(form.pattern.findall(normal)) > matching for normal in normalised):  # whole text
+        if any(len(form.pattern.findall(normal)) > matching for normal in forms):  # whole text
             return reason
-        if any(_has_unaccounted_text(form, segment, segments) for segment in segments):  # per segment
+        if any(_has_unaccounted_text(form, segment, texts) for segment, texts in zip(segments, segment_forms)):  # per segment
             return reason
     return None
 

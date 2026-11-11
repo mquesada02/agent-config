@@ -47,6 +47,12 @@ class GatedFormsTest(GateTestCase):
             with self.subTest(form=form.count_text):
                 self.assert_denied(self.gate(f'bash -c "{form.count_text}"'), f"unchecked command form: run {form.count_text} as a plain command")
 
+    def test_every_listed_form_is_denied_as_a_wrapped_form_after_a_quoted_value_that_holds_a_space(self):
+        for form in GATED_FORMS:
+            with self.subTest(form=form.count_text):
+                self.assert_denied(self.gate(f'echo "a b"; bash -c \'{form.count_text} --x "c d"\''),
+                                   f"unchecked command form: run {form.count_text} as a plain command")
+
     def test_every_listed_form_is_denied_as_an_unparsable_command(self):
         for form in GATED_FORMS:
             with self.subTest(form=form.count_text):
