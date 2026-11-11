@@ -3,7 +3,8 @@
 # ignored instruction, and halts the session after 3 re-blocks. It runs on Stop and PostToolUse and must never break a
 # session: any internal error gives no output and exit 0 (auto-compact stays the backstop).
 #
-# Expected behavior, not gaps: a successor reloads its skills (a handoff cannot hold skill text), and an ignored block is re-blocked before the launcher runs.
+# Expected behavior, not gaps: a successor reloads its skills (a handoff cannot hold skill text),
+# and an ignored block is re-blocked before the launcher runs.
 # Two maintenance points:
 # - MODEL_WINDOWS below: the fallback model -> window size table. Add a model here when it has a native 1M window.
 # - CLAUDE_CODE_SESSION_ATTENDED: an undocumented variable. If Claude Code renames it, headless runs get the block too.
