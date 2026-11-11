@@ -34,7 +34,7 @@ MODULES = {
 # and the modules that #391, #392, #393, #394, #395 and #398 filled. The "format.md" entry of MODULES keeps
 # #391 and #392 as an ownership mark that no test reads against the file text; the optimize
 # tickets are asserted by test_sql_optimize_structure.py; db-access.md keeps stub sections for
-# #396 and #397, asserted by test_sql_db_access.py (#400 filled its facts section).
+# #397, asserted by test_sql_db_access.py (#400 filled its facts section, #396 its write mode).
 FILLED = {"setup.md", "style.md", "format.md", "optimize.md", "dialects/postgres.md", "db-access.md"}
 STUBS = {
     module: tickets

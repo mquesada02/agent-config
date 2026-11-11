@@ -9,15 +9,15 @@ OPTIMIZE = os.path.join(SKILL_DIR, "optimize.md")
 ROUTER = os.path.join(SKILL_DIR, "SKILL.md")
 
 # The stub sections that db-access.md keeps: heading -> the ticket that fills it.
-STUB_SECTIONS = {"Write mode (stub)": "#396", "Diff (stub)": "#397"}
+STUB_SECTIONS = {"Diff (stub)": "#397"}
 SECTIONS = (
     "Rules", "Allowlist", "pg_run", "Read-only path", "Statements that EXPLAIN cannot take",
-    "No full result", "Timeouts and versions", "Residual risk", "Facts",
+    "No full result", "Timeouts and versions", "Residual risk", "Write mode", "Facts",
 )
 ERROR_KINDS = ("not_allowed", "refused", "connection_failed", "statement_failed", "psql_failed", "bad_output")
 GUARD_REASONS = (
     "empty", "unterminated", "multiple_statements", "write_statement", "not_select", "data_modifying",
-    "forbidden_function", "unicode_identifier",
+    "not_write", "forbidden_function", "unicode_identifier",
 )
 ALLOWLIST_REASONS = ("no_repo", "missing_file", "unreadable_file", "malformed_file", "no_entry", "service_not_listed")
 
@@ -62,7 +62,7 @@ class DbAccessModuleTest(unittest.TestCase):
     def test_the_intro_and_the_no_full_result_section_name_facts(self):
         self.assertIn("facts", self.text.split("\n## ", 1)[0])
         self.assertRegex(section(self.text, "No full result"), r"(?i)`pg_run facts` returns catalog metadata only")
-        self.assertIn("no write path", self.text)
+        self.assertIn("The only write path is `pg_run explain --mode write`, which always rolls back", self.text)
 
     def test_it_is_not_a_stub_outside_its_stub_sections(self):
         body = self.text
@@ -150,6 +150,59 @@ class DbAccessModuleTest(unittest.TestCase):
         self.assertRegex(body, r"(?i)guard")
 
 
+class WriteModeDocsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = read(DB_ACCESS)
+
+    def test_no_line_says_that_write_mode_does_not_exist(self):
+        for phrase in ("covers `SELECT` statements only", "Only `--mode select` exists", "not available yet", "no write path"):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, self.text)
+        self.assertNotIn("Write mode (stub)", self.text)
+
+    def test_it_names_the_write_mode_terms(self):
+        for term in ("not_write", "explain", "downgrade", "warnings", "BEGIN READ WRITE", "ROLLBACK", "--mode write"):
+            with self.subTest(term=term):
+                self.assertIn(term, self.text)
+        body = section(self.text, "Write mode")
+        for term in ("downgrade", "warnings", "`sequence`", "ran", "`analyze`", "`explain`", "ON_ERROR_STOP"):
+            with self.subTest(term=term):
+                self.assertIn(term, body)
+
+    def test_the_residual_risk_section_names_the_dead_tuples_and_the_select_privilege_guarantee(self):
+        body = section(self.text, "Residual risk")
+        self.assertRegex(body, r"(?i)dead tuples")
+        self.assertRegex(body, r"(?i)statistics counters|pg_stat")
+        self.assertRegex(body, r"(?i)role with `SELECT` privilege only stays the hard guarantee for select mode")
+
+    def test_the_data_modifying_bullet_names_write_mode_and_the_forbidden_function_bullet_names_each_mode(self):
+        data_modifying = next(line for line in self.text.splitlines() if line.startswith("- `data_modifying`"))
+        self.assertIn("--mode write", data_modifying)
+        forbidden = next(line for line in self.text.splitlines() if line.startswith("- `forbidden_function`"))
+        self.assertIn("select mode", forbidden)
+        self.assertIn("write mode", forbidden)
+        self.assertIn("set_config", forbidden)
+
+    def test_the_refused_bullet_names_the_guard_of_the_mode(self):
+        refused = next(line for line in self.text.splitlines() if line.startswith("- `refused`"))
+        self.assertIn("the guard of the mode", refused)
+        self.assertNotIn("select guard", refused)
+
+    def test_the_read_only_path_and_the_rules_name_write_mode_and_its_rollback(self):
+        read_only = section(self.text, "Read-only path")
+        self.assertIn("Write mode", read_only)
+        self.assertIn("always ended by `ROLLBACK`", read_only)
+        rules = section(self.text, "Rules")
+        self.assertIn("--mode write", rules)
+        self.assertIn("rolls back", rules)
+
+    def test_the_statements_section_follows_the_write_mode_static_review_only(self):
+        body = section(self.text, "Statements that EXPLAIN cannot take")
+        self.assertIn("Write mode", body)
+        self.assertIn("static_review_only", body)
+
+
 class OptimizeDatabasePathTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -207,9 +260,8 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertIn("Database path", first)
 
     def test_the_other_stubs_are_kept(self):
-        for ticket in ("#396", "#397"):
-            with self.subTest(ticket=ticket):
-                self.assertIn(ticket, self.text)
+        self.assertIn("#397", self.text)
+        self.assertNotIn("#396", self.text)
 
 
 class RouterLineTest(unittest.TestCase):

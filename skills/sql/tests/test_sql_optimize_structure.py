@@ -288,12 +288,13 @@ class OptimizeModuleTest(unittest.TestCase):
 
     def test_it_names_a_stub_section_for_each_later_ticket(self):
         parts = re.split(r"(?m)^## ", self.text)
-        for ticket in ("#396", "#397"):
+        for ticket in ("#397",):
             with self.subTest(ticket=ticket):
                 self.assertTrue(
                     any(ticket in part and re.search(r"(?i)stub|later|not yet", part) for part in parts[1:]),
                     ticket,
                 )
+        self.assertNotIn("#396", self.text)
 
     def test_the_plan_findings_section_is_filled_and_keeps_the_later_stubs(self):
         self.assertNotRegex(self.text, r"(?m)^## Plan findings \(stub\)")
@@ -304,9 +305,41 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertIn("actual values", plan)
         self.assertNotRegex(plan, r"\bpg_run\b")
         self.assertRegex(plan, r"never the capitalised word `Rewrite`|never.*capitalised word `Rewrite`")
-        for ticket in ("#396", "#397"):
-            with self.subTest(ticket=ticket):
-                self.assertIn(ticket, self.text)
+        self.assertIn("#397", self.text)
+
+    def test_the_write_path_section_is_filled(self):
+        self.assertNotIn("Write path (stub)", self.text)
+        write = section(self.text, "Write path")
+        self.assertNotRegex(write, r"(?i)\bstub\b")
+        self.assertNotRegex(write, r"\bpg_run\b")
+        self.assertIn("--mode write", write)
+        self.assertIn("plan_findings.py -", write)
+        self.assertRegex(write, r"(?i)rewrite of a write statement stays unproven")
+        self.assertIn("Note: <file>:<start_line>-<end_line> ran as plain EXPLAIN: <reason>.", self.text)
+        self.assertIn(
+            "Note: <file>:<start_line>-<end_line> writes to a table with a sequence, so the analysis moved the "
+            "sequence counter (a ROLLBACK does not undo it).",
+            self.text,
+        )
+
+    def test_the_steps_and_the_database_path_take_a_write_statement(self):
+        steps = section(self.text, "Steps")
+        self.assertNotIn("the plan of each complete `SELECT` as the section Database path says", steps)
+        step5 = next(line for line in steps.splitlines() if line.startswith("5. "))
+        self.assertIn("write statement", step5)
+        path = section(self.text, "Database path")
+        step4 = next(line for line in path.splitlines() if line.startswith("4. "))
+        for word in ("INSERT", "UPDATE", "DELETE", "MERGE"):
+            self.assertIn(f"`{word}`", step4)
+        self.assertIn("same completeness rule", step4)
+        step6 = next(line for line in path.splitlines() if line.startswith("6. "))
+        self.assertIn("--mode select", step6)
+        self.assertIn("--mode write", step6)
+
+    def test_a_plan_with_no_actual_values_keeps_its_note_for_a_downgrade(self):
+        plan = section(self.text, "Plan findings")
+        self.assertIn("Note: the plan of <file>:<start_line>-<end_line> has no actual values", plan)
+        self.assertIn("downgrade", plan)
 
     def test_the_database_path_holds_the_failure_note_lines(self):
         path = section(self.text, "Database path")
