@@ -10,6 +10,14 @@ It returns `(sql, None)` with the statement text cut at its final `;`, or
 The reasons are checked in this order: `empty`, `unterminated`,
 `multiple_statements`, `write_statement`, `not_select`, `data_modifying`,
 `forbidden_function`, `unicode_identifier`.
+
+`check_write(text)` accepts exactly one `INSERT`, `UPDATE`, `DELETE` or `MERGE`, with an optional
+`WITH` list that it reads as a grammar (it fails closed). It uses the same tokenizer. It returns
+`(result, None)` where `result` has `sql`, `nextval`, `scan` and `targets`, or `(None, refusal)`.
+Its reasons, in this order: `empty`, `unterminated`, `multiple_statements`, `not_write`,
+`forbidden_function` (`set_config` only), `unicode_identifier`. The names in `scan` are functions
+whose effect `ROLLBACK` cannot undo, or that run SQL from a string argument, so the run goes down
+to a plain `EXPLAIN`. The tokens are the only input: the guard never connects.
 """
 import collections
 import re
@@ -45,12 +53,32 @@ MESSAGES = {
     "empty": "The statement is empty.",
     "unterminated": "The statement has an unterminated quote, dollar-quoted string or comment.",
     "multiple_statements": "Select mode accepts one statement only.",
-    "write_statement": "A write statement needs write mode, which is not available yet.",
+    "write_statement": "A write statement needs --mode write.",
     "not_select": "Select mode accepts only SELECT or WITH ... SELECT.",
     "data_modifying": "The statement holds INSERT, UPDATE, DELETE, MERGE or INTO.",
     "forbidden_function": "The statement calls a function that select mode refuses.",
     "unicode_identifier": "A Unicode-escaped identifier (U&\") is refused.",
 }
+
+# Write mode has its own message table: no write refusal carries a select-mode text.
+WRITE_MESSAGES = {
+    "empty": "The statement is empty.",
+    "unterminated": "The statement has an unterminated quote, dollar-quoted string or comment.",
+    "multiple_statements": "Write mode accepts one statement only.",
+    "not_write_select": "Write mode accepts only INSERT, UPDATE, DELETE or MERGE. Use select mode for this statement.",
+    "not_write_other": (
+        "Write mode accepts only INSERT, UPDATE, DELETE or MERGE (with an optional WITH list). "
+        "Review this statement by reading only."
+    ),
+    "forbidden_function": "The statement calls set_config, which write mode refuses.",
+    "unicode_identifier": "A Unicode-escaped identifier (U&\") is refused.",
+}
+
+# Functions whose effect ROLLBACK cannot undo (a sequence, a session lock, a file, a remote call), or that
+# run SQL from a string argument that the guard cannot scan. A hit downgrades the run to a plain EXPLAIN.
+SCAN_NAMES = frozenset(["lo_export", "setval", "ts_stat", "connectby"])
+SCAN_PREFIXES = ("dblink", "query_to_xml", "cursor_to_xml", "crosstab")
+ADVISORY_PREFIXES = ("pg_advisory", "pg_try_advisory")
 
 
 def _quoted_end(text, start, quote, backslash):
@@ -215,3 +243,161 @@ def check_select(text):
         return _refuse("unicode_identifier")
     cut = tokens[semicolons[0]].start if semicolons else len(text)
     return text[:cut].strip(), None
+
+
+def _write_refuse(reason, static_review_only=False, message_key=None):
+    message = WRITE_MESSAGES[message_key or reason]
+    return None, {"reason": reason, "message": message, "static_review_only": static_review_only}
+
+
+def _is_punct(token, value):
+    return token.kind == "punct" and token.value == value
+
+
+def _is_word(token, word):
+    return token.kind == "word" and token.value.upper() == word
+
+
+def _after_parentheses(tokens, index):
+    """Index after the balanced `( ... )` that opens at `index`, or -1. A string is one token, so its parentheses do not count."""
+    if index >= len(tokens) or not _is_punct(tokens[index], "("):
+        return -1
+    depth = 0
+    for position in range(index, len(tokens)):
+        if _is_punct(tokens[position], "("):
+            depth += 1
+        elif _is_punct(tokens[position], ")"):
+            depth -= 1
+            if depth == 0:
+                return position + 1
+    return -1
+
+
+def _is_write_main(tokens):
+    """True when `tokens` is `WITH [RECURSIVE] name [(columns)] AS [[NOT] MATERIALIZED] (...) [, ...]` and then
+    `INSERT`, `UPDATE`, `DELETE` or `MERGE`. Any other shape is False (fail closed)."""
+    index = 1
+    if index < len(tokens) and _is_word(tokens[index], "RECURSIVE"):
+        index += 1
+    while True:
+        if index >= len(tokens) or tokens[index].kind not in ("word", "qident"):
+            return False
+        index += 1
+        if index < len(tokens) and _is_punct(tokens[index], "("):
+            index = _after_parentheses(tokens, index)
+            if index == -1:
+                return False
+        if index >= len(tokens) or not _is_word(tokens[index], "AS"):
+            return False
+        index += 1
+        if index < len(tokens) and _is_word(tokens[index], "NOT"):
+            index += 1
+            if index >= len(tokens) or not _is_word(tokens[index], "MATERIALIZED"):
+                return False
+        if index < len(tokens) and _is_word(tokens[index], "MATERIALIZED"):
+            index += 1
+        index = _after_parentheses(tokens, index)
+        if index == -1 or index >= len(tokens):
+            return False
+        if _is_punct(tokens[index], ","):
+            index += 1
+            continue
+        return tokens[index].kind == "word" and tokens[index].value.upper() in WRITE_WORDS
+
+
+def _write_static_review_only(tokens):
+    """False when EXPLAIN can take the statement (so the model reads the plan, not only the text)."""
+    first = tokens[0]
+    if _is_punct(first, "("):
+        return False
+    if first.kind != "word":
+        return True
+    word = first.value.upper()
+    if word in ANALYZABLE_FIRST:
+        return False
+    if word in SELECT_WORDS:
+        return any(t.kind == "word" and t.value.upper() in DATA_MODIFYING_WORDS for t in tokens)
+    return True
+
+
+def _name_text(token):
+    return token.value if token.kind == "word" else '"' + token.value.replace('"', '""') + '"'
+
+
+def _write_targets(tokens):
+    """The `[verb, name]` pairs of every position that can name a written table, at any depth."""
+    targets = []
+    for index, token in enumerate(tokens):
+        if token.kind != "word":
+            continue
+        verb = token.value.upper()
+        position = index + 1
+        if verb in ("INSERT", "MERGE"):
+            follower = "INTO"
+        elif verb == "DELETE":
+            follower = "FROM"
+        elif verb == "UPDATE":
+            follower = None
+        else:
+            continue
+        if follower:
+            if position >= len(tokens) or not _is_word(tokens[position], follower):
+                continue
+            position += 1
+        if position < len(tokens) and _is_word(tokens[position], "ONLY"):
+            position += 1
+        parts = []
+        while len(parts) < 3 and position < len(tokens) and tokens[position].kind in ("word", "qident"):
+            parts.append(_name_text(tokens[position]))
+            if position + 1 < len(tokens) and _is_punct(tokens[position + 1], ".") and len(parts) < 3:
+                position += 2
+            else:
+                break
+        if parts:
+            targets.append([verb.lower(), ".".join(parts)])
+    return targets
+
+
+def _scan_name(token):
+    if token.kind not in ("word", "qident"):
+        return None
+    name = token.value.lower()
+    if name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
+        return name
+    if name.startswith(ADVISORY_PREFIXES) and "_xact_" not in name:
+        return name
+    return None
+
+
+def check_write(text):
+    tokens, unterminated = tokenize(text)
+    significant = [t for t in tokens if not _is_semicolon(t)]
+    if not significant:
+        return _write_refuse("empty")
+    if unterminated:
+        return _write_refuse("unterminated")
+    semicolons = [i for i, t in enumerate(tokens) if _is_semicolon(t)]
+    if semicolons and semicolons[0] != len(tokens) - 1:
+        return _write_refuse("multiple_statements")
+    first_word = tokens[0].value.upper() if tokens[0].kind == "word" else None
+    body = tokens[:semicolons[0]] if semicolons else tokens
+    if first_word in WRITE_WORDS or (first_word == "WITH" and _is_write_main(body)):
+        pass
+    else:
+        static = _write_static_review_only(tokens)
+        select_form = first_word in SELECT_WORDS and not static
+        return _write_refuse("not_write", static, "not_write_select" if select_form else "not_write_other")
+    if any(t.kind in ("word", "qident") and t.value.lower() == "set_config" for t in tokens):
+        return _write_refuse("forbidden_function")
+    if any(t.kind == "uamp" for t in tokens):
+        return _write_refuse("unicode_identifier")
+    cut = tokens[semicolons[0]].start if semicolons else len(text)
+    return {
+        "sql": text[:cut].strip(WHITESPACE),
+        "nextval": any(
+            t.kind in ("word", "qident") and t.value.lower() == "nextval" and i + 1 < len(tokens) and _is_punct(tokens[i + 1], "(")
+            for i, t in enumerate(tokens)
+        ),
+        "scan": sorted({name for name in map(_scan_name, tokens) if name}),
+        "targets": _write_targets(body),
+    }, None
