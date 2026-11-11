@@ -76,11 +76,9 @@ def skip_reason():
 SKIP = skip_reason()
 
 
-@unittest.skipIf(SKIP, SKIP or "")
-class PgRunDockerTest(unittest.TestCase):
-    """`pg_run explain` against real PostgreSQL servers (13 and 18 from the official images)."""
-
-    ports = {}
+class DockerServers:
+    """Two throwaway PostgreSQL servers (13 and 18 from the official images), one set per test class.
+    A class that uses it sets `ports = {}` and `SETUP_SQL`, and has `unittest.TestCase` as its second base."""
 
     @classmethod
     def setUpClass(cls):
@@ -104,7 +102,7 @@ class PgRunDockerTest(unittest.TestCase):
             cls.ports[version] = int(mapping.rsplit(":", 1)[1])
         for version in VERSIONS:
             cls.wait_ready(version)
-            setup = host_psql(cls.ports[version], "-c", SETUP_SQL)
+            setup = host_psql(cls.ports[version], "-c", cls.SETUP_SQL)
             if setup.returncode != 0:
                 raise RuntimeError(f"the test schema failed on postgres:{version}: {setup.stderr}")
 
@@ -154,6 +152,23 @@ class PgRunDockerTest(unittest.TestCase):
         services = ", ".join(f'"pgrun_{v}"' for v in VERSIONS)
         with open(os.path.join(self.xdg, "sql-skill", "allowlist.toml"), "w") as handle:
             handle.write(f'["{REPO_KEY}"]\nservices = [{services}]\n{extra}')
+
+    def run_explain(self, version, mode, statement):
+        done = subprocess.run(
+            [sys.executable, "-I", SCRIPT, "explain", "--repo", self.repo, "--service", f"pgrun_{version}",
+             "--mode", mode, "--statement", statement],
+            capture_output=True, text=True, env=self.env, timeout=120,
+        )
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return json.loads(done.stdout)
+
+
+@unittest.skipIf(SKIP, SKIP or "")
+class PgRunDockerTest(DockerServers, unittest.TestCase):
+    """`pg_run explain` in select mode against real PostgreSQL servers."""
+
+    ports = {}
+    SETUP_SQL = SETUP_SQL
 
     def explain(self, version, statement):
         done = subprocess.run(
@@ -273,6 +288,203 @@ class PgRunDockerTest(unittest.TestCase):
                 self.assertEqual(len(data), 3)
                 self.assertEqual(self.facts_rows(version), "2|3")
                 self.assertEqual(self.rows(version), "5|15")
+
+
+def read_write_setup():
+    with open(os.path.join(HERE, "write_docker_setup.sql")) as handle:
+        return handle.read()
+
+
+# (statement, ran, table names in `downgrade`). Each runs on version 13 and 18.
+WRITE_CASES = [
+    ("a user trigger", "UPDATE pgw.trig SET v = 2", "explain", ["pgw.trig"]),
+    ("a user trigger, insert", "INSERT INTO pgw.trig VALUES (5, 5)", "explain", ["pgw.trig"]),
+    ("a user trigger, delete", "DELETE FROM pgw.trig", "explain", ["pgw.trig"]),
+    ("a DO ALSO rule", "UPDATE pgw.ruled_also SET v = 2", "explain", ["pgw.ruled_also"]),
+    ("a DO INSTEAD rule with an action", "INSERT INTO pgw.ruled_instead VALUES (1, 1)", "explain", ["pgw.ruled_instead"]),
+    ("internal foreign key triggers only (child)", "INSERT INTO pgw.child VALUES (1, 1)", "analyze", []),
+    ("internal foreign key triggers only (parent)", "DELETE FROM pgw.parent", "analyze", []),
+    ("a cascade child with a user trigger", "DELETE FROM pgw.cparent", "explain", ["pgw.cchild"]),
+    ("ON DELETE SET NULL child", "DELETE FROM pgw.nparent", "explain", ["pgw.nchild"]),
+    ("ON DELETE SET DEFAULT child", "DELETE FROM pgw.dparent WHERE id = 1", "explain", ["pgw.dchild"]),
+    ("ON UPDATE CASCADE child", "UPDATE pgw.uparent SET id = 2", "explain", ["pgw.uchild"]),
+    ("a trigger cloned onto a partition, statement on the parent", "UPDATE pgw.part SET v = 2", "explain", ["pgw.part", "pgw.part1"]),
+    ("a trigger cloned onto a partition, statement on the partition", "UPDATE pgw.part1 SET v = 2", "explain", ["pgw.part1"]),
+    ("a trigger created on the partition, statement on the parent", "UPDATE pgw.partb SET v = 2", "explain", ["pgw.partb1"]),
+    ("a trigger created on the partition, statement on the partition", "UPDATE pgw.partb1 SET v = 2", "explain", ["pgw.partb1"]),
+    ("a constraint trigger cloned onto a partition, statement on the parent", "UPDATE pgw.partd SET v = 2", "explain", ["pgw.partd", "pgw.partd1"]),
+    ("a constraint trigger cloned onto a partition, statement on the partition", "UPDATE pgw.partd1 SET v = 2", "explain", ["pgw.partd1"]),
+    ("a partitioned table with no trigger", "UPDATE pgw.partc SET v = 2", "analyze", []),
+    ("an INSTEAD OF trigger on a view", "UPDATE pgw.v_instead SET v = 2", "explain", ["pgw.v_instead"]),
+    ("an auto-updatable view over a table with a user trigger", "UPDATE pgw.v_auto SET v = 2", "explain", ["pgw.trig"]),
+    ("a statement-level trigger on a view", "UPDATE pgw.v_stmt SET v = 2", "explain", ["pgw.v_stmt"]),
+    ("a view over a view over a table with a user trigger", "UPDATE pgw.v_outer2 SET v = 2", "explain", ["pgw.trig"]),
+    ("a plain inheritance child with a user trigger", "UPDATE pgw.inh_parent SET v = 2", "explain", ["pgw.inh_child"]),
+    ("a disabled trigger", "UPDATE pgw.dis SET v = 2", "analyze", []),
+    ("a data-modifying CTE whose target has a trigger",
+     "WITH d AS (DELETE FROM pgw.trig RETURNING id) INSERT INTO pgw.plain SELECT id + 1000, 0 FROM d", "explain", ["pgw.trig"]),
+    ("a self-referencing cascade foreign key", "DELETE FROM pgw.selfref", "analyze", []),
+    ("two tables with foreign keys that reference each other", "DELETE FROM pgw.cyc_a", "analyze", []),
+    ("a table with no trigger", "UPDATE pgw.plain SET v = v + 1", "analyze", []),
+]
+
+WRITE_TABLES = (
+    "plain", "trig", "dis", "audit", "ruled_also", "sink", "ruled_instead", "ruled_nothing", "parent", "child",
+    "cparent", "cchild", "nparent", "nchild", "dparent", "dchild", "uparent", "uchild", "part", "partb", "partd",
+    "stmt_base", "inh_parent", "selfref", "cyc_a", "cyc_b", "ident", "ser",
+)
+
+
+@unittest.skipIf(SKIP, SKIP or "")
+class PgRunWriteDockerTest(DockerServers, unittest.TestCase):
+    """`pg_run explain --mode write` against real PostgreSQL servers: its own containers and its own setup SQL."""
+
+    ports = {}
+    SETUP_SQL = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.SETUP_SQL = read_write_setup()
+        super().setUpClass()
+
+    def write(self, version, statement):
+        return self.run_explain(version, "write", statement)
+
+    def snapshot(self, version):
+        """One line per table: its row count and a hash of its rows (sequence counters are not part of it)."""
+        parts = [
+            f"SELECT '{t}' AS t, count(*) AS n, md5(coalesce(string_agg(x::text, ',' ORDER BY x::text), '')) AS h FROM pgw.{t} AS x"
+            for t in WRITE_TABLES
+        ]
+        done = host_psql(self.ports[version], "-c", " UNION ALL ".join(parts) + " ORDER BY 1")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def sequence_state(self, version):
+        done = host_psql(
+            self.ports[version], "-c",
+            "SELECT (SELECT last_value || ',' || is_called FROM pgw.ident_id_seq), "
+            "(SELECT last_value || ',' || is_called FROM pgw.ser_id_seq), "
+            "(SELECT last_value || ',' || is_called FROM pgw.plain_seq)",
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def idle_sessions(self, version):
+        done = host_psql(
+            self.ports[version], "-c",
+            "SELECT count(*) FROM pg_stat_activity WHERE state LIKE 'idle in transaction%'",
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return int(done.stdout.strip())
+
+    def test_each_trigger_check_case_gives_the_expected_ran_and_leaves_the_data_unchanged(self):
+        for version in VERSIONS:
+            for label, statement, ran, tables in WRITE_CASES:
+                with self.subTest(version=version, case=label):
+                    before = self.snapshot(version)
+                    data = self.write(version, statement)
+                    self.assertTrue(data["ok"], data)
+                    self.assertEqual(data["ran"], ran, data)
+                    self.assertEqual(sorted({h["name"] for h in data["downgrade"]}), sorted(tables), data)
+                    for name in tables:
+                        self.assertIn(name, data["reason"])
+                    if ran == "analyze":
+                        self.assertEqual(data["reason"], "no trigger, rule or external call on the reached tables")
+                        self.assertIn("Execution Time", data["plan"][0])
+                    else:
+                        self.assertNotIn("Execution Time", data["plan"][0])
+                    self.assertEqual(self.snapshot(version), before)
+
+    def test_explain_analyze_of_an_insert_an_update_and_a_delete_leaves_the_table_unchanged(self):
+        for version in VERSIONS:
+            for statement in ("INSERT INTO pgw.plain VALUES (4, 40)", "UPDATE pgw.plain SET v = v + 100",
+                              "DELETE FROM pgw.plain WHERE id = 1"):
+                with self.subTest(version=version, statement=statement):
+                    before = self.snapshot(version)
+                    data = self.write(version, statement)
+                    self.assertEqual((data["ok"], data["ran"]), (True, "analyze"), data)
+                    self.assertEqual(data["downgrade"], [])
+                    self.assertEqual(self.snapshot(version), before)
+                    self.assertEqual(self.idle_sessions(version), 0)
+
+    def test_the_session_is_read_write_although_the_service_entry_says_off_and_the_table_is_unchanged(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.write(version, "INSERT INTO pgw.plain VALUES (50, 5)")
+                self.assertEqual((data["ok"], data["ran"]), (True, "analyze"), data)
+
+    def test_a_do_instead_nothing_rule_gives_bad_output_and_runs_no_analyze(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                before = self.snapshot(version)
+                data = self.write(version, "DELETE FROM pgw.ruled_nothing")
+                self.assertEqual((data["ok"], data["error"]), (False, "bad_output"), data)
+                self.assertEqual(self.snapshot(version), before)
+
+    def test_a_failing_statement_leaves_no_row_and_no_open_transaction(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                before = self.snapshot(version)
+                data = self.write(version, "INSERT INTO pgw.plain SELECT 200 + g, 1 / (g - 3) FROM generate_series(1, 5) AS g")
+                self.assertEqual((data["ok"], data["error"]), (False, "statement_failed"), data)
+                self.assertEqual(self.snapshot(version), before)
+                self.assertEqual(self.idle_sessions(version), 0)
+
+    def test_the_scan_statements_are_downgraded_and_nothing_runs(self):
+        statements = {
+            "dblink_exec": "INSERT INTO pgw.plain SELECT 100, length(pgw.dblink_exec('dbname=nodb', 'select 1'))",
+            "pg_advisory_lock": "INSERT INTO pgw.plain SELECT 101, 1 WHERE pg_advisory_lock(7)::text = ''",
+            "lo_export": "INSERT INTO pgw.plain SELECT 102, lo_export(1, '/tmp/sqlskill-never-written')",
+        }
+        for version in VERSIONS:
+            for name, statement in statements.items():
+                with self.subTest(version=version, name=name):
+                    before = self.snapshot(version)
+                    data = self.write(version, statement)
+                    self.assertEqual((data["ok"], data["ran"]), (True, "explain"), data)
+                    self.assertEqual(data["downgrade"], [{"kind": "function", "name": name}])
+                    self.assertEqual(self.snapshot(version), before)
+            locks = host_psql(self.ports[version], "-c", "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
+            self.assertEqual(locks.stdout.strip(), "0")
+
+    def test_the_sequence_warning_and_the_counter_that_rollback_does_not_undo(self):
+        cases = (
+            ("an identity column", "INSERT INTO pgw.ident (v) VALUES (1)", ["sequence"]),
+            ("a serial column", "INSERT INTO pgw.ser (v) VALUES (1)", ["sequence"]),
+            ("an explicit nextval", "INSERT INTO pgw.plain VALUES (nextval('pgw.plain_seq')::int + 500, 1)", ["sequence"]),
+            ("a table with no sequence", "INSERT INTO pgw.plain VALUES (60, 6)", []),
+            ("an update of a table with a sequence", "UPDATE pgw.ident SET v = 1", []),
+        )
+        for version in VERSIONS:
+            for label, statement, warnings in cases:
+                with self.subTest(version=version, case=label):
+                    before_rows = self.snapshot(version)
+                    data = self.write(version, statement)
+                    self.assertEqual((data["ok"], data["ran"], data["warnings"]), (True, "analyze", warnings), data)
+                    self.assertEqual(self.snapshot(version), before_rows)
+            with self.subTest(version=version, case="the counter moved"):
+                before = self.sequence_state(version)
+                self.write(version, "INSERT INTO pgw.ident (v) VALUES (1)")
+                self.assertNotEqual(self.sequence_state(version), before)
+
+    def test_merge_on_version_18_only(self):
+        version = "18"
+        merge_trigger = (
+            "MERGE INTO pgw.trig AS t USING (SELECT 1 AS id) AS s ON t.id = s.id "
+            "WHEN MATCHED THEN UPDATE SET v = 9"
+        )
+        merge_identity = (
+            "MERGE INTO pgw.ident AS t USING (SELECT 1 AS id) AS s ON t.v = s.id "
+            "WHEN NOT MATCHED THEN INSERT (v) VALUES (1)"
+        )
+        before = self.snapshot(version)
+        data = self.write(version, merge_trigger)
+        self.assertEqual((data["ok"], data["ran"]), (True, "explain"), data)
+        self.assertEqual([h["name"] for h in data["downgrade"]], ["pgw.trig"])
+        data = self.write(version, merge_identity)
+        self.assertEqual((data["ok"], data["ran"], data["warnings"]), (True, "analyze", ["sequence"]), data)
+        self.assertEqual(self.snapshot(version), before)
 
 
 if __name__ == "__main__":

@@ -349,6 +349,56 @@ class PassThroughTest(unittest.TestCase):
         self.assertEqual(result["server_version_num"], 130000)
 
 
+class WriteModePassThroughTest(unittest.TestCase):
+    """A `pg_run` write-mode object keeps its `ran`, `reason`, `downgrade` and `warnings` in the output."""
+
+    PLAN = plan_of(node("Result"))
+
+    def piped(self, **fields):
+        document = {"ok": True, "action": "explain", "server_version_num": 180000, "plan": self.PLAN, **fields}
+        proc, result = out(["-"], json.dumps(document))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        return result
+
+    def test_the_four_keys_are_passed_through_for_mode_write(self):
+        result = self.piped(
+            mode="write", ran="explain", reason="the statement calls dblink",
+            downgrade=[{"kind": "function", "name": "dblink"}], warnings=["sequence"],
+        )
+        self.assertEqual(result["ran"], "explain")
+        self.assertEqual(result["reason"], "the statement calls dblink")
+        self.assertEqual(result["downgrade"], [{"kind": "function", "name": "dblink"}])
+        self.assertEqual(result["warnings"], ["sequence"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["plan"], self.PLAN)
+
+    def test_a_key_that_the_input_lacks_is_left_out_and_never_null(self):
+        result = self.piped(mode="write", ran="analyze")
+        self.assertEqual(result["ran"], "analyze")
+        for key in ("reason", "downgrade", "warnings"):
+            self.assertNotIn(key, result)
+
+    def test_a_select_input_has_an_unchanged_output(self):
+        selected = self.piped(mode="select", ran="analyze", reason="select mode always analyzes", warnings=[])
+        for key in ("ran", "reason", "downgrade", "warnings"):
+            self.assertNotIn(key, selected)
+        self.assertEqual(
+            sorted(selected), sorted(["ok", "server_version_num", "analyze", "notes", "findings", "plan"])
+        )
+
+    def test_an_input_with_no_mode_and_a_bare_plan_are_unchanged(self):
+        document = {"ok": True, "server_version_num": 170000, "plan": self.PLAN, "ran": "analyze", "warnings": []}
+        _, with_keys = out(["-"], json.dumps(document))
+        self.assertNotIn("ran", with_keys)
+        _, bare = out(["-"], json.dumps(self.PLAN))
+        self.assertEqual(sorted(bare), sorted(["ok", "server_version_num", "analyze", "notes", "findings", "plan"]))
+
+    def test_a_failed_write_call_is_passed_on_as_before(self):
+        proc, result = out(["-"], json.dumps({"ok": False, "error": "refused", "mode": "write", "ran": "explain"}))
+        self.assertEqual((result["ok"], result["error"]), (False, "pg_run_failed"))
+        self.assertNotIn("ran", {k: v for k, v in result.items() if k != "source"})
+
+
 class ContractTest(unittest.TestCase):
     def test_the_output_is_one_line_that_starts_with_ok_first(self):
         for name, prefix in (("plan-01", '{"ok": true'), ("no-analyze", '{"ok": true')):

@@ -143,6 +143,64 @@ class RefusalsTest(TempTest):
                 self.assertEqual(code, 1)
                 self.assertIn(f"FAIL expected: {kind} not found", lines)
 
+    WRITE_PLAN = [{"Plan": {"Node Type": "ModifyTable"}}]
+    ANALYZED = {"ok": True, "action": "explain", "mode": "write", "ran": "analyze", "plan": WRITE_PLAN,
+                "reason": "no trigger, rule or external call on the reached tables", "downgrade": [], "warnings": []}
+    SEQUENCE = {**ANALYZED, "warnings": ["sequence"]}
+    DOWNGRADED = {"ok": True, "action": "explain", "mode": "write", "ran": "explain", "plan": WRITE_PLAN,
+                  "reason": "the statement calls dblink_exec", "downgrade": [{"kind": "function", "name": "dblink_exec"}],
+                  "warnings": []}
+
+    def test_the_write_kinds_pass_on_their_result(self):
+        cases = {
+            "analyzed": (self.ANALYZED, ["analyzed", "analyzed:app-pg18"]),
+            "sequence_warning": (self.SEQUENCE, ["sequence_warning", "sequence_warning:app-pg18", "analyzed"]),
+            "downgraded": (self.DOWNGRADED, ["downgraded", "downgraded:app-pg18"]),
+        }
+        for name, (payload, expect) in cases.items():
+            with self.subTest(kind=name):
+                self.assertEqual(self.grade(pg_run_events("t1", "app-pg18", payload), *expect)[:2], (0, ["PASS"]))
+
+    def test_the_write_kinds_fail_on_a_result_of_another_shape(self):
+        cases = [
+            ("analyzed", {**self.ANALYZED, "ran": "explain"}),
+            ("analyzed", {**self.ANALYZED, "plan": []}),
+            ("analyzed", {**self.ANALYZED, "ok": False, "error": "statement_failed"}),
+            ("analyzed", {k: v for k, v in self.ANALYZED.items() if k != "ran"}),
+            ("sequence_warning", {**self.ANALYZED, "warnings": []}),
+            ("sequence_warning", {k: v for k, v in self.ANALYZED.items() if k != "warnings"}),
+            ("sequence_warning", {**self.ANALYZED, "warnings": "sequence"}),
+            ("downgraded", {**self.DOWNGRADED, "ran": "analyze"}),
+            ("downgraded", {**self.DOWNGRADED, "reason": ""}),
+            ("downgraded", {k: v for k, v in self.DOWNGRADED.items() if k != "reason"}),
+            ("downgraded", {**self.DOWNGRADED, "plan": []}),
+            ("downgraded", {**self.DOWNGRADED, "ok": False, "error": "refused"}),
+        ]
+        for kind, payload in cases:
+            with self.subTest(kind=kind, payload=json.dumps(payload)[:80]):
+                code, lines, _ = self.grade(pg_run_events("t1", "app-pg18", payload), kind)
+                self.assertEqual(code, 1)
+                self.assertIn(f"FAIL expected: {kind} not found", lines)
+
+    def test_a_write_kind_is_service_bound(self):
+        for kind, payload in (("analyzed", self.ANALYZED), ("sequence_warning", self.SEQUENCE), ("downgraded", self.DOWNGRADED)):
+            with self.subTest(kind=kind):
+                code, lines, _ = self.grade(pg_run_events("t1", "app-pg13", payload), f"{kind}:app-pg18")
+                self.assertEqual(code, 1)
+                self.assertIn(f"FAIL expected: {kind}:app-pg18 not found", lines)
+
+    def test_an_ok_result_is_not_unexpected_when_a_write_kind_is_expected_and_is_when_none_is(self):
+        events = pg_run_events("t1", "app-pg18", self.ANALYZED)
+        self.assertEqual(self.grade(events, "analyzed")[:2], (0, ["PASS"]))
+        code, lines, _ = self.grade(events, "refused")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("FAIL unexpected-ok:") for line in lines))
+
+    def test_the_write_kinds_read_the_first_object_of_the_piped_call(self):
+        piped = "python3 /s/skills/sql/scripts/pg_run.py explain --service app-pg13 --mode write | python3 /s/plan_findings.py -"
+        events = [call("t1", piped), result("t1", self.DOWNGRADED)]
+        self.assertEqual(self.grade(events, "downgraded:app-pg13")[:2], (0, ["PASS"]))
+
     def test_no_connection_passes_with_no_call_and_with_a_not_allowed_result(self):
         self.assertEqual(self.grade([call("t0", "python3 allowlist.py .")], "no_connection:other-db")[:2], (0, ["PASS"]))
         self.assertEqual(self.grade(pg_run_events("t1", "other-db", NOT_ALLOWED), "no_connection:other-db")[:2],

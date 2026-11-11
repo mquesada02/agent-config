@@ -30,6 +30,30 @@ CREATE TABLE shop.events (
 
 CREATE INDEX orders_customer_id_idx ON shop.orders (customer_id);
 
+-- The write cases (#396): a table with a serial id (an INSERT moves its sequence), and a table whose row trigger
+-- calls a dblink function (the run must go down to a plain EXPLAIN, so the function never runs).
+CREATE EXTENSION dblink SCHEMA shop;
+
+CREATE TABLE shop.notes (
+  id serial PRIMARY KEY,
+  body text NOT NULL
+);
+
+CREATE TABLE shop.hooked (
+  id integer PRIMARY KEY,
+  body text NOT NULL
+);
+
+CREATE FUNCTION shop.hooked_notify() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM shop.dblink_exec('dbname=audit_sink', 'SELECT 1');
+  RETURN NEW;
+END $f$;
+
+CREATE TRIGGER hooked_row AFTER UPDATE ON shop.hooked FOR EACH ROW EXECUTE FUNCTION shop.hooked_notify();
+
+INSERT INTO shop.hooked (id, body) VALUES (1, 'first'), (2, 'second');
+
 INSERT INTO shop.customers (name, email)
 SELECT 'Customer ' || n, 'customer' || n || '@example.invalid' FROM generate_series(1, 20) AS n;
 

@@ -10,7 +10,9 @@ document (a list whose first item has a `Plan` key). A `pg_run` object with `ok`
 be fractional (PostgreSQL 18). The script uses only the standard library, opens no connection and writes no file.
 
 Output: one line of JSON that starts with {"ok": ...}. With ok true: server_version_num, analyze, notes,
-findings (each: rule, node, path, measured, threshold) and plan (the input plan, unchanged). A finding has no
+findings (each: rule, node, path, measured, threshold) and plan (the input plan, unchanged). When the input is
+a `pg_run` object with mode `write`, the keys `ran`, `reason`, `downgrade` and `warnings` of the input are
+passed through (a key that the input lacks is left out). A finding has no
 severity: the severity is in the dialect module. A plan with no actual values gives no finding and a note.
 Text that is not JSON, a number that is not finite (NaN, Infinity, 1e999) or too large, or a plan nested too deep
 gives ok false and error bad_input.
@@ -29,6 +31,7 @@ MAX_HASH_BATCHES = 1
 MIN_INNER_LOOPS = 1000
 MIN_READ_BLOCKS = 1000
 MAX_HIT_RATIO = 0.9
+WRITE_KEYS = ("ran", "reason", "downgrade", "warnings")
 
 
 class Usage(Exception):
@@ -178,7 +181,12 @@ def evaluate(document, version_argument):
         plan, version = document, version_argument
     if not (isinstance(plan, list) and plan and isinstance(plan[0], dict) and isinstance(plan[0].get("Plan"), dict)):
         return failure("bad_input", "the document is not an EXPLAIN (FORMAT JSON) plan: no Plan node")
-    return analyze_plan(plan, version)
+    result = analyze_plan(plan, version)
+    if isinstance(document, dict) and document.get("mode") == "write":
+        # A write-mode run says which EXPLAIN ran and why, and its warnings: pass them on, so that
+        # the piped call shows a downgrade and the sequence warning. A key the input lacks is left out.
+        result.update({key: document[key] for key in WRITE_KEYS if key in document})
+    return result
 
 
 def reject_constant(name):

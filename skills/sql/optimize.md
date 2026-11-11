@@ -8,7 +8,7 @@
 2. Pick the source module by the file form (the router's source module rule). Run its extractor and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
 3. Apply every enabled rule of [dialects/postgres.md](dialects/postgres.md) (the `PG-*` rules) to each statement. For a postgres.js template, also apply the `PGJS-*` rules of [sources/postgres-js.md](sources/postgres-js.md).
 4. A rule that needs a fact fires only when the repo shows the fact. Read the repo files for it (a schema file, a migration, a type). When the repo does not show the fact, the rule does not fire. With an allowlisted database, the section Database path reads the fact from the catalog instead (this also holds for a statement with an interpolation). When the catalog gives no answer, the rule uses the repo fact as before.
-5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` as the section Database path says, and turn each plan into `PLAN-*` findings as the section Plan findings says. A failed call gives a `Note:` line, and the run goes on.
+5. When the repo allows a database, take the catalog facts of the rules and the plan of each complete `SELECT` or write statement (`INSERT`, `UPDATE`, `DELETE` or `MERGE`) as the section Database path says, and turn each plan into `PLAN-*` findings as the section Plan findings says. A write statement follows the section Write path. A failed call gives a `Note:` line, and the run goes on.
 6. Write the report as the final message, as described below. Then stop.
 
 One finding is one row. A rule id has at most one row in the whole report. When a rule matches in many places, write all places in the Where cell of its one row, separated by `, `.
@@ -72,9 +72,9 @@ Load [db-access.md](db-access.md) when the run reaches this section. A plan come
 1. Run the allowlist reader: `python3 <skill folder>/scripts/allowlist.py <repo root>`. With `access` false, stay on the no-database path and write no extra line.
 2. With `access` true and no service in `services`, stay on the no-database path.
 3. With no rules file (the router's rules file reader prints `found` false), stay on the no-database path: make no connection.
-4. Pick the statements: each `SELECT` or `WITH ... SELECT` that is complete SQL. A `.sql` statement is complete. A template is complete when it has no `${...}` interpolation and no `$n` placeholder outside a string or a comment. A statement with an interpolation or a placeholder has no values, so it gets no plan call and stays on the no-database path (the catalog facts step below still reads its column facts).
+4. Pick the statements: each `SELECT` or `WITH ... SELECT`, and each statement whose command is `INSERT`, `UPDATE`, `DELETE` or `MERGE` (also with a `WITH` list), that is complete SQL. A write statement has the same completeness rule, the same gates (the allowlist and the rules file) and the same `Note:` lines of step 7 as a `SELECT`. A `.sql` statement is complete. A template is complete when it has no `${...}` interpolation and no `$n` placeholder outside a string or a comment. A statement with an interpolation or a placeholder has no values, so it gets no plan call and stays on the no-database path (the catalog facts step below still reads its column facts).
 5. Pick the service. When the allowlist names several, use the service that the user named, or ask which one to use. The module does not run `--check-services`: setup does.
-6. For each picked statement, run one command: `python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <name> --mode select --statement '<sql>'`, then a pipe (`|`), then `python3 <skill folder>/scripts/plan_findings.py -`. Write each single quote of the SQL as `'\''`. The plan goes from one script to the other: copy no plan, use no heredoc and no file. Read the JSON of `plan_findings.py` (it holds the plan too), as [db-access.md](db-access.md) says for the plan call.
+6. For each picked statement, run one command: `python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <name> --mode select --statement '<sql>'` (use `--mode write` instead for a write statement), then a pipe (`|`), then `python3 <skill folder>/scripts/plan_findings.py -`. Write each single quote of the SQL as `'\''`. The plan goes from one script to the other: copy no plan, use no heredoc and no file. Read the JSON of `plan_findings.py` (it holds the plan too), as [db-access.md](db-access.md) says for the plan call.
 7. A result with `ok` false is named in one `Note:` line. When `error` is `pg_run_failed`, the plan call failed: `Note: the database call for <file>:<start_line>-<end_line> failed (<source_error>), so that statement has only static findings.` Read the `source` object as [db-access.md](db-access.md) says for that `error` (its `reason`, `service` and redacted `message`), and write the `message` in the line when it helps. When `error` is `bad_input` (this also holds when the plan call printed nothing): `Note: the plan call or the plan findings call failed (bad_input), so that statement has only static findings.` When a tool hook denies the command (the SQL holds `<<` or a space followed by `#`), do not retry with a heredoc or a file: write `Note: the database call for <file>:<start_line>-<end_line> was denied by a tool hook (the SQL holds << or #), so that statement has only static findings.` Then go on with the static report.
 
 An `ok` plan changes no finding of the static rules. A statement with a failed call gives no `PLAN-*` row.
@@ -95,12 +95,18 @@ The `PLAN-*` rules are in the section Plan reading of [dialects/postgres.md](dia
 2. A rule id has at most one row in the report. When one plan has the finding at many nodes, or many statements have it, the one row covers all of them. The Where cell lists the place of each statement that has the finding.
 3. A finding is a row of the severity that the rule entry gives. The Problem cell is one line. It holds one entry for each finding of that rule, in the order of the script output (statement order, then plan order), separated by `; `. An entry is `<place> <node>: <measured values> against <threshold values>`, taken from `measured` and `threshold`. The cell ends with one sentence that explains the cause. Use the node details of the plan in `plan` for the explanation.
 4. The Fix cell proposes the fix in words (an index, an `ANALYZE`, a smaller select list, a filter earlier). It holds no replacement SQL and never the capitalised word `Rewrite`: a `PLAN-*` fix is advice, and the proof of a rewrite is a later ticket.
-5. With `analyze` false, write the line `Note: the plan of <file>:<start_line>-<end_line> has no actual values, so no PLAN-* rule applies.` and no row.
+5. With `analyze` false, write the line `Note: the plan of <file>:<start_line>-<end_line> has no actual values, so no PLAN-* rule applies.` and no row. This also holds for a write statement that ran as a plain `EXPLAIN` (a downgrade).
 6. A `PLAN-*` rule never fires without a database. A statement with no plan gets no `PLAN-*` row.
 
-## Write path (stub)
+## Write path
 
-Stub. Ticket #396 fills this section with the write path. It holds no behavior yet.
+A statement whose command is `INSERT`, `UPDATE`, `DELETE` or `MERGE` (also with a `WITH` list) uses `--mode write` in the call of the section Database path, piped into `plan_findings.py -` as for a `SELECT`. The same gates and the same completeness rule apply. The write run always rolls back, so the data is unchanged. Read these keys of the JSON of `plan_findings.py`:
+
+- `ran` is `explain`: a user trigger, a rule or an external call made the run a plain `EXPLAIN`, so the plan has no actual values. Write `Note: <file>:<start_line>-<end_line> ran as plain EXPLAIN: <reason>.` with the `reason` of the result. Write no `PLAN-*` row (item 5 of the section Plan findings).
+- `warnings` holds `sequence`: write `Note: <file>:<start_line>-<end_line> writes to a table with a sequence, so the analysis moved the sequence counter (a ROLLBACK does not undo it).`
+- A statement that the guard refuses (`error` `pg_run_failed` with a `source_error` of `refused`) gets the `Note:` line of step 7 of the section Database path and only its static findings.
+
+A rewrite of a write statement stays unproven: the proof is a later ticket (see the section Rewrite proof).
 
 ## Rewrite proof (stub)
 

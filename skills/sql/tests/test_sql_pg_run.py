@@ -31,21 +31,36 @@ import json, os, sys
 argv = sys.argv[1:]
 names = ["PGOPTIONS", "PGPASSWORD", "PGSERVICE", "PGHOST", "PGHOSTADDR", "PGPORT", "PGUSER", "PGDATABASE",
          "PGSERVICEFILE", "PGPASSFILE", "PGCONNECT_TIMEOUT", "PGSSLMODE", "LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"]
-stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") else None
+stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") or any(a.startswith("targets=") for a in argv) else None
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "stdin": stdin, "env": {n: os.environ.get(n) for n in names}}) + "\n")
 probe = any("SHOW server_version_num" in a for a in argv)
+# The kind of a write-mode run, from its argv: the catalog script has the `targets=` variable, the others
+# are told apart by the start of their EXPLAIN text.
+kind = "probe" if probe else "run"
+if any(a.startswith("targets=") for a in argv):
+    kind = "catalog"
+for a in argv:
+    for prefix, name in (("EXPLAIN (VERBOSE", "discovery"), ("EXPLAIN (FORMAT JSON)", "plain"), ("EXPLAIN (ANALYZE", "analyze")):
+        if a.startswith(prefix):
+            kind = name
 fail = os.environ.get("FAKE_FAIL_PROBE") if probe else os.environ.get("FAKE_FAIL")
+if kind in os.environ.get("FAKE_FAIL_KIND", "").split(","):
+    fail = "1"
 if fail:
     if os.environ.get("FAKE_STDERR_HEX"):
         sys.stderr.buffer.write(bytes.fromhex(os.environ["FAKE_STDERR_HEX"]))
     else:
-        sys.stderr.write(os.environ["FAKE_STDERR"])
+        sys.stderr.write(os.environ.get("FAKE_STDERR", "ERROR:  fake failure\n"))
     sys.exit(int(os.environ.get("FAKE_EXIT", "2")))
 if probe:
     sys.stdout.write(os.environ.get("FAKE_VERSION", "180000") + "\n")
 else:
-    out = os.environ.get("FAKE_STDOUT")
+    out = os.environ.get("FAKE_STDOUT_" + kind.upper(), os.environ.get("FAKE_STDOUT"))
+    if out is None and kind == "discovery":
+        out = json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Schema": "public", "Relation Name": "t"}}])
+    if out is None and kind == "catalog":
+        out = json.dumps({"hits": [], "sequence": False})
     if out is None:
         out = json.dumps([{"Plan": {"Node Type": "Result", "Shared Hit Blocks": 0}}], indent=2)
     sys.stdout.write(out)
@@ -133,6 +148,18 @@ class PgRunTestCase(unittest.TestCase):
         )
         self.assertIn(done.returncode, (0, 1), done.stderr)
         return done.returncode, json.loads(done.stdout)
+
+    def explain_write(self, statement, service="app-dev", env=None, extra=()):
+        done = self.run_pg(
+            "explain", "--repo", self.repo, "--service", service, "--mode", "write",
+            "--statement", statement, *extra, env=env,
+        )
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+        return done.returncode, json.loads(done.stdout)
+
+    def reset_log(self):
+        if os.path.exists(self.log):
+            os.remove(self.log)
 
     def calls(self):
         if not os.path.exists(self.log):
@@ -350,9 +377,9 @@ class AllowlistFirstTest(PgRunTestCase):
 
 
 class UsageTest(PgRunTestCase):
-    def test_write_mode_the_diff_action_and_a_facts_call_with_no_names_are_usage_errors(self):
+    def test_an_unknown_mode_the_diff_action_and_a_facts_call_with_no_names_are_usage_errors(self):
         cases = [
-            ("explain", "--repo", self.repo if False else "r", "--service", "app-dev", "--mode", "write", "--statement", "DELETE FROM t"),
+            ("explain", "--repo", "r", "--service", "app-dev", "--mode", "rewrite", "--statement", "DELETE FROM t"),
             ("diff", "--repo", "r", "--service", "app-dev"),
             ("facts", "--repo", "r", "--service", "app-dev"),
             ("bogus",),
@@ -823,6 +850,477 @@ class FactsTest(PgRunTestCase):
         self.run_facts("t.a", rows=[], env={"FAKE_VERSION": "130005"})
         self.assertNotIn("transaction_timeout", self.explain_call()["argv"][-1])
 
+
+def as_write(statement):
+    """A select-mode lexer case turned into a write statement: the text after `INSERT INTO t` is the same."""
+    return "INSERT INTO t " + statement if statement.lstrip().upper().startswith(("SELECT", "WITH", "/*")) else statement
+
+
+class WriteGuardTest(PgRunTestCase):
+    """The write guard, through the command line (`--mode write`)."""
+
+    ACCEPTED = [
+        "INSERT INTO t VALUES (1)",
+        "insert into t values (1);",
+        "UPDATE t SET a = 1",
+        "DELETE FROM t WHERE a = 1",
+        "MERGE INTO t USING s ON true WHEN MATCHED THEN DELETE",
+        "WITH a AS (SELECT 1) INSERT INTO t SELECT * FROM a",
+        "WITH RECURSIVE a AS (SELECT 1) INSERT INTO t SELECT * FROM a",
+        "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t",
+        "WITH a (x, y) AS (SELECT 1, 2) UPDATE t SET a = 1",
+        "WITH a AS MATERIALIZED (SELECT 1) DELETE FROM t",
+        "WITH a AS NOT MATERIALIZED (SELECT 1) DELETE FROM t",
+        "WITH d AS (DELETE FROM u RETURNING *) INSERT INTO t SELECT * FROM d",
+        "WITH update AS (SELECT 1) UPDATE t SET a = 1",
+        'WITH "delete" AS (SELECT 1) DELETE FROM t',
+        "WITH a AS (SELECT ')') DELETE FROM t",
+        "INSERT INTO t SELECT pg_notify('c', 'p')",
+        "INSERT INTO t SELECT pg_advisory_xact_lock(1)",
+        "INSERT INTO t SELECT pg_try_advisory_xact_lock(1)",
+    ] + [as_write(statement) for statement in GuardTest.ACCEPTED]
+
+    # (statement, reason, static_review_only)
+    REFUSED = [
+        (as_write(statement), reason, static)
+        for statement, reason, static in GuardTest.REFUSED
+        if reason in ("empty", "unterminated", "multiple_statements")
+    ] + [
+        ("INSERT INTO t VALUES (1); DELETE FROM t", "multiple_statements", False),
+        ("INSERT INTO t VALUES (1);;", "multiple_statements", False),
+        ("INSERT INTO t VALUES (1) -- x\r; COMMIT", "multiple_statements", False),
+        ("WITH a AS (SELECT 1) DELETE FROM t; SELECT 2", "multiple_statements", False),
+        ("SELECT 1", "not_write", False),
+        ("select 1;", "not_write", False),
+        ("WITH x AS (SELECT 1) SELECT * FROM x", "not_write", False),
+        ("TABLE t", "not_write", False),
+        ("VALUES (1)", "not_write", False),
+        ("(SELECT 1)", "not_write", False),
+        ("(SELECT 1) UNION (SELECT 2)", "not_write", False),
+        ("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "not_write", True),
+        ("SELECT * FROM t FOR UPDATE", "not_write", True),
+        ("SELECT * INTO newt FROM t", "not_write", True),
+        ("WITH a AS (SELECT 1) SELECT * INTO newt FROM a", "not_write", True),
+        ("SELECT set_config('a', 'b', false)", "not_write", False),
+    ] + [
+        (statement, "not_write", True)
+        for statement in (
+            "SET default_transaction_read_only = off", "SET x = 1", "RESET ALL", "RESET x", "BEGIN",
+            "START TRANSACTION", "COMMIT", "END", "ROLLBACK", "ABORT", "SET TRANSACTION READ WRITE",
+            "VACUUM t", "LISTEN c", "NOTIFY c", "CREATE TABLE t (a int)", "DROP TABLE t", "ALTER TABLE t ADD c int",
+            "EXPLAIN SELECT 1", "EXPLAIN ANALYZE INSERT INTO t VALUES (1)", "TRUNCATE t", "COPY t TO STDOUT",
+            "DO $$ begin end $$", "CALL p()", "DISCARD ALL", "LOCK t", "GRANT ALL ON t TO u", "\\! rm x", "foo",
+        )
+    ] + [
+        (statement, "not_write", True)
+        for statement in (
+            "WITH a AS (SELECT 1) SEARCH DEPTH FIRST BY x SET o INSERT INTO t VALUES (1)",
+            "WITH a AS (SELECT 1) CYCLE x SET is_cycle USING path INSERT INTO t VALUES (1)",
+            "WITH a (SELECT 1) INSERT INTO t VALUES (1)",
+            "WITH a AS (SELECT 1 INSERT INTO t VALUES (1)",
+            "WITH a AS SELECT 1 INSERT INTO t VALUES (1)",
+            "WITH a AS NOT (SELECT 1) INSERT INTO t VALUES (1)",
+            "WITH a AS (SELECT 1), INSERT INTO t VALUES (1)",
+            "WITH a AS (SELECT 1) b AS (SELECT 2) INSERT INTO t VALUES (1)",
+            "WITH RECURSIVE INSERT INTO t VALUES (1)",
+            "WITH 1 AS (SELECT 1) INSERT INTO t VALUES (1)",
+            "WITH a AS (SELECT 1) (INSERT INTO t VALUES (1))",
+            "WITH a AS (SELECT 1) SELECT * FROM a UNION ALL INSERT INTO t VALUES (1)",
+        )
+    ] + [
+        ("WITH a AS (SELECT 1)", "not_write", False),
+        ("WITH", "not_write", False),
+    ] + [
+        (statement, "forbidden_function", False)
+        for statement in (
+            "INSERT INTO t SELECT set_config('a', 'b', false)",
+            "INSERT INTO t SELECT pg_catalog.set_config('a', 'b', false)",
+            'INSERT INTO t SELECT "set_config"(\'a\', \'b\', false)',
+            'INSERT INTO t SELECT pg_catalog."set_config"(\'a\', \'b\', false)',
+            "INSERT INTO t SELECT SET_CONFIG('a', 'b', false)",
+            "UPDATE t SET a = set_config('default_transaction_read_only', 'off', false)",
+            "WITH a AS (SELECT set_config('a', 'b', false)) DELETE FROM t",
+        )
+    ] + [
+        ('INSERT INTO t SELECT U&"set\\005fconfig"(1)', "unicode_identifier", False),
+        ("DELETE FROM t WHERE U&\"a\" = 1", "unicode_identifier", False),
+    ]
+
+    def test_each_accepted_form_reaches_psql(self):
+        for statement in self.ACCEPTED:
+            with self.subTest(statement=statement):
+                self.reset_log()
+                code, data = self.explain_write(statement)
+                self.assertEqual((code, data["ok"]), (0, True), data)
+                self.assertTrue(self.calls())
+
+    def test_each_refusal_has_its_reason_and_never_reaches_psql(self):
+        for statement, reason, static in self.REFUSED:
+            with self.subTest(statement=statement):
+                self.reset_log()
+                code, data = self.explain_write(statement)
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    (data["ok"], data["error"], data["reason"], data["static_review_only"]),
+                    (False, "refused", reason, static),
+                    data,
+                )
+                self.assertTrue(data["message"])
+                self.assertEqual(self.calls(), [])
+
+    def test_the_reasons_are_checked_in_order(self):
+        order = [
+            ("", "empty"), ("INSERT INTO t SELECT 'x", "unterminated"),
+            ("SELECT set_config('a', 'b', false); SELECT 1", "multiple_statements"),
+            ("SELECT set_config('a', 'b', false)", "not_write"),
+            ("INSERT INTO t SELECT set_config('a', 'b', false), U&\"x\"", "forbidden_function"),
+            ("INSERT INTO t SELECT U&\"x\"", "unicode_identifier"),
+        ]
+        for statement, reason in order:
+            with self.subTest(reason=reason):
+                self.assertEqual(self.explain_write(statement)[1]["reason"], reason)
+
+    def test_the_write_messages_are_not_the_select_messages(self):
+        _, multiple = self.explain_write("INSERT INTO t VALUES (1); DELETE FROM t")
+        self.assertIn("Write mode accepts one statement only", multiple["message"])
+        for statement in ("SELECT 1", "WITH x AS (SELECT 1) SELECT * FROM x"):
+            with self.subTest(statement=statement):
+                message = self.explain_write(statement)[1]["message"]
+                self.assertIn("select mode", message)
+                self.assertNotIn("reading only", message)
+        for statement in ("TABLE t", "VALUES (1)", "SET x = 1", "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"):
+            with self.subTest(statement=statement):
+                message = self.explain_write(statement)[1]["message"]
+                self.assertIn("INSERT, UPDATE, DELETE or MERGE", message)
+                self.assertIn("reading only", message)
+                self.assertNotIn("select mode", message)
+        for statement in ("SELECT 1", "TABLE t", "INSERT INTO t SELECT set_config('a', 'b', false)", "DROP TABLE t"):
+            with self.subTest(statement=statement):
+                self.assertNotIn("Select mode", self.explain_write(statement)[1]["message"])
+
+    def test_ddl_and_vacuum_are_refused_in_both_modes(self):
+        for statement in ("VACUUM t", "CREATE TABLE t (a int)", "DROP TABLE t", "ALTER TABLE t ADD c int"):
+            with self.subTest(statement=statement):
+                self.assertEqual(self.explain(statement)[1]["reason"], "not_select")
+                self.assertEqual(self.explain_write(statement)[1]["reason"], "not_write")
+                self.assertEqual(self.calls(), [])
+
+    def test_the_select_write_statement_message_names_write_mode(self):
+        message = self.explain("DELETE FROM t")[1]["message"]
+        self.assertIn("--mode write", message)
+        self.assertNotIn("not available yet", message)
+
+    def test_the_trailing_semicolon_and_everything_after_it_are_cut(self):
+        self.explain_write("DELETE FROM t; -- x")
+        for call in self.calls():
+            for argument in call["argv"]:
+                if argument.startswith("EXPLAIN"):
+                    self.assertTrue(argument.endswith("DELETE FROM t"), argument)
+
+    def test_a_statement_is_read_from_stdin_when_there_is_no_statement_option(self):
+        done = self.run_pg("explain", "--repo", self.repo, "--service", "app-dev", "--mode", "write", stdin="DELETE FROM t42\n")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(any("DELETE FROM t42" in a for c in self.calls() for a in c["argv"]))
+
+    def test_a_service_off_the_allowlist_gives_not_allowed_before_the_guard_runs(self):
+        code, data = self.explain_write("SELECT 1", service="other")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "not_allowed", "service_not_listed"))
+        self.assertEqual(self.calls(), [])
+
+    def test_a_blank_that_only_unicode_treats_as_space_is_not_stripped_from_the_sent_text(self):
+        # PostgreSQL reads U+00A0 as an identifier character, so the text must reach the server as written.
+        statement = "DELETE FROM t WHERE a = 1  "
+        self.explain_write(statement)
+        sent = [a for c in self.calls() for a in c["argv"] if a.startswith("EXPLAIN")]
+        self.assertTrue(sent)
+        for text in sent:
+            self.assertTrue(text.endswith(" "), repr(text))
+
+
+def commands_of(call):
+    argv = call["argv"]
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "-c"]
+
+
+def variable_of(call, name):
+    prefix = name + "="
+    return next((a[len(prefix):] for a in call["argv"] if a.startswith(prefix)), None)
+
+
+class WriteRunTest(PgRunTestCase):
+    """The write-mode steps, with a fake `psql` that answers by the content of its argv."""
+
+    def kinds(self):
+        """The kinds of the recorded calls, in order."""
+        out = []
+        for call in self.calls():
+            argv = call["argv"]
+            if any("SHOW server_version_num" in a for a in argv):
+                out.append("probe")
+            elif variable_of(call, "targets") is not None:
+                out.append("catalog")
+            else:
+                text = next(a for a in argv if a.startswith("EXPLAIN"))
+                out.append(
+                    "discovery" if text.startswith("EXPLAIN (VERBOSE") else "plain" if text.startswith("EXPLAIN (FORMAT") else "analyze"
+                )
+        return out
+
+    def call_of(self, kind):
+        return self.calls()[self.kinds().index(kind)]
+
+    def test_the_session_flags_and_commands_of_each_run(self):
+        for version, timeouts in (("160000", "-c statement_timeout=30s -c lock_timeout=2s -c idle_in_transaction_session_timeout=10s"),
+                                  ("170000", "-c statement_timeout=30s -c lock_timeout=2s -c idle_in_transaction_session_timeout=10s -c transaction_timeout=60s")):
+            with self.subTest(version=version):
+                self.reset_log()
+                code, data = self.explain_write("UPDATE t SET a = 1", env={"FAKE_VERSION": version})
+                self.assertEqual((code, data["ran"]), (0, "analyze"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "analyze"])
+                probe = self.call_of("probe")
+                self.assertIn("-c default_transaction_read_only=on", probe["argv"][-1])
+                self.assertEqual(commands_of(probe), ["SHOW server_version_num"])
+                for kind in ("discovery", "catalog", "analyze"):
+                    call = self.call_of(kind)
+                    conninfo = call["argv"][-1]
+                    self.assertNotIn("default_transaction_read_only", conninfo, kind)
+                    self.assertEqual(conninfo, f"service=app-dev options='-c standard_conforming_strings=on {timeouts}'")
+                    self.assertIn("ON_ERROR_STOP=1", call["argv"], kind)
+                for kind in ("discovery", "analyze"):
+                    commands = commands_of(self.call_of(kind))
+                    self.assertEqual((commands[0], commands[-1]), ("BEGIN READ WRITE", "ROLLBACK"))
+                    self.assertEqual(len(commands), 3)
+                self.assertEqual(commands_of(self.call_of("discovery"))[1], "EXPLAIN (VERBOSE, FORMAT JSON) UPDATE t SET a = 1")
+                catalog = self.call_of("catalog")
+                self.assertEqual(commands_of(catalog), [])
+                self.assertTrue(catalog["stdin"].startswith("BEGIN READ ONLY;"))
+                self.assertTrue(catalog["stdin"].rstrip().endswith("ROLLBACK;"))
+
+    def test_the_analyze_text_by_version(self):
+        for version, text in (("130000", "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) DELETE FROM t"),
+                              ("170002", "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) DELETE FROM t"),
+                              ("180000", "EXPLAIN (ANALYZE, FORMAT JSON) DELETE FROM t")):
+            with self.subTest(version=version):
+                self.reset_log()
+                code, data = self.explain_write("DELETE FROM t", env={"FAKE_VERSION": version})
+                self.assertEqual(code, 0, data)
+                self.assertEqual(commands_of(self.call_of("analyze"))[1], text)
+
+    def test_the_output_of_an_analyze_run(self):
+        code, data = self.explain_write("UPDATE t SET a = 1")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            sorted(data),
+            sorted(["ok", "action", "service", "mode", "server_version_num", "ran", "reason", "timeouts", "downgrade", "warnings", "plan"]),
+        )
+        self.assertEqual((data["mode"], data["ran"], data["downgrade"], data["warnings"]), ("write", "analyze", [], []))
+        self.assertEqual(data["reason"], "no trigger, rule or external call on the reached tables")
+        self.assertIsInstance(data["plan"], list)
+
+    def test_a_scan_name_gives_the_discovery_run_and_the_plain_run_and_no_catalog_run(self):
+        names = [
+            "dblink", "dblink_exec", "public.dblink", "dblink_connect", "pg_advisory_lock", "pg_advisory_unlock",
+            "pg_try_advisory_lock", "pg_advisory_unlock_all", "lo_export", "setval", "query_to_xml",
+            "query_to_xml_and_xmlschema", "query_to_xmlschema", "cursor_to_xml", "cursor_to_xmlschema", "ts_stat",
+            "crosstab", "crosstab2", "crosstab3", "crosstab4", "connectby", '"dblink_exec"', "DBLINK_EXEC",
+        ]
+        for name in names:
+            with self.subTest(name=name):
+                self.reset_log()
+                code, data = self.explain_write(f"INSERT INTO t SELECT {name}('x')")
+                self.assertEqual((code, data["ran"]), (0, "explain"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "plain"])
+                bare = name.split(".")[-1].strip('"').lower()
+                self.assertEqual(data["downgrade"], [{"kind": "function", "name": bare}])
+                self.assertIn(bare, data["reason"])
+                self.assertEqual(data["warnings"], [])
+                self.assertEqual(commands_of(self.call_of("plain"))[1], f"EXPLAIN (FORMAT JSON) INSERT INTO t SELECT {name}('x')")
+
+    def test_a_scan_name_in_a_string_or_a_comment_is_not_found_and_a_transaction_lock_is_not_a_scan_name(self):
+        for statement in (
+            "INSERT INTO t SELECT 'dblink_exec(x)'",
+            "INSERT INTO t SELECT 1 -- lo_export\n",
+            "INSERT INTO t SELECT /* setval */ 1",
+            "INSERT INTO t SELECT $$pg_advisory_lock$$",
+            "INSERT INTO t SELECT pg_advisory_xact_lock(1)",
+            "INSERT INTO t SELECT pg_try_advisory_xact_lock_shared(1)",
+            "INSERT INTO t SELECT pg_notify('c', 'p')",
+        ):
+            with self.subTest(statement=statement):
+                self.reset_log()
+                code, data = self.explain_write(statement)
+                self.assertEqual((code, data["ran"]), (0, "analyze"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "analyze"])
+
+    def test_the_downgrade_entries_of_functions_are_sorted_without_duplicates(self):
+        code, data = self.explain_write("INSERT INTO t SELECT setval('s', 1), dblink('a', 'b'), setval('s', 2), lo_export(1, 'x')")
+        self.assertEqual(
+            data["downgrade"],
+            [{"kind": "function", "name": n} for n in ("dblink", "lo_export", "setval")],
+        )
+        self.assertEqual(data["reason"], "the statement calls dblink, lo_export, setval")
+
+    def test_the_targets_value_holds_the_verb_and_the_name_of_each_written_table(self):
+        cases = [
+            ("INSERT INTO t VALUES (1)", [["insert", "t"]]),
+            ("INSERT INTO ONLY s.t VALUES (1)", [["insert", "s.t"]]),
+            ("UPDATE t SET a = 1", [["update", "t"]]),
+            ("UPDATE ONLY t SET a = 1", [["update", "t"]]),
+            ("DELETE FROM s.t WHERE a = 1", [["delete", "s.t"]]),
+            ("MERGE INTO t USING s ON true WHEN MATCHED THEN DELETE", [["merge", "t"]]),
+            ('INSERT INTO "My ""T""".b VALUES (1)', [["insert", '"My ""T"""' + ".b"]]),
+            ("INSERT INTO a.b.c VALUES (1)", [["insert", "a.b.c"]]),
+            ('DELETE FROM "x y"', [["delete", '"x y"']]),
+            ("WITH d AS (DELETE FROM u RETURNING *) INSERT INTO t SELECT * FROM d", [["delete", "u"], ["insert", "t"]]),
+            ("INSERT INTO t VALUES (1) ON CONFLICT (a) DO UPDATE SET a = 2", [["insert", "t"], ["update", "SET"]]),
+            ("INSERT INTO t SELECT 1 FROM u FOR UPDATE", [["insert", "t"]]),
+            ("UPDATE t SET a = (SELECT b FROM u FOR UPDATE OF u)", [["update", "t"], ["update", "OF"]]),
+            ("DELETE FROM t USING (UPDATE u SET a = 1 RETURNING *) x", [["delete", "t"], ["update", "u"]]),
+        ]
+        for statement, expected in cases:
+            with self.subTest(statement=statement):
+                self.reset_log()
+                code, data = self.explain_write(statement)
+                self.assertEqual(code, 0, data)
+                self.assertEqual(json.loads(variable_of(self.call_of("catalog"), "targets")), expected)
+
+    def test_the_plan_targets_value_holds_each_modify_table_relation_at_any_depth(self):
+        plan = [{"Plan": {"Node Type": "ModifyTable", "Operation": "Insert", "Schema": "s", "Relation Name": "a", "Plans": [
+            {"Node Type": "Result", "Plans": [{"Node Type": "ModifyTable", "Operation": "Delete", "Schema": "s", "Relation Name": "b"}]},
+            {"Node Type": "ModifyTable", "Operation": "Update", "Target Tables": [
+                {"Schema": "s", "Relation Name": "c"}, {"Schema": "s", "Relation Name": "d"}]},
+        ]}}]
+        code, data = self.explain_write("INSERT INTO s.a VALUES (1)", env={"FAKE_STDOUT_DISCOVERY": json.dumps(plan)})
+        self.assertEqual(code, 0, data)
+        self.assertEqual(
+            sorted(json.loads(variable_of(self.call_of("catalog"), "plan_targets"))),
+            sorted([["Insert", "s", "a"], ["Delete", "s", "b"], ["Update", "s", "c"], ["Update", "s", "d"]]),
+        )
+
+    def test_the_catalog_script_is_constant_and_holds_none_of_the_names(self):
+        self.explain_write("UPDATE secret_t_one SET a = 1")
+        script_one = self.call_of("catalog")["stdin"]
+        self.reset_log()
+        self.explain_write("DELETE FROM secret_t_two")
+        script_two = self.call_of("catalog")["stdin"]
+        self.assertEqual(script_one, script_two)
+        self.assertNotIn("secret_t", script_one)
+        self.assertIn(":'targets'", script_one)
+        self.assertIn(":'plan_targets'", script_one)
+
+    def test_a_trigger_or_a_rule_hit_gives_the_plain_run_and_its_reason(self):
+        hits = {"hits": [{"kind": "trigger", "name": "public.t"}, {"kind": "rule", "name": "s.v"}, {"kind": "trigger", "name": "public.t"}], "sequence": True}
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_CATALOG": json.dumps(hits)})
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "plain"])
+        self.assertEqual(data["reason"], "a reached table has a user trigger or a rule: public.t, s.v")
+        self.assertEqual(data["downgrade"], [{"kind": k, "name": n} for k, n in (("trigger", "public.t"), ("rule", "s.v"), ("trigger", "public.t"))])
+        self.assertEqual(data["warnings"], [])
+        self.assertEqual(commands_of(self.call_of("plain"))[1], "EXPLAIN (FORMAT JSON) INSERT INTO t VALUES (1)")
+
+    def test_the_sequence_warning(self):
+        for stdout, statement, expected in (
+            ({"hits": [], "sequence": True}, "INSERT INTO t VALUES (1)", ["sequence"]),
+            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (1)", []),
+            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (nextval('s'))", ["sequence"]),
+            ({"hits": [], "sequence": False}, 'INSERT INTO t VALUES (pg_catalog."nextval"(\'s\'))', ["sequence"]),
+            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES ('nextval')", []),
+            ({"hits": [], "sequence": False}, "INSERT INTO t SELECT nextval FROM s", []),
+            ({"hits": [], "sequence": False}, 'INSERT INTO t SELECT "nextval" FROM s', []),
+            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (nextval ('s'))", ["sequence"]),
+            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (pg_catalog.nextval/* c */('s'))", ["sequence"]),
+        ):
+            with self.subTest(statement=statement, sequence=stdout["sequence"]):
+                code, data = self.explain_write(statement, env={"FAKE_STDOUT_CATALOG": json.dumps(stdout)})
+                self.assertEqual((code, data["ran"], data["warnings"]), (0, "analyze", expected), data)
+
+    def test_an_explicit_nextval_never_downgrades(self):
+        code, data = self.explain_write("INSERT INTO t VALUES (nextval('s'))")
+        self.assertEqual((data["ran"], data["downgrade"]), ("analyze", []))
+
+    def test_a_discovery_output_that_is_not_usable_is_bad_output_and_no_later_psql_call_follows(self):
+        node = {"Node Type": "ModifyTable", "Operation": "Update", "Schema": "s", "Relation Name": "t"}
+        outputs = [
+            "", "not json", "{}", json.dumps({"Plan": node}), json.dumps([]), json.dumps([1]), json.dumps([{"Plan": 1}]),
+            json.dumps([{"NoPlan": node}]),
+            json.dumps([{"Plan": {"Node Type": "Result"}}]),
+            json.dumps([{"Plan": {**node, "Schema": None}}]),
+            json.dumps([{"Plan": {**node, "Relation Name": 5}}]),
+            json.dumps([{"Plan": {k: v for k, v in node.items() if k != "Schema"}}]),
+            json.dumps([{"Plan": {**node, "Operation": None}}]),
+            json.dumps([{"Plan": {k: v for k, v in node.items() if k != "Operation"}}]),
+            json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Target Tables": []}}]),
+            json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Target Tables": [{"Schema": "s"}]}}]),
+            json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Target Tables": "t"}}]),
+            json.dumps([{"Plan": {"Node Type": "Result", "Plans": [{**node, "Relation Name": None}]}}]),
+        ]
+        for out in outputs:
+            with self.subTest(out=out[:80]):
+                self.reset_log()
+                code, data = self.explain_write("UPDATE t SET a = 1", env={"FAKE_STDOUT_DISCOVERY": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery"])
+
+    def test_a_malformed_catalog_output_is_bad_output_and_the_analyze_run_never_starts(self):
+        outputs = [
+            "", "not json", "[]", "{}", json.dumps({"hits": []}), json.dumps({"sequence": False}),
+            json.dumps({"hits": {}, "sequence": False}), json.dumps({"hits": [], "sequence": "no"}),
+            json.dumps({"hits": [], "sequence": 0}), json.dumps({"hits": ["x"], "sequence": False}),
+            json.dumps({"hits": [{"kind": "view", "name": "t"}], "sequence": False}),
+            json.dumps({"hits": [{"kind": "trigger", "name": 5}], "sequence": False}),
+            json.dumps({"hits": [{"kind": "trigger"}], "sequence": False}),
+            json.dumps({"hits": [], "sequence": False}) + "\nextra",
+        ]
+        for out in outputs:
+            with self.subTest(out=out[:60]):
+                self.reset_log()
+                code, data = self.explain_write("UPDATE t SET a = 1", env={"FAKE_STDOUT_CATALOG": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "catalog"])
+
+    def test_a_failing_run_gives_statement_failed_and_no_later_psql_call(self):
+        stderr = f'ERROR:  relation "t" does not exist\nLINE 1: EXPLAIN (VERBOSE, FORMAT JSON) UPDATE t SET a = 1\n'
+        for failing, expected in (
+            ("discovery", ["probe", "discovery"]),
+            ("catalog", ["probe", "discovery", "catalog"]),
+            ("analyze", ["probe", "discovery", "catalog", "analyze"]),
+        ):
+            with self.subTest(failing=failing):
+                self.reset_log()
+                code, data = self.explain_write(
+                    "UPDATE t SET a = 1", env={"FAKE_FAIL_KIND": failing, "FAKE_STDERR": stderr, "FAKE_EXIT": "1"}
+                )
+                self.assertEqual((code, data["error"]), (1, "statement_failed"), data)
+                self.assertEqual(self.kinds(), expected)
+                for call in self.calls():
+                    self.assertIn("ON_ERROR_STOP=1", call["argv"])
+
+    def test_a_failing_plain_run_gives_statement_failed(self):
+        code, data = self.explain_write(
+            "INSERT INTO t SELECT dblink('a', 'b')",
+            env={"FAKE_FAIL_KIND": "plain", "FAKE_STDERR": "ERROR:  boom\n", "FAKE_EXIT": "1"},
+        )
+        self.assertEqual((code, data["error"]), (1, "statement_failed"), data)
+
+    def test_a_to_regclass_rejection_of_a_name_is_statement_failed_and_no_analyze_run_starts(self):
+        stderr = "ERROR:  cross-database references are not implemented: a.b.c.d\n"
+        code, data = self.explain_write(
+            "UPDATE a.b.c SET x = 1", env={"FAKE_FAIL_KIND": "catalog", "FAKE_STDERR": stderr, "FAKE_EXIT": "1"}
+        )
+        self.assertEqual((code, data["error"]), (1, "statement_failed"), data)
+        self.assertNotIn("analyze", self.kinds())
+
+    def test_each_connection_failure_kind_leaks_no_connection_value_in_each_write_run(self):
+        for failing in ("discovery", "catalog", "analyze"):
+            for name, stderr in (("auth", AUTH_STDERR), ("unreachable", UNREACHABLE_STDERR)):
+                with self.subTest(failing=failing, kind=name):
+                    code, data = self.explain_write(
+                        "UPDATE t SET a = 1", env={"FAKE_FAIL_KIND": failing, "FAKE_STDERR": stderr, "FAKE_EXIT": "2"}
+                    )
+                    self.assertEqual((code, data["error"]), (1, "connection_failed"))
+                    text = json.dumps(data)
+                    for canary in CANARIES:
+                        self.assertNotIn(canary, text)
 
 if __name__ == "__main__":
     unittest.main()

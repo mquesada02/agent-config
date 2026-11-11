@@ -14,7 +14,10 @@ DRIVER_CASES = os.path.join(DB, "cases")
 RULES_FILE = os.path.join(SKILL_DIR, "scripts", "rules_file.py")
 README = os.path.join(EVALS, "README.md")
 PLUGIN_CASES = ("db-off-allowlist", "db-bypass-refused", "db-connection-fails")
-KIND = re.compile(r"(not_allowed|refused|connection_failed|plan|facts)(:[A-Za-z0-9_.-]+)?|no_connection:[A-Za-z0-9_.-]+")
+KIND = re.compile(
+    r"(not_allowed|refused|connection_failed|plan|facts|analyzed|sequence_warning|downgraded)(:[A-Za-z0-9_.-]+)?"
+    r"|no_connection:[A-Za-z0-9_.-]+"
+)
 ROOT_README = os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "README.md")
 
 with open(os.path.join(DB, "canaries.json"), encoding="utf-8") as handle:
@@ -162,7 +165,8 @@ class DriverCasesTest(unittest.TestCase):
         names = sorted(os.listdir(DRIVER_CASES))
         self.assertEqual(names, [
             "bad-password", "facts-pg-02", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
-            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "wrong-host"])
+            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "write-analyze",
+            "write-dblink-trigger", "write-sequence", "wrong-host"])
         for name in names:
             folder = os.path.join(DRIVER_CASES, name)
             with self.subTest(case=name):
