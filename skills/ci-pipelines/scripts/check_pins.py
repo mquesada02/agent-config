@@ -81,14 +81,14 @@ def verify(repo, sha, tag, cache):
         return "unverified", "repo-unreadable"
     found = None
     if tag:
-        if (repo, tag) not in cache:
-            cache[(repo, tag)] = tag_commit(repo, tag)
-        found = cache[(repo, tag)]
+        if ("tag", repo, tag) not in cache:
+            cache[("tag", repo, tag)] = tag_commit(repo, tag)
+        found = cache[("tag", repo, tag)]
     if found == sha:
         return "ok", None
-    if (repo, sha) not in cache:
-        cache[(repo, sha)] = get(f"repos/{repo}/commits/{sha}") is not None
-    if not cache[(repo, sha)]:
+    if ("commit", repo, sha) not in cache:
+        cache[("commit", repo, sha)] = get(f"repos/{repo}/commits/{sha}") is not None
+    if not cache[("commit", repo, sha)]:
         return "unknown-commit", None
     if not tag:
         return "ok", None

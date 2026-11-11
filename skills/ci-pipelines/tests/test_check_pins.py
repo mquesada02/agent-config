@@ -137,6 +137,10 @@ class CheckPins(unittest.TestCase):
         self.commit(GOOD)
         self.assertEqual(self.result(f"acme/setup@{GOOD} # v1.2.0"), ("unverified", "unverified"))
 
+    def test_a_version_comment_that_equals_the_sha_does_not_hide_a_real_commit(self):
+        self.commit(GOOD)
+        self.assertEqual(self.result(f"acme/setup@{GOOD} # {GOOD}"), ("unknown-tag", "verified"))
+
     def test_a_missing_gh_is_unverified(self):
         box = Sandbox(gh=False)
         self.addCleanup(box.cleanup)
