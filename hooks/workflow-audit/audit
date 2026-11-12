@@ -1623,11 +1623,27 @@ def _unbacked_size_approvals(approvals, units):
     return failures
 
 
-def check_s5(ledger, audited, problem):
+FINAL_REVIEW = (CODE_REVIEW, "final")
+
+
+def check_s5(ledger, audited, problem, worktree=None):
     """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`; they are needed
-    only when the ledger holds an extension or a size-approval."""
-    failures = [f"{loop} {phase}: round {number} is past the cap of {ledger.effective_cap(loop, phase)}"
-                for (loop, phase), number in ledger.rounds.items() if number > ledger.effective_cap(loop, phase)]
+    only when the ledger holds an extension or a size-approval. With a `worktree`, a section 6 final round that follows a rebase
+    (see `_rebase_exempt_rounds`) does not count against the cap; without one, no round is exempt."""
+    exempt, note = {}, ""
+    if worktree is not None and ledger.rounds.get(FINAL_REVIEW, 0) > ledger.effective_cap(*FINAL_REVIEW) and len(ledger.commits) > 1:
+        try:
+            exempt = _rebase_exempt_rounds(worktree, ledger)
+        except Unavailable as unavailable:
+            note = f" (rebase proof unavailable: {unavailable})"
+    exempt_text = ", ".join(f"round {number} after phase-commit {sha[:7]}" for number, sha in exempt.items())
+    failures = []
+    for (loop, phase), number in ledger.rounds.items():
+        cap = ledger.effective_cap(loop, phase)
+        skipped = len(exempt) if (loop, phase) == FINAL_REVIEW else 0
+        if number - skipped > cap:
+            failures.append(f"{loop} {phase}: round {number} is past the cap of {cap}"
+                            + (f" (not counting the post-rebase {exempt_text})" if skipped else note if (loop, phase) == FINAL_REVIEW else ""))
     extensions = [event for event in ledger.events if event["kind"] == "extension"]
     approvals = [event for event in ledger.events if event["kind"] == "size-approval"]
     if extensions or approvals:
@@ -1637,7 +1653,8 @@ def check_s5(ledger, audited, problem):
         failures += _unbacked_extensions(ledger, extensions, units) + _unbacked_size_approvals(approvals, units)
     if failures:
         return False, _truncate_lines(failures)
-    return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap"
+    return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap" + (
+        f"; exempt post-rebase final round: {exempt_text}" if exempt else "")
 
 
 def _is_known_commit(worktree, sha):
@@ -1666,6 +1683,34 @@ def _patch_id(worktree, sha):
     if result.returncode != 0:
         raise Unavailable(f"git patch-id exited with status {result.returncode}: {result.stderr.strip()}")
     return result.stdout.split()[0] if result.stdout.strip() else None
+
+
+def _is_rebase_of(worktree, before, sha):
+    """True when the phase commit `sha` proves a rebase of the phase commit `before`: it exists, it is an ancestor of HEAD, its patch-id differs
+    (section 6 step 3 requires a new final round only then) and its parent differs (the base moved). False when any of this cannot be shown."""
+    if not (_is_known_commit(worktree, sha) and _is_known_commit(worktree, before) and _is_ancestor_of_head(worktree, sha)):
+        return False
+    new_id, old_id = _patch_id(worktree, sha), _patch_id(worktree, before)
+    if new_id is None or old_id is None or new_id == old_id:
+        return False
+    try:
+        new_parent = _git_output(worktree, "rev-parse", "--verify", "-q", f"{sha}^")
+        old_parent = _git_output(worktree, "rev-parse", "--verify", "-q", f"{before}^")
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+    return new_parent is not None and old_parent is not None and new_parent != old_parent
+
+
+def _rebase_exempt_rounds(worktree, ledger):
+    """{round number: phase-commit sha} of the section 6 final rounds that S5 does not count against the cap: for each phase-commit after the
+    first, the first final round after it, when `_is_rebase_of` holds for it and the phase-commit before it. Raises Unavailable when git cannot answer."""
+    exempt = {}
+    for (position, event), (_, before) in zip(ledger.commits[1:], ledger.commits):
+        first = next((round_event for later, round_event in ledger.round_events
+                      if later > position and (round_event["loop"], round_event["phase"]) == FINAL_REVIEW), None)
+        if first is not None and first["round"] not in exempt and _is_rebase_of(worktree, before["sha"], event["sha"]):
+            exempt[first["round"]] = event["sha"]
+    return exempt
 
 
 def check_s6(worktree, ledger):
@@ -1797,7 +1842,7 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
         return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")], None, s3_evidence
     agents = None if audited is None else _agents(audited)
     text = str(problem)
-    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text),
+    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text, worktree),
             _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
 
 

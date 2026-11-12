@@ -3,7 +3,7 @@ import json
 import os
 import unittest
 
-from audit_support import (ABSENT, HERE, ask_rows, edit_row, extension_event, owner_row, queued_row, round_event, stamp,
+from audit_support import (ABSENT, HERE, ask_rows, edit_row, extension_event, owner_row, phase_commit_event, queued_row, round_event, stamp,
                            subagent_rows)
 from test_ledger_checks import LedgerChecksCase
 
@@ -343,6 +343,101 @@ class FixtureTest(LedgerChecksCase):
         self.assertNotIn("/home/", text)
         rows = [json.loads(line) for line in text.splitlines()]
         self.assertEqual({row["version"] for row in rows if "version" in row}, {"2.1.301"})
+
+
+class RebaseRoundTest(ExtensionCase):
+    """The one final round that follows a rebase (CLAUDE.md section 6 step 3) is not counted against the cap, but only with the proof of a rebase."""
+    FINAL = {"phase": "final"}
+
+    def setUp(self):
+        super().setUp()
+        self.original = self.commit("feat: phase", name="phase.txt")
+        self.git("checkout", "-q", "main")
+        self.commit("chore: main moves", name="main.txt")
+        self.git("checkout", "-q", "feature")
+        self.git("rebase", "-q", "main")
+        self.rebased = self.git("rev-parse", "HEAD")
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.tip = self.rebased
+
+    def change_the_patch(self):
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write("resolved differently")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        self.tip = self.git("rev-parse", "HEAD")
+        self.git("push", "-q", "--force", "origin", "feature")
+
+    def run_s5(self, first, second, later=(8,)):
+        """Final rounds 1 to 7 (cap 3 plus 4 extension rounds) after the phase commit `first`, then `second` and the final rounds `later`."""
+        events = ([round_event(), phase_commit_event(first)] + [round_event(n, **self.FINAL) for n in range(1, 8)]
+                  + [phase_commit_event(second)] + [round_event(n, **self.FINAL) for n in later]
+                  + [extension_event(phase="final", rounds=4, time=stamp(EXTENSION_AT), quote=QUOTE)])
+        return self.s5([owner_row(QUOTE, 100, HUMAN)], events)
+
+    def exempt(self, first, second, later=(8,)):
+        item = self.run_s5(first, second, later)
+        self.assertEqual(item["result"], "pass", item["evidence"])
+        return item["evidence"]
+
+    def not_exempt(self, first, second, later=(8,)):
+        item = self.run_s5(first, second, later)
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn("code-review final: round 8 is past the cap of 7", item["evidence"])
+        return item["evidence"]
+
+    def test_a_round_after_a_rebase_with_a_new_patch_id_passes_and_is_named(self):
+        self.change_the_patch()
+        evidence = self.exempt(self.original, self.tip)
+        self.assertIn(f"round 8 after phase-commit {self.tip[:7]}", evidence)
+
+    def test_a_second_extra_round_after_the_same_phase_commit_fails(self):
+        self.change_the_patch()
+        evidence = self.run_s5(self.original, self.tip, (8, 9))["evidence"]
+        self.assertIn("code-review final: round 9 is past the cap of 7", evidence)
+        self.assertIn(f"round 8 after phase-commit {self.tip[:7]}", evidence)
+
+    def test_the_exemption_goes_to_the_first_round_after_the_phase_commit_not_to_a_later_one(self):
+        self.change_the_patch()
+        events = ([round_event(), phase_commit_event(self.original)] + [round_event(n, **self.FINAL) for n in range(1, 9)]
+                  + [phase_commit_event(self.tip)] + [round_event(9, **self.FINAL)]
+                  + [extension_event(phase="final", rounds=4, time=stamp(EXTENSION_AT), quote=QUOTE)])
+        item = self.s5([owner_row(QUOTE, 100, HUMAN)], events)
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn("round 9 is past the cap of 7", item["evidence"])
+
+    def test_the_same_patch_id_gives_no_exemption(self):
+        self.not_exempt(self.original, self.rebased)
+
+    def test_the_same_parent_gives_no_exemption(self):
+        self.change_the_patch()
+        self.not_exempt(self.rebased, self.tip)
+
+    def test_a_missing_phase_commit_gives_no_exemption(self):
+        self.not_exempt(self.original, "b" * 40)
+
+    def test_a_missing_earlier_phase_commit_gives_no_exemption(self):
+        self.change_the_patch()
+        self.not_exempt("b" * 40, self.tip)
+
+    def test_a_phase_commit_that_is_not_an_ancestor_of_head_gives_no_exemption(self):
+        self.git("checkout", "-q", "-b", "side", "main")
+        side = self.commit("feat: side", name="side.txt")
+        self.git("checkout", "-q", "feature")
+        self.not_exempt(self.original, side)
+
+    def test_the_first_phase_commit_alone_gives_no_exemption(self):
+        events = ([round_event(), phase_commit_event(self.rebased)] + [round_event(n, **self.FINAL) for n in range(1, 9)]
+                  + [extension_event(phase="final", rounds=4, time=stamp(EXTENSION_AT), quote=QUOTE)])
+        item = self.s5([owner_row(QUOTE, 100, HUMAN)], events)
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn("code-review final: round 8 is past the cap of 7", item["evidence"])
+
+    def test_a_round_within_the_cap_needs_no_proof(self):
+        events = ([round_event(), phase_commit_event("b" * 40), phase_commit_event("c" * 40)]
+                  + [round_event(n, **self.FINAL) for n in range(1, 4)])
+        item = self.s5([], events)
+        self.assertEqual(item["result"], "pass", item["evidence"])
+        self.assertNotIn("exempt", item["evidence"])
 
 
 class CommandTest(ExtensionCase):
