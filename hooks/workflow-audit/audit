@@ -1642,8 +1642,12 @@ def check_s5(ledger, audited, problem, worktree=None):
         cap = ledger.effective_cap(loop, phase)
         skipped = len(exempt) if (loop, phase) == FINAL_REVIEW else 0
         if number - skipped > cap:
-            failures.append(f"{loop} {phase}: round {number} is past the cap of {cap}"
-                            + (f" (not counting the post-rebase {exempt_text})" if skipped else note if (loop, phase) == FINAL_REVIEW else ""))
+            detail = ""
+            if skipped:
+                detail = f" (not counting the post-rebase {exempt_text})"
+            elif (loop, phase) == FINAL_REVIEW:
+                detail = note
+            failures.append(f"{loop} {phase}: round {number} is past the cap of {cap}{detail}")
     extensions = [event for event in ledger.events if event["kind"] == "extension"]
     approvals = [event for event in ledger.events if event["kind"] == "size-approval"]
     if extensions or approvals:
@@ -1694,8 +1698,7 @@ def _is_rebase_of(worktree, before, sha):
     if new_id is None or old_id is None or new_id == old_id:
         return False
     try:
-        new_parent = _git_output(worktree, "rev-parse", "--verify", "-q", f"{sha}^")
-        old_parent = _git_output(worktree, "rev-parse", "--verify", "-q", f"{before}^")
+        new_parent, old_parent = (_git_output(worktree, "rev-parse", "--verify", "-q", f"{commit}^") for commit in (sha, before))
     except RuntimeError as problem:
         raise Unavailable(str(problem))
     return new_parent is not None and old_parent is not None and new_parent != old_parent
