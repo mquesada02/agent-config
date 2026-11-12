@@ -1,4 +1,4 @@
-# Text tests of tickets #100, #164, #166 and #489: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
+# Text tests of tickets #100, #164, #166, #489 and #494: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
 import os
 import re
 import shutil
@@ -164,6 +164,62 @@ class SectionsEightAndElevenTest(RuleTextCase):
 
     def test_the_auditor_subagent_is_an_allowed_agent_use(self):
         self.assert_in(section(read(ROOT_CLAUDE_MD), 11), "- The auditor subagent: section 6 step 5 and section 7.")
+
+
+class FreshCiRuleTest(RuleTextCase):
+    """Ticket #494: the section 8 fresh-CI rule, in the order that the session meets its steps."""
+
+    def setUp(self):
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        start = text.index("Before you give the owner the merge command")
+        self.rule = text[start:text.index("After merging, run", start)]
+
+    def test_the_rule_still_skips_a_pr_without_ci_checks(self):
+        self.assert_in(self.rule, "Skip this check when the PR has no CI checks.")
+
+    def test_the_check_is_an_ancestry_check_not_a_time_comparison(self):
+        self.assert_in(self.rule, "3. Find the head that the last CI run of the PR tested. If the base tip is an ancestor of that head "
+                                  "(`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6.")
+        self.assert_not_in(self.rule, "Compare the time")
+
+    def test_the_base_is_fetched_before_the_check_and_the_git_merge_uses_the_fetched_base(self):
+        self.assert_in(self.rule, "1. Fetch the base branch: `git fetch origin <base>`.", "`git merge` of the fetched base and a push")
+
+    def test_a_pr_with_no_run_goes_to_the_wait_step(self):
+        self.assert_in(self.rule, "2. If no run exists for the PR, go to step 6.")
+
+    def test_a_merge_conflict_means_report_and_ask(self):
+        self.assert_in(self.rule, "5. On a merge conflict, give no merge command: report the conflicting files to the owner and ask how to go on. "
+                                  "Do not resolve them on your own.")
+
+    def test_a_running_or_missing_run_means_a_blocking_watch_then_tell_the_owner(self):
+        self.assert_in(self.rule, "with a blocking `gh pr checks --watch`, not a poll loop. "
+                                  "If no run appears for the head within about 10 minutes, tell the owner and stop.")
+
+    def test_a_red_run_means_report_with_the_link_and_ask(self):
+        self.assert_in(self.rule, "7. If the run fails, give no merge command: report the failing check with its link to the owner and ask how to go on. "
+                                  "Do not fix it on your own.")
+
+    def test_the_updated_head_is_audited_again_before_the_merge_command(self):
+        self.assert_in(self.rule, "8. If you merged the base in step 4, run the section 6 step 5 audit again on the new head.",
+                       "9. Give the merge command only after the run is green and, when step 8 applied, the audit passed.")
+
+    def test_the_steps_come_in_the_order_the_session_meets_them(self):
+        marks = ["1. Fetch", "2. If no run exists", "3. Find the head", "4. Otherwise merge", "5. On a merge conflict", "6. Wait for the CI run",
+                 "7. If the run fails", "8. If you merged", "9. Give the merge command"]
+        positions = [self.rule.index(mark) for mark in marks]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_merge_options_and_the_conflict_rule_sit_on_separate_lines(self):
+        steps = [line for line in self.rule.splitlines() if re.match(r"\d\. ", line)]
+        self.assertEqual(len(steps), 9)
+        self.assertIn("update-branch", steps[3])
+        self.assertNotIn("conflict", steps[3])
+        self.assertNotIn("update-branch", steps[4])
+
+    def test_rebase_stays_banned_without_restating_the_general_force_push_ban(self):
+        self.assert_in(self.rule, "Never rebase a PR branch for this: a rebase rewrites audited commits and needs a force-push.")
+        self.assert_not_in(self.rule, "Never rebase and force-push")
 
 
 class ContextStopRuleTest(RuleTextCase):

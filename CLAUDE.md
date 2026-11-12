@@ -163,12 +163,17 @@ When merging a PR, follow these rules:
 - if not, create a merge commit 
 
 Before you give the owner the merge command, check that the CI result of the PR is still valid. Skip this check when the PR has no CI checks. Follow these steps:
-1. Compare the time of the last CI run of the PR with the last commit of the base branch.
-2. If the base moved after that run, merge the base into the PR branch: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`, or `git merge` of the base and a push. `gh pr update-branch` may not exist in the installed `gh`.
-3. Wait for a green CI run on the new head.
-4. Give the merge command only after that run is green.
+1. Fetch the base branch: `git fetch origin <base>`.
+2. If no run exists for the PR, go to step 6.
+3. Find the head that the last CI run of the PR tested. If the base tip is an ancestor of that head (`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6.
+4. Otherwise merge the base into the PR branch: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`, or `git merge` of the fetched base and a push. `gh pr update-branch` may not exist in the installed `gh`.
+5. On a merge conflict, give no merge command: report the conflicting files to the owner and ask how to go on. Do not resolve them on your own.
+6. Wait for the CI run on the head with a blocking `gh pr checks --watch`, not a poll loop. If no run appears for the head within about 10 minutes, tell the owner and stop.
+7. If the run fails, give no merge command: report the failing check with its link to the owner and ask how to go on. Do not fix it on your own.
+8. If you merged the base in step 4, run the section 6 step 5 audit again on the new head.
+9. Give the merge command only after the run is green and, when step 8 applied, the audit passed.
 
-Never rebase and force-push a PR branch for this. It rewrites audited commits.
+Never rebase a PR branch for this: a rebase rewrites audited commits and needs a force-push.
 
 After merging, run `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>`. It is the only cleanup path: it deletes the remote branch (unless the branch is protected), switches the main checkout to the **base** branch, pulls, and removes the worktree and the local branch. For the session's own worktree, finish the report and the memory update first, because the session ends at the last step. On a refusal, fix the cause or ask the user.
 
