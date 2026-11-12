@@ -31,6 +31,7 @@ MIN_CALL_SECONDS = 3  # a work call starts only when at least this much time is 
 WORKER_SHOW_SECONDS = 10  # the worker-show comparison retries inside this window, which is inside the work time
 RETRY_PAUSE_SECONDS = 1  # the pause between two worker-show tries
 ERROR_CHARS = 300
+MISSING = "<missing>"  # the reason text for a missing pane key; a real pane key is tabId:leafId and always holds a colon
 TITLE_CHARS = 200
 MAX_OUTPUT_BYTES = 1024 * 1024
 CLI_FALLBACK = "orca-ide"  # never bare `orca` outside an Orca terminal: there it starts the GNOME screen reader
@@ -327,22 +328,40 @@ class Launch:
         another terminal of the worktree). Returns the failure or None."""
         if self.old_handle == self.worker_handle:
             return None
-        own =self.call(["terminal", "show", "--terminal", self.old_handle])
+        failure = self.check_variable_is_stale()
+        if failure:
+            return failure
+        passed = self.call(["terminal", "show", "--terminal", self.worker_handle])
+        failure = self.check_passed_handle_in_worktree(passed, worktree) or self.check_pane_key(passed)
+        if failure:
+            return failure
+        self.old_handle = self.worker_handle  # the confirmed terminal is the predecessor for the title and the lineage line
+        return None
+
+    def check_variable_is_stale(self):
+        """Returns the failure unless Orca says that $ORCA_TERMINAL_HANDLE is a stale handle."""
+        own = self.call(["terminal", "show", "--terminal", self.old_handle])
         if own.ok:
             return self.wrong_handle("Orca still knows $ORCA_TERMINAL_HANDLE as another terminal")
         if dig(own.data, "error", "code") != "terminal_handle_stale":
             return self.wrong_handle(own.error)
-        passed = self.call(["terminal", "show", "--terminal", self.worker_handle])
+        return None
+
+    def check_passed_handle_in_worktree(self, passed, worktree):
+        """Returns the failure unless `passed` (the `terminal show` of the passed handle) places the passed handle in this worktree."""
         if not (passed.get("result", "terminal", "handle") == self.worker_handle and passed.get("result", "terminal", "worktreePath") == worktree):
             return self.wrong_handle(passed.error if not passed.ok else "Orca does not place the passed handle in this worktree")
+        return None
+
+    def check_pane_key(self, passed):
+        """Returns the failure unless the tabId:leafId of `passed` equals $ORCA_PANE_KEY."""
         tab, leaf = passed.get("result", "terminal", "tabId"), passed.get("result", "terminal", "leafId")
         passed_key = f"{tab}:{leaf}" if isinstance(tab, str) and tab and isinstance(leaf, str) and leaf else None
-        shown_key = one_line(passed_key or "none", 100)
+        shown_key = one_line(passed_key or MISSING, 100)
         if not self.pane_key:
             return self.wrong_handle(f"$ORCA_PANE_KEY is missing, so Orca cannot prove that the passed handle is this terminal (passed handle pane key {shown_key})")
         if passed_key is None or passed_key != self.pane_key:  # no ids from Orca never proves anything, whatever the variable holds
             return self.wrong_handle(f"the passed handle pane key {shown_key} is not $ORCA_PANE_KEY {one_line(self.pane_key, 100)}")
-        self.old_handle = self.worker_handle  # the confirmed terminal is the predecessor for the title and the lineage line
         return None
 
     def check_dispatch(self, worktree):
