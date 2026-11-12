@@ -57,6 +57,14 @@ This is the SEC-01 method.
 3. When the `object.type` of the answer is `tag` (an annotated tag), make one more call, `gh api repos/<owner>/<repo>/git/tags/<sha>`, and use its `object.sha`, which is the commit.
 4. Write the pin as `@<sha> # <tag>`.
 
+## Check the pins
+
+This is the commit part of SEC-01. Run `python3 <skill folder>/scripts/check_pins.py <repo path>` as one plain command (no `cd`, `;`, `&&` or pipe) after the intake, when a workflow has a `uses:` line pinned to a 40-character SHA. It makes only read-only `gh api` calls and prints JSON with one entry for each pinned line. Read the `result` of each entry:
+
+- `tag-mismatch` (the tag of the version comment is another commit), `unknown-tag` (that tag does not exist) and `unknown-commit` (the SHA is not a commit of the repo) are SEC-01 findings at the line of the entry.
+- `unverified` is never a finding. Its `reason` is `gh-missing`, `not-logged-in`, `no-network`, `rate-limited`, `repo-unreadable` or `gh-error`. The `Intake:` line says `SEC-01 pins not verified (<reason>)`.
+- `ok` is no finding.
+
 ## Offline Node support list
 
 The intake script reads this block when it has no network. It is the dated list of supported Node majors.

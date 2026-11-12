@@ -5,7 +5,7 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 ## Steps
 
 1. Load every rule file in `rules/` except the monorepo file. Today that is [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md). Load [rules/monorepo.md](rules/monorepo.md) only when the `monorepo` fact of the intake has `monorepo: true`. A single package never loads it.
-2. Read the intake JSON (see [SKILL.md](SKILL.md)). It holds every repo fact: do not read `package.json`, the lockfile or the settings yourself, and run no other shell command than the tools of [tools.md](tools.md) that the intake says are on PATH (step 6). The fix flow has its own commands (see "Fix on approval"). Use the Read, Glob and Grep tools for the workflow files. Name every default and every unknown fact in section 2 of the report (see "Intake facts" below).
+2. Read the intake JSON (see [SKILL.md](SKILL.md)). It holds every repo fact: do not read `package.json`, the lockfile or the settings yourself, and run no other shell command than the tools of [tools.md](tools.md) that the intake says are on PATH (step 6) and the pin check of [tools.md](tools.md) ("Check the pins"), which you run only when a workflow has a `uses:` line pinned to a 40-character SHA. The fix flow has its own commands (see "Fix on approval"). Use the Read, Glob and Grep tools for the workflow files. Name every default and every unknown fact in section 2 of the report (see "Intake facts" below).
 3. Take the required checks from the `required_checks` fact (see "Required checks" below). Do this before you propose a rename or a split.
 4. Take the tool status from the `installed_tools` fact (see "Tool status" below). The install hints are in [tools.md](tools.md).
 5. Check each workflow file against each rule. For each failed rule, note every `file:line` place and the severity of the part that failed. A rule that fails in parts of different severity gets one row in each severity table.
@@ -45,6 +45,7 @@ The cost and monorepo rules read these facts from the intake JSON. Run no other 
 
 The security rules and the tool merge read these sources. Run no other command for them.
 
+- SEC-01 reads the output of the pin check (see "Check the pins" in [tools.md](tools.md)) for the commit part. A recorded pin check output that the user names replaces the run. When a pin is `unverified`, the `Intake:` line says `SEC-01 pins not verified (<reason>)` and the form check still applies.
 - SEC-02 reads `.github/dependabot.yml` with the Read and Glob tools.
 - A mapped zizmor finding takes the severity of its SEC rule part, and shows as the SEC id (see the mapping table in [tools.md](tools.md)).
 - Any other zizmor finding keeps its audit id and is a suggestion. An actionlint finding is a suggestion.

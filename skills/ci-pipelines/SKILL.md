@@ -22,6 +22,7 @@ Read the whole branch file with the Read tool, never only a part of it with a se
 ## Modules
 
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls. It reads the dated offline Node list from [tools.md](tools.md) when it has no network.
+- [scripts/check_pins.py](scripts/check_pins.py): the SEC-01 pin check. It makes read-only `gh api` calls and tells whether each pinned SHA is the commit of its version comment tag.
 - [tools.md](tools.md): detection and install hints for actionlint, zizmor and pinact, the zizmor-to-SEC mapping, the output merge, the SHA lookup and the dated offline list of supported Node majors (the intake script reads this list with no network).
 - [review.md](review.md): the review steps, the report contract and the fix-on-approval steps.
 - [create.md](create.md): the create steps, the fill table, and the Dependabot and `security-audit.yml` texts.

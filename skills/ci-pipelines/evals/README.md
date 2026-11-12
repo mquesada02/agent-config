@@ -7,7 +7,7 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
@@ -15,7 +15,7 @@ claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.
 - `--runs 3` and `--threshold 1.0` are the plugin eval defaults, written here on purpose.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace. Pass it only for suites that you wrote.
 - `--ablation with-without` adds the no-skill baseline arm (`W/OUT` and `Δ` columns).
-- `--allow-tools` grants the one shell call of the review steps, the intake script. The pattern matches the path of the script in the skill folder that the run uses. In the review cases the workspace is a temporary folder that is not inside a git repo (a parent repo with an `origin` would be read), and it has a temporary home and no GitHub credentials. The intake finds no GitHub remote, so `required_checks` is `unknown` and the review says "unreadable" (the `name-09-...` case expects this).
+- `--allow-tools` grants the shell calls of the review steps: the intake script and the pin check script (with no GitHub credentials the pin check reports `unverified`; the `sec-01-wrong-sha` case gives a recorded `pins.json` instead). The pattern matches the path of the script in the skill folder that the run uses. In the review cases the workspace is a temporary folder that is not inside a git repo (a parent repo with an `origin` would be read), and it has a temporary home and no GitHub credentials. The intake finds no GitHub remote, so `required_checks` is `unknown` and the review says "unreadable" (the `name-09-...` case expects this).
 - `--keep-temp` keeps the trace of each run (`tracePath` in the result). The result JSON holds scores and grader verdicts but not the final message, so `grade_eval_results.py` reads the final message from the trace. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Remove them by hand when you are done.
 - Add `--case <glob>` to run one case. Later tickets add cases to this same run.
 - Plugin eval exits 1 when a case scores below the threshold. A bare skill folder is a valid target (it resolves as the plugin `ci-pipelines`), so no wrapper manifest is needed.

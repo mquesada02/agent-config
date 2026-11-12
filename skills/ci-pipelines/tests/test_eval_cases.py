@@ -25,6 +25,7 @@ COST_MONO_CASES = {
 }
 SEC_CASES = {
     "sec-01-tag-pin": (["SEC-01"], []),
+    "sec-01-wrong-sha": (["SEC-01"], []),
     "sec-02-no-dependabot": (["SEC-02"], []),
     "sec-03-no-permissions": (["SEC-03"], []),
     "sec-04-untrusted-context-in-run": (["SEC-04"], []),
@@ -187,7 +188,7 @@ class ReviewCases(unittest.TestCase):
     def test_there_is_a_case_for_each_sec_rule_and_one_for_each_critical_part_next_to_its_required_part(self):
         for number in range(1, 11):
             self.assertTrue([n for n in SEC_CASES if n.startswith(f"sec-{number:02d}-")], f"SEC-{number:02d}")
-        for number in (4, 7):
+        for number in (1, 4, 7):
             self.assertEqual(len([n for n in SEC_CASES if n.startswith(f"sec-{number:02d}-")]), 2, number)
 
     def test_cost_04_has_a_case_for_each_part_and_one_that_forbids_it(self):
@@ -286,7 +287,7 @@ class NewFixtures(unittest.TestCase):
                     cls.texts[path] = read(path)
 
     def test_the_new_cases_exist(self):
-        self.assertEqual(len(self.cases), 46)
+        self.assertEqual(len(self.cases), 47)
 
     def test_no_new_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():
@@ -430,6 +431,30 @@ class RecordedIntakeMerge(RecordedIntakeChecks, unittest.TestCase):
         lines = workflow_text(self.CASE).splitlines()
         line = next(i for i, text in enumerate(lines, start=1) if "actions/checkout@v4" in text)
         self.assertEqual(location["concrete"]["location"]["start_point"]["row"] + 1, line)
+
+
+class RecordedPinCheck(unittest.TestCase):
+    CASE = "sec-01-wrong-sha"
+
+    def setUp(self):
+        with open(os.path.join(case_dir(self.CASE), "repo", "pins.json"), encoding="utf-8") as handle:
+            self.pins = json.load(handle)
+
+    def test_the_prompt_points_to_the_recorded_pin_check_and_runs_no_script(self):
+        prompt = read(os.path.join(case_dir(self.CASE), "prompt.md"))
+        self.assertIn("pins.json", prompt)
+        self.assertIn("do not run the pin check script", prompt)
+
+    def test_each_recorded_pin_is_the_uses_line_of_the_fixture_and_one_is_ok_and_two_are_wrong(self):
+        lines = workflow_text(self.CASE).splitlines()
+        for pin in self.pins["pins"]:
+            self.assertIn(f"uses: {pin['uses']}@{pin['sha']} # {pin['tag']}", lines[pin["line"] - 1])
+        self.assertEqual(sorted(p["result"] for p in self.pins["pins"]), ["ok", "tag-mismatch", "unknown-commit"])
+        self.assertEqual(self.pins["status"], "verified")
+
+    def test_the_pins_are_synthetic(self):
+        for pin in self.pins["pins"]:
+            self.assertRegex(pin["sha"], r"^(\w)\1{39}$")
 
 
 class RecordedIntakeMissingTool(RecordedIntakeChecks, unittest.TestCase):
