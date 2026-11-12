@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Setup grader (D) for a `/sql setup` run: the diff is shown before any write, and the written TOML is right.
 
-Usage: grade_setup.py TRACE --repo <folder> --expect <json file> [--allowlist <file> --key <repo key>]
+Usage: grade_setup.py TRACE --repo <folder> --expect <json file> [--allowlist <file> --key <repo key>] [--diff-in-prompt]
+
+`--diff-in-prompt` is for a run where the diff is shown by the permission prompt (the setup diff hook, as in the
+two-turn runner), not by a message of the model: the `shown` check is skipped, and a change call whose result holds
+`Setup write check:` (the hook denied it, so nothing ran) is not a change call for the `order`, `shown` and `digest`
+checks. Without the flag nothing changes.
 
 TRACE is a path, or - for stdin: a plugin eval trace in stream-json form (JSON lines). A line of type
 `assistant` holds `message.content`, a list of items: `tool_use` (id, name, input) and `text`. A line
@@ -179,8 +184,18 @@ def added_lines(plan):
     return found
 
 
-def check_order_shown_digest(trace, written):
+HOOK_DENIAL = "Setup write check:"
+
+
+def hook_denied_ids(trace):
+    """The ids of the calls whose result holds the denial text of the setup diff hook (nothing ran). A result comes after
+    its call in the trace, so this is a pass over the results before the checks."""
+    return {event[1] for event in trace if event[0] == "result" and HOOK_DENIAL in event[2]}
+
+
+def check_order_shown_digest(trace, written, diff_in_prompt=False):
     failures = []
+    skipped = hook_denied_ids(trace) if diff_in_prompt else set()
     plan_ids = set()
     latest = None  # (plan, index of its result)
     texts = []  # (index, text)
@@ -194,7 +209,7 @@ def check_order_shown_digest(trace, written):
             if name == "Bash" and isinstance(command, str) and PLAN_CALL.search(command):
                 plan_ids.add(identifier)
             target = change_target(name, data)
-            if target is None:
+            if target is None or identifier in skipped:
                 continue
             what = target[1].strip()[:100]
             if not written:
@@ -205,7 +220,7 @@ def check_order_shown_digest(trace, written):
                 continue
             plan, plan_index = latest
             shown = "\n".join(t for i, t in texts if i > plan_index)
-            missing = [line for line in added_lines(plan) if line not in shown]
+            missing = [] if diff_in_prompt else [line for line in added_lines(plan) if line not in shown]
             if missing:
                 failures.append(f"FAIL shown: the diff line {missing[0]!r} was not shown before the change: {what!r}")
             if target[0] == "write":
@@ -322,6 +337,7 @@ def main(argv):
     parser.add_argument("--expect", required=True)
     parser.add_argument("--allowlist")
     parser.add_argument("--key")
+    parser.add_argument("--diff-in-prompt", action="store_true")
     args = parser.parse_args(argv)
     try:
         expect = load_expect(args.expect)
@@ -337,7 +353,7 @@ def main(argv):
         print(f"cannot read the trace: {error}", file=sys.stderr)
         return 2
     written = expect.get("written", True)
-    failures = check_order_shown_digest(trace, written)
+    failures = check_order_shown_digest(trace, written, args.diff_in_prompt)
     failures += check_rules(args.repo, expect, written)
     failures += check_allowlist(args.allowlist, args.key, expect)
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))

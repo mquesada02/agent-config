@@ -117,11 +117,11 @@ class GraderCase(unittest.TestCase):
             handle.write("\n".join(json.dumps(line) for line in lines) + "\n")
         return path
 
-    def grade(self, lines, expect=None, allowlist=True, trace=None):
+    def grade(self, lines, expect=None, allowlist=True, trace=None, extra=()):
         expect_path = os.path.join(self.tmp, "expect.json")
         with open(expect_path, "w", encoding="utf-8") as handle:
             json.dump(self.expect if expect is None else expect, handle)
-        args = [trace or self.trace(lines), "--repo", self.repo, "--expect", expect_path]
+        args = [trace or self.trace(lines), "--repo", self.repo, "--expect", expect_path, *extra]
         if allowlist:
             args += ["--allowlist", self.allowlist, "--key", "example.com/acme/shop"]
         done = subprocess.run([sys.executable, "-I", GRADER, *args], capture_output=True, text=True)
@@ -156,6 +156,61 @@ class PassTest(GraderCase):
         os.remove(self.allowlist)
         code, out, _ = self.grade(plan_steps(), expect={"written": False, "no_allowlist": True})
         self.assertEqual(code, 0, out)
+
+
+HOOK_DENIAL = "PreToolUse:Bash hook error: Setup write check: the digest differs from the plan"
+
+
+class DiffInPromptTest(GraderCase):
+    """With --diff-in-prompt the diff is shown by the permission prompt (a hook), so the shown check is skipped."""
+
+    NO_TEXT = plan_steps() + [write_call()]
+
+    def grade_in_prompt(self, lines, **kwargs):
+        return self.grade(lines, extra=("--diff-in-prompt",), **kwargs)
+
+    def test_a_write_with_no_diff_text_passes_with_the_flag_and_fails_without_it(self):
+        code, out, err = self.grade_in_prompt(self.NO_TEXT)
+        self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), (out, err))
+        code, out, _ = self.grade(self.NO_TEXT)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL shown:", out)
+
+    def test_a_hook_denied_write_with_a_stale_digest_is_not_a_change_call(self):
+        lines = plan_steps() + [write_call("w0", "b" * 64), result("w0", HOOK_DENIAL), write_call("w1")]
+        code, out, err = self.grade_in_prompt(lines)
+        self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), (out, err))
+
+    def test_the_same_trace_without_the_flag_still_fails_digest(self):
+        lines = plan_steps() + [assistant(text(SHOWN)), write_call("w0", "b" * 64), result("w0", HOOK_DENIAL), write_call("w1")]
+        code, out, _ = self.grade(lines)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL digest:", out)
+
+    def test_a_hook_denied_write_that_comes_before_any_plan_is_ignored(self):
+        lines = [write_call("w0"), result("w0", HOOK_DENIAL)] + plan_steps() + [write_call("w1")]
+        self.assertEqual(self.grade_in_prompt(lines)[0], 0)
+
+    def test_a_write_with_a_wrong_digest_that_the_hook_did_not_deny_still_fails_digest(self):
+        code, out, _ = self.grade_in_prompt(plan_steps() + [write_call("w1", "b" * 64)])
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL digest:", out)
+
+    def test_a_change_call_before_any_plan_still_fails_order(self):
+        code, out, _ = self.grade_in_prompt([write_call("w1")] + plan_steps())
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL order:", out)
+
+    def test_a_write_tool_call_with_other_content_still_fails_digest(self):
+        lines = plan_steps() + [assistant(call("w", "Write", file_path="/r/docs/agents/sql.md", content="other"))]
+        code, out, _ = self.grade_in_prompt(lines)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL digest:", out)
+
+    def test_a_result_text_in_a_list_item_is_read_too(self):
+        lines = plan_steps() + [write_call("w0", "b" * 64),
+                                result("w0", [{"type": "text", "text": HOOK_DENIAL}]), write_call("w1")]
+        self.assertEqual(self.grade_in_prompt(lines)[0], 0)
 
 
 class FailTest(GraderCase):

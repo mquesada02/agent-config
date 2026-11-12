@@ -1,6 +1,6 @@
 # Setup module
 
-`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never skip a step and never reorder them. Before the `write` call of Step 6, you must have sent one message of your own that starts with `Diff to confirm:` and holds the diff. A `write` call without that message is an error, even when nobody can answer.
+`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never skip a step and never reorder them.
 
 Every script needs Python 3.11 or newer. `<skill folder>` is the folder of this skill and `<repo root>` is the repo. Never read the PG password file (`PGPASSFILE`, `~/.pgpass`): setup reads service names only.
 
@@ -92,14 +92,15 @@ Show each name in `service_check.missing`. The developer corrects it or keeps it
    - Run `plan` alone: never pipe or filter its output, because the whole JSON output must be in the result of the call (the digest of the confirmation comes from it).
    - A malformed file gives `ok` false: stop and show the message.
    - Resolve every `conflicts` entry first. Ask per key: keep the current value or take the proposed one. Drop a key that the developer keeps from the proposal, then run `plan` again. A re-run only appends prose rules: it never removes a hand-written line or comment.
-3. Show the one diff. Print `rules_file.diff` and `allowlist.diff` (an absent `allowlist` means no allowlist change) as text in a message of your own, in a code block, together with the `warnings` and the `skipped_rules`. Do this before any write, even when the developer gave the confirmation in advance. The diff text must be in your own message: the result of a tool call does not count. Start that message with the line `Diff to confirm:`, then give the diff in a code block. Make the `write` call only after that message. The `write` call is the question: Claude Code asks the developer to approve it in a permission prompt, and that permission prompt is the confirmation. Do not ask a separate question in text before the call.
-4. Call `write` with the digest of the latest plan. The developer approves or declines it in the permission prompt:
+3. Show the `warnings` and the `skipped_rules` (when there are any) in a message of your own. Then make the `write` call. A hook runs `plan` again for the same repo and proposal and puts the whole diff (`rules_file.diff`, and `allowlist.diff` when there is one) in the permission prompt, so you do not print the diff. The `write` call is the question: Claude Code asks the developer to approve it in that permission prompt, and the permission prompt is the confirmation. Do not ask a separate question in text before the call. Use absolute paths for the repo folder and the proposal file in the `plan` and `write` commands, and call `write` alone as one command: the hook denies any other form.
+4. Call `write` with the digest of the latest plan. The developer sees the diff, then approves or declines it in the permission prompt:
 
    ```
    python3 <skill folder>/scripts/setup_files.py write <repo root> --proposal <proposal file> --confirm <digest>
    ```
 
-   - The call is denied or declined (the permission prompt was refused, or no one could answer): stop for this turn. Do not write the files by any other route (the Write tool, a shell redirect, `tee`). Do not call `write` again in the same turn, with changed arguments or not. Say that nothing was written and ask the developer to confirm the diff. A later user message that confirms the diff allows one new `write` call with the digest of the latest plan.
+   - The call is denied or declined (the permission prompt was refused, or no one could answer; a denial with a `Setup write check:` reason is the next case): stop for this turn. Do not write the files by any other route (the Write tool, a shell redirect, `tee`). Do not call `write` again in the same turn, with changed arguments or not. Say that nothing was written and ask the developer to confirm the diff. A later user message that confirms the diff allows one new `write` call with the digest of the latest plan.
+   - The call is denied and the reason starts with `Setup write check:`: the hook could not check the call, so no prompt was shown and nobody was asked. This is not a decline. Fix the cause that the reason names (for example run `plan` again and use its new digest, use absolute paths, or call `write` alone) and call `write` again.
    - `reason` is `stale_digest`: a file changed after the diff. Run `plan` again, show the new diff and call `write` again.
    - `reason` is `write_failed` (nothing was written; this does not apply to a denied call): write the exact `text` of the latest `plan` output with the Write tool, for each file that has `changed` true (`rules_file.path` and `allowlist.path`). Change nothing else. This is the only direct edit of the two files. When the Write tool is denied for a file, stop for that file: show its path and its `text` to the developer in the final message, and say that it was not written.
 5. A stopped setup leaves the rules file and the allowlist unwritten. The formatter install of Step 3 has its own earlier approval.

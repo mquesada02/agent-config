@@ -108,11 +108,27 @@ class SetupMdStepSixTest(unittest.TestCase):
     def test_the_permission_prompt_is_the_confirmation(self):
         self.assertRegex(self.step_six(), r"permission prompt is the confirmation")
 
-    def test_the_diff_message_and_the_digest_rule_stay(self):
+    def test_the_digest_rule_stays(self):
         step = self.step_six()
-        self.assertIn("Diff to confirm:", step)
         self.assertIn("stale_digest", step)
         self.assertIn("--confirm <digest>", step)
+
+    def test_no_diff_message_is_asked_of_the_model_anywhere_in_the_file(self):
+        with open(SETUP_MD, encoding="utf-8") as handle:
+            self.assertNotIn("Diff to confirm", handle.read())
+
+    def test_the_hook_shows_the_diff_in_the_permission_prompt(self):
+        step = self.step_six()
+        self.assertRegex(step, r"(?s)hook.*permission prompt.*diff|diff.*permission prompt")
+        self.assertRegex(step, r"you do not print the diff")
+
+    def test_a_denial_that_starts_with_setup_write_check_is_not_a_decline(self):
+        step = self.step_six()
+        self.assertIn("Setup write check:", step)
+        self.assertRegex(step, r"is not a decline")
+
+    def test_the_repo_and_the_proposal_paths_are_absolute(self):
+        self.assertRegex(self.step_six(), r"absolute path")
 
     def test_a_denied_write_call_stops_the_turn_with_no_other_route(self):
         step = self.step_six()
