@@ -281,7 +281,9 @@ class DenyTest(HookCase):
         inner = f"python3 {self.script} write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
         for command in (f"sh -c '{inner}'", f'bash -c "{inner}"', f"echo {self.script} write",
                         f'grep -n "{self.script} write" setup.md', f"cat '{self.script}\twrite'",
-                        f"git commit -m 'run setup_files.py write later'"):
+                        f"git commit -m 'run setup_files.py write later'",
+                        # the removed rule glob ended with a star, so write_x and writex matched it
+                        f"python3 {self.script} write_x {self.repo}", f"python3 {self.script} writex {self.repo}"):
             with self.subTest(command):
                 self.assertDenied(self.run_hook(self.payload(command)), "alone")
         self.assertIsNone(self.ran())

@@ -38,7 +38,7 @@ ALLOWED_VARIABLES = ("XDG_CONFIG_HOME",)
 # The raw text that the permission ask rule of ticket 509 matched (the script name, then write). The hook replaces that rule
 # (a rule and a hook that both ask show only the rule text in the prompt, never the diff), so it must refuse every command
 # that this text matches and that is not the exact write form.
-RAW_WRITE = re.compile(re.escape(SCRIPT_NAME) + r"\W+write\b")
+RAW_WRITE = re.compile(re.escape(SCRIPT_NAME) + r"\W+write")
 DENY_PREFIX = "Setup write check: "
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 OPERATOR = re.compile(r"^[();<>|&]+$")
