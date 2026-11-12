@@ -99,9 +99,21 @@ class DbAccessModuleTest(unittest.TestCase):
 
     def test_the_residual_risk_section_names_the_diff_risks(self):
         body = section(self.text, "Residual risk")
-        for text in ("#476", "not one transaction", "output order of B", "80 rows", "volatile", "multirange"):
+        for text in ("not one transaction", "output order of B", "80 rows", "volatile", "multirange"):
             with self.subTest(text=text):
                 self.assertIn(text, body)
+
+    def test_the_select_downgrade_is_documented_and_the_open_issue_note_is_gone(self):
+        self.assertNotIn("tracked in issue #476", self.text)
+        body = section(self.text, "Read-only path")
+        for fact in ("plain `EXPLAIN`", "downgrade", "query_to_xml", "cursor_to_xml", "ts_stat", "crosstab", "connectby"):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, body)
+        risks = section(self.text, "Residual risk")
+        for fact in ("ts_rewrite", "view", "Unicode"):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, risks)
+        self.assertIn("`ran` (`analyze` or `explain`", section(self.text, "pg_run"))
 
     def test_the_rules_say_what_claude_never_does(self):
         body = section(self.text, "Rules")

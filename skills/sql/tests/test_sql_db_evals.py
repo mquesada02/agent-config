@@ -166,8 +166,8 @@ class DriverCasesTest(unittest.TestCase):
         self.assertEqual(names, [
             "bad-password", "facts-pg-02", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
             "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "rewrite-no-tests",
-            "rewrite-proven", "rewrite-write-unproven", "write-analyze", "write-dblink-trigger", "write-sequence",
-            "wrong-host"])
+            "rewrite-proven", "rewrite-write-unproven", "select-query-to-xml", "write-analyze", "write-dblink-trigger",
+            "write-sequence", "wrong-host"])
         for name in names:
             folder = os.path.join(DRIVER_CASES, name)
             with self.subTest(case=name):
@@ -271,7 +271,7 @@ class ReadmeTest(unittest.TestCase):
                        "facts-pg-02", "facts[:SERVICE]", "`rules`", "plan-01-estimate", "plan-02-seq-scan",
                        "plan-03-spill", "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled",
                        "plan_findings.py", "`report`", "`judge`", "`disabled`", "rubric-plan.md", "shop.events",
-                       "canaries.json", "db-expect.json", "grader G and the leak scan"):
+                       "canaries.json", "db-expect.json", "grader G and the leak scan", "select-query-to-xml"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
 

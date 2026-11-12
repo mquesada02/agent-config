@@ -441,6 +441,7 @@ class DriverTest(base.TempTest):
                     "write-sequence": ["analyzed:app-pg13", "analyzed:app-pg18",
                                        "sequence_warning:app-pg13", "sequence_warning:app-pg18"],
                     "write-dblink-trigger": ["downgraded:app-pg13", "downgraded:app-pg18"],
+                    "select-query-to-xml": ["downgraded:app-pg13", "downgraded:app-pg18"],
                     "bad-password": ["connection_failed:app-badpw"],
                     "wrong-host": ["connection_failed:app-wronghost"]}
         rules = {"facts-pg-02": {"expect": ["PG-02"], "forbid": []},

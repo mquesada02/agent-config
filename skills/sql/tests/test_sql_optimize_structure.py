@@ -304,6 +304,13 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertIn("section Rewrite proof", plan)
         self.assertNotIn("#397", self.text)
 
+    def test_a_select_downgrade_gets_the_plain_explain_note_and_no_plan_row(self):
+        plan = section(self.text, "Plan findings")
+        for fact in ("a `SELECT` that calls a function that runs SQL from a string", "query_to_xml*", "connectby",
+                     "ran as plain EXPLAIN: <reason>.", "in either mode", "no `PLAN-*` row"):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, plan)
+
     def test_the_write_path_section_is_filled(self):
         self.assertNotIn("Write path (stub)", self.text)
         write = section(self.text, "Write path")

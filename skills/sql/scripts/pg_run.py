@@ -10,7 +10,9 @@ With no `--statement` the statement is read from stdin. The order of work: the
 allowlist check (`allowlist.py`), the guard of the mode (`sql_guard.py`), the server
 version probe, then the explain run: `psql -X -w` with `service=<name>` and the
 session options in the conninfo. In select mode it is `BEGIN READ ONLY`, `EXPLAIN (ANALYZE ...
-FORMAT JSON)`, `ROLLBACK`. It prints one JSON object. Every error text is
+FORMAT JSON)`, `ROLLBACK`. When the statement calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`,
+`ts_stat`, `crosstab*`, `connectby`; see `sql_guard.py`), the run is a plain `EXPLAIN (FORMAT JSON)` and `downgrade`
+says why. The output has `ran`, `reason`, `downgrade` and `warnings` in both modes. It prints one JSON object. Every error text is
 redacted: the output has no key that holds raw `psql` text.
 
 Write mode (`--mode write`) takes one `INSERT`, `UPDATE`, `DELETE` or `MERGE`. It sets no
@@ -192,13 +194,20 @@ def server_version(service, overrides):
     return int(probe.strip())
 
 
-def explain(service, statement, overrides):
+def explain(service, checked, overrides):
+    """One select statement (`checked` is the result of `sql_guard.check_select_scan`): `ANALYZE`, or a plain EXPLAIN
+    when it calls a string-SQL function, whose text argument could hold SQL that `ANALYZE` would run."""
     version = server_version(service, overrides)
     options, timeouts = session_options(version, overrides)
-    buffers = "ANALYZE, BUFFERS" if version < EXPLICIT_BUFFERS_BELOW else "ANALYZE"
+    downgrade = [{"kind": "function", "name": name} for name in checked["scan"]]
+    if downgrade:
+        ran, reason, text = "explain", downgrade_reason(downgrade), "EXPLAIN (FORMAT JSON)"
+    else:
+        buffers = "ANALYZE, BUFFERS" if version < EXPLICIT_BUFFERS_BELOW else "ANALYZE"
+        ran, reason, text = "analyze", "no call of a function that runs SQL from a string", f"EXPLAIN ({buffers}, FORMAT JSON)"
     out = run_psql(
         service, options, ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"],
-        ["BEGIN READ ONLY", f"EXPLAIN ({buffers}, FORMAT JSON) {statement}", "ROLLBACK"],
+        ["BEGIN READ ONLY", f"{text} {checked['sql']}", "ROLLBACK"],
     )
     try:
         plan = json.loads(out)
@@ -208,8 +217,8 @@ def explain(service, statement, overrides):
         raise bad_output("The explain run did not return one JSON plan list.")
     return {
         "ok": True, "action": "explain", "service": service, "mode": "select",
-        "server_version_num": version, "ran": "analyze", "reason": "select mode always analyzes",
-        "timeouts": timeouts, "warnings": [], "plan": plan,
+        "server_version_num": version, "ran": ran, "reason": reason,
+        "timeouts": timeouts, "downgrade": downgrade, "warnings": [], "plan": plan,
     }
 
 
@@ -768,11 +777,11 @@ def run_explain(args):
             return explain_write(args.service, checked, access["timeouts"].get(args.service, {}))
         except Failure as failure:
             return failure.result
-    sql, refusal = sql_guard.check_select(statement)
+    checked, refusal = sql_guard.check_select_scan(statement)
     if refusal:
         return {"ok": False, "error": "refused", **refusal}
     try:
-        return explain(args.service, sql, access["timeouts"].get(args.service, {}))
+        return explain(args.service, checked, access["timeouts"].get(args.service, {}))
     except Failure as failure:
         return failure.result
 

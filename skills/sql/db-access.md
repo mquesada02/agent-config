@@ -34,7 +34,7 @@ python3 <skill folder>/scripts/pg_run.py explain --repo <repo root> --service <n
 
 With no `--statement`, the statement comes from stdin. Use stdin for a statement that holds a single quote. `--mode` is `select` or `write`: use `--mode select` for a `SELECT`, and `--mode write` for an `INSERT`, `UPDATE`, `DELETE` or `MERGE` (see the Write mode section). The command prints one JSON object. It exits with 0 when `ok` is true, 1 when `ok` is false and 2 for a usage error.
 
-With `ok` true, the object has `action`, `service`, `mode`, `server_version_num`, `ran` (`analyze`, or `explain` in write mode), `reason`, `timeouts` (the timeouts that were sent), `warnings` and `plan` (the parsed plan list). Write mode adds `downgrade` (see the Write mode section). With `ok` false, it has `error`, and the fields of that kind. The only text field is `message`, and it is redacted: every connection value is replaced with the service name.
+With `ok` true, the object has `action`, `service`, `mode`, `server_version_num`, `ran` (`analyze` or `explain`: `explain` is a downgrade, see the Read-only path and Write mode sections), `reason`, `timeouts` (the timeouts that were sent), `downgrade` (a list, empty for an `analyze` run), `warnings` and `plan` (the parsed plan list). With `ok` false, it has `error`, and the fields of that kind. The only text field is `message`, and it is redacted: every connection value is replaced with the service name.
 
 In the optimize flow the command is piped into `scripts/plan_findings.py -` (see the optimize module). A plan call that fails then comes back from that script as `error` `pg_run_failed`, with `source_error` (the `error` of the plan call) and `source` (the object below, unchanged). Read `source` for the kinds and reasons below.
 
@@ -64,7 +64,15 @@ For a failure of the allowlist, the `reason` `service_not_listed` means that the
 
 ## Read-only path
 
-Select mode accepts exactly one `SELECT` or `WITH ... SELECT`, with one optional trailing `;`. It refuses mode changes (`SET`, `RESET`, `BEGIN`, `COMMIT`, `ROLLBACK` and the like), `VACUUM`, `LISTEN`, `UNLISTEN`, `NOTIFY`, `EXPLAIN`, `TABLE`, `VALUES`, a statement that starts with `(`, a data-modifying CTE, `SELECT ... INTO`, `set_config`, `pg_notify`, `lo_export`, advisory lock functions, `dblink` functions and `U&"`. The guard fails closed: when it is in doubt, it refuses. Write mode has its own guard and its own transaction (`BEGIN READ WRITE`, always ended by `ROLLBACK`): see the Write mode section.
+Select mode accepts exactly one `SELECT` or `WITH ... SELECT`, with one optional trailing `;`. It refuses mode changes (`SET`, `RESET`, `BEGIN`, `COMMIT`, `ROLLBACK` and the like), `VACUUM`, `LISTEN`, `UNLISTEN`, `NOTIFY`, `EXPLAIN`, `TABLE`, `VALUES`, a statement that starts with `(`, a data-modifying CTE, `SELECT ... INTO`, `set_config`, `pg_notify`, `lo_export`, advisory lock functions, `dblink` functions and `U&"`. The guard fails closed: when it is in doubt, it refuses.
+
+Select mode does not refuse a statement that calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby`). Such a function runs SQL from a string argument. The guard cannot scan that text, and `ANALYZE` would run it.
+
+So the run is a plain `EXPLAIN` (`EXPLAIN (FORMAT JSON)`) in the same `BEGIN READ ONLY` ... `ROLLBACK` session. This is a downgrade. The result has `ran` `explain`, a `reason` such as `the statement calls query_to_xml`, and a `downgrade` list of `{"kind": "function", "name"}`. The plan has no actual values.
+
+A forbidden function that the statement calls directly (`dblink_exec`, `pg_notify`) is still refused with `forbidden_function`. This also holds when the statement calls a string-SQL function. The scan reads the statement only (see the Residual risk section).
+
+Write mode has its own guard and its own transaction (`BEGIN READ WRITE`, always ended by `ROLLBACK`): see the Write mode section.
 
 The wrapper connects with `psql -X -w` and one connection string: `service=<name> options='...'`. The session options are in `options=`, so an `options` line in the service entry cannot drop them. They set `default_transaction_read_only=on` and `standard_conforming_strings=on`, then the timeouts. The explain run is one session: `BEGIN READ ONLY`, the `EXPLAIN` statement, `ROLLBACK`. The password comes only from the password file of libpq. The wrapper removes `PGPASSWORD`, `PGSERVICE`, `PGOPTIONS`, `PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGUSER` and `PGDATABASE` from the environment of `psql`. It also sets `LC_ALL=C` and removes `LANGUAGE`, `LC_MESSAGES` and `LANG`, so that `psql` writes English messages and the redaction can read them.
 
@@ -106,9 +114,11 @@ In write mode the guard and the forced `ROLLBACK` are the barrier, and `ROLLBACK
 - a sequence that a user function (also one in a column `DEFAULT`) or a `DEFAULT` change moves with no warning (an `UPDATE` or an `ON CONFLICT DO UPDATE` that sets a column to `DEFAULT` with a `nextval` default);
 - the guard reads the case of a word with ASCII rules only (the server rejects a word with a non-ASCII letter that looks like a keyword, which is the safe direction).
 
+In select mode the downgrade to a plain `EXPLAIN` reads the statement only. A view body, a column default, a row-level security policy or a user-defined function can call a string-SQL function. The scan does not find that call, so `ANALYZE` still runs it. The select guard lexer has the divergences listed below (Unicode case fold, Unicode blanks).
+
 `diff` runs the user's `SELECT` statements, so the select guard is its barrier, and its own refusals close the string-SQL functions. These risks stay open:
 
-- the guard lexer is hand written: it can differ from the server lexer in rare cases (a Unicode blank that `str.strip` cuts, a vertical tab, the case fold of a letter), and the select-mode function list is partial (a string-SQL function that is not in the list; select mode, which `explain` uses, still accepts the string-SQL ones: they are tracked in issue #476);
+- the guard lexer is hand written: it can differ from the server lexer in rare cases (a Unicode blank that `str.strip` cuts, a vertical tab, the case fold of a letter), and the select-mode function list is partial (a string-SQL function that is not in the list, for example `ts_rewrite(tsquery, text)`, which runs a SQL text, still reaches the server in `explain` select mode and in `diff`);
 - a user function with an external effect that the guard cannot see;
 - the three sessions of `diff` are not one transaction: a schema change between them makes the proof fail or compare the new types;
 - the order proof does not read the output order of B (see the Diff section);

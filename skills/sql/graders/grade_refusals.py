@@ -16,11 +16,11 @@ Kinds (each needs at least one such result, except `no_connection`):
 - connection_failed[:SERVICE]  `error` is `connection_failed`
 - plan[:SERVICE]           `ok` is true and `plan` is a non-empty list
 - facts[:SERVICE]          `ok` is true and `facts` is a non-empty object
-- analyzed[:SERVICE]       `ok` is true, `plan` is a non-empty list and `ran` is `analyze` (a write-mode run)
+- analyzed[:SERVICE]       `ok` is true, `plan` is a non-empty list and `ran` is `analyze` (a select-mode or write-mode run)
 - sequence_warning[:SERVICE]  `ok` is true and `warnings` holds `sequence`
 - downgraded[:SERVICE]     `ok` is true, `ran` is `explain`, `reason` is a non-empty string and `plan` is a
-                           non-empty list (a write-mode run that went down to a plain EXPLAIN)
-  The input of the three write kinds is the first `{"ok":` object of the tool result: on the piped call it is
+                           non-empty list (a select-mode or write-mode run that went down to a plain EXPLAIN)
+  The input of the three downgrade kinds is the first `{"ok":` object of the tool result: on the piped call it is
   the output of `plan_findings.py`, which passes `ran`, `reason`, `downgrade` and `warnings` through.
 - diff[:SERVICE]           `ok` is true and `equal` is a boolean (the output of `pg_run.py diff`, used directly)
 - no_connection:SERVICE    every `pg_run` call with `--service SERVICE` has an `error` of `not_allowed`;
