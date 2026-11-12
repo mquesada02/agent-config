@@ -68,6 +68,11 @@ if turn.get("denied"):
     for call_id in called:
         events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "is_error": True,
             "content": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}})
+if turn.get("hook_asked"):
+    # claude -p answers a hook ask with a tool result that is the reason of the hook itself
+    for call_id in called:
+        events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "is_error": True,
+            "content": reasons["ask"]}]}})
 for path in turn.get("write_files", []):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as handle:
@@ -233,6 +238,17 @@ class TurnsTest(unittest.TestCase):
         proc = self.run_runner("--runs", "1")
         self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
         self.assertEqual(len(self.calls()), 2)
+
+    def test_a_write_call_whose_result_is_the_hook_ask_reason_passes_no_write(self):
+        # the real result text of a hook ask in claude -p (the one-gate setup of ticket 520): the reason itself
+        self.set_scenario(scenario(turn1={"write_call": True, "hook_asked": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
+
+    def test_a_file_tool_call_whose_result_is_the_hook_ask_reason_still_fails_no_write(self):
+        self.set_scenario(scenario(turn1={"change_call": True, "hook_asked": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
 
     def test_a_write_call_that_the_hook_denied_and_then_a_corrected_one_that_the_ask_denied_passes_no_write(self):
         self.set_scenario(scenario(turn1={"hook_denied_first": True, "write_call": True, "denied": True}))

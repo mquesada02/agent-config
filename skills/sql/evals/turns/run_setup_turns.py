@@ -67,6 +67,7 @@ SANDBOX_FAILED = "Sandbox is enabled but failed to initialize"
 HOOK_SCRIPT = "setup_diff_prompt.py"
 HOOK_LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
 HOOK_DENIAL = "Setup write check:"
+HOOK_ASK = "Diff to confirm:"
 # the one file under the temp HOME that `claude` itself writes in a run (the global git ignore line `**/.claude/.cc-writes/`)
 CLAUDE_OWN_FILES = (os.path.join(".config", "git", "ignore"),)
 KEY = "example.com/acme/shop"
@@ -256,11 +257,12 @@ def latest_plan(trace):
 
 
 def denied_calls(trace):
-    """The ids of the calls whose tool result says that the permission was denied (a hook `ask` is a deny in
-    `claude -p`), or that the setup diff hook denied the call (its reason starts with `Setup write check:`)."""
+    """The ids of the calls that did not run: the tool result says that the permission was denied, or it is the reason of the
+    setup diff hook (`claude -p` answers a hook `ask` with that reason as the result, and it starts with `Diff to confirm:`),
+    or the hook denied the call (its reason holds `Setup write check:`)."""
     return {event[1] for event in trace
             if event[0] == "result" and (("Permission to use" in str(event[2]) and "has been denied" in str(event[2]))
-                                         or HOOK_DENIAL in str(event[2]))}
+                                         or str(event[2]).startswith(HOOK_ASK) or HOOK_DENIAL in str(event[2]))}
 
 
 def is_write_call(event):
