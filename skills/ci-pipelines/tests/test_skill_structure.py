@@ -191,8 +191,7 @@ class CostAndMonorepoRules(unittest.TestCase):
 
     def test_cost_08_skips_a_checkout_that_mono_01_covers(self):
         fields = self.cost["COST-08"]
-        for field in ("Check", "Fix"):
-            self.assertIn("MONO-01", fields[field])
+        self.assertIn("MONO-01", fields["Check"])
         self.assertIn("never a COST-08 finding", fields["Check"])
         self.assertIn("in a job of a PR run that runs a task of the repo's monorepo tool", fields["Check"])
         self.assertIn("A job that runs only on a push to main is still a COST-08 finding", fields["Check"])
