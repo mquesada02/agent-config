@@ -92,15 +92,16 @@ Show each name in `service_check.missing`. The developer corrects it or keeps it
    - Run `plan` alone: never pipe or filter its output, because the whole JSON output must be in the result of the call (the digest of the confirmation comes from it).
    - A malformed file gives `ok` false: stop and show the message.
    - Resolve every `conflicts` entry first. Ask per key: keep the current value or take the proposed one. Drop a key that the developer keeps from the proposal, then run `plan` again. A re-run only appends prose rules: it never removes a hand-written line or comment.
-3. Show the one diff. Print `rules_file.diff` and `allowlist.diff` (an absent `allowlist` means no allowlist change) as text in a message of your own, in a code block, together with the `warnings` and the `skipped_rules`. Do this before any write, even when the developer gave the confirmation in advance. The diff text must be in your own message: the result of a tool call does not count. Start that message with the line `Diff to confirm:`, then give the diff in a code block. Make the `write` call only after that message. Then ask for the confirmation, once.
-4. Write both files after that confirmation, with the digest of the latest plan:
+3. Show the one diff. Print `rules_file.diff` and `allowlist.diff` (an absent `allowlist` means no allowlist change) as text in a message of your own, in a code block, together with the `warnings` and the `skipped_rules`. Do this before any write, even when the developer gave the confirmation in advance. The diff text must be in your own message: the result of a tool call does not count. Start that message with the line `Diff to confirm:`, then give the diff in a code block. Make the `write` call only after that message. The `write` call is the question: Claude Code asks the developer to approve it in a permission prompt, and that permission prompt is the confirmation. Do not ask a separate question in text before the call.
+4. Call `write` with the digest of the latest plan. The developer approves or declines it in the permission prompt:
 
    ```
    python3 <skill folder>/scripts/setup_files.py write <repo root> --proposal <proposal file> --confirm <digest>
    ```
 
-   - `reason` is `stale_digest`: a file changed after the diff. Run `plan` again, show the new diff and ask again.
-   - `reason` is `write_failed` (nothing was written): write the exact `text` of the latest `plan` output with the Write tool, for each file that has `changed` true (`rules_file.path` and `allowlist.path`). Change nothing else. This is the only direct edit of the two files. When the Write tool is denied for a file, stop for that file: show its path and its `text` to the developer in the final message, and say that it was not written.
+   - The call is denied or declined (the permission prompt was refused, or no one could answer): stop for this turn. Do not write the files by any other route (the Write tool, a shell redirect, `tee`). Do not call `write` again in the same turn, with changed arguments or not. Say that nothing was written and ask the developer to confirm the diff. A later user message that confirms the diff allows one new `write` call with the digest of the latest plan.
+   - `reason` is `stale_digest`: a file changed after the diff. Run `plan` again, show the new diff and call `write` again.
+   - `reason` is `write_failed` (nothing was written; this does not apply to a denied call): write the exact `text` of the latest `plan` output with the Write tool, for each file that has `changed` true (`rules_file.path` and `allowlist.path`). Change nothing else. This is the only direct edit of the two files. When the Write tool is denied for a file, stop for that file: show its path and its `text` to the developer in the final message, and say that it was not written.
 5. A stopped setup leaves the rules file and the allowlist unwritten. The formatter install of Step 3 has its own earlier approval.
 
 ## Step 7: Report

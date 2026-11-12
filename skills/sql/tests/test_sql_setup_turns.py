@@ -2,6 +2,7 @@ import json
 import os
 import pwd
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,15 +33,33 @@ if turn.get("exit"):
 rules_text = scenario["rules_text"]
 diff_text = "Diff to confirm:\n+line one\n+line two" if turn.get("show") else "I will write the files now."
 events = []
-if turn.get("plan"):
+def plan_events(call_id):
     plan = {"ok": True, "digest": "d1", "rules_file": {"diff": "--- a\n+++ b\n+line one\n+line two", "text": rules_text}}
-    events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "p1", "name": "Bash",
-        "input": {"command": "python3 /skill/scripts/setup_files.py plan . --proposal /tmp/p.json"}}]}})
-    events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "p1", "content": json.dumps(plan)}]}})
-events.append({"type": "assistant", "message": {"content": [{"type": "text", "text": diff_text}]}})
+    return [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": call_id, "name": "Bash",
+                "input": {"command": "python3 /skill/scripts/setup_files.py plan . --proposal /tmp/p.json"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "content": json.dumps(plan)}]}}]
+if turn.get("plan"):
+    events += plan_events("p1")
+diff_event = {"type": "assistant", "message": {"content": [{"type": "text", "text": diff_text}]}}
+if not turn.get("show_late"):
+    events.append(diff_event)
+called = []
 if turn.get("change_call"):
+    called.append("w1")
     events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "w1", "name": "Write",
         "input": {"file_path": os.path.join(os.getcwd(), "docs", "agents", "sql.md"), "content": rules_text}}]}})
+if turn.get("write_call"):
+    called.append("w2")
+    events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "w2", "name": "Bash",
+        "input": {"command": turn.get("write_command", "python3 /skill/scripts/setup_files.py write . --proposal /tmp/p.json --confirm d1")}}]}})
+if turn.get("denied"):
+    for call_id in called:
+        events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "is_error": True,
+            "content": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}})
+if turn.get("replan"):
+    events += plan_events("p2")
+if turn.get("show_late"):
+    events.append(diff_event)
 for path in turn.get("write_files", []):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as handle:
@@ -50,6 +69,11 @@ if turn.get("write_xdg"):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with open(target, "w") as handle:
         handle.write("x = 1\n")
+if turn.get("claude_git_ignore"):
+    target = os.path.join(os.environ["XDG_CONFIG_HOME"], "git", "ignore")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w") as handle:
+        handle.write("**/.claude/.cc-writes/\n")
 if turn.get("sandbox_fail"):
     events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "s1", "name": "Bash",
         "input": {"command": "python3 /skill/scripts/rules_file.py ."}}]}})
@@ -182,6 +206,97 @@ class TurnsTest(unittest.TestCase):
             rules.append(rule)
         return rules
 
+    # --- ticket 509: turn 1 has the ask rule of settings.json, turn 2 has none ---
+    def repo_ask_rule(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "settings.json"), encoding="utf-8") as handle:
+            ask = json.load(handle)["permissions"]["ask"]
+        return [rule for rule in ask if "setup_files.py write" in rule]
+
+    def settings_of(self, call):
+        return json.loads(call["argv"][call["argv"].index("--settings") + 1])
+
+    def test_turn_1_has_the_ask_rule_of_settings_json_and_turn_2_has_none(self):
+        self.run_runner("--runs", "1")
+        first, second = self.calls()
+        rule = self.repo_ask_rule()
+        self.assertEqual(len(rule), 1)
+        self.assertEqual(self.settings_of(first)["permissions"]["ask"], rule)
+        self.assertNotIn("permissions", self.settings_of(second))
+        self.assertEqual([r for r in self.rules_after(second["argv"], "--allowedTools") if r.startswith("Bash")], ["Bash"])
+
+    def test_a_denied_write_call_after_the_shown_diff_in_turn_1_passes(self):
+        self.set_scenario(scenario(turn1={"write_call": True, "denied": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_a_denied_write_call_before_the_diff_is_shown_fails_the_shown_check(self):
+        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "show_late": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 shown"])
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_a_denied_write_before_a_re_plan_and_the_diff_fails_the_shown_check(self):
+        # the first denied write call counts, even when a second plan result and the diff come after it
+        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "show_late": True, "replan": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 shown"])
+
+    def test_a_denied_write_call_with_a_shell_redirect_to_the_rules_file_fails_no_write(self):
+        command = "python3 /skill/scripts/setup_files.py write . --proposal /tmp/p.json --confirm d1 && echo x > docs/agents/sql.md"
+        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "write_command": command}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def test_a_write_call_in_turn_1_that_was_not_denied_fails_no_write(self):
+        self.set_scenario(scenario(turn1={"write_call": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_a_denied_write_tool_call_in_turn_1_still_fails_no_write(self):
+        self.set_scenario(scenario(turn1={"change_call": True, "denied": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def test_a_file_change_in_turn_1_fails_even_when_the_write_call_was_denied(self):
+        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "write_files": ["docs/agents/sql.md"]}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def runner_tree(self, settings_text):
+        """A copy of the runner and the graders in a temp repo whose settings.json is settings_text (None: no file)."""
+        repo = os.path.join(self.root, "tree-" + uuid.uuid4().hex[:8])
+        skill = os.path.join(repo, "skills", "sql")
+        os.makedirs(os.path.join(skill, "evals", "turns"))
+        shutil.copy(RUNNER, os.path.join(skill, "evals", "turns", "run_setup_turns.py"))
+        for folder in ("graders", "scripts"):
+            shutil.copytree(os.path.join(SKILL_DIR, folder), os.path.join(skill, folder),
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        if settings_text is not None:
+            with open(os.path.join(repo, "settings.json"), "w", encoding="utf-8") as handle:
+                handle.write(settings_text)
+        return os.path.join(skill, "evals", "turns", "run_setup_turns.py")
+
+    def test_a_missing_or_wrong_ask_rule_is_a_usage_error_before_anything_is_created(self):
+        one = json.dumps({"permissions": {"ask": ["Bash(*setup_files.py write*)"]}})
+        two = json.dumps({"permissions": {"ask": ["Bash(*setup_files.py write*)", "Bash(python3 *setup_files.py write*)"]}})
+        for name, text in (("no file", None), ("not json", "{"), ("no ask key", json.dumps({"permissions": {}})),
+                           ("no write entry", json.dumps({"permissions": {"ask": ["Bash(rm *)"]}})), ("two entries", two)):
+            with self.subTest(name):
+                runner = self.runner_tree(text)
+                proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
+                                      capture_output=True, text=True, env=self.env, cwd=self.root)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""), proc.stderr)
+                self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse(os.path.exists(self.out))
+        runner = self.runner_tree(one)
+        proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
+                              capture_output=True, text=True, env=self.env, cwd=self.root)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.settings_of(self.calls()[0])["permissions"]["ask"], ["Bash(*setup_files.py write*)"])
+
     # --- the three cases of the brief ---
     def test_a_write_only_in_turn_2_after_the_shown_diff_passes(self):
         proc = self.run_runner("--runs", "1")
@@ -205,6 +320,11 @@ class TurnsTest(unittest.TestCase):
         self.set_scenario(scenario(turn1={"write_xdg": True}))
         proc = self.run_runner("--runs", "1")
         self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def test_the_global_git_ignore_file_that_claude_writes_itself_is_not_a_turn_1_write(self):
+        self.set_scenario(scenario(turn1={"claude_git_ignore": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
 
     def test_a_turn_1_that_does_not_show_the_diff_fails(self):
         self.set_scenario(scenario(turn1={"show": False}))

@@ -8,10 +8,15 @@ For each case under the evals folder (default `setup-*`) and each run, this runn
 own scaffold, then runs two turns of one `claude -p` session (model sonnet): turn 1 is the case prompt up to its
 confirmation sentence (`--session-id`), turn 2 is a plain confirmation (`--resume` of the same session id).
 
-Turn 1 checks (a failure ends the run; turn 2 does not run): `no-write` (no change call in the trace, and the
-content hashes of the work folder without `.git` and of the temp HOME folder are the same before and after),
-`plan` (a `setup_files.py plan` call with a readable plan result) and `shown` (the final message holds every
-added line of the diffs of the latest plan). Turn 2 checks: `write` (a change call, or none when the case
+Turn 1 has the permission ask rule of the setup write call (the one `permissions.ask` entry for `setup_files.py write`
+of the repo `settings.json`; exit code 2 when it is not there exactly once): in `claude -p` an `ask` is a deny and wins over
+the bare `Bash` allow, so turn 1 can never write. Turn 2 runs without the rule, as the user's yes in the prompt.
+
+Turn 1 checks (a failure ends the run; turn 2 does not run): `no-write` (no change call except a `setup_files.py write`
+call that was denied, and the content hashes of the work folder without `.git` and of the temp HOME folder are the same
+before and after), `plan` (a `setup_files.py plan` call with a readable plan result) and `shown` (every added line of the
+diffs of the latest plan is in an assistant text after the plan result and before the first denied `write` call; with no
+`write` call the final message counts too). Turn 2 checks: `write` (a change call, or none when the case
 `expected.json` has `written` false), then grader D (`grade_setup.py`) on the combined trace of both turns with
 the case's `expected.json`.
 
@@ -56,6 +61,9 @@ TURN2_PROMPT = "I confirm the diff. Write the files now."
 CLAUDE_SECONDS = 900
 SCAFFOLD_SECONDS = 600
 SANDBOX_FAILED = "Sandbox is enabled but failed to initialize"
+WRITE_SCRIPT = "setup_files.py write"
+# the one file under the temp HOME that `claude` itself writes in a run (the global git ignore line `**/.claude/.cc-writes/`)
+CLAUDE_OWN_FILES = (os.path.join(".config", "git", "ignore"),)
 KEY = "example.com/acme/shop"
 PROMPT_LINE = re.compile(r"^(\s+)prompt:\s*\|[-+]?\s*$")
 
@@ -109,14 +117,17 @@ def split_prompt(case_folder):
     return text.partition(CONFIRMATION)[0].strip()
 
 
-def snapshot(folder, skip_git=False):
-    """Relative path -> sha256 of every file under the folder (the top-level .git is skipped on request)."""
+def snapshot(folder, skip_git=False, skip=()):
+    """Relative path -> sha256 of every file under the folder (the top-level .git is skipped on request, and so is each
+    relative path of `skip`)."""
     found = {}
     for current, dirs, files in os.walk(folder):
         if skip_git and current == folder and ".git" in dirs:
             dirs.remove(".git")
         for name in files:
             path = os.path.join(current, name)
+            if os.path.relpath(path, folder) in skip:
+                continue
             try:
                 with open(path, "rb") as handle:
                     found[os.path.relpath(path, folder)] = hashlib.sha256(handle.read()).hexdigest()
@@ -138,11 +149,31 @@ def allowed_tools(folders):
 DENIED_TOOLS = (f"Bash(python3 {SKILL_DIR}/scripts/formatter_install.py apply:*)", "Bash(*formatter_install.py apply*)")
 
 
-def sandbox_settings(folders):
-    """Bash runs only in the OS sandbox: no unsandboxed command, writes only in the run folders, no network."""
-    return json.dumps({"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": True,
-                                   "allowUnsandboxedCommands": False, "filesystem": {"allowWrite": list(folders)},
-                                   "network": {"allowedDomains": []}}})
+def sandbox_settings(folders, ask=None):
+    """Bash runs only in the OS sandbox: no unsandboxed command, writes only in the run folders, no network.
+    `ask` is the permission ask rule of the setup write call (turn 1 only): in `dontAsk` mode it is a deny, and it wins over
+    the bare `Bash` allow rule, so turn 1 can never write; turn 2 has no ask rule, as the user's yes in the prompt."""
+    settings = {"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": True,
+                            "allowUnsandboxedCommands": False, "filesystem": {"allowWrite": list(folders)},
+                            "network": {"allowedDomains": []}}}
+    if ask:
+        settings["permissions"] = {"ask": list(ask)}
+    return json.dumps(settings)
+
+
+def write_ask_rule():
+    """The one `permissions.ask` entry of the repo settings.json for the setup write call. Raises Usage otherwise."""
+    path = os.path.join(os.path.dirname(SKILL_DIR), "..", "settings.json")
+    path = os.path.realpath(path)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            ask = json.load(handle)["permissions"]["ask"]
+        rules = [rule for rule in ask if isinstance(rule, str) and WRITE_SCRIPT in rule]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise Usage(f"cannot read the permissions.ask list of {path}")
+    if len(rules) != 1:
+        raise Usage(f"{path} needs exactly one permissions.ask entry for {WRITE_SCRIPT}, found {len(rules)}")
+    return rules[0]
 
 
 def sandbox_failed(text, label, turn):
@@ -156,9 +187,9 @@ def sandbox_failed(text, label, turn):
     return []
 
 
-def claude_argv(prompt, session, budget, folders):
+def claude_argv(prompt, session, budget, folders, ask=None):
     return ["claude", "-p", prompt, "--model", "sonnet", "--output-format", "stream-json", "--verbose",
-            "--plugin-dir", SKILL_DIR, "--setting-sources", "", "--settings", sandbox_settings(folders),
+            "--plugin-dir", SKILL_DIR, "--setting-sources", "", "--settings", sandbox_settings(folders, ask),
             "--strict-mcp-config", "--permission-mode", "dontAsk", "--tools", "Skill,Read,Glob,Grep,Write,Edit,Bash",
             "--max-budget-usd", budget, *session, "--disallowedTools", *DENIED_TOOLS, "--allowedTools",
             *allowed_tools(folders)]
@@ -200,8 +231,9 @@ def change_calls(trace):
 
 
 def latest_plan(trace):
+    """(plan, index of its result in the trace) of the latest readable `setup_files.py plan` result, or None."""
     plan_ids, latest = set(), None
-    for event in trace:
+    for index, event in enumerate(trace):
         if event[0] == "call" and event[2] == "Bash" and isinstance(event[3], dict):
             command = event[3].get("command")
             if isinstance(command, str) and grade_setup.PLAN_CALL.search(command):
@@ -209,11 +241,46 @@ def latest_plan(trace):
         elif event[0] == "result" and event[1] in plan_ids:
             plan = grade_setup.parse_plan(event[2])
             if plan is not None:
-                latest = plan
+                latest = (plan, index)
     return latest
 
 
-def run_one(case_folder, number, out, budget, turn1_prompt):
+def denied_calls(trace):
+    """The ids of the calls whose tool result says that the permission was denied (an `ask` rule is a deny in `claude -p`)."""
+    return {event[1] for event in trace
+            if event[0] == "result" and "Permission to use" in str(event[2]) and "has been denied" in str(event[2])}
+
+
+def is_write_call(event):
+    """A `setup_files.py write` call that does nothing else: a command that also redirects to a rules or allowlist file is
+    another change route (change_target names such a command a write call first)."""
+    target = grade_setup.change_target(event[2], event[3]) if event[0] == "call" else None
+    return bool(target) and target[0] == "write" and not grade_setup.bash_changes_a_file(target[1])
+
+
+def undenied_change_calls(trace):
+    """The change calls of a turn 1 that are a FAIL: all of them, except a `setup_files.py write` call that was denied."""
+    denied = denied_calls(trace)
+    return [event for event in change_calls(trace) if not (is_write_call(event) and event[1] in denied)]
+
+
+def missing_diff_line(trace, plan_found, message):
+    """The first added diff line of the plan that no assistant text of turn 1 holds, or None. The text must come after the
+    latest plan result and before the first denied `write` call of the turn (a denied call before that plan result leaves no
+    such text); with no such call the final message counts too."""
+    plan, plan_index = plan_found
+    denied = denied_calls(trace)
+    end, final_counts = len(trace), True
+    for index, event in enumerate(trace):
+        if is_write_call(event) and event[1] in denied:
+            end, final_counts = index, False
+            break
+    shown = "\n".join([event[1] for index, event in enumerate(trace) if event[0] == "text" and plan_index < index < end]
+                      + ([message] if final_counts else []))
+    return next((line for line in grade_setup.added_lines(plan) if line not in shown), None)
+
+
+def run_one(case_folder, number, out, budget, turn1_prompt, ask_rule):
     """The failure lines of one run, each starting with FAIL."""
     name = os.path.basename(case_folder)
     label = f"{name}#{number}"
@@ -236,13 +303,13 @@ def run_one(case_folder, number, out, budget, turn1_prompt):
         return [f"FAIL {label} scaffold: {first}"]
     with open(os.path.join(case_folder, "expected.json"), encoding="utf-8") as handle:
         expect = json.load(handle)
-    before = (snapshot(state["work"], skip_git=True), snapshot(state["home"]))
+    before = (snapshot(state["work"], skip_git=True), snapshot(state["home"], skip=CLAUDE_OWN_FILES))
     folders = (state["work"], state["config"], state["tmp"])
     env = claude_env(state)
     session = str(uuid.uuid4())
     paths = {suffix: os.path.join(out, f"{name}-{number}-{suffix}.jsonl") for suffix in ("turn1", "turn2", "trace")}
 
-    problem = run_turn(claude_argv(turn1_prompt, ["--session-id", session], budget, folders), state["work"], env,
+    problem = run_turn(claude_argv(turn1_prompt, ["--session-id", session], budget, folders, [ask_rule]), state["work"], env,
                        paths["turn1"], 1)
     if problem:
         return [f"FAIL {label} {problem}"]
@@ -258,18 +325,18 @@ def run_one(case_folder, number, out, budget, turn1_prompt):
     if message is None:
         return [f"FAIL {label} turn1 final: no final message"]
     failures = []
-    after = (snapshot(state["work"], skip_git=True), snapshot(state["home"]))
-    if change_calls(trace1):
-        failures.append(f"FAIL {label} turn1 no-write: a change call in turn 1")
+    after = (snapshot(state["work"], skip_git=True), snapshot(state["home"], skip=CLAUDE_OWN_FILES))
+    if undenied_change_calls(trace1):
+        failures.append(f"FAIL {label} turn1 no-write: a change call in turn 1 that the permission rule did not deny")
     elif before != after:
         failures.append(f"FAIL {label} turn1 no-write: a file of the work folder or of the temp HOME changed in turn 1")
-    plan = latest_plan(trace1)
-    if plan is None:
+    plan_found = latest_plan(trace1)
+    if plan_found is None:
         failures.append(f"FAIL {label} turn1 plan: no setup_files.py plan call with a readable plan result")
     else:
-        missing = [line for line in grade_setup.added_lines(plan) if line not in message]
-        if missing:
-            failures.append(f"FAIL {label} turn1 shown: the diff line {missing[0]!r} is not in the final message")
+        missing = missing_diff_line(trace1, plan_found, message)
+        if missing is not None:
+            failures.append(f"FAIL {label} turn1 shown: the diff line {missing!r} was not shown before the write call")
     if failures:
         return failures
 
@@ -332,6 +399,7 @@ def main(argv):
             for needed in ("scaffold.sh", "expected.json"):
                 if not os.path.isfile(os.path.join(case_folder, needed)):
                     raise Usage(f"{os.path.basename(case_folder)}: no {needed}")
+        ask_rule = write_ask_rule()
     except Usage as error:
         print(f"run_setup_turns: {error}", file=sys.stderr)
         return 2
@@ -349,7 +417,7 @@ def main(argv):
     for case_folder in cases:
         name = os.path.basename(case_folder)
         for number in range(1, args.runs + 1):
-            lines = run_one(case_folder, number, out, args.max_budget_usd, prompts[case_folder])
+            lines = run_one(case_folder, number, out, args.max_budget_usd, prompts[case_folder], ask_rule)
             failed = failed or bool(lines)
             print("\n".join(lines + [f"{name}#{number}: {'FAIL' if lines else 'PASS'}"]), flush=True)
     print("FAIL" if failed else "PASS")
