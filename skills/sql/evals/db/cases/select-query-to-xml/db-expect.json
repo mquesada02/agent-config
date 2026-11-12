@@ -1,0 +1,5 @@
+{
+  "expect": ["downgraded:app-pg13", "downgraded:app-pg18"],
+  "sequences_may_differ": false,
+  "final": {"contains": ["plain EXPLAIN"]}
+}
