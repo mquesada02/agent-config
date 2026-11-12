@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,8 +30,8 @@ ALLOWLIST_DIFF = "--- a/allowlist.toml\n+++ b/allowlist.toml\n@@ -0,0 +1 @@\n+se
 DIGEST = "d1d1d1"
 
 
-def load_module():
-    spec = importlib.util.spec_from_file_location("setup_diff_prompt", HOOK)
+def load_module(path=HOOK):
+    spec = importlib.util.spec_from_file_location("setup_diff_prompt", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -41,7 +42,11 @@ class HookCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="setupdiff-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = os.path.realpath(self.tmp.name)
-        self.script = os.path.join(self.root, "skill", "scripts", "setup_files.py")
+        # A copy of the hook in a tree that has the skill next to it: the hook trusts only the setup_files.py of that tree.
+        self.hook = os.path.join(self.root, "hooks", "setup-diff-prompt", "setup_diff_prompt.py")
+        os.makedirs(os.path.dirname(self.hook))
+        shutil.copy(HOOK, self.hook)
+        self.script = os.path.join(self.root, "skills", "sql", "scripts", "setup_files.py")
         os.makedirs(os.path.dirname(self.script))
         with open(self.script, "w", encoding="utf-8") as handle:
             handle.write(FAKE_SCRIPT)
@@ -74,7 +79,7 @@ class HookCase(unittest.TestCase):
 
     def run_hook(self, payload=None, raw=None, env=None):
         text = raw if raw is not None else json.dumps(payload)
-        proc = subprocess.run([sys.executable, "-I", HOOK], input=text, capture_output=True, text=True,
+        proc = subprocess.run([sys.executable, "-I", self.hook], input=text, capture_output=True, text=True,
                               env={**os.environ, **(env or {})}, cwd=self.root)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout) if proc.stdout.strip() else None
@@ -123,11 +128,11 @@ class AskTest(HookCase):
         self.assertEqual(ran["argv"], ["plan", self.repo, "--proposal", self.proposal])
         self.assertEqual(os.path.realpath(ran["cwd"]), folder)
 
-    def test_a_var_assignment_prefix_is_allowed_and_the_plan_run_sees_it_next_to_the_hook_environment(self):
-        output = self.run_hook(self.payload(self.write_command(prefix="XDG_CONFIG_HOME=/x/cfg PGSERVICEFILE=/x/pg ")))
+    def test_an_xdg_config_home_prefix_is_allowed_and_the_plan_run_sees_it_next_to_the_hook_environment(self):
+        output = self.run_hook(self.payload(self.write_command(prefix="XDG_CONFIG_HOME=/x/cfg ")))
         self.assertEqual(self.decision(output)[0], "ask")
         env = self.ran()["env"]
-        self.assertEqual((env["XDG_CONFIG_HOME"], env["PGSERVICEFILE"]), ("/x/cfg", "/x/pg"))
+        self.assertEqual(env["XDG_CONFIG_HOME"], "/x/cfg")
         self.assertEqual(env["PATH"], os.environ["PATH"])
 
     def test_the_options_may_come_in_any_order(self):
@@ -139,8 +144,32 @@ class AskTest(HookCase):
         self.assertEqual(self.decision(self.run_hook(self.payload(command)))[0], "ask")
 
     def test_a_script_path_is_used_as_written_relative_to_the_hook_cwd(self):
-        command = f"python3 skill/scripts/setup_files.py write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
+        command = f"python3 skills/sql/scripts/setup_files.py write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
         self.assertEqual(self.decision(self.run_hook(self.payload(command)))[0], "ask")
+
+    def test_a_script_that_is_not_the_skill_script_of_the_hook_tree_is_denied_and_never_run(self):
+        other = os.path.join(self.root, "evil", "setup_files.py")
+        os.makedirs(os.path.dirname(other))
+        shutil.copy(self.script, other)
+        for command in (self.write_command(script=other),
+                        f"python3 {self.root}/skills/sql/scripts/../../../evil/setup_files.py write {self.repo} "
+                        f"--proposal {self.proposal} --confirm {DIGEST}"):
+            with self.subTest(command):
+                self.assertDenied(self.run_hook(self.payload(command)), "not the sql skill")
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(other), "ran.json")))
+        self.assertIsNone(self.ran())
+
+    def test_a_symlink_to_the_skill_script_is_the_skill_script(self):
+        os.makedirs(os.path.join(self.root, "linked"))
+        link = os.path.join(self.root, "linked", "setup_files.py")
+        os.symlink(self.script, link)
+        self.assertEqual(self.decision(self.run_hook(self.payload(self.write_command(script=link))))[0], "ask")
+
+    def test_a_var_prefix_other_than_xdg_config_home_is_denied_and_the_plan_does_not_run(self):
+        for prefix in ("LD_PRELOAD=/x/evil.so ", "PGSERVICEFILE=/x/pg ", "XDG_CONFIG_HOME=/x/cfg LD_AUDIT=/x/a.so "):
+            with self.subTest(prefix):
+                self.assertDenied(self.run_hook(self.payload(self.write_command(prefix=prefix))), "XDG_CONFIG_HOME")
+        self.assertIsNone(self.ran())
 
 
 class DenyTest(HookCase):
@@ -165,8 +194,8 @@ class DenyTest(HookCase):
         self.assertDenied(self.run_hook(self.payload(self.write_command())), "exit")
 
     def test_a_missing_script_is_denied(self):
-        command = self.write_command(script=os.path.join(self.root, "none", "setup_files.py"))
-        self.assertDenied(self.run_hook(self.payload(command)), "not found")
+        os.remove(self.script)
+        self.assertDenied(self.run_hook(self.payload(self.write_command())), "not found")
 
     def test_a_relative_repo_or_proposal_path_is_denied_and_the_plan_does_not_run(self):
         for command in (self.write_command(repo="repo"), self.write_command(proposal="proposal.json")):
@@ -176,7 +205,7 @@ class DenyTest(HookCase):
 
     def test_a_slow_plan_is_denied_when_the_limit_passes(self):
         self.set_plan({}, mode="sleep")
-        decided = load_module().decide(self.payload(self.write_command()), plan_seconds=0.5)
+        decided = load_module(self.hook).decide(self.payload(self.write_command()), plan_seconds=0.5)
         self.assertEqual(decided["decision"], "deny")
         self.assertIn("seconds", decided["reason"])
 
@@ -184,7 +213,7 @@ class DenyTest(HookCase):
         self.assertEqual(load_module().PLAN_SECONDS, 15)
 
     def test_an_unexpected_exception_in_the_decision_is_a_deny(self):
-        module = load_module()
+        module = load_module(self.hook)
 
         def boom(*args, **kwargs):
             raise RuntimeError("boom")

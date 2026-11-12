@@ -4,7 +4,11 @@
 The hook reads the hook input JSON on stdin. A command that does not call the setup script `write` step
 passes with no output. A write call must be exactly one simple command:
 
-    [VAR=value ...] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>
+    [XDG_CONFIG_HOME=value] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>
+
+Any other variable prefix is denied, and <path> must lead to the setup_files.py of the sql skill in the same
+tree as this hook (TRUSTED_SCRIPT): the hook runs `plan` unsandboxed before the prompt, so it never runs a
+script or a loader variable that the model chose.
 
 The hook runs `setup_files.py plan` for the same repo and proposal, checks the plan digest against
 `--confirm`, and answers `ask` with the full diff of the plan in the decision reason, so that Claude Code
@@ -26,10 +30,15 @@ import sys
 PLAN_SECONDS = 15
 LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
 SCRIPT_NAME = "setup_files.py"
+# The hook runs `plan` outside the sandbox and before the permission prompt, so it runs only this script, never a path or a
+# variable that the model chose: the loader variables (LD_PRELOAD, LD_AUDIT, ...) would load model code into that run.
+TRUSTED_SCRIPT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "skills", "sql",
+                                               "scripts", SCRIPT_NAME))
+ALLOWED_VARIABLES = ("XDG_CONFIG_HOME",)
 DENY_PREFIX = "Setup write check: "
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 OPERATOR = re.compile(r"^[();<>|&]+$")
-FORM = "[VAR=value ...] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>"
+FORM = "[XDG_CONFIG_HOME=value] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>"
 FORM_HELP = "call write alone, as one simple command in this form: " + FORM
 
 
@@ -151,11 +160,17 @@ def decide_checked(hook_input, plan_seconds):
     repo, proposal = os.path.expanduser(repo), os.path.expanduser(proposal)
     if not (os.path.isabs(repo) and os.path.isabs(proposal)):
         return deny("the repo folder and the proposal file must be absolute paths")
+    refused = [name for name in assignments if name not in ALLOWED_VARIABLES]
+    if refused:
+        return deny("the variable %s is not allowed before python3; only %s may be set. %s"
+                    % (refused[0], ", ".join(ALLOWED_VARIABLES), FORM_HELP))
     script = os.path.expanduser(script)
     full = script if os.path.isabs(script) else os.path.join(cwd or os.getcwd(), script)
+    if os.path.realpath(full) != TRUSTED_SCRIPT:
+        return deny("the script %s is not the sql skill setup_files.py of this hook tree (%s)" % (script, TRUSTED_SCRIPT))
     if not os.path.isfile(full):
         return deny("the script %s was not found" % script)
-    plan = run_plan(full, repo, proposal, assignments, cwd, plan_seconds)
+    plan = run_plan(TRUSTED_SCRIPT, repo, proposal, assignments, cwd, plan_seconds)
     if "decision" in plan:
         return plan
     if plan["digest"] != confirm:
