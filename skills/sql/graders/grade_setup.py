@@ -150,15 +150,20 @@ def change_target(name, data):
 
 
 def parse_plan(text):
-    """The first JSON object of a tool result that starts with an `ok` key, or None."""
+    """The first JSON object of a tool result that starts with an `ok` key and has a `digest` (the plan), else the first
+    object that starts with an `ok` key (a failed plan), or None. One call can run `services` and `plan` together."""
     decoder = json.JSONDecoder()
+    first = None
     for match in re.finditer(r"\{\s*\"ok\"\s*:", text):
         try:
             value, _ = decoder.raw_decode(text, match.start())
         except ValueError:
             continue
-        return value
-    return None
+        if isinstance(value, dict) and "digest" in value:
+            return value
+        if first is None:
+            first = value
+    return first
 
 
 def added_lines(plan):
