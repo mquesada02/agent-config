@@ -85,6 +85,8 @@ WRITE_MESSAGES = {
 
 # Functions whose effect ROLLBACK cannot undo (a sequence, a session lock, a file, a remote call), or that
 # run SQL from a string argument that the guard cannot scan. A hit downgrades the run to a plain EXPLAIN.
+# Select mode refuses the effect names directly (`lo_export`, `dblink*`) and its read-only transaction refuses `setval`,
+# so it downgrades only the string-SQL names (`STRING_SQL_*`); write mode and `diff` use the whole scan lists.
 STRING_SQL_NAMES = frozenset(["ts_stat", "connectby"])
 STRING_SQL_PREFIXES = ("query_to_xml", "cursor_to_xml", "crosstab")
 SCAN_NAMES = frozenset(["lo_export", "setval"]) | STRING_SQL_NAMES
@@ -229,31 +231,37 @@ def _forbidden_name(token):
     return name in FORBIDDEN_NAMES or name.startswith(FORBIDDEN_PREFIXES)
 
 
-def check_select(text):
+def _select_tokens(text):
+    """`(sql, None, tokens)` for a statement that select mode accepts, else `(None, refusal, None)`."""
     tokens, unterminated = tokenize(text)
     significant = [t for t in tokens if not _is_semicolon(t)]
     if not significant:
-        return _refuse("empty")
+        return (*_refuse("empty"), None)
     if unterminated:
-        return _refuse("unterminated")
+        return (*_refuse("unterminated"), None)
     semicolons = [i for i, t in enumerate(tokens) if _is_semicolon(t)]
     if semicolons and semicolons[0] != len(tokens) - 1:
-        return _refuse("multiple_statements")
+        return (*_refuse("multiple_statements"), None)
     first = tokens[0]
     first_word = first.value.upper() if first.kind == "word" else None
     if first_word in WRITE_WORDS:
-        return _refuse("write_statement")
+        return (*_refuse("write_statement"), None)
     if first_word not in SELECT_WORDS:
-        return _refuse("not_select", _static_review_only(first))
+        return (*_refuse("not_select", _static_review_only(first)), None)
     for token in tokens:
         if token.kind == "word" and token.value.upper() in DATA_MODIFYING_WORDS:
-            return _refuse("data_modifying")
+            return (*_refuse("data_modifying"), None)
     if any(_forbidden_name(t) for t in tokens):
-        return _refuse("forbidden_function")
+        return (*_refuse("forbidden_function"), None)
     if any(t.kind == "uamp" for t in tokens):
-        return _refuse("unicode_identifier")
+        return (*_refuse("unicode_identifier"), None)
     cut = tokens[semicolons[0]].start if semicolons else len(text)
-    return text[:cut].strip(), None
+    return text[:cut].strip(), None, tokens
+
+
+def check_select(text):
+    sql, refusal, _ = _select_tokens(text)
+    return (sql, None) if refusal is None else (None, refusal)
 
 
 def _string_sql_name(token):
@@ -270,10 +278,9 @@ def check_select_scan(text):
     `result` has `sql` and `scan` (the sorted, lower-cased names of the tokens in `STRING_SQL_NAMES` or starting with
     `STRING_SQL_PREFIXES`; a name in a string or a comment is no token), or `(None, refusal)` as `check_select` gives it.
     A non-empty `scan` makes `pg_run` run a plain EXPLAIN. A directly called forbidden function is still refused."""
-    sql, refusal = check_select(text)
+    sql, refusal, tokens = _select_tokens(text)
     if refusal:
         return None, refusal
-    tokens, _ = tokenize(text)
     return {"sql": sql, "scan": sorted({name for name in map(_string_sql_name, tokens) if name})}, None
 
 

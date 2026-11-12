@@ -66,7 +66,11 @@ For a failure of the allowlist, the `reason` `service_not_listed` means that the
 
 Select mode accepts exactly one `SELECT` or `WITH ... SELECT`, with one optional trailing `;`. It refuses mode changes (`SET`, `RESET`, `BEGIN`, `COMMIT`, `ROLLBACK` and the like), `VACUUM`, `LISTEN`, `UNLISTEN`, `NOTIFY`, `EXPLAIN`, `TABLE`, `VALUES`, a statement that starts with `(`, a data-modifying CTE, `SELECT ... INTO`, `set_config`, `pg_notify`, `lo_export`, advisory lock functions, `dblink` functions and `U&"`. The guard fails closed: when it is in doubt, it refuses.
 
-Select mode does not refuse a statement that calls a function that runs SQL from a string argument (`query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby`): the guard cannot scan that text, and `ANALYZE` would run it. The run is a plain `EXPLAIN` (`EXPLAIN (FORMAT JSON)`) in the same `BEGIN READ ONLY` ... `ROLLBACK` session (a downgrade): the result has `ran` `explain`, a `reason` such as `the statement calls query_to_xml` and a `downgrade` list of `{"kind": "function", "name"}`, and the plan has no actual values. A function called directly that select mode forbids (`dblink_exec`, `pg_notify`) is still refused with `forbidden_function`, also in a statement that calls a string-SQL function. The scan reads the statement only: a view body, a column default, a policy or a user-defined function that calls one of these functions is not scanned (see the Residual risk section).
+Select mode does not refuse a statement that calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby`). Such a function runs SQL from a string argument. The guard cannot scan that text, and `ANALYZE` would run it.
+
+So the run is a plain `EXPLAIN` (`EXPLAIN (FORMAT JSON)`) in the same `BEGIN READ ONLY` ... `ROLLBACK` session. This is a downgrade. The result has `ran` `explain`, a `reason` such as `the statement calls query_to_xml`, and a `downgrade` list of `{"kind": "function", "name"}`. The plan has no actual values.
+
+A forbidden function that the statement calls directly (`dblink_exec`, `pg_notify`) is still refused with `forbidden_function`. This also holds when the statement calls a string-SQL function. The scan reads the statement only (see the Residual risk section).
 
 Write mode has its own guard and its own transaction (`BEGIN READ WRITE`, always ended by `ROLLBACK`): see the Write mode section.
 
@@ -110,7 +114,7 @@ In write mode the guard and the forced `ROLLBACK` are the barrier, and `ROLLBACK
 - a sequence that a user function (also one in a column `DEFAULT`) or a `DEFAULT` change moves with no warning (an `UPDATE` or an `ON CONFLICT DO UPDATE` that sets a column to `DEFAULT` with a `nextval` default);
 - the guard reads the case of a word with ASCII rules only (the server rejects a word with a non-ASCII letter that looks like a keyword, which is the safe direction).
 
-In select mode the downgrade to a plain `EXPLAIN` reads the statement only: a string-SQL function that a view body, a column default, a row-level security policy or a user-defined function calls is not found, so `ANALYZE` still runs it. The select guard lexer has the divergences listed below (Unicode case fold, Unicode blanks).
+In select mode the downgrade to a plain `EXPLAIN` reads the statement only. A view body, a column default, a row-level security policy or a user-defined function can call a string-SQL function. The scan does not find that call, so `ANALYZE` still runs it. The select guard lexer has the divergences listed below (Unicode case fold, Unicode blanks).
 
 `diff` runs the user's `SELECT` statements, so the select guard is its barrier, and its own refusals close the string-SQL functions. These risks stay open:
 
