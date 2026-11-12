@@ -89,12 +89,31 @@ class OverrideTest(unittest.TestCase):
 
 
 class ShapeTest(unittest.TestCase):
-    def test_the_two_api_forms_share_one_head_helper_and_one_reach(self):
-        self.assertIs(audit.API_FORM.head, audit.API_OVERRIDE_FORM.head)
-        self.assertEqual(audit.API_TEXT_REACH, 300)
-        for form in (audit.API_FORM, audit.API_OVERRIDE_FORM):
-            self.assertIn(f"{{0,{audit.API_TEXT_REACH}}}", form.pattern.pattern)
-        self.assertIn(f"|.{{{audit.API_TEXT_REACH}}})", audit.API_FORM.pattern.pattern)
+    """An unparsable text is denied when its `gh api` form can reach the gated word within the reach (`API_TEXT_REACH`), and not otherwise."""
+
+    def gate(self, command):
+        return audit.gate_reason(command, os.getcwd())
+
+    def test_an_unparsable_gh_api_call_that_names_pulls_within_the_reach_is_denied(self):
+        for filler in (0, 1, audit.API_TEXT_REACH - len(" pulls") - len(" '")):
+            with self.subTest(filler=filler):
+                self.assertEqual(self.gate(f"gh api {'x' * filler} pulls '"), audit.API_FORM.unparsable_reason)
+
+    def test_an_unparsable_gh_api_call_that_reaches_the_limit_is_denied_even_with_no_gated_word(self):
+        self.assertEqual(self.gate(f"gh api {'x' * audit.API_TEXT_REACH}'"), audit.API_FORM.unparsable_reason)
+
+    def test_an_unparsable_gh_api_call_that_names_no_gated_word_within_the_reach_is_allowed(self):
+        self.assertIsNone(self.gate("gh api user '"))
+        self.assertIsNone(self.gate(f"gh api {'x' * (audit.API_TEXT_REACH - 2)}'"))
+
+    def test_an_unparsable_gh_api_call_with_the_override_header_within_the_reach_is_denied(self):
+        for filler in (0, 1, audit.API_TEXT_REACH - len(" x-http-method-override") - len(" '")):
+            with self.subTest(filler=filler):
+                self.assertEqual(self.gate(f"gh api {'x' * filler} x-http-method-override '"), audit.API_OVERRIDE_FORM.unparsable_reason)
+
+    def test_an_unparsable_gh_api_call_with_the_override_header_beyond_the_reach_is_denied_by_the_pulls_form_only(self):
+        """The override form reads no further than the reach; the pulls form denies the call because it reaches its own limit."""
+        self.assertEqual(self.gate(f"gh api {'x' * audit.API_TEXT_REACH} x-http-method-override '"), audit.API_FORM.unparsable_reason)
 
     def test_the_head_is_all_the_words_of_a_plain_call_and_none_for_another_command(self):
         self.assertEqual(audit._api_whole_head(["gh", "api", "user"]), ["gh", "api", "user"])
