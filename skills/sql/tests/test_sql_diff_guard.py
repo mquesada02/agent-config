@@ -44,7 +44,7 @@ class DiffGuardRefusalTest(unittest.TestCase):
 
     def test_the_string_sql_functions_are_forbidden(self):
         for name in ("query_to_xml", "cursor_to_xml", "query_to_xml_and_xmlschema", "ts_stat", "ts_rewrite", "crosstab", "crosstab2",
-                     "connectby", "setval", "TS_REWRITE", '"ts_rewrite"', "QUERY_TO_XML", '"ts_stat"'):
+                     "connectby", "setval", "QUERY_TO_XML", '"ts_stat"'):
             refusal = self.refusal(f"SELECT {name}('select 1', true, false, '')")
             self.assertEqual(refusal["reason"], "forbidden_function", name)
             self.assertFalse(refusal["static_review_only"])

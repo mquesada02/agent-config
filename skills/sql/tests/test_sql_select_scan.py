@@ -94,7 +94,7 @@ class SelectScanTest(unittest.TestCase):
 class ScanListsTest(unittest.TestCase):
     """The split of the scan lists keeps the members of write mode and `diff`."""
 
-    def test_the_scan_sets_equal_the_old_literals(self):
+    def test_the_scan_sets_hold_the_listed_names(self):
         self.assertEqual(sql_guard.SCAN_NAMES, frozenset(["lo_export", "setval", "ts_stat", "ts_rewrite", "connectby"]))
         self.assertEqual(set(sql_guard.SCAN_PREFIXES), {"dblink", "query_to_xml", "cursor_to_xml", "crosstab"})
 
