@@ -175,6 +175,38 @@ class HookTest(unittest.TestCase):
     def test_nesting_deeper_than_the_limit_is_denied(self):
         self.assert_denied("bash -c \"bash -c \\\"bash -c \\\\\\\"bash -c 'git diff'\\\\\\\"\\\"\"")
 
+    def reason_of(self, command):
+        output = self.run_hook(command)
+        self.assertIsNotNone(output, command)
+        self.assertEqual(output["permissionDecision"], "deny")
+        return output["permissionDecisionReason"]
+
+    def test_a_backtick_form_that_holds_a_gated_command_is_denied_with_a_reason_that_names_it(self):
+        for command, named in (
+            ("echo `git push`", "git push changes the remote"),
+            ("echo `git push", "git push changes the remote"),
+            ("echo \"`gh pr merge 5`\"", "gh pr merge changes GitHub"),
+            ("x=`gh api -X PUT repos/o/r/environments/prod` && ls", "gh api with the method 'PUT' changes GitHub"),
+            ("ls `echo hi` `terraform apply`", "terraform apply changes remote state"),
+            ("echo `bash -c 'git push'`", "git push changes the remote"),
+            ("echo `echo \\`git push\\``", "git push changes the remote"),
+        ):
+            with self.subTest(command=command):
+                reason = self.reason_of(command)
+                self.assertIn(f"{named}, inside a backtick form", reason)
+                self.assertNotIn("cannot be read", reason)
+
+    def test_a_backtick_form_with_no_gated_command_is_still_denied_as_unreadable(self):
+        for command in ("echo `ls`", "echo `", "echo `git status` `git diff`", "echo `$CMD`", "echo \"`ls`\""):
+            with self.subTest(command=command):
+                reason = self.reason_of(command)
+                self.assertIn("the command cannot be read (ValueError)", reason)
+                self.assertNotIn("inside a backtick form", reason)
+
+    def test_the_reason_of_a_form_with_no_backtick_is_unchanged(self):
+        self.assertIn("gh pr merge changes GitHub. A subagent", self.reason_of("echo $(gh pr merge 5)"))
+        self.assertIn("a gh subcommand that a variable, a substitution or a pattern builds. A subagent", self.reason_of("gh $SUB create"))
+
     def test_read_only_forms_pass_for_a_subagent(self):
         for command in ALLOWED:
             with self.subTest(command=command):
