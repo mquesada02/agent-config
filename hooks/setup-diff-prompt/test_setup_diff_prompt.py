@@ -288,6 +288,13 @@ class DenyTest(HookCase):
                 self.assertDenied(self.run_hook(self.payload(command)), "alone")
         self.assertIsNone(self.ran())
 
+    def test_a_tab_or_two_spaces_between_the_script_and_write_is_denied_and_the_plan_does_not_run(self):
+        for separator in ("\t", "  ", " \t"):
+            command = f"python3 {self.script}{separator}write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
+            with self.subTest(repr(separator)):
+                self.assertDenied(self.run_hook(self.payload(command)), "alone")
+        self.assertIsNone(self.ran())
+
     def test_a_command_with_more_than_one_line_that_calls_write_is_denied(self):
         command = self.write_command()
         for text in (f"{command}\necho x", f"echo x\n{command}", f"python3 -I {self.script}\nwrite {self.repo} "

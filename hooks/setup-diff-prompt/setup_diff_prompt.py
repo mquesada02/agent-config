@@ -164,6 +164,9 @@ def decide_checked(hook_input, plan_seconds):
         return None
     if "\n" in command or "\r" in command:
         raise Refusal("the command is not one line; " + FORM_HELP)
+    raw = RAW_WRITE.search(command)
+    if raw and re.search(r"[^\S ]| {2}", raw.group()):
+        raise Refusal("a tab or two spaces stand between the script and write; " + FORM_HELP)
     assignments, script, repo, proposal, confirm = parse_write(words)
     cwd = hook_input.get("cwd") if isinstance(hook_input.get("cwd"), str) else None
     repo, proposal = os.path.expanduser(repo), os.path.expanduser(proposal)
