@@ -28,6 +28,8 @@ WORK_SECONDS = 85  # work deadline; the rest of the overall time is the cleanup 
 CALL_SECONDS = 10  # own limit of each status, list, show, create, send and close call
 WAIT_SECONDS = 60  # own limit of the idle wait
 MIN_CALL_SECONDS = 3  # a work call starts only when at least this much time is left
+WORKER_SHOW_SECONDS = 10  # the worker-show comparison retries inside this window, which is inside the work time
+RETRY_PAUSE_SECONDS = 1  # the pause between two worker-show tries
 ERROR_CHARS = 300
 TITLE_CHARS = 200
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -315,15 +317,43 @@ class Launch:
         title = shown.get("result", "terminal", "title") if shown else None
         return successor_title(title if isinstance(title, str) else "claude")
 
+    def wrong_handle(self, reason):
+        return self.early_failed(f"worker handle is not this terminal (passed {self.worker_handle}, $ORCA_TERMINAL_HANDLE {self.old_handle}): {reason}")
+
+    def confirm_worker_handle(self, worktree):
+        """When the passed worker handle differs from $ORCA_TERMINAL_HANDLE, accept it only when Orca says that the variable is stale
+        and that the passed handle is a terminal of this worktree. Returns the failure or None."""
+        if self.old_handle == self.worker_handle:
+            return None
+        own =self.call(["terminal", "show", "--terminal", self.old_handle])
+        if own.ok:
+            return self.wrong_handle("Orca still knows $ORCA_TERMINAL_HANDLE as another terminal")
+        if dig(own.data, "error", "code") != "terminal_handle_stale":
+            return self.wrong_handle(own.error)
+        passed = self.call(["terminal", "show", "--terminal", self.worker_handle])
+        if not (passed.get("result", "terminal", "handle") == self.worker_handle and passed.get("result", "terminal", "worktreePath") == worktree):
+            return self.wrong_handle(passed.error if not passed.ok else "Orca does not place the passed handle in this worktree")
+        self.old_handle = self.worker_handle  # the confirmed terminal is the predecessor for the title and the lineage line
+        return None
+
     def check_dispatch(self, worktree):
-        """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. Writes the worker manual file. Returns the failure or None."""
-        shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch, "--full"])  # only the full view has the dispatch record
-        if not shown.ok:
-            return self.early_failed(shown.error)
-        if (shown.get("result", "dispatch", "id"), shown.get("result", "dispatch", "taskId"), shown.get("result", "dispatch", "assigneeHandle")) != (
-            self.dispatch, self.task, self.worker_handle
-        ):
-            return self.early_failed("the Dispatch does not match the worker handle and Task")
+        """The worker pre-check: worker-show confirms the Dispatch, Task and worker handle. A record that does not match is read again
+        for WORKER_SHOW_SECONDS; the failure then names each field. Writes the worker manual file. Returns the failure or None."""
+        end = time.monotonic() + WORKER_SHOW_SECONDS
+        while True:
+            shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch, "--full"], until=min(end, self.work_end))  # only the full view has the dispatch record
+            if not shown.ok:
+                return self.early_failed(shown.error)
+            differences = []
+            for name, passed in (("id", self.dispatch), ("taskId", self.task), ("assigneeHandle", self.worker_handle)):
+                orca = shown.get("result", "dispatch", name)
+                if orca != passed:
+                    differences.append(f"{name} passed {passed}, Orca {one_line(str(orca), 80) if orca is not None else 'none'}")
+            if not differences:
+                break
+            if end - time.monotonic() < RETRY_PAUSE_SECONDS + MIN_CALL_SECONDS:
+                return self.early_failed("the Dispatch does not match the worker handle and Task: " + "; ".join(differences))
+            time.sleep(RETRY_PAUSE_SECONDS)
         if clean(worktree) != worktree:  # the path is printed into the commands
             return self.early_failed("worktree path has a control character")
         self.worktree = worktree
@@ -333,7 +363,7 @@ class Launch:
         """Steps 4 to 13. Returns (status word, user text)."""
         if self.role not in ROLES:
             return self.failed(f"role {self.role[:ERROR_CHARS]} is not supported")  # only the role value is cut
-        if self.worker and self.old_handle != self.worker_handle:  # a missing or invalid variable counts as a mismatch
+        if self.worker and not self.old_handle:  # a missing or invalid variable cannot name this terminal
             return self.early_failed("worker handle is not this terminal")
         try:
             info = os.lstat(self.session + ".handoff.md", dir_fd=self.dir_fd)
@@ -351,10 +381,12 @@ class Launch:
             return self.early_failed("ORCA_CLI_COMMAND is invalid") if self.worker else self.failed("ORCA_CLI_COMMAND is invalid")
         worktree = self.worktree_path()
         if worktree is None:
+            if self.worker and self.old_handle != self.worker_handle:
+                return self.wrong_handle("Orca is not running or does not manage this worktree, so it cannot confirm the passed handle")
             failure = self.write_manual() if self.worker else None  # nothing can be verified without Orca: the text uses the IDs as typed and the cwd (maybe a sub-folder) as the worktree path
             return failure or ("manual", "no Orca: " + self.manual)
         if self.worker:
-            failure = self.check_dispatch(worktree)
+            failure = self.confirm_worker_handle(worktree) or self.check_dispatch(worktree)
             if failure:
                 return failure
 
