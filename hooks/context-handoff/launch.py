@@ -321,9 +321,11 @@ class Launch:
         return self.early_failed(f"worker handle is not this terminal (passed {self.worker_handle}, $ORCA_TERMINAL_HANDLE {self.old_handle}): {reason}")
 
     def confirm_worker_handle(self, worktree):
-        """The passed worker handle differs from $ORCA_TERMINAL_HANDLE. Accept it only when Orca says that the variable is stale
+        """When the passed worker handle differs from $ORCA_TERMINAL_HANDLE, accept it only when Orca says that the variable is stale
         and that the passed handle is a terminal of this worktree. Returns the failure or None."""
-        own = self.call(["terminal", "show", "--terminal", self.old_handle])
+        if self.old_handle == self.worker_handle:
+            return None
+        own =self.call(["terminal", "show", "--terminal", self.old_handle])
         if own.ok:
             return self.wrong_handle("Orca still knows $ORCA_TERMINAL_HANDLE as another terminal")
         if dig(own.data, "error", "code") != "terminal_handle_stale":
@@ -342,12 +344,11 @@ class Launch:
             shown = self.call(["orchestration", "worker-show", "--dispatch", self.dispatch, "--full"], until=min(end, self.work_end))  # only the full view has the dispatch record
             if not shown.ok:
                 return self.early_failed(shown.error)
-            differences = [
-                f"{name} passed {passed}, Orca {one_line(str(orca), 80) if orca is not None else 'none'}"
-                for name, passed in (("id", self.dispatch), ("taskId", self.task), ("assigneeHandle", self.worker_handle))
-                for orca in [shown.get("result", "dispatch", name)]
-                if orca != passed
-            ]
+            differences = []
+            for name, passed in (("id", self.dispatch), ("taskId", self.task), ("assigneeHandle", self.worker_handle)):
+                orca = shown.get("result", "dispatch", name)
+                if orca != passed:
+                    differences.append(f"{name} passed {passed}, Orca {one_line(str(orca), 80) if orca is not None else 'none'}")
             if not differences:
                 break
             if end - time.monotonic() < RETRY_PAUSE_SECONDS + MIN_CALL_SECONDS:
@@ -385,7 +386,7 @@ class Launch:
             failure = self.write_manual() if self.worker else None  # nothing can be verified without Orca: the text uses the IDs as typed and the cwd (maybe a sub-folder) as the worktree path
             return failure or ("manual", "no Orca: " + self.manual)
         if self.worker:
-            failure = (self.confirm_worker_handle(worktree) if self.old_handle != self.worker_handle else None) or self.check_dispatch(worktree)
+            failure = self.confirm_worker_handle(worktree) or self.check_dispatch(worktree)
             if failure:
                 return failure
 
