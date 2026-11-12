@@ -1446,6 +1446,11 @@ class WorkerStaleHandleTest(WorkerTestCase):
     def confirmed(self, **change):
         return reply({"terminal": {"handle": OLD_HANDLE, "worktreePath": self.worktree, "tabId": "tab_1", "leafId": "leaf_1", "title": "◐ Fix the thing", **change}})
 
+    def reset_stub_logs(self):
+        """Remove the call log and the sequence counter of the stub, so that the next launch in the same test starts clean."""
+        os.remove(self.log_path)
+        os.remove(self.log_path + ".terminal_show.count")
+
     def assert_both_handles_named(self, text, reason):
         self.assertEqual(text, self.early_failed_text(f"worker handle is not this terminal (passed {OLD_HANDLE}, $ORCA_TERMINAL_HANDLE {self.STALE}): {reason}"))
         self.assertNotIn("terminal create", self.names())
@@ -1471,8 +1476,7 @@ class WorkerStaleHandleTest(WorkerTestCase):
                 self.assertEqual(status, "failed")
                 self.assert_both_handles_named(text, reason)
                 self.assertNotIn("orchestration worker-show", self.names())
-                os.remove(self.log_path)
-                os.remove(self.log_path + ".terminal_show.count")  # the stub's call counter of the sequence
+                self.reset_stub_logs()
 
     def test_the_handle_of_another_terminal_of_the_worktree_is_refused_and_this_terminal_is_accepted(self):
         other = self.confirmed(tabId="tab_2", leafId="leaf_2")  # Orca confirms the other terminal as a terminal of this worktree
@@ -1480,8 +1484,7 @@ class WorkerStaleHandleTest(WorkerTestCase):
         status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY)
         self.assertEqual(status, "failed")
         self.assert_both_handles_named(text, "the passed handle pane key tab_2:leaf_2 is not $ORCA_PANE_KEY tab_1:leaf_1")
-        os.remove(self.log_path)
-        os.remove(self.log_path + ".terminal_show.count")
+        self.reset_stub_logs()
         self.stale()
         self.assertEqual(self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
 
@@ -1497,15 +1500,42 @@ class WorkerStaleHandleTest(WorkerTestCase):
                 self.stale(self.confirmed(**change))
                 status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY)
                 self.assertEqual(status, "failed")
-                self.assert_both_handles_named(text, "the passed handle pane key none is not $ORCA_PANE_KEY tab_1:leaf_1")
-                os.remove(self.log_path)
-                os.remove(self.log_path + ".terminal_show.count")
+                self.assert_both_handles_named(text, "the passed handle pane key <missing> is not $ORCA_PANE_KEY tab_1:leaf_1")
+                self.reset_stub_logs()
 
     def test_a_passed_handle_without_ids_is_refused_even_when_the_pane_key_is_the_word_none(self):
         self.stale(self.confirmed(tabId=None))
         status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY="none")
         self.assertEqual(status, "failed")
-        self.assert_both_handles_named(text, "the passed handle pane key none is not $ORCA_PANE_KEY none")
+        self.assert_both_handles_named(text, "the passed handle pane key <missing> is not $ORCA_PANE_KEY none")
+
+    def test_a_pane_key_that_is_not_the_tab_colon_leaf_format_is_refused(self):
+        """Pins the format that the check builds: tabId, a colon, leafId."""
+        for name, key in {"slash": "tab_1/leaf_1", "no separator": "tab_1leaf_1", "swapped": "leaf_1:tab_1", "tab only": "tab_1"}.items():
+            with self.subTest(name=name):
+                self.stale()
+                status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=key)
+                self.assertEqual(status, "failed")
+                self.assert_both_handles_named(text, f"the passed handle pane key tab_1:leaf_1 is not $ORCA_PANE_KEY {key}")
+                self.reset_stub_logs()
+
+    def test_control_characters_in_the_ids_of_the_passed_handle_are_cleaned_in_the_reason(self):
+        for name, change, shown in (
+            ("tab", {"tabId": "tab\n1"}, "tab 1:leaf_1"),
+            ("leaf", {"leafId": "leaf\t1"}, "tab_1:leaf 1"),
+        ):
+            with self.subTest(name=name):
+                self.stale(self.confirmed(**change))
+                status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY)
+                self.assertEqual(status, "failed")
+                self.assert_both_handles_named(text, f"the passed handle pane key {shown} is not $ORCA_PANE_KEY tab_1:leaf_1")
+                self.reset_stub_logs()
+
+    def test_ids_whose_cleaned_text_equals_the_pane_key_are_still_refused(self):
+        self.stale(self.confirmed(tabId="tab\n1"))
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY="tab 1:leaf_1")
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "the passed handle pane key tab 1:leaf_1 is not $ORCA_PANE_KEY tab 1:leaf_1")
 
     def test_a_pane_key_with_control_characters_is_cleaned_in_the_reason(self):
         self.stale()
