@@ -178,6 +178,7 @@ class Launch:
         self.total_end = start + OVERALL_SECONDS
         old_handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
         self.old_handle = old_handle if valid_handle(old_handle) else ""
+        self.pane_key = os.environ.get("ORCA_PANE_KEY", "")  # <tabId>:<leafId> of this terminal's pane; the proof for a stale handle
         self.cli = None
         self.successor_session = str(uuid.uuid4())  # the session ID that the successor is started with
         self.created = None  # the handle of the terminal this launcher created, until the prompt is confirmed
@@ -321,8 +322,9 @@ class Launch:
         return self.early_failed(f"worker handle is not this terminal (passed {self.worker_handle}, $ORCA_TERMINAL_HANDLE {self.old_handle}): {reason}")
 
     def confirm_worker_handle(self, worktree):
-        """When the passed worker handle differs from $ORCA_TERMINAL_HANDLE, accept it only when Orca says that the variable is stale
-        and that the passed handle is a terminal of this worktree. Returns the failure or None."""
+        """When the passed worker handle differs from $ORCA_TERMINAL_HANDLE, accept it only when Orca says that the variable is stale,
+        that the passed handle is a terminal of this worktree, and that its tabId:leafId equals $ORCA_PANE_KEY (this terminal, not
+        another terminal of the worktree). Returns the failure or None."""
         if self.old_handle == self.worker_handle:
             return None
         own =self.call(["terminal", "show", "--terminal", self.old_handle])
@@ -333,6 +335,13 @@ class Launch:
         passed = self.call(["terminal", "show", "--terminal", self.worker_handle])
         if not (passed.get("result", "terminal", "handle") == self.worker_handle and passed.get("result", "terminal", "worktreePath") == worktree):
             return self.wrong_handle(passed.error if not passed.ok else "Orca does not place the passed handle in this worktree")
+        tab, leaf = passed.get("result", "terminal", "tabId"), passed.get("result", "terminal", "leafId")
+        passed_key = f"{tab}:{leaf}" if isinstance(tab, str) and tab and isinstance(leaf, str) and leaf else None
+        shown_key = one_line(passed_key or "none", 100)
+        if not self.pane_key:
+            return self.wrong_handle(f"$ORCA_PANE_KEY is missing, so Orca cannot prove that the passed handle is this terminal (passed handle pane key {shown_key})")
+        if passed_key is None or passed_key != self.pane_key:  # no ids from Orca never proves anything, whatever the variable holds
+            return self.wrong_handle(f"the passed handle pane key {shown_key} is not $ORCA_PANE_KEY {one_line(self.pane_key, 100)}")
         self.old_handle = self.worker_handle  # the confirmed terminal is the predecessor for the title and the lineage line
         return None
 
