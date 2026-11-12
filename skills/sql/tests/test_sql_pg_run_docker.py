@@ -246,18 +246,25 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
         hidden = f"SELECT pgrun_test.dblink_exec(''{connection}'', ''INSERT INTO pgrun_test.probe_t VALUES (1)'')"
         for version in VERSIONS:
             with self.subTest(version=version):
+                # Positive control: the hidden statement does insert a row when it runs (the table is emptied after).
+                control = host_psql(self.ports[version], "-c", hidden.replace("''", "'"))
+                self.assertEqual(control.returncode, 0, control.stderr)
+                self.assertEqual(self.probe_rows(version), "1")
+                emptied = host_psql(self.ports[version], "-c", "TRUNCATE pgrun_test.probe_t")
+                self.assertEqual(emptied.returncode, 0, emptied.stderr)
                 data = self.explain(version, f"SELECT query_to_xml('{hidden}', true, true, '')")
                 self.assertTrue(data["ok"], data)
                 self.assertEqual(self.probe_rows(version), "0")
                 self.assertEqual((data["ran"], data["mode"]), ("explain", "select"))
                 self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
 
-    def test_the_examples_of_the_brief_give_a_plain_explain(self):
+    def test_a_forbidden_function_in_the_text_argument_gives_a_plain_explain(self):
         for version in VERSIONS:
             for hidden in ("pg_notify(''chan'', ''x'')", "set_config(''pgrun.flag'', ''1'', false)"):
                 with self.subTest(version=version, hidden=hidden):
                     data = self.explain(version, f"SELECT query_to_xml('SELECT {hidden}', true, true, '')")
                     self.assertEqual((data["ok"], data["ran"]), (True, "explain"), data)
+                    self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
 
     def test_each_listed_function_gives_a_plain_explain_and_a_normal_select_still_analyzes(self):
         statements = {

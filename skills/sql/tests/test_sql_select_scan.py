@@ -59,10 +59,12 @@ class SelectScanTest(unittest.TestCase):
                 self.assertEqual(self.scan(text), [])
 
     def test_a_statement_with_no_listed_function_has_an_empty_scan(self):
-        for text in ("SELECT 1", "SELECT lower(a) FROM t", "SELECT query_to_xmlx", "SELECT xcrosstab"):
+        for text in ("SELECT 1", "SELECT lower(a) FROM t", "SELECT xcrosstab"):
             with self.subTest(text=text):
-                expected = ["query_to_xmlx"] if text == "SELECT query_to_xmlx" else []
-                self.assertEqual(self.scan(text), expected)
+                self.assertEqual(self.scan(text), [])
+
+    def test_a_name_that_starts_with_a_listed_prefix_is_found(self):
+        self.assertEqual(self.scan("SELECT query_to_xmlx"), ["query_to_xmlx"])
 
     def test_a_refusal_of_check_select_passes_through_unchanged(self):
         for text in (
