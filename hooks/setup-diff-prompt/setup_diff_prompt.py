@@ -42,6 +42,10 @@ FORM = "[XDG_CONFIG_HOME=value] python3 [-I] <path>/setup_files.py write <repo> 
 FORM_HELP = "call write alone, as one simple command in this form: " + FORM
 
 
+class Refusal(Exception):
+    """A check failed: `decide` turns it into a deny with this reason."""
+
+
 def deny(reason):
     return {"decision": "deny", "reason": DENY_PREFIX + reason}
 
@@ -59,9 +63,9 @@ def calls_write(words):
 
 
 def parse_write(words):
-    """(assignments, script, repo, proposal, confirm) of the exact write form, or a deny dictionary."""
+    """(assignments, script, repo, proposal, confirm) of the exact write form; raises Refusal for any other form."""
     if any(OPERATOR.match(word) for word in words):
-        return deny("this is a compound command, a pipe or a redirect; " + FORM_HELP)
+        raise Refusal("this is a compound command, a pipe or a redirect; " + FORM_HELP)
     index = 0
     assignments = {}
     while index < len(words) and ASSIGNMENT.match(words[index]):
@@ -69,51 +73,51 @@ def parse_write(words):
         assignments[name] = value
         index += 1
     if index >= len(words) or words[index] != "python3":
-        return deny("the command does not start with python3; " + FORM_HELP)
+        raise Refusal("the command does not start with python3; " + FORM_HELP)
     index += 1
     if index < len(words) and words[index] == "-I":
         index += 1
     if index + 1 >= len(words) or os.path.basename(words[index]) != SCRIPT_NAME or words[index + 1] != "write":
-        return deny("the script is not called directly with write; " + FORM_HELP)
+        raise Refusal("the script is not called directly with write; " + FORM_HELP)
     script = words[index]
     rest = words[index + 2:]
     if not rest or rest[0].startswith("--"):
-        return deny("the repo folder is missing after write; " + FORM_HELP)
+        raise Refusal("the repo folder is missing after write; " + FORM_HELP)
     repo, options = rest[0], rest[1:]
     found = {}
     while options:
         if options[0] not in ("--proposal", "--confirm") or len(options) < 2 or options[0] in found:
-            return deny("unexpected, repeated or incomplete words after the repo folder; " + FORM_HELP)
+            raise Refusal("unexpected, repeated or incomplete words after the repo folder; " + FORM_HELP)
         found[options[0]] = options[1]
         options = options[2:]
     if set(found) != {"--proposal", "--confirm"}:
-        return deny("the command needs --proposal and --confirm; " + FORM_HELP)
+        raise Refusal("the command needs --proposal and --confirm; " + FORM_HELP)
     return assignments, script, repo, found["--proposal"], found["--confirm"]
 
 
 def run_plan(script, repo, proposal, assignments, cwd, plan_seconds):
-    """The decoded plan, or a deny dictionary."""
+    """The decoded plan; raises Refusal when the plan cannot give a digest."""
     env = dict(os.environ)
     env.update(assignments)
     try:
         done = subprocess.run([sys.executable, "-I", script, "plan", repo, "--proposal", proposal],
                               capture_output=True, text=True, timeout=plan_seconds, cwd=cwd, env=env)
     except subprocess.TimeoutExpired:
-        return deny("plan did not end in %s seconds" % plan_seconds)
+        raise Refusal("plan did not end in %s seconds" % plan_seconds)
     except OSError as error:
-        return deny("plan could not start: %s" % error)
+        raise Refusal("plan could not start: %s" % error)
     try:
         plan = json.loads(done.stdout)
     except ValueError:
-        return deny("plan printed no JSON object (exit code %s)" % done.returncode)
+        plan = None
     if not isinstance(plan, dict):
-        return deny("plan printed no JSON object (exit code %s)" % done.returncode)
+        raise Refusal("plan printed no JSON object (exit code %s)" % done.returncode)
     if plan.get("ok") is not True:
-        return deny("plan refused: %s" % (plan.get("message") or plan.get("reason") or "no message"))
+        raise Refusal("plan refused: %s" % (plan.get("message") or plan.get("reason") or "no message"))
     if done.returncode != 0:
-        return deny("plan has ok true but exit code %s" % done.returncode)
+        raise Refusal("plan has ok true but exit code %s" % done.returncode)
     if not isinstance(plan.get("digest"), str):
-        return deny("plan has no digest")
+        raise Refusal("plan has no digest")
     return plan
 
 
@@ -131,50 +135,47 @@ def decide(hook_input, plan_seconds=PLAN_SECONDS):
     """The decision dictionary {"decision", "reason"} (ask or deny), or None for a pass. Never raises."""
     try:
         return decide_checked(hook_input, plan_seconds)
+    except Refusal as refusal:
+        return deny(str(refusal))
     except Exception as error:  # fail closed: a bug in the hook is a deny, never an allow
         return deny("internal error in the hook: %s: %s" % (type(error).__name__, error))
 
 
 def decide_checked(hook_input, plan_seconds):
     if not isinstance(hook_input, dict):
-        return deny("the hook input is not a JSON object")
+        raise Refusal("the hook input is not a JSON object")
     if hook_input.get("tool_name") != "Bash":
         return None
     tool_input = hook_input.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str):
-        return deny("the Bash call has no command text")
+        raise Refusal("the Bash call has no command text")
     if SCRIPT_NAME not in command:
         return None
     try:
         words = split_words(command)
     except ValueError as error:
-        return deny("the command cannot be split into shell words (%s)" % error)
+        raise Refusal("the command cannot be split into shell words (%s)" % error)
     if not calls_write(words):
         return None
-    parsed = parse_write(words)
-    if isinstance(parsed, dict):
-        return parsed
-    assignments, script, repo, proposal, confirm = parsed
+    assignments, script, repo, proposal, confirm = parse_write(words)
     cwd = hook_input.get("cwd") if isinstance(hook_input.get("cwd"), str) else None
     repo, proposal = os.path.expanduser(repo), os.path.expanduser(proposal)
     if not (os.path.isabs(repo) and os.path.isabs(proposal)):
-        return deny("the repo folder and the proposal file must be absolute paths")
+        raise Refusal("the repo folder and the proposal file must be absolute paths")
     refused = [name for name in assignments if name not in ALLOWED_VARIABLES]
     if refused:
-        return deny("the variable %s is not allowed before python3; only %s may be set. %s"
+        raise Refusal("the variable %s is not allowed before python3; only %s may be set. %s"
                     % (refused[0], ", ".join(ALLOWED_VARIABLES), FORM_HELP))
     script = os.path.expanduser(script)
     full = script if os.path.isabs(script) else os.path.join(cwd or os.getcwd(), script)
     if os.path.realpath(full) != TRUSTED_SCRIPT:
-        return deny("the script %s is not the sql skill setup_files.py of this hook tree (%s)" % (script, TRUSTED_SCRIPT))
+        raise Refusal("the script %s is not the sql skill setup_files.py of this hook tree (%s)" % (script, TRUSTED_SCRIPT))
     if not os.path.isfile(full):
-        return deny("the script %s was not found" % script)
+        raise Refusal("the script %s was not found" % script)
     plan = run_plan(TRUSTED_SCRIPT, repo, proposal, assignments, cwd, plan_seconds)
-    if "decision" in plan:
-        return plan
     if plan["digest"] != confirm:
-        return deny("the digest differs from the plan: the files changed after the plan. "
+        raise Refusal("the digest differs from the plan: the files changed after the plan. "
                     "Run plan again, then call write with the new digest")
     return {"decision": "ask", "reason": "Diff to confirm:\n" + diff_text(plan)}
 
