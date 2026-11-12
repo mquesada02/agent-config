@@ -301,5 +301,28 @@ class RoundThreeGraderTest(GraderCase):
                 self.assertTrue(out.strip().splitlines()[0].startswith("FAIL order"), out)
 
 
+class ServicesAndPlanInOneResultTest(GraderCase):
+    """One Bash call that runs `services` and then `plan` has two JSON objects that start with ok: the plan is the one
+    with a digest (ticket 509: a real run read the services object, so `shown` and `digest` were checked on the wrong object)."""
+
+    def combined(self, shown):
+        services = json.dumps({"ok": True, "service_check": {"service_file": "found", "missing": []}})
+        return [
+            assistant(call("p1", "Bash", command="python3 setup_files.py services app-dev\npython3 setup_files.py plan /r --proposal /tmp/p.json")),
+            result("p1", services + " " + json.dumps(PLAN)),
+            assistant(text(shown)),
+            write_call(),
+        ]
+
+    def test_the_plan_object_is_the_one_with_the_digest(self):
+        code, out, err = self.grade(self.combined(SHOWN))
+        self.assertEqual(code, 0, (out, err))
+
+    def test_a_missing_diff_is_found_on_the_plan_object_not_the_services_object(self):
+        code, out, err = self.grade(self.combined("I will write now."))
+        self.assertEqual(code, 1, (out, err))
+        self.assertTrue(any(line.startswith("FAIL shown") for line in out.splitlines()), out)
+
+
 if __name__ == "__main__":
     unittest.main()
