@@ -2960,21 +2960,30 @@ API_GRAPHQL = re.compile(r"graphql/?(?:[?#].*)?$", re.IGNORECASE)  # the GraphQL
 METHOD_OVERRIDE_HEADER = "x-http-method-override"
 
 
+def _before_dashes(arguments):
+    """The arguments up to `--`, which ends the options."""
+    return arguments[:arguments.index("--")] if "--" in arguments else arguments
+
+
+def _api_option_values(arguments, short, long):
+    """The value of each `short` (`-X`) or `long` (`--method`) option of the `gh api` arguments, in order: the next word (empty when there is
+    none), `--long=value`, or `-Xvalue` / `-X=value`. The one flat reading of these options: each word is read by itself, a value is not
+    skipped, so that a header or a method that is the value of another option is still seen. The method and the override checks use it."""
+    for index, word in enumerate(_before_dashes(arguments)):
+        if word in (short, long):
+            yield arguments[index + 1] if index + 1 < len(arguments) else ""  # the next word, even if it is the `--`
+        elif word.startswith(f"{long}="):
+            yield word[len(long) + 1:]
+        elif word.startswith(short):
+            yield word[len(short):].removeprefix("=")
+
+
 def _api_method(arguments):
     """The HTTP method of the `gh api` arguments: the last --method/-X, else POST when a field or an input is given, else GET."""
-    method = implied = None
-    for index, word in enumerate(arguments):
-        if word == "--":
-            break
-        if word in ("-X", "--method"):
-            method = arguments[index + 1] if index + 1 < len(arguments) else ""
-        elif word.startswith("--method="):
-            method = word[len("--method="):]
-        elif word.startswith("-X"):
-            method = word[2:].removeprefix("=")
-        elif word.startswith(("-f", "-F", "--field", "--raw-field", "--input")):
-            implied = "POST"
-    return (method or implied or "GET").upper()
+    methods = list(_api_option_values(arguments, "-X", "--method"))
+    body_options = ("-f", "-F", "--field", "--raw-field", "--input")  # a field or an input makes the request a POST
+    implied = "POST" if any(word.startswith(body_options) for word in _before_dashes(arguments)) else None
+    return ((methods[-1] if methods else None) or implied or "GET").upper()
 
 
 def _denies_api_pull(segment, appendable=False):
@@ -3006,22 +3015,13 @@ def _denies_api_override(segment):
     arguments = _command_words(segment)[len(head):]
     if any(METHOD_OVERRIDE_HEADER in word.lower() for word in arguments):
         return True
-    for index, word in enumerate(arguments):
-        if word == "--":
-            break
-        if word in ("-H", "--header"):
-            header = arguments[index + 1] if index + 1 < len(arguments) else ""
-        elif word.startswith("--header="):
-            header = word[len("--header="):]
-        elif word.startswith("-H") and not word.startswith("--"):
-            header = word[2:].removeprefix("=")
-        else:
-            continue
-        if re.search(r"[$`]", header.split(":", 1)[0]):
-            return True
-    return False
+    return any(re.search(r"[$`]", header.split(":", 1)[0]) for header in _api_option_values(arguments, "-H", "--header"))
 
 
+# The alias rule is stricter than "deny an expansion that opens a pull request" (decided by the owner, #519): an expansion to `pulls` or
+# GraphQL, or with no endpoint, is denied whatever its method. `gh` appends the arguments of the alias call to the expansion, so the
+# method, the fields and the endpoint of the expansion are not final: `gh alias set x 'api -X GET repos/o/r/pulls'` and `'api'` can still
+# open a pull request once the call adds `-X POST -f ...` or an endpoint.
 def _alias_api_problem(word):
     """Whether a word of `gh alias set` is the expansion of a `gh api` call that the gate denies (see `_denies_api_pull`, `appendable`),
     or cannot be read. The word is parsed as the arguments of `gh`, which is how `gh` runs a non-shell expansion."""
@@ -3048,12 +3048,20 @@ def _denies_alias_pull(segment):
 
 # The text count of `gh api` reads only a call whose text can reach the pulls endpoint or GraphQL (or holds a `$` or a backtick); the head
 # of a plain call is the whole segment, so that this text is its own and a wrapped call is the unchecked one.
+API_TEXT_REACH = 300  # the characters of a `gh api` call that the text counts of the `gh api` forms read after the word `api`
+
+
+def _api_whole_head(segment):
+    """The head of a `gh api` segment for the per-segment count of the `gh api` forms: all its words, or None when it is no `gh api` call."""
+    return _command_words(segment) if _api_head(segment) else None
+
+
 API_FORM = GatedForm(_has_head(_api_head), "gh api pulls", "gh api pulls",
                      "unchecked command form: the command cannot be parsed; run gh api pulls as a plain command",
-                     # The reach is 300 characters, so that many starts cannot make the count slow; a call with 300 more that cannot be read is counted.
-                     # The reach does not stop at a `;`, `&` or `|`: the text cannot tell one in a quote from a separator.
-                     _cli_pattern("gh", GH_VALUE_OPTIONS, "api(?![\\w.-])(?:.{0,300}?(?i:pulls|graphql|createpullrequest|[$`])|.{300})"),
-                     lambda segment: _command_words(segment) if _api_head(segment) else None, _denies_api_pull,
+                     # The reach is API_TEXT_REACH characters, so that many starts cannot make the count slow; a call with that many more that
+                     # cannot be read is counted. The reach does not stop at a `;`, `&` or `|`: the text cannot tell one in a quote from a separator.
+                     _cli_pattern("gh", GH_VALUE_OPTIONS, f"api(?![\\w.-])(?:.{{0,{API_TEXT_REACH}}}?(?i:pulls|graphql|createpullrequest|[$`])|.{{{API_TEXT_REACH}}})"),
+                     _api_whole_head, _denies_api_pull,
                      "gh api that opens a pull request is denied" + PR_POINTER, PR_POINTER)
 ALIAS_FORM = GatedForm(_has_head(_alias_head), "gh alias set", "gh alias set",
                        "unchecked command form: the command cannot be parsed; run gh alias set as a plain command",
@@ -3062,8 +3070,8 @@ ALIAS_FORM = GatedForm(_has_head(_alias_head), "gh alias set", "gh alias set",
 # `gh api` with a method-override header is denied whatever it does, so the text count reads any call whose text holds the header name.
 API_OVERRIDE_FORM = GatedForm(_has_head(_api_head), "gh api method-override", "gh api method-override",
                               "unchecked command form: the command cannot be parsed; run gh api method-override as a plain command",
-                              _cli_pattern("gh", GH_VALUE_OPTIONS, "api(?![\\w.-])(?:.{0,300}?(?i:method-override))"),
-                              lambda segment: _command_words(segment) if _api_head(segment) else None, _denies_api_override,
+                              _cli_pattern("gh", GH_VALUE_OPTIONS, f"api(?![\\w.-])(?:.{{0,{API_TEXT_REACH}}}?(?i:method-override))"),
+                              _api_whole_head, _denies_api_override,
                               "gh api with a method-override header is denied")
 # `gh alias import` adds aliases from a file or stdin, which the gate cannot read: denied whatever it imports.
 ALIAS_IMPORT_FORM = GatedForm(_has_head(_alias_import_head), "gh alias import", "gh alias import",
