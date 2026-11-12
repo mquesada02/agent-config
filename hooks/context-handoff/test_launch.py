@@ -1198,8 +1198,9 @@ class NoTestSwitchTest(unittest.TestCase):
     def test_the_launcher_reads_only_the_documented_environment(self):
         with open(LAUNCH) as handle:
             source = handle.read()
-        self.assertEqual(source.count("os.environ"), 2)  # ORCA_TERMINAL_HANDLE and ORCA_CLI_COMMAND; TMPDIR is read in runtime_dir
+        self.assertEqual(source.count("os.environ"), 3)  # ORCA_TERMINAL_HANDLE, ORCA_PANE_KEY and ORCA_CLI_COMMAND; TMPDIR is read in runtime_dir
         self.assertIn('"ORCA_TERMINAL_HANDLE"', source)
+        self.assertIn('"ORCA_PANE_KEY"', source)
         self.assertIn('"ORCA_CLI_COMMAND"', source)
 
 
@@ -1435,11 +1436,15 @@ class WorkerRetryTest(WorkerTestCase):
 
 class WorkerStaleHandleTest(WorkerTestCase):
     STALE = "term_stale"
+    PANE_KEY = "tab_1:leaf_1"
 
     def stale(self, passed=None):
         """The first `terminal show` (the variable) is stale; the next ones (the passed handle, then the title lookup) get `passed`."""
-        passed = passed or reply({"terminal": {"handle": OLD_HANDLE, "worktreePath": self.worktree, "title": "◐ Fix the thing"}})
+        passed = passed or self.confirmed()
         self.scenario["terminal show"] = {"sequence": [failure("terminal_handle_stale", "terminal_handle_stale"), passed]}
+
+    def confirmed(self, **change):
+        return reply({"terminal": {"handle": OLD_HANDLE, "worktreePath": self.worktree, "tabId": "tab_1", "leafId": "leaf_1", "title": "◐ Fix the thing", **change}})
 
     def assert_both_handles_named(self, text, reason):
         self.assertEqual(text, self.early_failed_text(f"worker handle is not this terminal (passed {OLD_HANDLE}, $ORCA_TERMINAL_HANDLE {self.STALE}): {reason}"))
@@ -1447,7 +1452,7 @@ class WorkerStaleHandleTest(WorkerTestCase):
 
     def test_a_stale_variable_whose_passed_handle_orca_confirms_launches(self):
         self.stale()
-        self.assertEqual(self.launch(self.worker_arguments(), handle=self.STALE), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+        self.assertEqual(self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
         shows = [self.option(call, "--terminal") for call in self.calls() if call["argv"][:2] == ["terminal", "show"]]
         self.assertEqual(shows[:2], [self.STALE, OLD_HANDLE])
         self.assertEqual(self.lineage()[0]["predecessor"], OLD_HANDLE)  # the confirmed terminal, not the stale variable
@@ -1468,6 +1473,45 @@ class WorkerStaleHandleTest(WorkerTestCase):
                 self.assertNotIn("orchestration worker-show", self.names())
                 os.remove(self.log_path)
                 os.remove(self.log_path + ".terminal_show.count")  # the stub's call counter of the sequence
+
+    def test_the_handle_of_another_terminal_of_the_worktree_is_refused_and_this_terminal_is_accepted(self):
+        other = self.confirmed(tabId="tab_2", leafId="leaf_2")  # Orca confirms the other terminal as a terminal of this worktree
+        self.stale(other)
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY)
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "the passed handle pane key tab_2:leaf_2 is not $ORCA_PANE_KEY tab_1:leaf_1")
+        os.remove(self.log_path)
+        os.remove(self.log_path + ".terminal_show.count")
+        self.stale()
+        self.assertEqual(self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY), ("ok", f"context handoff done: successor {NEW_HANDLE}"))
+
+    def test_a_missing_pane_key_fails_and_names_both_handles(self):
+        self.stale()
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE)
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "$ORCA_PANE_KEY is missing, so Orca cannot prove that the passed handle is this terminal (passed handle pane key tab_1:leaf_1)")
+
+    def test_a_passed_handle_without_tab_and_leaf_ids_fails(self):
+        for name, change in {"no tab": {"tabId": None}, "no leaf": {"leafId": ""}, "number": {"leafId": 5}}.items():
+            with self.subTest(name=name):
+                self.stale(self.confirmed(**change))
+                status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY=self.PANE_KEY)
+                self.assertEqual(status, "failed")
+                self.assert_both_handles_named(text, "the passed handle pane key none is not $ORCA_PANE_KEY tab_1:leaf_1")
+                os.remove(self.log_path)
+                os.remove(self.log_path + ".terminal_show.count")
+
+    def test_a_passed_handle_without_ids_is_refused_even_when_the_pane_key_is_the_word_none(self):
+        self.stale(self.confirmed(tabId=None))
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY="none")
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "the passed handle pane key none is not $ORCA_PANE_KEY none")
+
+    def test_a_pane_key_with_control_characters_is_cleaned_in_the_reason(self):
+        self.stale()
+        status, text = self.launch(self.worker_arguments(), handle=self.STALE, ORCA_PANE_KEY="tab\nleaf")
+        self.assertEqual(status, "failed")
+        self.assert_both_handles_named(text, "the passed handle pane key tab_1:leaf_1 is not $ORCA_PANE_KEY tab leaf")
 
     def test_a_variable_that_orca_still_knows_fails(self):
         status, text = self.launch(self.worker_arguments(), handle=self.STALE)  # the default `terminal show` answers ok for any handle
