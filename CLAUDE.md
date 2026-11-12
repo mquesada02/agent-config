@@ -163,10 +163,10 @@ When merging a PR, follow these rules:
 - if not, create a merge commit 
 
 Before you give the owner the merge command, check that the CI result of the PR is still valid. Skip this check when the PR has no CI checks. Follow these steps:
-1. Fetch the base branch and the PR head: `git fetch origin <base> pull/<n>/head`.
+1. Fetch the base branch and the PR head: `git fetch origin <base> pull/<n>/head`. The fetch brings the PR head into the local clone, so a tested head that was on the PR branch is there for step 3.
 2. If no run exists for the PR, go to step 6.
-3. Find the head that the last CI run of the PR tested. If the base tip is an ancestor of that head (`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6. If the tested head is not in the local clone after step 1 (for example after a force push), the CI result is stale: go to step 4.
-4. Otherwise merge the base into the PR branch: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`, or `git merge` of the fetched base and a push. `gh pr update-branch` may not exist in the installed `gh`. After the REST call, run `git pull --ff-only` in the worktree of the PR branch, so that it holds the new PR head.
+3. Find the head that the last CI run of the PR tested. First check that the tested head is in the local clone: `git cat-file -e <tested head>^{commit}`. If it is missing (for example after a force push), the CI result is stale: go to step 4. If it is there, check the base tip: if the base tip is an ancestor of that head (`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6. If it is not, go to step 4.
+4. If the base tip is not an ancestor of the tested head, or the tested head is stale, merge the base into the PR branch: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`, or `git merge` of the fetched base and a push. `gh pr update-branch` may not exist in the installed `gh`. After the REST call, find the worktree of the PR branch with `git worktree list` (match the branch name). In that worktree, run `git pull --ff-only origin <PR branch>`, so that it holds the new PR head. This needs no upstream on the branch.
 5. On a merge conflict, give no merge command: report the conflicting files to the owner and ask how to go on. Do not resolve them on your own.
 6. Wait for the CI run on the head with a blocking `gh pr checks --watch`, not a poll loop. If no run appears for the head within about 10 minutes, tell the owner and stop.
 7. If the run fails, give no merge command: report the failing check with its link to the owner and ask how to go on. Do not fix it on your own.
