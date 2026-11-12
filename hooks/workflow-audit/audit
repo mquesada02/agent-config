@@ -2668,7 +2668,7 @@ def _is_orca(word):
     return os.path.basename(word) in ORCA_COMMANDS
 
 
-# The options of `gh` and `orca` that take a value. `gh api` has more of its own: they matter only to find its endpoint.
+# The options of `gh` that take a value (`gh api` has more, below: they matter only to find its endpoint).
 GH_VALUE_OPTIONS = frozenset(("-R", "--repo"))
 # The value options of `orca` (the global ones and those of the dispatch command, from `orca agent-context --json`): orca may read them anywhere.
 ORCA_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
@@ -2717,8 +2717,8 @@ _alias_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["alias", "set"])
 
 
 def _arguments(segment, head):
-    """The command words after the head of a segment that `head` matches."""
-    return _command_words(segment)[len(head(segment)):]
+    """The command words of a segment after its head (the words that its `_cli_head` function gave)."""
+    return _command_words(segment)[len(head):]
 
 
 def _is_pr_create(segment):
@@ -2738,7 +2738,7 @@ def _is_gated_pr_create(segment):
     """A `gh pr create` that needs a passing record: one that is not a help-only command. A redirection in the head is no help-only
     command: the old gate did not match it and denied it as an unchecked form (`2>/dev/null gh pr create --help`)."""
     head = _pr_head(segment)
-    return head is not None and not (_is_help(_arguments(segment, _pr_head)) and not any(REDIRECTION.fullmatch(word) for word in head))
+    return head is not None and (not _is_help(_arguments(segment, head)) or any(REDIRECTION.fullmatch(word) for word in head))
 
 
 def _is_dispatch(segment):
@@ -2748,7 +2748,7 @@ def _is_dispatch(segment):
     head = _dispatch_head(segment)
     if head is None:
         return False
-    arguments = _arguments(segment, _dispatch_head)
+    arguments = _arguments(segment, head)
     exempt = _is_help(arguments) or any(word == "--retry-of" or word.startswith("--retry-of=") for word in arguments)
     return not (exempt and len(head) == 3)
 
@@ -3055,6 +3055,11 @@ def _raw_match(text, form):
     return any(form.pattern.search(normal) for normal in _normal_forms(text))
 
 
+def _pattern_count(form, command):
+    """The most matches of the pattern of `form` in any reading of the quotes of `command`."""
+    return max(len(form.pattern.findall(normal)) for normal in _normal_forms(command))
+
+
 def _branch_option(arguments, long, short):
     """The last value of the `long` or `short` option (--head/-H, --base/-B), or None when absent."""
     value = None
@@ -3305,7 +3310,7 @@ def gate_reason(command, cwd, session_id=None):
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
     # together with a substitution marker, means the command may run gh pr create where the gate cannot follow it: fail closed.
-    unfollowed = ("$(" in command or "`" in command) and max(len(PR_FORM.pattern.findall(normal)) for normal in _normal_forms(command)) > pr_matches
+    unfollowed = ("$(" in command or "`" in command) and _pattern_count(PR_FORM, command) > pr_matches
     if not pr_creates and not dispatches:
         return _final_reason(command, segments, unfollowed)
     if pr_creates and (not isinstance(cwd, str) or not cwd):
@@ -3340,7 +3345,7 @@ def gate_reason(command, cwd, session_id=None):
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
                     moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
-                reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head))
+                reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head(item)))
                 if reason:
                     return reason
             elif _is_dispatch(item):
