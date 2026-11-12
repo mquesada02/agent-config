@@ -55,7 +55,7 @@ class StubTest(RunProofCase):
         self.assert_run_proof_passes(self.run_cleanup(self.wt))
         self.assertEqual(len(self.worker_calls()), 2)
 
-    def test_a_call_without_full_gets_the_compact_view(self):
+    def test_a_run_current_without_full_would_give_no_proof(self):
         self.stub(FULL_RUN_CURRENT, "", rc=1)
         self.stub("orca orchestration run-current", json.dumps({"ok": True, "result": {"runId": RUN_ID, "objective": "x"}}))
         self.assert_no_proof(self.run_cleanup(self.wt))
@@ -160,7 +160,7 @@ class RunProofTest(RunProofCase):
         calls = self.worker_calls()
         self.assertEqual(len(calls), 2)
         for call in calls:
-            self.assertIn(f"--run {RUN_ID} --limit 100 --json --full", call)
+            self.assertTrue(call.startswith(FULL_WORKER_LIST), call)
         self.assertEqual(calls[1], f"{FULL_WORKER_LIST} --cursor cur1")
 
     def test_every_orca_call_is_one_the_spec_allows(self):

@@ -53,7 +53,7 @@ class ActiveRefusalTest(ActiveCase):
         self.assert_active_refusal(result, "ctx_live")
         self.assertEqual(self.starts(result, "Ownership"), [])
         for call in self.worker_calls():
-            self.assertIn(f"--run {RUN_ID} --limit 100 --json --full", call)
+            self.assertTrue(call.startswith(FULL_WORKER_LIST), call)
 
     def test_it_holds_under_a_149_proof(self):
         self.stub_show(parent=self.anchor_id)
