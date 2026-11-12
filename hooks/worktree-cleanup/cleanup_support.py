@@ -11,6 +11,8 @@ CLEANUP = os.path.join(HERE, "cleanup")
 HANDLE = "term_test"
 RUN_ID = "run_test"
 MISSING = object()
+FULL_RUN_CURRENT = "orca orchestration run-current --json --full"
+FULL_WORKER_LIST = f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json --full"
 
 # One stub for `orca` and `gh`. It logs "<name> <args>" to calls.log and answers from config.json,
 # keyed by "<name> <all args>", else by "<name> <first two args>". A list value is a sequence of answers,
@@ -128,15 +130,13 @@ class CleanupCase(unittest.TestCase):
     def stub_terminal(self, worktree_id, rc=0):
         self.stub("orca terminal show", json.dumps({"ok": True, "result": {"terminal": {"worktreeId": worktree_id}}}), rc=rc)
 
-    def stub_sequence(self, key, answers):
-        """Answer the calls of one key in order, one {"stdout", "rc"} dict each; the last answer repeats."""
-        self.config[key] = [{"stdout": "", "rc": 0, "stderr": "", **answer} for answer in answers]
-        self.write_config()
-
     def stub_run_current(self, run_id=RUN_ID, ok=True, rc=0, coordinator="term_stale"):
+        """Orca answers the compact view to a call without `--full` (the two-argument key) and the full view to the exact call with it."""
         run = {"id": run_id, "coordinator_handle": coordinator} if run_id else None
         result = {"run": run} if run else {}
-        self.stub("orca orchestration run-current", json.dumps({"ok": ok, "result": result}), rc=rc)
+        compact = {"runId": run_id, "objective": "test"} if run_id else {}
+        self.stub("orca orchestration run-current", json.dumps({"ok": ok, "result": compact}), rc=rc)
+        self.stub(FULL_RUN_CURRENT, json.dumps({"ok": ok, "result": result}), rc=rc)
 
     def worker_row(self, worktree=None, handle=None, via="resource", dispatch="ctx_one", state="succeeded", terminal="retained"):
         """A worker-list row. `via` is where the worktree id sits: "resource", or "projection" with resource null.
@@ -157,11 +157,20 @@ class CleanupCase(unittest.TestCase):
 
     def stub_worker_pages(self, *pages):
         """The pages of `worker-list`, one per call, in order."""
-        self.stub_sequence("orca orchestration worker-list", [{"stdout": json.dumps(page)} for page in pages])
+        self.stub_worker_raw(*[{"stdout": json.dumps(page)} for page in pages])
 
     def stub_worker_raw(self, *answers):
-        """The raw answers of `worker-list`, one {"stdout", "rc"} dict per call, in order (for pages that are not valid)."""
-        self.stub_sequence("orca orchestration worker-list", list(answers))
+        """The raw answers of `worker-list`, one {"stdout", "rc"} dict per call, in order (for pages that are not valid).
+        The full view sits under the exact call with `--full`; a page after the first is asked with the cursor of the page before.
+        A call without `--full` gets the compact view (`nextCursor`, no `page`)."""
+        self.stub("orca orchestration worker-list", json.dumps({"ok": True, "result": {"workers": [], "nextCursor": None}}))
+        key = FULL_WORKER_LIST
+        for answer in answers:
+            self.stub(key, answer.get("stdout", ""), rc=answer.get("rc", 0), stderr=answer.get("stderr", ""))
+            try:
+                key = f"{FULL_WORKER_LIST} --cursor {json.loads(answer['stdout'])['result']['page']['nextCursor']}"
+            except (KeyError, TypeError, ValueError):
+                break
 
     def stub_gh_merged(self, prs=None, rc=0):
         if prs is None:
