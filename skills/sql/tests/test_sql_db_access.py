@@ -78,7 +78,7 @@ class DbAccessModuleTest(unittest.TestCase):
         for reason in ("unbalanced_parentheses", "forbidden_function", "write_statement"):
             with self.subTest(reason=reason):
                 self.assertIn(f"`{reason}`", body)
-        for name in ("query_to_xml*", "cursor_to_xml*", "ts_stat", "crosstab*", "connectby", "setval"):
+        for name in ("query_to_xml*", "cursor_to_xml*", "ts_stat", "ts_rewrite", "crosstab*", "connectby", "setval"):
             with self.subTest(name=name):
                 self.assertIn(f"`{name}`", body)
         for key in (
@@ -110,7 +110,7 @@ class DbAccessModuleTest(unittest.TestCase):
             with self.subTest(fact=fact):
                 self.assertIn(fact, body)
         risks = section(self.text, "Residual risk")
-        for fact in ("ts_rewrite", "view", "Unicode"):
+        for fact in ("ts_rewrite", "view", "Unicode", "sweep", "2026-11-12"):
             with self.subTest(fact=fact):
                 self.assertIn(fact, risks)
         self.assertIn("`ran` (`analyze` or `explain`", section(self.text, "pg_run"))

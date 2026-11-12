@@ -11,7 +11,7 @@ allowlist check (`allowlist.py`), the guard of the mode (`sql_guard.py`), the se
 version probe, then the explain run: `psql -X -w` with `service=<name>` and the
 session options in the conninfo. In select mode it is `BEGIN READ ONLY`, `EXPLAIN (ANALYZE ...
 FORMAT JSON)`, `ROLLBACK`. When the statement calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`,
-`ts_stat`, `crosstab*`, `connectby`; see `sql_guard.py`), the run is a plain `EXPLAIN (FORMAT JSON)` and `downgrade`
+`ts_stat`, `ts_rewrite`, `crosstab*`, `connectby`; see `sql_guard.py`), the run is a plain `EXPLAIN (FORMAT JSON)` and `downgrade`
 says why. The output has `ran`, `reason`, `downgrade` and `warnings` in both modes. It prints one JSON object. Every error text is
 redacted: the output has no key that holds raw `psql` text.
 

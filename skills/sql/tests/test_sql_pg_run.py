@@ -1144,7 +1144,7 @@ class WriteRunTest(PgRunTestCase):
             "dblink", "dblink_exec", "public.dblink", "dblink_connect", "pg_advisory_lock", "pg_advisory_unlock",
             "pg_try_advisory_lock", "pg_advisory_unlock_all", "lo_export", "setval", "query_to_xml",
             "query_to_xml_and_xmlschema", "query_to_xmlschema", "cursor_to_xml", "cursor_to_xmlschema", "ts_stat",
-            "crosstab", "crosstab2", "crosstab3", "crosstab4", "connectby", '"dblink_exec"', "DBLINK_EXEC",
+            "ts_rewrite", "crosstab", "crosstab2", "crosstab3", "crosstab4", "connectby", '"dblink_exec"', "DBLINK_EXEC",
         ]
         for name in names:
             with self.subTest(name=name):
@@ -1384,6 +1384,7 @@ class DiffGuardTest(DiffTestCase):
             ("UPDATE t SET a = 1", "SELECT 1", "a", "write_statement"),
             ("SELECT 1", "SELECT ts_stat('x')", "b", "forbidden_function"),
             ("SELECT crosstab('x')", "SELECT 1", "a", "forbidden_function"),
+            ("SELECT ts_rewrite('a'::tsquery, 'SELECT dblink_exec(1)')", "SELECT 1", "a", "forbidden_function"),
             ("SELECT query_to_xml('x', true, true, '')", "SELECT 1", "a", "forbidden_function"),
             ("SELECT cursor_to_xml('x', 1, true, true, '')", "SELECT 1", "a", "forbidden_function"),
             ("SELECT connectby('x')", "SELECT 1", "a", "forbidden_function"),
@@ -1777,6 +1778,7 @@ class SelectDowngradeTest(PgRunTestCase):
         "query_to_xml('select 1', true, true, '')", "query_to_xml_and_xmlschema('select 1', true, true, '')",
         "query_to_xmlschema('select 1', true, true, '')", "cursor_to_xml('c'::refcursor, 1, true, true, '')",
         "cursor_to_xmlschema('c'::refcursor, true, true, '')", "ts_stat('select 1')", "crosstab('select 1')",
+        "ts_rewrite('a'::tsquery, 'select 1')", "ts_rewrite('a'::tsquery, 'b'::tsquery, 'c'::tsquery)",
         "crosstab3('select 1')", "connectby('t', 'a', 'b', 'c', 1)",
     )
 

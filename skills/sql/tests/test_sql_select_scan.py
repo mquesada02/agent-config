@@ -9,7 +9,7 @@ import sql_guard  # noqa: E402
 
 LISTED = (
     "query_to_xml", "query_to_xml_and_xmlschema", "query_to_xmlschema", "cursor_to_xml", "cursor_to_xmlschema",
-    "ts_stat", "crosstab", "crosstab2", "crosstab4", "connectby",
+    "ts_stat", "ts_rewrite", "crosstab", "crosstab2", "crosstab4", "connectby",
 )
 
 
@@ -95,11 +95,11 @@ class ScanListsTest(unittest.TestCase):
     """The split of the scan lists keeps the members of write mode and `diff`."""
 
     def test_the_scan_sets_equal_the_old_literals(self):
-        self.assertEqual(sql_guard.SCAN_NAMES, frozenset(["lo_export", "setval", "ts_stat", "connectby"]))
+        self.assertEqual(sql_guard.SCAN_NAMES, frozenset(["lo_export", "setval", "ts_stat", "ts_rewrite", "connectby"]))
         self.assertEqual(set(sql_guard.SCAN_PREFIXES), {"dblink", "query_to_xml", "cursor_to_xml", "crosstab"})
 
     def test_the_string_sql_lists_are_a_subset_without_the_effect_names(self):
-        self.assertEqual(sql_guard.STRING_SQL_NAMES, frozenset(["ts_stat", "connectby"]))
+        self.assertEqual(sql_guard.STRING_SQL_NAMES, frozenset(["ts_stat", "ts_rewrite", "connectby"]))
         self.assertEqual(set(sql_guard.STRING_SQL_PREFIXES), {"query_to_xml", "cursor_to_xml", "crosstab"})
 
     def test_write_mode_and_diff_keep_their_results(self):
@@ -108,9 +108,23 @@ class ScanListsTest(unittest.TestCase):
         self.assertEqual(result["scan"], ["query_to_xml"])
         result, refusal = sql_guard.check_write("UPDATE t SET a = 1 WHERE lo_export(1, 'f') > 0 AND setval('s', 1) > 0")
         self.assertEqual(result["scan"], ["lo_export", "setval"])
-        for name in ("ts_stat", "crosstab", "connectby", "query_to_xml", "cursor_to_xml"):
+        for name in ("ts_stat", "ts_rewrite", "crosstab", "connectby", "query_to_xml", "cursor_to_xml"):
             with self.subTest(name=name):
                 result, refusal = sql_guard.check_diff(f"SELECT {name}('x')")
+                self.assertIsNone(result)
+                self.assertEqual(refusal["reason"], "forbidden_function")
+
+    def test_ts_rewrite_in_both_forms_is_found_in_select_mode_and_write_mode_and_refused_by_diff(self):
+        for call in ("ts_rewrite('a'::tsquery, 'SELECT dblink_exec(1)')",
+                     "ts_rewrite('a'::tsquery, 'b'::tsquery, 'c'::tsquery)"):
+            with self.subTest(call=call):
+                result, refusal = sql_guard.check_select_scan(f"SELECT {call}")
+                self.assertIsNone(refusal)
+                self.assertEqual(result["scan"], ["ts_rewrite"])
+                result, refusal = sql_guard.check_write(f"UPDATE t SET q = {call}")
+                self.assertIsNone(refusal)
+                self.assertEqual(result["scan"], ["ts_rewrite"])
+                result, refusal = sql_guard.check_diff(f"SELECT {call}")
                 self.assertIsNone(result)
                 self.assertEqual(refusal["reason"], "forbidden_function")
 

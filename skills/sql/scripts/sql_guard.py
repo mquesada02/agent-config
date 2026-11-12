@@ -12,7 +12,7 @@ The reasons are checked in this order: `empty`, `unterminated`,
 `forbidden_function`, `unicode_identifier`.
 
 `check_select_scan(text)` runs `check_select` and adds `scan`: the string-SQL functions (`query_to_xml*`,
-`cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby`) that the statement calls. Their text argument is a string
+`cursor_to_xml*`, `ts_stat`, `ts_rewrite`, `crosstab*`, `connectby`) that the statement calls. Their text argument is a string
 that this guard cannot scan, so `pg_run` runs a plain EXPLAIN for a non-empty `scan`.
 
 `check_write(text)` accepts exactly one `INSERT`, `UPDATE`, `DELETE` or `MERGE`, with an optional
@@ -87,7 +87,7 @@ WRITE_MESSAGES = {
 # run SQL from a string argument that the guard cannot scan. A hit downgrades the run to a plain EXPLAIN.
 # Select mode refuses the effect names directly (`lo_export`, `dblink*`) and its read-only transaction refuses `setval`,
 # so it downgrades only the string-SQL names (`STRING_SQL_*`); write mode and `diff` use the whole scan lists.
-STRING_SQL_NAMES = frozenset(["ts_stat", "connectby"])
+STRING_SQL_NAMES = frozenset(["ts_stat", "ts_rewrite", "connectby"])
 STRING_SQL_PREFIXES = ("query_to_xml", "cursor_to_xml", "crosstab")
 SCAN_NAMES = frozenset(["lo_export", "setval"]) | STRING_SQL_NAMES
 SCAN_PREFIXES = ("dblink",) + STRING_SQL_PREFIXES
