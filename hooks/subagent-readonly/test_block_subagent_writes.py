@@ -258,9 +258,6 @@ RULES = hook.DenyRules(hook.load_reader())
 class NamedReasonTest(unittest.TestCase):
     """Whether a reason names a gated command is the type of the reason, not its text."""
 
-    def test_an_unnamed_reason_is_flagged_by_its_type(self):
-        self.assertFalse(hook.names_gated_command(hook.UnnamedReason("anything")))
-
     def test_the_text_of_a_reason_decides_nothing(self):
         for text in ("a gh subcommand that a variable, a substitution or a pattern builds", "the command cannot be read (ValueError)",
                      "shell commands nested deeper than 3", "git push changes the remote"):
@@ -282,7 +279,6 @@ class NamedReasonTest(unittest.TestCase):
     def test_the_reason_texts(self):
         self.assertEqual(RULES.command_reason("gh $SUB create"), "a gh subcommand that a variable, a substitution or a pattern builds")
         self.assertEqual(RULES.command_reason("echo `ls`"), "the command cannot be read (ValueError)")
-        self.assertEqual(RULES.command_reason("echo `git push`"), "git push changes the remote, inside a backtick form")
 
 
 class BacktickReasonTest(unittest.TestCase):

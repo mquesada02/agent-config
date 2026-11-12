@@ -95,6 +95,7 @@ class ShapeTest(unittest.TestCase):
         return audit.gate_reason(command, os.getcwd())
 
     def test_an_unparsable_gh_api_call_that_names_pulls_within_the_reach_is_denied(self):
+        # The last filler is the longest one that still leaves the gated word and the closing quote inside the reach.
         for filler in (0, 1, audit.API_TEXT_REACH - len(" pulls") - len(" '")):
             with self.subTest(filler=filler):
                 self.assertEqual(self.gate(f"gh api {'x' * filler} pulls '"), audit.API_FORM.unparsable_reason)

@@ -27,7 +27,8 @@ UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
 
 class UnnamedReason(str):
     """A deny reason that names no gated command: a word that cannot be resolved, a text that cannot be read, a nesting that is too deep.
-    The type is the flag, so that no decision reads the reason text. It is a `str`: the reason text is what it always was."""
+    The type is the flag, so that no decision reads the reason text. Any new reason that names no gated command must be built with this
+    type, and the flag is kept only while the same object is passed on: a string operation on it (`f"{reason}..."`) returns a plain `str`."""
 
 
 def unresolved_reason(names, what):
