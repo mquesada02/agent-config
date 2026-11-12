@@ -65,4 +65,4 @@ How a workflow handles actions, tokens, permissions, untrusted input, privileged
 - **Severity:** required
 - **Rule:** The dependency audit (`npm audit`, `pnpm audit` or `yarn npm audit`) runs in its own `audit` job, with `--audit-level=high`. On PRs it runs only when the lockfile changes (a `changes` job output, see COST-03), and it is part of the gate. A weekly scheduled workflow, `security-audit.yml`, also runs the audit on main. Its cron uses an odd minute. An audit step inside another job is a finding.
 - **Check:** mechanical
-- **Fix:** Move the audit step into its own `audit` job with `--audit-level=high` that runs on PRs only when the lockfile changes and is in the `needs` of the gate, and add a weekly `security-audit.yml`.
+- **Fix:** Move the audit step into its own `audit` job with `--audit-level=high` that runs on PRs only when the lockfile changes and is in the `needs` of the gate, and add a weekly `security-audit.yml` with `cron: '17 6 * * 1'` (an odd minute, so the run does not start on the hour).
