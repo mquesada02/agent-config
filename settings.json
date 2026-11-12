@@ -8,9 +8,7 @@
   },
   "permissions": {
     "allow": [],
-    "ask": [
-      "Bash(*setup_files.py write*)"
-    ],
+    "ask": [],
     "deny": [
       "Edit(~/.local/bin/**)",
       "Edit(~/bin/**)",
