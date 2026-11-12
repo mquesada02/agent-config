@@ -159,6 +159,12 @@ class AskTest(HookCase):
         self.assertFalse(os.path.exists(os.path.join(os.path.dirname(other), "ran.json")))
         self.assertIsNone(self.ran())
 
+    def test_a_script_path_with_a_tilde_is_expanded_before_the_trust_check(self):
+        command = f"python3 ~/skills/sql/scripts/setup_files.py write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
+        output = self.run_hook(self.payload(command), env={"HOME": self.root})
+        self.assertEqual(self.decision(output)[0], "ask")
+        self.assertIsNotNone(self.ran())
+
     def test_a_symlink_to_the_skill_script_is_the_skill_script(self):
         os.makedirs(os.path.join(self.root, "linked"))
         link = os.path.join(self.root, "linked", "setup_files.py")
