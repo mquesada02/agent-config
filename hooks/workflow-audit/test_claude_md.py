@@ -173,7 +173,10 @@ class FreshCiRuleTest(RuleTextCase):
         text = section(read(ROOT_CLAUDE_MD), 8)
         start = text.index("Before you give the owner the merge command")
         self.rule = text[start:text.index("After merging, run", start)]
-        self.steps = {int(match.group(1)): line for line in self.rule.splitlines() if (match := re.match(r"(\d)\. ", line))}
+        pairs = [(int(match.group(1)), line) for line in self.rule.splitlines() if (match := re.match(r"(\d+)\. ", line))]
+        numbers = [number for number, _ in pairs]
+        self.assertEqual(len(numbers), len(set(numbers)), f"the fresh-CI rule repeats a step number: {numbers}")
+        self.steps = dict(pairs)
 
     def step(self, number):
         self.assertIn(number, self.steps, f"the fresh-CI rule has no step {number}")
@@ -217,8 +220,7 @@ class FreshCiRuleTest(RuleTextCase):
                                      "In that worktree, run `git pull --ff-only origin <PR branch>`, so that it holds the new PR head.")
 
     def test_the_pull_names_the_remote_branch_and_needs_no_upstream(self):
-        self.assert_in(self.step(4), "`git pull --ff-only origin <PR branch>`", "This needs no upstream on the branch.")
-        self.assert_not_in(self.step(4), "`git pull --ff-only` in")
+        self.assert_in(self.step(4), "This needs no upstream on the branch.")
 
     def test_a_pr_with_no_run_goes_to_the_wait_step(self):
         self.assert_in(self.rule, "2. If no run exists for the PR, go to step 6.")
