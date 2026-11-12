@@ -164,12 +164,12 @@ def claude_argv(prompt, session, budget, folders):
             *allowed_tools(folders)]
 
 
-def claude_env(home_state):
+def claude_env(state):
     env = {key: value for key, value in os.environ.items() if not key.startswith("PG")}
     env.update({
-        "PGSERVICEFILE": os.path.join(home_state["home"], ".pg_service.conf"),
-        "XDG_CONFIG_HOME": home_state["config"],
-        "TMPDIR": home_state["tmp"],
+        "PGSERVICEFILE": os.path.join(state["home"], ".pg_service.conf"),
+        "XDG_CONFIG_HOME": state["config"],
+        "TMPDIR": state["tmp"],
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
         "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
@@ -247,8 +247,9 @@ def run_one(case_folder, number, out, budget, turn1_prompt):
     if problem:
         return [f"FAIL {label} {problem}"]
     text1 = read_text(paths["turn1"])
-    if sandbox_failed(text1, label, 1):
-        return sandbox_failed(text1, label, 1)
+    sandbox_line = sandbox_failed(text1, label, 1)
+    if sandbox_line:
+        return sandbox_line
     message = results.final_message(paths["turn1"])
     try:
         trace1 = grade_setup.events(text1)
@@ -280,8 +281,9 @@ def run_one(case_folder, number, out, budget, turn1_prompt):
     with open(paths["trace"], "w", encoding="utf-8") as handle:
         handle.write(text1 if text1.endswith("\n") else text1 + "\n")
         handle.write(text2)
-    if sandbox_failed(text2, label, 2):
-        return sandbox_failed(text2, label, 2)
+    sandbox_line = sandbox_failed(text2, label, 2)
+    if sandbox_line:
+        return sandbox_line
     if results.final_message(paths["turn2"]) is None:
         failures.append(f"FAIL {label} turn2 final: no final message")
     try:
@@ -290,9 +292,10 @@ def run_one(case_folder, number, out, budget, turn1_prompt):
         trace2 = None
     if trace2 is not None:
         changed = bool(change_calls(trace2))
-        if expect.get("written", True) and not changed:
+        written = expect.get("written", True)
+        if written and not changed:
             failures.append(f"FAIL {label} turn2 write: no change call in turn 2")
-        elif not expect.get("written", True) and changed:
+        elif changed and not written:
             failures.append(f"FAIL {label} turn2 write: a change call in turn 2, and the case expects no write")
     args = [paths["trace"], "--repo", state["work"], "--expect", os.path.join(case_folder, "expected.json")]
     if "services" in expect or expect.get("no_allowlist"):

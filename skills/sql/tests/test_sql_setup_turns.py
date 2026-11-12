@@ -444,7 +444,9 @@ class TurnsTest(unittest.TestCase):
         # A turn 1 with no plan stops the run at once, so only the first call and its prompt are logged.
         self.set_scenario(scenario(turn1={"plan": False}))
         for case in ("setup-rerun", "setup-tags-fixture"):
-            os.remove(os.path.join(self.fake_dir, "calls.jsonl")) if os.path.exists(os.path.join(self.fake_dir, "calls.jsonl")) else None
+            calls_log = os.path.join(self.fake_dir, "calls.jsonl")
+            if os.path.exists(calls_log):
+                os.remove(calls_log)
             self.run_runner("--runs", "1", "--case", case, evals=REAL_EVALS, out=os.path.join(self.root, "real-" + case))
             prompt = self.calls()[0]["argv"][1]
             self.assertTrue(prompt.startswith("Run `/sql setup` on the repo in the current folder"), prompt)
