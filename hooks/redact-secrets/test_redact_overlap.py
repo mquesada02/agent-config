@@ -3,7 +3,7 @@
 The rules are key based and run in one pass, so no replacement reads the output of another one.
 These tests pin that behavior for three cases: one value that contains another, a value that equals
 or contains the mask text, and two keyed values next to each other. Each case runs in JSON, in YAML,
-on separate lines and as plain pairs on one line.
+on separate lines and as plain pairs on one line. Some formats add a case about the text around the values.
 
 JSON, YAML and separate lines: every value becomes `***` once and the rest of the text is unchanged.
 Plain pairs on one line: `plain_line_value` masks from the first value to the line end (a plain value
@@ -60,9 +60,10 @@ class OverlapJson(unittest.TestCase):
 
 
 class OverlapYaml(unittest.TestCase):
-    def check(self, v1, v2, quote=""):
-        text = "%s: %s%s%s\n%s: %s%s%s\n" % (K1, quote, v1, quote, K2, quote, v2, quote)
-        expected = "%s: %s%s%s\n%s: %s%s%s\n" % (K1, quote, MASK, quote, K2, quote, MASK, quote)
+    def check(self, v1, v2, quote_char=""):
+        q = quote_char
+        text = "%s: %s%s%s\n%s: %s%s%s\n" % (K1, q, v1, q, K2, q, v2, q)
+        expected = "%s: %s%s%s\n%s: %s%s%s\n" % (K1, q, MASK, q, K2, q, MASK, q)
         self.assertEqual(redact(text), expected)
 
     def test_534_yaml_a_value_that_contains_the_next_value(self):
@@ -127,9 +128,7 @@ class OverlapPlainPairsOnOneLine(unittest.TestCase):
 
     def check(self, v1, v2):
         text = "%s=%s %s=%s\n" % (K1, v1, K2, v2)
-        out = redact(text)
-        self.assertEqual(out, "%s=%s\n" % (K1, MASK))
-        self.assertEqual(out.count(MASK), 1)
+        self.assertEqual(redact(text), "%s=%s\n" % (K1, MASK))
 
     def test_534_one_line_a_value_that_contains_the_next_value(self):
         self.check(LONG, SHORT)
