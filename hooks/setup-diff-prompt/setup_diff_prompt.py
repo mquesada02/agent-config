@@ -35,6 +35,10 @@ SCRIPT_NAME = "setup_files.py"
 TRUSTED_SCRIPT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "skills", "sql",
                                                "scripts", SCRIPT_NAME))
 ALLOWED_VARIABLES = ("XDG_CONFIG_HOME",)
+# The raw text that the permission ask rule of ticket 509 matched (the script name, then write). The hook replaces that rule
+# (a rule and a hook that both ask show only the rule text in the prompt, never the diff), so it must refuse every command
+# that this text matches and that is not the exact write form.
+RAW_WRITE = re.compile(re.escape(SCRIPT_NAME) + r"\W+write\b")
 DENY_PREFIX = "Setup write check: "
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 OPERATOR = re.compile(r"^[();<>|&]+$")
@@ -156,8 +160,10 @@ def decide_checked(hook_input, plan_seconds):
         words = split_words(command)
     except ValueError as error:
         raise Refusal("the command cannot be split into shell words (%s)" % error)
-    if not calls_write(words):
+    if not (RAW_WRITE.search(command) or calls_write(words)):
         return None
+    if "\n" in command or "\r" in command:
+        raise Refusal("the command is not one line; " + FORM_HELP)
     assignments, script, repo, proposal, confirm = parse_write(words)
     cwd = hook_input.get("cwd") if isinstance(hook_input.get("cwd"), str) else None
     repo, proposal = os.path.expanduser(repo), os.path.expanduser(proposal)

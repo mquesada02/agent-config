@@ -276,6 +276,24 @@ class DenyTest(HookCase):
                 self.assertDenied(self.run_hook(self.payload(command)))
         self.assertIsNone(self.ran())
 
+    def test_a_command_that_holds_the_script_name_and_write_in_its_text_but_is_not_the_exact_form_is_denied(self):
+        # The hook replaces the ask rule of ticket 509, which matched the raw text, so it denies what that text matched.
+        inner = f"python3 {self.script} write {self.repo} --proposal {self.proposal} --confirm {DIGEST}"
+        for command in (f"sh -c '{inner}'", f'bash -c "{inner}"', f"echo {self.script} write",
+                        f'grep -n "{self.script} write" setup.md', f"cat '{self.script}\twrite'",
+                        f"git commit -m 'run setup_files.py write later'"):
+            with self.subTest(command):
+                self.assertDenied(self.run_hook(self.payload(command)), "alone")
+        self.assertIsNone(self.ran())
+
+    def test_a_command_with_more_than_one_line_that_calls_write_is_denied(self):
+        command = self.write_command()
+        for text in (f"{command}\necho x", f"echo x\n{command}", f"python3 -I {self.script}\nwrite {self.repo} "
+                     f"--proposal {self.proposal} --confirm {DIGEST}", f"{command}\r\necho x"):
+            with self.subTest(text):
+                self.assertDenied(self.run_hook(self.payload(text)), "one line")
+        self.assertIsNone(self.ran())
+
 
 class PassTest(HookCase):
     def test_a_plan_call_passes_with_no_output_and_does_not_run_the_plan(self):
@@ -357,9 +375,11 @@ class StructureTest(unittest.TestCase):
     def test_the_entry_timeout_is_above_the_plan_limit(self):
         self.assertGreater(self.hook_commands()[0][1]["timeout"], load_module().PLAN_SECONDS)
 
-    def test_the_permission_ask_rule_of_the_setup_write_call_is_unchanged(self):
-        ask = self.settings()["permissions"]["ask"]
-        self.assertEqual([rule for rule in ask if "setup_files.py write" in rule], ["Bash(*setup_files.py write*)"])
+    def test_no_permission_ask_rule_names_the_setup_write_call_because_the_hook_replaces_it(self):
+        # When a permission ask rule and the hook both ask, Claude Code shows the text of the rule and drops the hook reason,
+        # so the diff never reaches the prompt (owner decision "1: hook replaces rule", ticket 520).
+        ask = self.settings().get("permissions", {}).get("ask", [])
+        self.assertEqual([rule for rule in ask if "setup_files.py" in rule], [])
 
     def test_the_declared_test_command_lists_the_hook_folder(self):
         with open(os.path.join(REPO, ".claude", "CLAUDE.md"), encoding="utf-8") as handle:
