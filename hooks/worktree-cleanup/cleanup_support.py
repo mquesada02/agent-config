@@ -15,7 +15,8 @@ FULL_RUN_CURRENT = "orca orchestration run-current --json --full"
 FULL_WORKER_LIST = f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json --full"
 
 # One stub for `orca` and `gh`. It logs "<name> <args>" to calls.log and answers from config.json,
-# keyed by "<name> <all args>", else by "<name> <first two args>". Calls of `orca worktree rm` can remove the worktree like Orca does.
+# keyed by "<name> <all args>", else by "<name> <first two args>". A list value is a sequence of answers,
+# one per call of that key (the last repeats). Calls of `orca worktree rm` can remove the worktree like Orca does.
 STUB = """#!/usr/bin/env python3
 import json, os, subprocess, sys
 d = os.environ["STUB_DIR"]
@@ -28,6 +29,14 @@ key = " ".join([name] + args[:2])
 full = " ".join([name] + args)
 config_key = full if full in cfg else key
 entry = cfg.get(config_key, {"rc": 1, "stderr": "unstubbed call"})
+if isinstance(entry, list):
+    counts_path = os.path.join(d, "counts.json")
+    counts = json.load(open(counts_path)) if os.path.exists(counts_path) else {}
+    n = counts.get(config_key, 0)
+    counts[config_key] = n + 1
+    with open(counts_path, "w") as f:
+        json.dump(counts, f)
+    entry = entry[min(n, len(entry) - 1)]
 effect = cfg.get("rm_effect")
 if key == "orca worktree rm" and effect and entry.get("rc", 0) == 0:
     command = "sleep %s; git -C %s worktree remove --force %s" % (effect.get("delay", 0), effect["repo"], effect["path"])
