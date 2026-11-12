@@ -258,6 +258,29 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
                 self.assertEqual((data["ran"], data["mode"]), ("explain", "select"))
                 self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
 
+    def test_ts_rewrite_with_a_side_effect_statement_in_its_text_never_runs_it(self):
+        # The text of ts_rewrite runs as SQL. This one opens a second connection (outside the read-only transaction)
+        # and inserts a row. An ANALYZE run would run it; the downgraded plain EXPLAIN must not.
+        connection = f"host=127.0.0.1 port=5432 user={SUPERUSER} dbname=postgres password={FIXTURE_SECRET}"
+        inner = (
+            "SELECT 'a'::tsquery, to_tsquery('simple', regexp_replace(pgrun_test.dblink_exec('" + connection
+            + "', 'INSERT INTO pgrun_test.probe_t VALUES (1)'), '[^A-Za-z]', '', 'g'))"
+        )
+        statement = "SELECT ts_rewrite('a'::tsquery, '" + inner.replace("'", "''") + "')"
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                # Positive control: the statement does insert a row when it runs (the table is emptied after).
+                control = host_psql(self.ports[version], "-c", statement)
+                self.assertEqual(control.returncode, 0, control.stderr)
+                self.assertEqual(self.probe_rows(version), "1")
+                emptied = host_psql(self.ports[version], "-c", "TRUNCATE pgrun_test.probe_t")
+                self.assertEqual(emptied.returncode, 0, emptied.stderr)
+                data = self.explain(version, statement)
+                self.assertTrue(data["ok"], data)
+                self.assertEqual(self.probe_rows(version), "0")
+                self.assertEqual((data["ran"], data["mode"]), ("explain", "select"))
+                self.assertEqual(data["downgrade"], [{"kind": "function", "name": "ts_rewrite"}])
+
     def test_a_forbidden_function_in_the_text_argument_gives_a_plain_explain(self):
         for version in VERSIONS:
             for hidden in ("pg_notify(''chan'', ''x'')", "set_config(''pgrun.flag'', ''1'', false)"):
@@ -269,6 +292,7 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     def test_each_listed_function_gives_a_plain_explain_and_a_normal_select_still_analyzes(self):
         statements = {
             "ts_stat": "SELECT * FROM ts_stat('SELECT to_tsvector(''x'')')",
+            "ts_rewrite": "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, ''b''::tsquery')",
             "crosstab": "SELECT * FROM pgrun_test.crosstab('SELECT 1, 1, 1') AS ct(a int, b int)",
             "connectby": "SELECT * FROM pgrun_test.connectby('pgrun_test.items', 'a', 'a', '1', 0) AS t(a int, p int, l int)",
             "cursor_to_xml": "SELECT cursor_to_xml('c'::refcursor, 1, true, true, '')",
