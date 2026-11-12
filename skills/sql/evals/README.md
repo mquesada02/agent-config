@@ -157,6 +157,28 @@ Grader D (`graders/grade_setup.py TRACE --repo <folder> --expect <expected.json>
 | `setup-no-sql` | A repo with no SQL: default style, empty tags, no allowlist, no detector run |
 | `setup-rerun` | A re-run asks per changed key, keeps the hand-written comment and rule, appends the new rule |
 
+### Two-turn runner (`evals/turns/run_setup_turns.py`)
+
+A plugin eval case has one user turn, so each `setup-*` prompt holds the confirmation in advance, and it cannot prove that `/sql setup` shows the diff and then waits. The hand-run two-turn runner proves it. It is its own script (not a mode of `run_db_cases.py`, not part of `claude plugin eval`), it costs tokens, and it is not in the repo test command (its unit tests, with a fake `claude`, are in `tests/test_sql_setup_turns.py`).
+
+```
+python3 skills/sql/evals/turns/run_setup_turns.py [--case GLOB] [--runs N] [--out FOLDER] [--max-budget-usd USD]
+```
+
+The default `--case` is `setup-*` and the default `--runs` is 3. Use a short `--out` folder (for example `/var/tmp/sqlturns-1`, never inside your home folder; a new name for each invocation, because the runner refuses a run folder that already exists with a `scaffold` FAIL line): the sandbox of Claude Code makes a unix socket in the run's `TMPDIR`, and a long path makes the sandbox fail to start (the run then prints a `sandbox` FAIL line). For each case and run, the runner runs the case scaffold with a temp HOME and a temp `XDG_CONFIG_HOME`, then two turns of one `claude -p` session (model sonnet, a fixed `--session-id`, then `--resume` of it):
+
+1. Turn 1 is the case prompt up to its confirmation sentence (`Show me the diff, and then confirm it and write the files.`). Checks: `no-write` (no change call, and no file of the repo or of the temp HOME changed), `plan` (a `setup_files.py plan` call with a readable plan) and `shown` (the final message holds every added line of the plan diffs). A failure ends the run.
+2. Turn 2 is `I confirm the diff. Write the files now.` Checks: `write` (the write happens in this turn), then grader D (`grade_setup.py`, with the case `expected.json`) on the combined trace of both turns.
+
+It prints `FAIL <case>#<n> <check>: <message>` for each failed check, then `<case>#<n>: PASS|FAIL` for each run, then PASS or FAIL (exit code 0 or 1; 2 for a usage error). The turn files `<case>-<n>-turn1.jsonl`, `-turn2.jsonl` and `-trace.jsonl` stay in the out folder. A `no-write`, `plan` or `shown` FAIL means that `/sql setup` skipped the wait; report it, and do not change `setup.md` without an owner decision.
+
+Isolation and residual risks:
+
+- The runner refuses to start (exit code 1, before it creates a folder) when the out folder is the real home folder or inside it. The `claude` child keeps the real `HOME` only for its login (a temp HOME is "Not logged in"); `PGSERVICEFILE`, `XDG_CONFIG_HOME` and `TMPDIR` point to temp folders and git is cut off from the real git config. The runner writes nothing under the real HOME and copies no credential.
+- Bash runs only in the Claude Code OS sandbox (sandbox enabled, `failIfUnavailable`, no unsandboxed command, writes only in the run's work, config and tmp folders, no network). `formatter_install.py apply` is denied. `Write` and `Edit` are limited to the same folders.
+- Residual risk: the child can read files under the real HOME (`Read`, `Glob`, `Grep` and Bash reads), and such text can land in the persisted test transcript.
+- Residual risk: session persistence stays on, because `--resume` needs it. `claude` keeps the transcripts of the test sessions under the real `~/.claude/projects`, with its other login and cache files.
+
 ## Fixture rules
 
 - Every fixture is synthetic. No fixture copies code from the private inspiration repo, and no file names it.
