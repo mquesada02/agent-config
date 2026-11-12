@@ -13,10 +13,11 @@ COMMAND is the judge command (default: claude -p with haiku and no tools). It re
 Output: one line "<case>#<n> row <k> <RULE>: PASS|FAIL <reason>" for each row, one line
 "<case>#<n>: PASS|FAIL|no rows" for each run, one line "FAIL <label> <check>: <message>" for each error, then
 "rows: X of Y PASS" and "runs: A of B PASS" (a run with no rows, such as a clean report, is not counted).
-Exit code: 0 all rows judged, 1 an error (trace, judge command or judge reply), 2 usage error or unreadable result.
+Exit code: 0 all rows judged (a FAIL verdict is not an error), 1 an error (trace, judge command or judge reply), 2 usage error or unreadable result.
 """
 import argparse
 import fnmatch
+import importlib.util
 import json
 import os
 import re
@@ -26,6 +27,13 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# `python3 -I` does not put this folder on the import path, so load the sibling module by its path.
+_spec = importlib.util.spec_from_file_location("grade_eval_results", os.path.join(HERE, "grade_eval_results.py"))
+_shared = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_shared)
+final_message = _shared.final_message
+
 JUDGE = "fix-quality"
 COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 FLAG = "⚑"
@@ -42,18 +50,6 @@ CRITERION = (
     "branch protection are in the flag section below. The skill does not change branch protection itself.\n"
     "Answer on one line: PASS or FAIL, a colon, and one short reason (at most 25 words)."
 )
-
-
-def final_message(trace_path):
-    """The `result` field of the last line of a trace, or None when the trace is missing or has none."""
-    try:
-        with open(trace_path, encoding="utf-8") as handle:
-            lines = [line for line in handle.read().splitlines() if line.strip()]
-        last = json.loads(lines[-1])
-    except (OSError, ValueError, IndexError):
-        return None
-    result = last.get("result") if isinstance(last, dict) else None
-    return result if isinstance(result, str) else None
 
 
 def judged_runs(result_path, pattern):
@@ -120,7 +116,7 @@ def workflow_text(evals, case):
 
 
 def question(files, section, cells):
-    number, rule, where, problem, fix = cells
+    _, rule, where, problem, fix = cells
     lines = [CRITERION, "", "Workflow files:", files, ""]
     if FLAG in rule:
         lines += ["Flag section:", section or "(the report has no flag section)", ""]
