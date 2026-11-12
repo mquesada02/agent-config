@@ -115,7 +115,6 @@ printf '[app-dev]\\nhost=localhost\\n' > "$HOME/.pg_service.conf"
 """
 HOOK_COMMAND = "python3 -I ~/.claude/hooks/setup-diff-prompt/setup_diff_prompt.py"
 HOOK_GROUP = {"matcher": "Bash", "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 30, "onFailure": "block"}]}
-ASK_RULE = "Bash(*setup_files.py write*)"
 EXPECTED = {"settings": {"style": {"indent": "2 spaces"}}, "contains": ["Rule one"], "no_allowlist": True}
 
 GOOD = {
@@ -218,21 +217,14 @@ class TurnsTest(unittest.TestCase):
             rules.append(rule)
         return rules
 
-    # --- ticket 509: turn 1 has the ask rule of settings.json, turn 2 has none ---
-    def repo_ask_rule(self):
-        with open(os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "settings.json"), encoding="utf-8") as handle:
-            ask = json.load(handle)["permissions"]["ask"]
-        return [rule for rule in ask if "setup_files.py write" in rule]
-
+    # --- ticket 520: the hook is the only gate (no permission ask rule in either turn) ---
     def settings_of(self, call):
         return json.loads(call["argv"][call["argv"].index("--settings") + 1])
 
-    def test_turn_1_has_the_ask_rule_of_settings_json_and_turn_2_has_none(self):
+    def test_neither_turn_has_a_permission_rule_because_the_hook_is_the_only_gate(self):
         self.run_runner("--runs", "1")
         first, second = self.calls()
-        rule = self.repo_ask_rule()
-        self.assertEqual(len(rule), 1)
-        self.assertEqual(self.settings_of(first)["permissions"]["ask"], rule)
+        self.assertNotIn("permissions", self.settings_of(first))
         self.assertNotIn("permissions", self.settings_of(second))
         self.assertEqual([r for r in self.rules_after(second["argv"], "--allowedTools") if r.startswith("Bash")], ["Bash"])
 
@@ -317,28 +309,7 @@ class TurnsTest(unittest.TestCase):
                 handle.write(settings_text)
         return os.path.join(skill, "evals", "turns", "run_setup_turns.py")
 
-    def test_a_missing_or_wrong_ask_rule_is_a_usage_error_before_anything_is_created(self):
-        hooks = {"PreToolUse": [HOOK_GROUP]}
-        one = json.dumps({"permissions": {"ask": [ASK_RULE]}, "hooks": hooks})
-        two = json.dumps({"permissions": {"ask": [ASK_RULE, "Bash(python3 *setup_files.py write*)"]}, "hooks": hooks})
-        for name, text in (("no file", None), ("not json", "{"), ("no ask key", json.dumps({"permissions": {}, "hooks": hooks})),
-                           ("no write entry", json.dumps({"permissions": {"ask": ["Bash(rm *)"]}, "hooks": hooks})),
-                           ("two entries", two)):
-            with self.subTest(name):
-                runner = self.runner_tree(text)
-                proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
-                                      capture_output=True, text=True, env=self.env, cwd=self.root)
-                self.assertEqual((proc.returncode, proc.stdout), (2, ""), proc.stderr)
-                self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
-                self.assertEqual(self.calls(), [])
-                self.assertFalse(os.path.exists(self.out))
-        runner = self.runner_tree(one)
-        proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
-                              capture_output=True, text=True, env=self.env, cwd=self.root)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(self.settings_of(self.calls()[0])["permissions"]["ask"], ["Bash(*setup_files.py write*)"])
-
-    # --- ticket 520: turn 1 has the setup diff hook, turn 2 has neither the hook nor the ask rule ---
+    # --- ticket 520: turn 1 has the setup diff hook, turn 2 has no hook ---
     def test_turn_1_has_the_hook_entry_with_the_repo_path_and_turn_2_has_no_hook(self):
         self.run_runner("--runs", "1")
         first, second = self.calls()
@@ -363,7 +334,7 @@ class TurnsTest(unittest.TestCase):
                             ("two entries", {"PreToolUse": [HOOK_GROUP, HOOK_GROUP]}),
                             ("two commands in a group", {"PreToolUse": [{**HOOK_GROUP, "hooks": HOOK_GROUP["hooks"] * 2}]})):
             with self.subTest(name):
-                settings = {"permissions": {"ask": [ASK_RULE]}}
+                settings = {}
                 if hooks is not None:
                     settings["hooks"] = hooks
                 runner = self.runner_tree(json.dumps(settings))
@@ -378,7 +349,7 @@ class TurnsTest(unittest.TestCase):
     def test_a_hook_in_a_group_with_other_commands_is_copied_alone(self):
         group = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 -I ~/.claude/hooks/other/other.py"},
                                                  HOOK_GROUP["hooks"][0]]}
-        settings = {"permissions": {"ask": [ASK_RULE]}, "hooks": {"PreToolUse": [group]}}
+        settings = {"hooks": {"PreToolUse": [group]}}
         runner = self.runner_tree(json.dumps(settings))
         proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
                               capture_output=True, text=True, env=self.env, cwd=self.root)

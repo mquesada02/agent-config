@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import os
 import re
 import unittest
@@ -9,6 +8,7 @@ SKILL_DIR = os.path.dirname(HERE)
 REPO_DIR = os.path.dirname(os.path.dirname(SKILL_DIR))
 SETUP_MD = os.path.join(SKILL_DIR, "setup.md")
 README = os.path.join(SKILL_DIR, "evals", "README.md")
+HOOK = os.path.join(REPO_DIR, "hooks", "setup-diff-prompt", "setup_diff_prompt.py")
 
 SCRIPT = "/home/dev/.claude/skills/sql/scripts/setup_files.py"
 WRITE_CALLS = [
@@ -27,76 +27,50 @@ OTHER_CALLS = [
 ]
 
 
-def repo_settings():
-    with open(os.path.join(REPO_DIR, "settings.json"), encoding="utf-8") as handle:
-        return json.load(handle)
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def write_rule():
-    ask = repo_settings().get("permissions", {}).get("ask", [])
-    return [rule for rule in ask if "setup_files.py write" in rule]
+class HookCoversTheWriteCallTest(unittest.TestCase):
+    """The setup diff hook replaced the permission ask rule of ticket 509 (a rule and a hook that both ask show only the rule
+    text in the prompt, never the diff). Its raw text pattern RAW_WRITE is the old rule glob, so it must match every form of
+    the write call and none of the other setup calls; grader D's WRITE_CALL names the same calls in a trace."""
 
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = load("setup_diff_prompt", HOOK)
+        cls.runner = load("run_setup_turns", os.path.join(SKILL_DIR, "evals", "turns", "run_setup_turns.py"))
 
-def matches(rule, command):
-    """A restatement of the Claude Code wildcard rule for a Bash rule: `*` is any text, the whole specifier must match.
-    A compound command is split at `&&`, `||`, `;` and `|`, and the command is matched when one part matches.
-    The real prompt behavior is proven by the prototype with a real `claude`, not by this test."""
-    specifier = re.fullmatch(r"Bash\((.*)\)", rule, re.DOTALL).group(1)
-    pattern = re.compile(".*".join(re.escape(piece) for piece in specifier.split("*")), re.DOTALL)
-    return any(pattern.fullmatch(part.strip()) for part in re.split(r"&&|\|\||;|\|", command))
-
-
-class AskRuleTest(unittest.TestCase):
-    def test_settings_json_has_exactly_one_ask_rule_for_the_setup_write_call(self):
-        self.assertEqual(len(write_rule()), 1, repo_settings().get("permissions"))
-
-    def test_the_rule_matches_every_form_of_the_write_call(self):
-        rule = write_rule()[0]
+    def test_the_hook_text_pattern_matches_every_form_of_the_write_call(self):
         for command in WRITE_CALLS:
             with self.subTest(command):
-                self.assertTrue(matches(rule, command))
+                self.assertTrue(self.hook.RAW_WRITE.search(command))
 
-    def test_the_rule_does_not_match_plan_or_the_other_setup_calls(self):
-        rule = write_rule()[0]
+    def test_the_hook_text_pattern_does_not_match_plan_or_the_other_setup_calls(self):
         for command in OTHER_CALLS:
             with self.subTest(command):
-                self.assertFalse(matches(rule, command))
+                self.assertFalse(self.hook.RAW_WRITE.search(command))
+
+    def test_the_hook_text_pattern_and_grader_d_name_the_same_calls(self):
+        for command in WRITE_CALLS:
+            with self.subTest(command):
+                self.assertTrue(self.runner.grade_setup.WRITE_CALL.search(command))
+        for command in OTHER_CALLS:
+            with self.subTest(command):
+                self.assertFalse(self.runner.grade_setup.WRITE_CALL.search(command))
 
     def test_the_commands_of_setup_md_are_the_forms_that_the_tests_use(self):
         with open(SETUP_MD, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("python3 <skill folder>/scripts/setup_files.py write <repo root>", text)
         self.assertIn("python3 <skill folder>/scripts/setup_files.py plan <repo root>", text)
-        rule = write_rule()[0]
-        self.assertTrue(matches(rule, "python3 <skill folder>/scripts/setup_files.py write <repo root> --proposal <proposal file> --confirm <digest>"))
-        self.assertFalse(matches(rule, "python3 <skill folder>/scripts/setup_files.py plan <repo root> --proposal <proposal file>"))
-
-
-class RuleAndGraderAgreeTest(unittest.TestCase):
-    """The ask rule of settings.json, the runner constant WRITE_SCRIPT (how the runner finds that rule) and grader D's
-    WRITE_CALL (how a trace call is named a write call) are three spellings of one call: they must agree."""
-
-    @classmethod
-    def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("run_setup_turns", os.path.join(SKILL_DIR, "evals", "turns", "run_setup_turns.py"))
-        cls.runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.runner)
-
-    def test_the_rule_holds_the_script_text_that_the_runner_searches_for(self):
-        self.assertIn(self.runner.WRITE_SCRIPT, write_rule()[0])
-
-    def test_all_three_name_the_write_calls_and_none_of_the_other_calls(self):
-        rule = write_rule()[0]
-        for command in WRITE_CALLS:
-            with self.subTest(command):
-                self.assertIn(self.runner.WRITE_SCRIPT, command)
-                self.assertTrue(self.runner.grade_setup.WRITE_CALL.search(command))
-                self.assertTrue(matches(rule, command))
-        for command in OTHER_CALLS:
-            with self.subTest(command):
-                self.assertNotIn(self.runner.WRITE_SCRIPT, command)
-                self.assertFalse(self.runner.grade_setup.WRITE_CALL.search(command))
-                self.assertFalse(matches(rule, command))
+        self.assertTrue(self.hook.RAW_WRITE.search(
+            "python3 <skill folder>/scripts/setup_files.py write <repo root> --proposal <proposal file> --confirm <digest>"))
+        self.assertFalse(self.hook.RAW_WRITE.search(
+            "python3 <skill folder>/scripts/setup_files.py plan <repo root> --proposal <proposal file>"))
 
 
 class SetupMdStepSixTest(unittest.TestCase):
@@ -127,6 +101,10 @@ class SetupMdStepSixTest(unittest.TestCase):
         self.assertIn("Setup write check:", step)
         self.assertRegex(step, r"is not a decline")
 
+    def test_no_other_command_may_hold_the_script_name_followed_by_write(self):
+        # the hook denies every command whose text holds them, not only a wrong write call (it replaced the ask rule)
+        self.assertRegex(self.step_six(), r"(?s)script name followed by `write` in any other command.*hook denies it too")
+
     def test_the_repo_and_the_proposal_paths_are_absolute(self):
         self.assertRegex(self.step_six(), r"absolute path")
 
@@ -144,13 +122,13 @@ class SetupMdStepSixTest(unittest.TestCase):
 
 
 class ReadmeTest(unittest.TestCase):
-    def test_the_two_turn_runner_section_names_the_ask_rule(self):
+    def test_the_two_turn_runner_section_names_the_hook_as_the_only_gate_of_turn_1(self):
         with open(README, encoding="utf-8") as handle:
             text = handle.read()
         section = text.split("### Two-turn runner", 1)[1]
         section = re.split(r"\n#{2,3} ", section, maxsplit=1)[0]
-        self.assertIn("permissions.ask", section)
-        self.assertRegex(section, r"turn 1.*ask rule|ask rule.*turn 1")
+        self.assertRegex(section, r"(?i)only gate")
+        self.assertRegex(section, r"turn 1.*hook|hook.*turn 1")
 
 
 if __name__ == "__main__":

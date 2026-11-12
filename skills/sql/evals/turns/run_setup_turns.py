@@ -8,16 +8,14 @@ For each case under the evals folder (default `setup-*`) and each run, this runn
 own scaffold, then runs two turns of one `claude -p` session (model sonnet): turn 1 is the case prompt up to its
 confirmation sentence (`--session-id`), turn 2 is a plain confirmation (`--resume` of the same session id).
 
-Turn 1 has the permission ask rule of the setup write call (the one `permissions.ask` entry for `setup_files.py write`
-of the repo `settings.json`; exit code 2 when it is not there exactly once): in `claude -p` an `ask` is a deny and wins over
-the bare `Bash` allow, so turn 1 can never write. Turn 1 also has the setup diff hook (the one `hooks.PreToolUse` command
-of the repo `settings.json` that runs `setup_diff_prompt.py`, with `~/.claude/` replaced by the repo folder; exit code 2 when it
-is not there exactly once): it answers `ask` with the plan diff, and it writes each ask or deny to the file that
-SETUP_DIFF_PROMPT_LOG names (in the run's temp folder). Turn 2 runs without the rule and without the hook, as the
-user's yes in the prompt.
+Turn 1 has the setup diff hook, which is the only gate of the setup write call (the one `hooks.PreToolUse` command of the
+repo `settings.json` that runs `setup_diff_prompt.py`, with `~/.claude/` replaced by the repo folder; exit code 2 when it is
+not there exactly once). It answers `ask` with the plan diff, and in `claude -p` an `ask` is a deny, so turn 1 can never
+write. It writes each ask or deny to the file that SETUP_DIFF_PROMPT_LOG names (in the run's temp folder). Turn 2 runs
+without the hook, as the user's yes in the prompt.
 
 Turn 1 checks (a failure ends the run; turn 2 does not run): `no-write` (no change call except a `setup_files.py write`
-call that the permission rule or the hook denied, and the content hashes of the work folder without `.git` and of the
+call that the hook asked on, which `claude -p` denies, or denied, and the content hashes of the work folder without `.git` and of the
 temp HOME folder are the same before and after), `plan` (a `setup_files.py plan` call with a readable plan result) and
 `prompt-diff` (the hook log has an `ask` entry whose reason holds every added line of the diffs of the latest plan: each
 diff line that starts with `+`, not the `+++` header, equals a whole line of the reason, trailing white space removed on
@@ -66,7 +64,6 @@ TURN2_PROMPT = "I confirm the diff. Write the files now."
 CLAUDE_SECONDS = 900
 SCAFFOLD_SECONDS = 600
 SANDBOX_FAILED = "Sandbox is enabled but failed to initialize"
-WRITE_SCRIPT = "setup_files.py write"
 HOOK_SCRIPT = "setup_diff_prompt.py"
 HOOK_LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
 HOOK_DENIAL = "Setup write check:"
@@ -157,31 +154,15 @@ def allowed_tools(folders):
 DENIED_TOOLS = (f"Bash(python3 {SKILL_DIR}/scripts/formatter_install.py apply:*)", "Bash(*formatter_install.py apply*)")
 
 
-def sandbox_settings(folders, ask=None, hook=None):
+def sandbox_settings(folders, hook=None):
     """Bash runs only in the OS sandbox: no unsandboxed command, writes only in the run folders, no network.
-    `ask`: the permission ask rules and `hook`: the `hooks` setting for turn 1 (see the module docstring); turn 2 has none."""
+    `hook`: the `hooks` setting for turn 1 (see the module docstring); turn 2 has none."""
     settings = {"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": True,
                             "allowUnsandboxedCommands": False, "filesystem": {"allowWrite": list(folders)},
                             "network": {"allowedDomains": []}}}
-    if ask:
-        settings["permissions"] = {"ask": list(ask)}
     if hook:
         settings["hooks"] = hook
     return json.dumps(settings)
-
-
-def write_ask_rule():
-    """The one `permissions.ask` entry of the repo settings.json for the setup write call. Raises Usage otherwise."""
-    path = os.path.join(REPO_DIR, "settings.json")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            ask = json.load(handle)["permissions"]["ask"]
-        rules = [rule for rule in ask if isinstance(rule, str) and WRITE_SCRIPT in rule]
-    except (OSError, ValueError, KeyError, TypeError):
-        raise Usage(f"cannot read the permissions.ask list of {path}")
-    if len(rules) != 1:
-        raise Usage(f"{path} needs exactly one permissions.ask entry for {WRITE_SCRIPT}, found {len(rules)}")
-    return rules[0]
 
 
 def setup_hook_settings():
@@ -216,9 +197,9 @@ def sandbox_failed(text, label, turn):
     return []
 
 
-def claude_argv(prompt, session, budget, folders, ask=None, hook=None):
+def claude_argv(prompt, session, budget, folders, hook=None):
     return ["claude", "-p", prompt, "--model", "sonnet", "--output-format", "stream-json", "--verbose",
-            "--plugin-dir", SKILL_DIR, "--setting-sources", "", "--settings", sandbox_settings(folders, ask, hook),
+            "--plugin-dir", SKILL_DIR, "--setting-sources", "", "--settings", sandbox_settings(folders, hook),
             "--strict-mcp-config", "--permission-mode", "dontAsk", "--tools", "Skill,Read,Glob,Grep,Write,Edit,Bash",
             "--max-budget-usd", budget, *session, "--disallowedTools", *DENIED_TOOLS, "--allowedTools",
             *allowed_tools(folders)]
@@ -275,7 +256,7 @@ def latest_plan(trace):
 
 
 def denied_calls(trace):
-    """The ids of the calls whose tool result says that the permission was denied (an `ask` rule or a hook `ask` is a deny in
+    """The ids of the calls whose tool result says that the permission was denied (a hook `ask` is a deny in
     `claude -p`), or that the setup diff hook denied the call (its reason starts with `Setup write check:`)."""
     return {event[1] for event in trace
             if event[0] == "result" and (("Permission to use" in str(event[2]) and "has been denied" in str(event[2]))
@@ -323,7 +304,7 @@ def prompt_diff_problem(log_path, plan):
     return None
 
 
-def run_one(case_folder, number, out, budget, turn1_prompt, ask_rule, hook):
+def run_one(case_folder, number, out, budget, turn1_prompt, hook):
     """The failure lines of one run, each starting with FAIL."""
     name = os.path.basename(case_folder)
     label = f"{name}#{number}"
@@ -354,7 +335,7 @@ def run_one(case_folder, number, out, budget, turn1_prompt, ask_rule, hook):
     session = str(uuid.uuid4())
     paths = {suffix: os.path.join(out, f"{name}-{number}-{suffix}.jsonl") for suffix in ("turn1", "turn2", "trace")}
 
-    problem = run_turn(claude_argv(turn1_prompt, ["--session-id", session], budget, folders, [ask_rule], hook), state["work"], env,
+    problem = run_turn(claude_argv(turn1_prompt, ["--session-id", session], budget, folders, hook), state["work"], env,
                        paths["turn1"], 1)
     if problem:
         return [f"FAIL {label} {problem}"]
@@ -445,7 +426,6 @@ def main(argv):
             for needed in ("scaffold.sh", "expected.json"):
                 if not os.path.isfile(os.path.join(case_folder, needed)):
                     raise Usage(f"{os.path.basename(case_folder)}: no {needed}")
-        ask_rule = write_ask_rule()
         hook = setup_hook_settings()
     except Usage as error:
         print(f"run_setup_turns: {error}", file=sys.stderr)
@@ -464,7 +444,7 @@ def main(argv):
     for case_folder in cases:
         name = os.path.basename(case_folder)
         for number in range(1, args.runs + 1):
-            lines = run_one(case_folder, number, out, args.max_budget_usd, prompts[case_folder], ask_rule, hook)
+            lines = run_one(case_folder, number, out, args.max_budget_usd, prompts[case_folder], hook)
             failed = failed or bool(lines)
             print("\n".join(lines + [f"{name}#{number}: {'FAIL' if lines else 'PASS'}"]), flush=True)
     print("FAIL" if failed else "PASS")
