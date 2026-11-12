@@ -107,12 +107,20 @@ python3 skills/ci-pipelines/scripts/grade_create_results.py <results folder>/res
 - **Model run.** The model run of these cases belongs to the eval ticket (issue 362), not to the ticket that added them. The unit tests of the cases are in `tests/test_create_cases.py`, and the tests of the two scripts are in `tests/test_check_workflow.py` and `tests/test_grade_create_results.py`.
 - **No session transcript.** A create case has no `history.jsonl`, so a run writes no transcript into the case folder.
 
+## Fix-quality rationale
+
+Plugin eval tells an `llm` judge to answer with one word, keeps only the votes, and shows the judge one input (the last message). So a result file holds no reason for a `fix-quality` fail, and the judge cannot see the workflow. `scripts/judge_fix_quality.py` reads the same result and the kept traces (`--keep-temp`), and asks a haiku judge one question for each table row, with the exact text of the fixture workflow files (`repo/.github`) and the flag section for a row marked with ⚑. It prints `PASS` or `FAIL` and a reason for each row, then the row and run pass rates. It costs one judge call for each row, so use `--case <glob>` to limit it:
+
+```
+python3 skills/ci-pipelines/scripts/judge_fix_quality.py <results folder>/result.json --case 'name-*'
+```
+
 ## Graders
 
 - `expect-<ID>.md` and `forbid-<ID>.md`: a `regex` grader that finds the id in the Rule cell of a table row. They are generated from `expect.json`, and a unit test keeps them in step.
 - `section-*.md`: `regex` graders for the section markers of the report contract.
 - `no-edit.md`, `no-write.md`, `no-shell-write.md`: `tool_used` graders with `min: 0` and `max: 0`. The skill must not edit a workflow before approval.
-- `fix-quality.md`: an `llm` judge of the fix text. It is `arm: with-only`, so it is reported and not scored.
+- `fix-quality.md`: an `llm` judge of the fix text. It judges the finding rows one row at a time, on the last message only. It is `arm: with-only`, so it is reported and not scored. Plugin eval reads graders only from the case folder, so every case holds the same copy, and `tests/test_fix_quality_grader.py` fails when a copy differs. To change the text, write one copy and copy it over all the others. To read why a run failed, see "Fix-quality rationale".
 - `skill-fired.md` (trigger case): `tool_used: Skill`. Under `--ablation with-without` it is an indicator of the with-arm, not part of the score.
 - `actionlint-ran.md`, `actionlint-after-edit.md`, `no-actionlint.md`, `diff-in-message.md`, `gh-api-no-write.md`, `diff-scope.md` (approval cases): see "Approval cases". `diff-scope.md` is an `llm` judge with `arm: with-only`, so it is reported and not scored.
 - `wrote-ci.md`, `actionlint-after-write.md`, `wrote-<file>.md`, `no-write-<file>.md`, `no-edit-<file>.md`, `unchanged-<file>.md`, `no-write-github.md`, `names-COST-05.md` (create cases): see "Create cases".
