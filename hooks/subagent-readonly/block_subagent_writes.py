@@ -34,7 +34,8 @@ def unresolved_reason(names, what):
 
 # `gh <group> <verb>`: the verbs of each group that change something on GitHub.
 GH_WRITE_VERBS = {
-    "pr": {"create", "merge", "edit", "close", "comment", "review", "ready", "reopen", "lock", "unlock", "update-branch", "revert"},
+    "alias": {"set", "import", "delete"},  # a subagent never needs an alias; an alias can hide a write (`pr merge`)
+    "pr": {"create", "new", "merge", "edit", "close", "comment", "review", "ready", "reopen", "lock", "unlock", "update-branch", "revert"},
     "issue": {"create", "edit", "close", "comment", "reopen", "delete", "lock", "unlock", "pin", "unpin", "transfer", "develop"},
     "repo": {"edit", "create", "delete", "fork", "rename", "archive", "unarchive", "sync", "set-default"},
     "release": {"create", "delete", "edit", "upload", "delete-asset"},

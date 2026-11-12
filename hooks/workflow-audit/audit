@@ -2714,6 +2714,7 @@ _pr_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["pr", "create"], ["pr", "new"]) 
 _dispatch_head = _cli_head(_is_orca, ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
 _api_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["api"])
 _alias_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["alias", "set"])
+_alias_import_head = _cli_head(_is_gh, GH_VALUE_OPTIONS, ["alias", "import"])
 
 
 def _arguments(segment, head):
@@ -2955,6 +2956,8 @@ CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
 PR_POINTER = ". Open the pull request with `gh pr create` as a plain command, after the audit"
 # `gh api` can open a pull request with no `gh pr create`. A wrapped `gh api` is denied whatever it does, as every wrapped form is.
 API_PULLS = re.compile(r"(?:^|/)pulls/?(?:[?#].*)?$", re.IGNORECASE)
+API_GRAPHQL = re.compile(r"graphql/?(?:[?#].*)?$", re.IGNORECASE)  # the GraphQL endpoint with a trailing slash, a query string or any case
+METHOD_OVERRIDE_HEADER = "x-http-method-override"
 
 
 def _api_method(arguments):
@@ -2974,33 +2977,73 @@ def _api_method(arguments):
     return (method or implied or "GET").upper()
 
 
-def _denies_api_pull(segment):
+def _denies_api_pull(segment, appendable=False):
     """A `gh api` call that sends a request that is not a GET to a `.../pulls` endpoint (which opens a pull request), or a GraphQL call
-    that holds the `createPullRequest` mutation, or whose query or endpoint cannot be read here (a variable, `--input`, `=@file`)."""
+    that holds the `createPullRequest` mutation, or whose query or endpoint cannot be read here (a variable, `--input`, `=@file`).
+    `appendable` is for the expansion of an alias: `gh` appends the arguments of the alias call to it, so its method, its fields and an
+    endpoint that it lacks are not final. Then any call to `pulls` or GraphQL, or with no endpoint, is denied whatever its method."""
     head = _api_head(segment)
     if head is None:
         return False
     arguments = _command_words(segment)[len(head):]
-    if _api_method(arguments) == "GET":
+    if not appendable and _api_method(arguments) == "GET":
         return False
     found = _words(_positionals(_significant(arguments), GH_API_VALUE_OPTIONS, 1))
     endpoint = found[0] if found else ""
-    if re.search(r"[$`]", endpoint) or API_PULLS.search(endpoint):
+    graphql = bool(API_GRAPHQL.search(endpoint))
+    if re.search(r"[$`]", endpoint) or API_PULLS.search(endpoint) or (appendable and (not endpoint or graphql)):
         return True
-    return endpoint.endswith("graphql") and any(
+    return graphql and any(
         re.search(r"[$`]|=@", word) or word.startswith("--input") or "createpullrequest" in word.lower() for word in arguments)
 
 
+def _denies_api_override(segment):
+    """A `gh api` call with a method-override header, whatever its method and endpoint: GitHub may read the header as the method. The
+    header name is read as text in any case, in any option spelling; a header name that a variable or a substitution builds is denied."""
+    head = _api_head(segment)
+    if head is None:
+        return False
+    arguments = _command_words(segment)[len(head):]
+    if any(METHOD_OVERRIDE_HEADER in word.lower() for word in arguments):
+        return True
+    for index, word in enumerate(arguments):
+        if word == "--":
+            break
+        if word in ("-H", "--header"):
+            header = arguments[index + 1] if index + 1 < len(arguments) else ""
+        elif word.startswith("--header="):
+            header = word[len("--header="):]
+        elif word.startswith("-H") and not word.startswith("--"):
+            header = word[2:].removeprefix("=")
+        else:
+            continue
+        if re.search(r"[$`]", header.split(":", 1)[0]):
+            return True
+    return False
+
+
+def _alias_api_problem(word):
+    """Whether a word of `gh alias set` is the expansion of a `gh api` call that the gate denies (see `_denies_api_pull`, `appendable`),
+    or cannot be read. The word is parsed as the arguments of `gh`, which is how `gh` runs a non-shell expansion."""
+    try:
+        segments = [item for item in split_command(f"gh {word}") if isinstance(item, list)]
+    except Exception:
+        return True
+    return any(_denies_api_pull(segment, appendable=True) or _denies_api_override(segment) for segment in segments)
+
+
 def _denies_alias_pull(segment):
-    """A `gh alias set` whose arguments hold `pr create` or `pr new` (any `gh` spelling, a shell expansion too), or whose expansion
-    cannot be read here (`-` reads it from stdin; a variable or a substitution builds it). All arguments are read, not only the second
-    positional one: an expansion that starts with `-` (`-R o/r pr create`) is no positional word for a parse of options."""
+    """A `gh alias set` whose arguments hold `pr create` or `pr new` (any `gh` spelling, a shell expansion too), or a `gh api` call that
+    opens a pull request, or whose expansion cannot be read here (`-` reads it from stdin; a variable or a substitution builds it). All
+    arguments are read, not only the second positional one: an expansion that starts with `-` (`-R o/r pr create`) is no positional word
+    for a parse of options."""
     head = _alias_head(segment)
     if head is None:
         return False
     arguments = [word for word in _command_words(segment)[len(head):] if word not in ("--", "--clobber", "-s", "--shell")]
     return "-" in arguments or any(re.search(r"[$`]", word) for word in arguments) or any(
-        PR_FORM.pattern.search(normal) for word in arguments for found in (word, f"gh {word}") for normal in _normal_forms(found))
+        PR_FORM.pattern.search(normal) for word in arguments for found in (word, f"gh {word}") for normal in _normal_forms(found)) or any(
+        _alias_api_problem(word) for word in arguments)
 
 
 # The text count of `gh api` reads only a call whose text can reach the pulls endpoint or GraphQL (or holds a `$` or a backtick); the head
@@ -3016,6 +3059,17 @@ ALIAS_FORM = GatedForm(_has_head(_alias_head), "gh alias set", "gh alias set",
                        "unchecked command form: the command cannot be parsed; run gh alias set as a plain command",
                        _cli_pattern("gh", GH_VALUE_OPTIONS, "alias", "set(?![\\w.-])"), _alias_head, _denies_alias_pull,
                        "gh alias set with an expansion that opens a pull request, or that cannot be read, is denied" + PR_POINTER, PR_POINTER)
+# `gh api` with a method-override header is denied whatever it does, so the text count reads any call whose text holds the header name.
+API_OVERRIDE_FORM = GatedForm(_has_head(_api_head), "gh api method-override", "gh api method-override",
+                              "unchecked command form: the command cannot be parsed; run gh api method-override as a plain command",
+                              _cli_pattern("gh", GH_VALUE_OPTIONS, "api(?![\\w.-])(?:.{0,300}?(?i:method-override))"),
+                              lambda segment: _command_words(segment) if _api_head(segment) else None, _denies_api_override,
+                              "gh api with a method-override header is denied")
+# `gh alias import` adds aliases from a file or stdin, which the gate cannot read: denied whatever it imports.
+ALIAS_IMPORT_FORM = GatedForm(_has_head(_alias_import_head), "gh alias import", "gh alias import",
+                              "gh alias import is denied: the command cannot be parsed",
+                              _cli_pattern("gh", GH_VALUE_OPTIONS, "alias", "import(?![\\w.-])"), _alias_import_head,
+                              _has_head(_alias_import_head), "gh alias import is denied: an imported alias can hide a gated command")
 
 
 def _cleanup_form(segment, count_text, pattern, head, denied, deny_reason):
@@ -3042,7 +3096,7 @@ SKIP_OWNERSHIP_FORM = _cleanup_form(
     f"--skip-ownership is denied: only the user runs `! {CLEANUP_COMMAND} --skip-ownership <worktree path>`, for a worktree that the session "
     "cannot prove it owns")
 # The PR reason wins when a command has an unchecked form of both; the new forms follow.
-GATED_FORMS = (PR_FORM, DISPATCH_FORM, API_FORM, ALIAS_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_FORM, WORKTREE_RM_FORM, SKIP_OWNERSHIP_FORM)
+GATED_FORMS = (PR_FORM, DISPATCH_FORM, API_FORM, API_OVERRIDE_FORM, ALIAS_FORM, ALIAS_IMPORT_FORM, BRANCH_FORM, PUSH_FORM, WORKTREE_REMOVE_FORM, WORKTREE_RM_FORM, SKIP_OWNERSHIP_FORM)
 
 
 def _raw_match(text, form):
