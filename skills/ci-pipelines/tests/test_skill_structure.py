@@ -189,6 +189,14 @@ class CostAndMonorepoRules(unittest.TestCase):
             self.assertIn(text, rule)
         self.assertIn("`monorepo`", self.mono["MONO-01"]["Check"])
 
+    def test_cost_08_skips_a_checkout_that_mono_01_covers(self):
+        fields = self.cost["COST-08"]
+        for field in ("Check", "Fix"):
+            self.assertIn("MONO-01", fields[field])
+        self.assertIn("never a COST-08 finding", fields["Check"])
+        self.assertIn("in a job of a PR run that runs a task of the repo's monorepo tool", fields["Check"])
+        self.assertIn("A job that runs only on a push to main is still a COST-08 finding", fields["Check"])
+
     def test_mono_02_proposes_the_pnpm_filter_and_adds_no_tool(self):
         fields = self.mono["MONO-02"]
         self.assertIn("pnpm filter", fields["Rule"])
