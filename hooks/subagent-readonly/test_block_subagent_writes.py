@@ -1,3 +1,6 @@
+import importlib.machinery
+import importlib.util
+import itertools
 import json
 import os
 import subprocess
@@ -233,6 +236,91 @@ class HookTest(unittest.TestCase):
     def test_input_that_is_not_json_passes(self):
         result = subprocess.run([sys.executable, "-I", HOOK], input=b"not json", capture_output=True, check=False)
         self.assertEqual((result.returncode, result.stdout), (0, b""))
+
+
+def _hook_module():
+    """The hook as a module, read as data (no `.pyc` is written)."""
+    previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        loader = importlib.machinery.SourceFileLoader("block_subagent_writes_for_test", HOOK)
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+    finally:
+        sys.dont_write_bytecode = previous
+
+
+hook = _hook_module()
+RULES = hook.DenyRules(hook.load_reader())
+
+
+class NamedReasonTest(unittest.TestCase):
+    """Whether a reason names a gated command is the type of the reason, not its text."""
+
+    def test_the_text_of_a_reason_decides_nothing(self):
+        for text in ("a gh subcommand that a variable, a substitution or a pattern builds", "the command cannot be read (ValueError)",
+                     "shell commands nested deeper than 3", "git push changes the remote"):
+            with self.subTest(text=text):
+                self.assertTrue(hook.names_gated_command(text))
+                self.assertFalse(hook.names_gated_command(hook.UnnamedReason(text)))
+
+    def test_a_reason_that_names_no_gated_command_is_flagged_and_a_gated_one_is_not(self):
+        deep = "bash -c \"bash -c \\\"bash -c \\\\\\\"bash -c 'git diff'\\\\\\\"\\\"\""
+        for command in ("gh $SUB create", "git $SUB", "$CMD x", "terraform $SUB", "aws s3 $OP", "echo `ls`", "echo `", deep):
+            with self.subTest(command=command):
+                reason = RULES.command_reason(command)
+                self.assertTrue(reason)
+                self.assertFalse(hook.names_gated_command(reason))
+        for command in ("git push", "gh pr merge 5", "echo $(git push)", "echo `git push`", "echo `echo \\`git push\\``"):
+            with self.subTest(command=command):
+                self.assertTrue(hook.names_gated_command(RULES.command_reason(command)))
+
+    def test_the_reason_texts(self):
+        self.assertEqual(RULES.command_reason("gh $SUB create"), "a gh subcommand that a variable, a substitution or a pattern builds")
+        self.assertEqual(RULES.command_reason("echo `ls`"), "the command cannot be read (ValueError)")
+
+
+class BacktickReasonTest(unittest.TestCase):
+    """Each path of `backtick_reason`; none of them raises, so the method needs no `try/except` around its loop."""
+
+    def reason(self, command, depth=0):
+        return RULES.backtick_reason(command, depth)
+
+    def test_the_nesting_limit_returns_none(self):
+        self.assertIsNone(self.reason("echo `git push`", RULES.audit.MAX_SHELL_DEPTH + 1))
+        self.assertIsNotNone(self.reason("echo `git push`", RULES.audit.MAX_SHELL_DEPTH))
+
+    def test_a_text_with_no_backtick_returns_none(self):
+        self.assertIsNone(self.reason("git push"))
+
+    def test_a_closed_form_with_a_gated_command_is_named(self):
+        self.assertEqual(self.reason("echo `git push`"), "git push changes the remote, inside a backtick form")
+
+    def test_an_unclosed_form_runs_to_the_end_of_the_text(self):
+        self.assertEqual(self.reason("echo `gh pr merge 5"), "gh pr merge changes GitHub, inside a backtick form")
+
+    def test_a_form_with_no_gated_command_returns_none(self):
+        for command in ("echo `ls`", "echo `", "echo `$CMD`", "echo `git status` `git diff`"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.reason(command))
+
+    def test_a_later_form_is_searched_after_an_earlier_one(self):
+        self.assertEqual(self.reason("ls `echo hi` `terraform apply`"), "terraform apply changes remote state, inside a backtick form")
+
+    def test_a_body_that_cannot_be_read_is_searched_in_turn(self):
+        self.assertEqual(self.reason("echo `echo \\`git push\\``"),
+                         "git push changes the remote, inside a backtick form, inside a backtick form")
+
+    def test_no_text_makes_it_raise(self):
+        pieces = ("`", "\\", "'", '"', "$(", ")", "git push", " ", "<<")
+        for count in range(1, 5):
+            for combination in itertools.product(pieces, repeat=count):
+                text = "".join(combination)
+                try:
+                    self.reason(text)
+                except Exception as error:
+                    self.fail(f"{text!r} raised {error!r}")
 
 
 if __name__ == "__main__":

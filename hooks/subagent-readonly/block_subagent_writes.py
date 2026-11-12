@@ -23,22 +23,24 @@ AUDIT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DENY_NOTICE = ("A subagent must not change remote state. Do not run this command. Report the need as a finding in your review "
                "instead; the owner runs it.")
 UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
-# The reasons that name no gated command: a word that cannot be resolved, a text that cannot be read, a nesting that is too deep.
-UNRESOLVED_SUFFIX = " that a variable, a substitution or a pattern builds"
-UNREADABLE_PREFIX = "the command cannot be read"
-TOO_DEEP_PREFIX = "shell commands nested deeper than"
+
+
+class UnnamedReason(str):
+    """A deny reason that names no gated command: a word that cannot be resolved, a text that cannot be read, a nesting that is too deep.
+    The type is the flag, so that no decision reads the reason text. Any new reason that names no gated command must be built with this
+    type, and the flag is kept only while the same object is passed on: a string operation on it (`f"{reason}..."`) returns a plain `str`."""
 
 
 def unresolved_reason(names, what):
     """The deny reason when a word is built by a variable, a substitution or a pattern (the hook cannot read what it names), else None."""
     if any(UNRESOLVABLE_WORD.search(name) for name in names):
-        return f"a {what}{UNRESOLVED_SUFFIX}"
+        return UnnamedReason(f"a {what} that a variable, a substitution or a pattern builds")
     return None
 
 
 def names_gated_command(reason):
     """Whether a deny reason names a gated command (`gh pr merge changes GitHub`), and not a word or a text that the hook cannot read."""
-    return not (reason.endswith(UNRESOLVED_SUFFIX) or reason.startswith((UNREADABLE_PREFIX, TOO_DEEP_PREFIX)))
+    return not isinstance(reason, UnnamedReason)
 
 
 # `gh <group> <verb>`: the verbs of each group that change something on GitHub.
@@ -234,33 +236,30 @@ class DenyRules:
         names the gated command, so that the reason is not a bare "cannot be read". A body that cannot be read itself is searched in turn."""
         if depth > self.audit.MAX_SHELL_DEPTH:
             return None
-        try:
-            start = command.find("`")
-            while start >= 0:  # each backtick form wherever it is, a quoted one too: it is denied either way
-                try:
-                    end = self.audit._backtick_end(command, start + 1)
-                except ValueError:  # not closed: the body runs to the end of the text
-                    end = len(command)
-                body = re.sub(r"\\([`\\$])", r"\1", command[start + 1:end])  # bash unescapes a backtick body, as `_mask_substitutions` does
-                try:
-                    reason = self.read_reason(body, depth + 1)
-                except Exception:
-                    reason = self.backtick_reason(body, depth + 1)
-                if reason and names_gated_command(reason):
-                    return f"{reason}, inside a backtick form"
-                start = command.find("`", end + 1)
-        except Exception:  # whatever fails here leaves the bare reason of the caller
-            pass
+        start = command.find("`")
+        while start >= 0:  # each backtick form wherever it is, a quoted one too: it is denied either way
+            try:
+                end = self.audit._backtick_end(command, start + 1)
+            except ValueError:  # not closed: the body runs to the end of the text
+                end = len(command)
+            body = re.sub(r"\\([`\\$])", r"\1", command[start + 1:end])  # bash unescapes a backtick body, as `_mask_substitutions` does
+            try:
+                reason = self.read_reason(body, depth + 1)
+            except Exception:
+                reason = self.backtick_reason(body, depth + 1)
+            if reason and names_gated_command(reason):
+                return f"{reason}, inside a backtick form"
+            start = command.find("`", end + 1)
         return None
 
     def command_reason(self, command, depth=0):
         """The deny reason for a command text, or None. Raises nothing: what cannot be read is denied."""
         if depth > self.audit.MAX_SHELL_DEPTH:
-            return f"{TOO_DEEP_PREFIX} {self.audit.MAX_SHELL_DEPTH}"
+            return UnnamedReason(f"shell commands nested deeper than {self.audit.MAX_SHELL_DEPTH}")
         try:
             return self.read_reason(command, depth)
         except Exception as error:  # a ValueError of the reader, a RecursionError, or any other failure
-            return self.backtick_reason(command, depth) or f"{UNREADABLE_PREFIX} ({type(error).__name__})"
+            return self.backtick_reason(command, depth) or UnnamedReason(f"the command cannot be read ({type(error).__name__})")
 
 
 def main():

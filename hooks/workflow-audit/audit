@@ -2986,6 +2986,10 @@ def _api_method(arguments):
     return ((methods[-1] if methods else None) or implied or "GET").upper()
 
 
+# The alias rule (`appendable`) is stricter than "deny an expansion that opens a pull request" (decided by the owner, #519): an expansion
+# to `pulls` or GraphQL, or with no endpoint, is denied whatever its method. `gh` appends the arguments of the alias call to the
+# expansion, so the method, the fields and the endpoint of the expansion are not final: `gh alias set x 'api -X GET repos/o/r/pulls'`
+# and `'api'` can still open a pull request once the call adds `-X POST -f ...` or an endpoint.
 def _denies_api_pull(segment, appendable=False):
     """A `gh api` call that sends a request that is not a GET to a `.../pulls` endpoint (which opens a pull request), or a GraphQL call
     that holds the `createPullRequest` mutation, or whose query or endpoint cannot be read here (a variable, `--input`, `=@file`).
@@ -3018,10 +3022,6 @@ def _denies_api_override(segment):
     return any(re.search(r"[$`]", header.split(":", 1)[0]) for header in _api_option_values(arguments, "-H", "--header"))
 
 
-# The alias rule is stricter than "deny an expansion that opens a pull request" (decided by the owner, #519): an expansion to `pulls` or
-# GraphQL, or with no endpoint, is denied whatever its method. `gh` appends the arguments of the alias call to the expansion, so the
-# method, the fields and the endpoint of the expansion are not final: `gh alias set x 'api -X GET repos/o/r/pulls'` and `'api'` can still
-# open a pull request once the call adds `-X POST -f ...` or an endpoint.
 def _alias_api_problem(word):
     """Whether a word of `gh alias set` is the expansion of a `gh api` call that the gate denies (see `_denies_api_pull`, `appendable`),
     or cannot be read. The word is parsed as the arguments of `gh`, which is how `gh` runs a non-shell expansion."""
