@@ -109,7 +109,10 @@ class JudgeFixQuality(unittest.TestCase):
 
     def test_a_name_09_row_gets_the_flag_section_even_without_the_flag_mark(self):
         text = report("Add the job `ci-passed`.", "Rename the job.", "Tell the user the check names.")
-        self.add_case("name-09-x", [text.replace("| NAME-03 |", "| NAME-09 |").replace("\n## Approve", "\n## ⚑ Branch protection change needed\n\nRemove `test`, add `CI passed`.\n\n## Approve")])
+        text = text.replace("| NAME-03 |", "| NAME-09 |")
+        flag_section = "## ⚑ Branch protection change needed\n\nRemove `test`, add `CI passed`.\n\n"
+        self.assertIn("\n## Approve", text)
+        self.add_case("name-09-x", [text.replace("## Approve", flag_section + "## Approve")])
         self.run_script()
         first, second, third = self.prompts()
         self.assertNotIn("Remove `test`, add `CI passed`.", second)
