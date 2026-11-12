@@ -51,6 +51,7 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 EVALS = os.path.dirname(HERE)
 SKILL_DIR = os.path.dirname(EVALS)
+REPO_DIR = os.path.dirname(os.path.dirname(SKILL_DIR))
 sys.path.insert(0, os.path.join(SKILL_DIR, "graders"))
 
 import grade_eval_results as results  # noqa: E402
@@ -151,8 +152,7 @@ DENIED_TOOLS = (f"Bash(python3 {SKILL_DIR}/scripts/formatter_install.py apply:*)
 
 def sandbox_settings(folders, ask=None):
     """Bash runs only in the OS sandbox: no unsandboxed command, writes only in the run folders, no network.
-    `ask` is the permission ask rule of the setup write call (turn 1 only): in `dontAsk` mode it is a deny, and it wins over
-    the bare `Bash` allow rule, so turn 1 can never write; turn 2 has no ask rule, as the user's yes in the prompt."""
+    `ask`: the permission ask rules for turn 1 (see the module docstring); turn 2 has none."""
     settings = {"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": True,
                             "allowUnsandboxedCommands": False, "filesystem": {"allowWrite": list(folders)},
                             "network": {"allowedDomains": []}}}
@@ -163,8 +163,7 @@ def sandbox_settings(folders, ask=None):
 
 def write_ask_rule():
     """The one `permissions.ask` entry of the repo settings.json for the setup write call. Raises Usage otherwise."""
-    path = os.path.join(os.path.dirname(SKILL_DIR), "..", "settings.json")
-    path = os.path.realpath(path)
+    path = os.path.join(REPO_DIR, "settings.json")
     try:
         with open(path, encoding="utf-8") as handle:
             ask = json.load(handle)["permissions"]["ask"]
@@ -258,10 +257,14 @@ def is_write_call(event):
     return bool(target) and target[0] == "write" and not grade_setup.bash_changes_a_file(target[1])
 
 
+def is_denied_write(event, denied):
+    return is_write_call(event) and event[1] in denied
+
+
 def undenied_change_calls(trace):
     """The change calls of a turn 1 that are a FAIL: all of them, except a `setup_files.py write` call that was denied."""
     denied = denied_calls(trace)
-    return [event for event in change_calls(trace) if not (is_write_call(event) and event[1] in denied)]
+    return [event for event in change_calls(trace) if not is_denied_write(event, denied)]
 
 
 def missing_diff_line(trace, plan_found, message):
@@ -270,13 +273,12 @@ def missing_diff_line(trace, plan_found, message):
     such text); with no such call the final message counts too."""
     plan, plan_index = plan_found
     denied = denied_calls(trace)
-    end, final_counts = len(trace), True
-    for index, event in enumerate(trace):
-        if is_write_call(event) and event[1] in denied:
-            end, final_counts = index, False
-            break
-    shown = "\n".join([event[1] for index, event in enumerate(trace) if event[0] == "text" and plan_index < index < end]
-                      + ([message] if final_counts else []))
+    first_denied = next((index for index, event in enumerate(trace) if is_denied_write(event, denied)), None)
+    end = len(trace) if first_denied is None else first_denied
+    texts = [event[1] for event in trace[plan_index + 1:end] if event[0] == "text"]
+    if first_denied is None:
+        texts.append(message)
+    shown = "\n".join(texts)
     return next((line for line in grade_setup.added_lines(plan) if line not in shown), None)
 
 
