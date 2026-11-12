@@ -193,7 +193,8 @@ class FreshCiRuleTest(RuleTextCase):
                                   "the CI result is stale: go to step 4.")
 
     def test_the_worktree_is_fast_forwarded_after_the_rest_update(self):
-        self.assert_in(self.rule, "After the REST call, run `git pull --ff-only` in your worktree, so that it holds the new PR head.")
+        self.assert_in(self.rule, "After the REST call, run `git pull --ff-only` in the worktree of the PR branch, "
+                                  "so that it holds the new PR head.")
         step_4 = next(line for line in self.rule.splitlines() if line.startswith("4. "))
         self.assertIn("git pull --ff-only", step_4)
 
