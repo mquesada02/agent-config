@@ -183,7 +183,19 @@ class FreshCiRuleTest(RuleTextCase):
         self.assert_not_in(self.rule, "Compare the time")
 
     def test_the_base_is_fetched_before_the_check_and_the_git_merge_uses_the_fetched_base(self):
-        self.assert_in(self.rule, "1. Fetch the base branch: `git fetch origin <base>`.", "`git merge` of the fetched base and a push")
+        self.assert_in(self.rule, "`git merge` of the fetched base and a push")
+
+    def test_the_pr_head_is_fetched_with_the_base_before_the_check(self):
+        self.assert_in(self.rule, "1. Fetch the base branch and the PR head: `git fetch origin <base> pull/<n>/head`.")
+
+    def test_a_tested_head_missing_after_the_fetch_counts_as_stale(self):
+        self.assert_in(self.rule, "If the tested head is not in the local clone after step 1 (for example after a force push), "
+                                  "the CI result is stale: go to step 4.")
+
+    def test_the_worktree_is_fast_forwarded_after_the_rest_update(self):
+        self.assert_in(self.rule, "After the REST call, run `git pull --ff-only` in your worktree, so that it holds the new PR head.")
+        steps = [line for line in self.rule.splitlines() if re.match(r"\d\. ", line)]
+        self.assertIn("git pull --ff-only", steps[3])
 
     def test_a_pr_with_no_run_goes_to_the_wait_step(self):
         self.assert_in(self.rule, "2. If no run exists for the PR, go to step 6.")
