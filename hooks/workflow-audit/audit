@@ -2956,7 +2956,7 @@ CLEANUP_POINTER = f", or use {CLEANUP_COMMAND}"
 PR_POINTER = ". Open the pull request with `gh pr create` as a plain command, after the audit"
 # `gh api` can open a pull request with no `gh pr create`. A wrapped `gh api` is denied whatever it does, as every wrapped form is.
 API_PULLS = re.compile(r"(?:^|/)pulls/?(?:[?#].*)?$", re.IGNORECASE)
-API_GRAPHQL = re.compile(r"graphql/?(?:[?#].*)?$", re.IGNORECASE)  # a superset of the old `endswith("graphql")`: a slash, a query or any case
+API_GRAPHQL = re.compile(r"graphql/?(?:[?#].*)?$", re.IGNORECASE)  # the GraphQL endpoint with a trailing slash, a query string or any case
 METHOD_OVERRIDE_HEADER = "x-http-method-override"
 
 
@@ -2990,9 +2990,10 @@ def _denies_api_pull(segment, appendable=False):
         return False
     found = _words(_positionals(_significant(arguments), GH_API_VALUE_OPTIONS, 1))
     endpoint = found[0] if found else ""
-    if re.search(r"[$`]", endpoint) or API_PULLS.search(endpoint) or (appendable and (not endpoint or API_GRAPHQL.search(endpoint))):
+    graphql = bool(API_GRAPHQL.search(endpoint))
+    if re.search(r"[$`]", endpoint) or API_PULLS.search(endpoint) or (appendable and (not endpoint or graphql)):
         return True
-    return bool(API_GRAPHQL.search(endpoint)) and any(
+    return graphql and any(
         re.search(r"[$`]|=@", word) or word.startswith("--input") or "createpullrequest" in word.lower() for word in arguments)
 
 
