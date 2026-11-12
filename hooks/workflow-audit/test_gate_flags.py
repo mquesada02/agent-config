@@ -17,6 +17,22 @@ API_DENIED = (
     "gh api graphql -f query='mutation { createPullRequest(input: {}) { clientMutationId } }'", "gh api graphql --input query.json",
     "gh api graphql -F query=@query.graphql", 'gh api graphql -f query="$QUERY"', "gh api -X POST repos/o/r/PULLS -f title=t",
     "gh api -X POST 'repos/o/r/pulls#x' -f title=t",
+    # M16: the endpoint spelled with a trailing slash, a query or another case is the GraphQL endpoint too
+    "gh api graphql/ -f query='mutation { createPullRequest(input: {}) { clientMutationId } }'",
+    "gh api GraphQL -f query='mutation { createPullRequest(input: {}) { clientMutationId } }'",
+    "gh api 'graphql?x=1' -f query='mutation { createPullRequest(input: {}) { clientMutationId } }'",
+    "gh api /graphql/ --input query.json",
+)
+OVERRIDE_DENIED = (
+    "gh api -H 'X-HTTP-Method-Override: POST' repos/o/r/pulls", "gh api -H 'x-http-method-override: POST' repos/o/r/pulls -f title=t",
+    "gh api --method GET -H 'X-HTTP-Method-Override: POST' repos/o/r/pulls", "gh api --header 'X-HTTP-Method-Override: POST' repos/o/r/pulls",
+    "gh api --header='X-HTTP-Method-Override: POST' repos/o/r/pulls", "gh api -H'X-HTTP-Method-Override: POST' repos/o/r/pulls",
+    "gh api -H 'X-Http-Method-Override:POST' repos/o/r/issues", "gh api repos/o/r/issues -H 'X-HTTP-METHOD-OVERRIDE: PATCH'",
+    "gh -R o/r api -H 'X-HTTP-Method-Override: POST' repos/o/r/pulls", "gh api -H \"$HEADER\" repos/o/r/pulls", "gh api -H \"X-HTTP-Method-$NAME: POST\" repos/o/r/issues",
+)
+OVERRIDE_ALLOWED = (
+    "gh api -H 'Accept: application/vnd.github+json' repos/o/r/pulls", "gh api --header 'Authorization: Bearer '$TOKEN user",
+    "gh api -H 'Accept: application/json' repos/o/r/issues --jq '.[].title'",
 )
 API_ALLOWED = (
     "gh api repos/o/r/pulls", "gh api repos/o/r/pulls/5", "gh api -X GET repos/o/r/pulls -f state=open", "gh api -X POST repos/o/r/issues -f title=t",
@@ -27,8 +43,15 @@ ALIAS_DENIED = (
     "gh alias set pc 'pr create'", "gh alias set pc 'pr new --fill'", "gh alias set pc 'pr -R o/r create'", "gh alias set pc '-R o/r pr create'", "gh alias set pc '--repo=o/r pr new'","gh alias set pc -- '-R o/r pr create'",
     "gh alias set --shell pc 'gh pr create'", "gh alias set -s pc '!gh -R o/r pr create'", "gh alias set --clobber pc 'pr create'", "gh alias set pc -",
     'gh alias set pc "$EXPANSION"',
+    # M8: an expansion that is a `gh api` call to pulls or GraphQL, or that lacks the endpoint (the alias call appends it), or that has an override header
+    "gh alias set pc 'api -X POST repos/o/r/pulls -f title=t'", "gh alias set pc 'api repos/o/r/pulls'", "gh alias set pc 'api graphql'",
+    "gh alias set pc 'api -X POST'", "gh alias set pc 'api'", "gh alias set pc '-R o/r api repos/o/r/pulls'", "gh alias set pc -- 'api repos/o/r/pulls'",
+    "gh alias set pc 'api -H \"X-HTTP-Method-Override: POST\" repos/o/r/issues'", "gh alias set pc 'api repos/o/r/pulls; pr view'",
+    "gh alias set pc 'api \"repos/o/r/pulls'",
 )
-ALIAS_ALLOWED = ("gh alias set pv 'pr view'", "gh alias set --shell pv '!gh pr list | head'", "gh alias list", "gh alias set --help")
+ALIAS_ALLOWED = ("gh alias set pv 'pr view'", "gh alias set --shell pv '!gh pr list | head'", "gh alias list", "gh alias set --help",
+                 "gh alias set me 'api user --jq .login'", "gh alias set iss 'api repos/o/r/issues -H \"Accept: application/json\"'")
+ALIAS_IMPORT_DENIED = ("gh alias import aliases.yml", "gh alias import -", "gh alias import --clobber aliases.yml", "gh -R o/r alias import f", "gh alias --help import f")
 
 
 class PrSpellingTest(GateTestCase):
@@ -96,6 +119,41 @@ class ApiTest(GateTestCase):
                 self.assert_allowed(self.gate(command))
 
 
+class ApiOverrideTest(GateTestCase):
+    def test_a_call_with_a_method_override_header_is_denied(self):
+        for command in OVERRIDE_DENIED:
+            with self.subTest(command=command):
+                self.assertIn("gh api", self.denial(self.gate(command)) or "")
+
+    def test_a_call_with_the_header_only_is_denied_with_the_override_reason(self):
+        for command in OVERRIDE_DENIED:
+            if "pulls" not in command:
+                with self.subTest(command=command):
+                    self.assert_denied(self.gate(command), "gh api with a method-override header is denied")
+        self.assert_denied(self.gate(OVERRIDE_DENIED[0]), "gh api with a method-override header is denied")
+
+    def test_a_call_with_the_header_is_denied_when_wrapped(self):
+        for command in OVERRIDE_DENIED:
+            with self.subTest(command=command):
+                reason = self.denial(self.gate(f"bash -c {shlex.quote(command)}"))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("unchecked command form: run gh api "), reason)
+
+    def test_a_call_with_the_header_is_denied_in_a_substitution(self):
+        for command in OVERRIDE_DENIED:
+            for wrapped in (f"echo $({command})", f"echo `{command}`"):
+                with self.subTest(command=wrapped):
+                    self.assertIsNotNone(self.denial(self.gate(wrapped)))
+
+    def test_a_call_with_the_header_is_denied_when_the_command_cannot_be_parsed(self):
+        self.assert_denied(self.gate(f'{OVERRIDE_DENIED[2]} "open'), "unchecked command form: the command cannot be parsed")
+
+    def test_another_header_is_allowed(self):
+        for command in OVERRIDE_ALLOWED:
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+
 class ApiSpeedTest(GateTestCase):
     def test_many_calls_in_one_command_are_gated_in_linear_time(self):
         started = time.monotonic()
@@ -127,6 +185,28 @@ class AliasTest(GateTestCase):
 
     def test_another_alias_is_allowed(self):
         for command in ALIAS_ALLOWED:
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+
+class AliasImportTest(GateTestCase):
+    def test_an_alias_import_is_denied(self):
+        for command in ALIAS_IMPORT_DENIED:
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(command), "gh alias import is denied")
+
+    def test_an_alias_import_is_denied_when_wrapped_or_in_a_substitution(self):
+        for command in ALIAS_IMPORT_DENIED:
+            with self.subTest(command=command):
+                self.assert_denied(self.gate(f"bash -c {shlex.quote(command)}"), "unchecked command form: run gh alias import as a plain command")
+                for wrapped in (f"echo $({command})", f"echo `{command}`"):
+                    self.assertIsNotNone(self.denial(self.gate(wrapped)))
+
+    def test_an_alias_import_is_denied_when_the_command_cannot_be_parsed(self):
+        self.assert_denied(self.gate('gh alias import f "open'), "gh alias import is denied: the command cannot be parsed")
+
+    def test_the_other_alias_commands_are_allowed(self):
+        for command in ("gh alias list", "gh alias delete pc", "gh alias --help", "gh alias set --help"):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
