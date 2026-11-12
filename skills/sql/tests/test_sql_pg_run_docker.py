@@ -30,6 +30,9 @@ CREATE SCHEMA pgrun_test;
 CREATE TABLE pgrun_test.items (a int);
 INSERT INTO pgrun_test.items SELECT generate_series(1, 5);
 CREATE VIEW pgrun_test.items_v AS SELECT a FROM pgrun_test.items;
+CREATE EXTENSION dblink SCHEMA pgrun_test;
+CREATE EXTENSION tablefunc SCHEMA pgrun_test;
+CREATE TABLE pgrun_test.probe_t (a int);
 CREATE TABLE public.facts_t (id int NOT NULL, due_on date, note text);
 INSERT INTO public.facts_t VALUES (1, DATE '2026-01-01', 'x'), (2, NULL, NULL);
 CREATE FUNCTION pgrun_test.writes() RETURNS int LANGUAGE sql
@@ -230,6 +233,48 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     def test_the_rows_are_unchanged_after_the_runs(self):
         for version in VERSIONS:
             self.assertEqual(self.rows(version), "5|15")
+
+    def probe_rows(self, version):
+        done = host_psql(self.ports[version], "-c", "SELECT count(*) FROM pgrun_test.probe_t")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def test_a_string_sql_function_runs_a_plain_explain_and_its_hidden_sql_never_runs(self):
+        # The text of query_to_xml opens a second connection (outside the read-only transaction) and inserts a row.
+        # An ANALYZE run would run it; the downgraded plain EXPLAIN must not.
+        connection = f"host=127.0.0.1 port=5432 user={SUPERUSER} dbname=postgres password={FIXTURE_SECRET}"
+        hidden = f"SELECT pgrun_test.dblink_exec(''{connection}'', ''INSERT INTO pgrun_test.probe_t VALUES (1)'')"
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.explain(version, f"SELECT query_to_xml('{hidden}', true, true, '')")
+                self.assertTrue(data["ok"], data)
+                self.assertEqual(self.probe_rows(version), "0")
+                self.assertEqual((data["ran"], data["mode"]), ("explain", "select"))
+                self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
+
+    def test_the_examples_of_the_brief_give_a_plain_explain(self):
+        for version in VERSIONS:
+            for hidden in ("pg_notify(''chan'', ''x'')", "set_config(''pgrun.flag'', ''1'', false)"):
+                with self.subTest(version=version, hidden=hidden):
+                    data = self.explain(version, f"SELECT query_to_xml('SELECT {hidden}', true, true, '')")
+                    self.assertEqual((data["ok"], data["ran"]), (True, "explain"), data)
+
+    def test_each_listed_function_gives_a_plain_explain_and_a_normal_select_still_analyzes(self):
+        statements = {
+            "ts_stat": "SELECT * FROM ts_stat('SELECT to_tsvector(''x'')')",
+            "crosstab": "SELECT * FROM pgrun_test.crosstab('SELECT 1, 1, 1') AS ct(a int, b int)",
+            "connectby": "SELECT * FROM pgrun_test.connectby('pgrun_test.items', 'a', 'a', '1', 0) AS t(a int, p int, l int)",
+            "cursor_to_xml": "SELECT cursor_to_xml('c'::refcursor, 1, true, true, '')",
+        }
+        for version in VERSIONS:
+            for name, statement in statements.items():
+                with self.subTest(version=version, name=name):
+                    data = self.explain(version, statement)
+                    self.assertEqual((data["ok"], data["ran"]), (True, "explain"), data)
+                    self.assertEqual([hit["name"] for hit in data["downgrade"]], [name])
+            with self.subTest(version=version, name="normal"):
+                data = self.explain(version, "SELECT * FROM pgrun_test.items")
+                self.assertEqual((data["ok"], data["ran"], data["downgrade"]), (True, "analyze", []))
 
     def facts(self, version, *names):
         done = subprocess.run(

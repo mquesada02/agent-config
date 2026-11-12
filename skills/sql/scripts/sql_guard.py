@@ -11,6 +11,10 @@ The reasons are checked in this order: `empty`, `unterminated`,
 `multiple_statements`, `write_statement`, `not_select`, `data_modifying`,
 `forbidden_function`, `unicode_identifier`.
 
+`check_select_scan(text)` runs `check_select` and adds `scan`: the string-SQL functions (`query_to_xml*`,
+`cursor_to_xml*`, `ts_stat`, `crosstab*`, `connectby`) that the statement calls. Their text argument is a string
+that this guard cannot scan, so `pg_run` runs a plain EXPLAIN for a non-empty `scan`.
+
 `check_write(text)` accepts exactly one `INSERT`, `UPDATE`, `DELETE` or `MERGE`, with an optional
 `WITH` list that it reads as a grammar (it fails closed). It uses the same tokenizer. It returns
 `(result, None)` where `result` has `sql`, `nextval`, `scan` and `targets`, or `(None, refusal)`.
@@ -81,8 +85,10 @@ WRITE_MESSAGES = {
 
 # Functions whose effect ROLLBACK cannot undo (a sequence, a session lock, a file, a remote call), or that
 # run SQL from a string argument that the guard cannot scan. A hit downgrades the run to a plain EXPLAIN.
-SCAN_NAMES = frozenset(["lo_export", "setval", "ts_stat", "connectby"])
-SCAN_PREFIXES = ("dblink", "query_to_xml", "cursor_to_xml", "crosstab")
+STRING_SQL_NAMES = frozenset(["ts_stat", "connectby"])
+STRING_SQL_PREFIXES = ("query_to_xml", "cursor_to_xml", "crosstab")
+SCAN_NAMES = frozenset(["lo_export", "setval"]) | STRING_SQL_NAMES
+SCAN_PREFIXES = ("dblink",) + STRING_SQL_PREFIXES
 ADVISORY_PREFIXES = ("pg_advisory", "pg_try_advisory")
 
 
@@ -248,6 +254,27 @@ def check_select(text):
         return _refuse("unicode_identifier")
     cut = tokens[semicolons[0]].start if semicolons else len(text)
     return text[:cut].strip(), None
+
+
+def _string_sql_name(token):
+    if token.kind not in ("word", "qident"):
+        return None
+    name = token.value.lower()
+    if name in STRING_SQL_NAMES or name.startswith(STRING_SQL_PREFIXES):
+        return name
+    return None
+
+
+def check_select_scan(text):
+    """`check_select`, then the string-SQL functions of the accepted statement. It returns `(result, None)` where
+    `result` has `sql` and `scan` (the sorted, lower-cased names of the tokens in `STRING_SQL_NAMES` or starting with
+    `STRING_SQL_PREFIXES`; a name in a string or a comment is no token), or `(None, refusal)` as `check_select` gives it.
+    A non-empty `scan` makes `pg_run` run a plain EXPLAIN. A directly called forbidden function is still refused."""
+    sql, refusal = check_select(text)
+    if refusal:
+        return None, refusal
+    tokens, _ = tokenize(text)
+    return {"sql": sql, "scan": sorted({name for name in map(_string_sql_name, tokens) if name})}, None
 
 
 def _write_refuse(reason, static_review_only=False, message_key=None):

@@ -202,6 +202,15 @@ class RefusalsTest(TempTest):
         events = [call("t1", piped), result("t1", self.DOWNGRADED)]
         self.assertEqual(self.grade(events, "downgraded:app-pg13")[:2], (0, ["PASS"]))
 
+    def test_a_select_mode_downgrade_passes_downgraded_and_fails_analyzed(self):
+        select_downgrade = {**self.DOWNGRADED, "mode": "select", "reason": "the statement calls query_to_xml"}
+        piped = "python3 /s/skills/sql/scripts/pg_run.py explain --service app-pg13 --mode select | python3 /s/plan_findings.py -"
+        events = [call("t1", piped), result("t1", select_downgrade)]
+        self.assertEqual(self.grade(events, "downgraded:app-pg13")[:2], (0, ["PASS"]))
+        code, lines, _ = self.grade(events, "analyzed:app-pg13")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL expected: analyzed:app-pg13 not found", lines)
+
     def test_no_connection_passes_with_no_call_and_with_a_not_allowed_result(self):
         self.assertEqual(self.grade([call("t0", "python3 allowlist.py .")], "no_connection:other-db")[:2], (0, ["PASS"]))
         self.assertEqual(self.grade(pg_run_events("t1", "other-db", NOT_ALLOWED), "no_connection:other-db")[:2],

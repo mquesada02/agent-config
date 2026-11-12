@@ -520,8 +520,10 @@ class ConnectionTest(PgRunTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             sorted(data),
-            sorted(["ok", "action", "service", "mode", "server_version_num", "ran", "reason", "timeouts", "warnings", "plan"]),
+            sorted(["ok", "action", "service", "mode", "server_version_num", "ran", "reason", "timeouts", "downgrade", "warnings", "plan"]),
         )
+        self.assertEqual(data["downgrade"], [])
+        self.assertEqual(data["reason"], "no call of a function that runs SQL from a string")
         self.assertEqual((data["ok"], data["action"], data["service"], data["mode"], data["ran"]), (True, "explain", "app-dev", "select", "analyze"))
         self.assertEqual(data["warnings"], [])
         self.assertIsInstance(data["plan"], list)
@@ -1766,6 +1768,64 @@ class DiffFailureTest(DiffTestCase):
             partial = {k: v for k, v in good.items() if k != name}
             code, data = self.diff(env={"FAKE_STDOUT_PROOF": json.dumps(partial)})
             self.assertEqual(data["error"], "bad_output", name)
+
+
+class SelectDowngradeTest(PgRunTestCase):
+    """Select mode: a statement that calls a string-SQL function runs as a plain EXPLAIN, rolled back and read-only."""
+
+    LISTED = (
+        "query_to_xml('select 1', true, true, '')", "query_to_xml_and_xmlschema('select 1', true, true, '')",
+        "query_to_xmlschema('select 1', true, true, '')", "cursor_to_xml('c'::refcursor, 1, true, true, '')",
+        "cursor_to_xmlschema('c'::refcursor, true, true, '')", "ts_stat('select 1')", "crosstab('select 1')",
+        "crosstab3('select 1')", "connectby('t', 'a', 'b', 'c', 1)",
+    )
+
+    def test_each_listed_function_gives_a_plain_explain_with_the_downgrade(self):
+        for call in self.LISTED:
+            statement = f"SELECT {call}"
+            name = call.split("(")[0]
+            with self.subTest(statement=statement):
+                self.reset_log()
+                code, data = self.explain(statement)
+                self.assertEqual(code, 0, data)
+                self.assertEqual((data["mode"], data["ran"]), ("select", "explain"))
+                self.assertEqual(data["downgrade"], [{"kind": "function", "name": name}])
+                self.assertEqual(data["reason"], f"the statement calls {name}")
+                self.assertEqual(data["warnings"], [])
+                self.assertIsInstance(data["plan"], list)
+                run = self.explain_call()
+                self.assertEqual(commands_of(run), ["BEGIN READ ONLY", f"EXPLAIN (FORMAT JSON) {statement}", "ROLLBACK"])
+                self.assertIn("default_transaction_read_only=on", run["argv"][-1])
+
+    def test_several_names_are_listed_in_scan_order(self):
+        code, data = self.explain("SELECT ts_stat('a'), query_to_xml('b', true, true, ''), ts_stat('c')")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["reason"], "the statement calls query_to_xml, ts_stat")
+        self.assertEqual([hit["name"] for hit in data["downgrade"]], ["query_to_xml", "ts_stat"])
+
+    def test_a_forbidden_name_in_the_text_argument_does_not_run(self):
+        code, data = self.explain("SELECT query_to_xml('SELECT dblink_exec(1)', true, true, '')")
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        commands = commands_of(self.explain_call())
+        self.assertEqual(commands[1], "EXPLAIN (FORMAT JSON) SELECT query_to_xml('SELECT dblink_exec(1)', true, true, '')")
+
+    def test_a_direct_forbidden_call_is_still_refused_with_no_connection(self):
+        code, data = self.explain("SELECT dblink_exec(1)")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "refused", "forbidden_function"))
+        code, data = self.explain("SELECT query_to_xml('select 1', true, true, ''), pg_notify('c', 'p')")
+        self.assertEqual((code, data["error"], data["reason"]), (1, "refused", "forbidden_function"))
+        self.assertEqual(self.calls(), [])
+
+    def test_a_normal_select_still_runs_analyze(self):
+        code, data = self.explain("SELECT 1 AS one")
+        self.assertEqual((code, data["ran"], data["downgrade"]), (0, "analyze", []))
+        self.assertEqual(commands_of(self.explain_call())[1], "EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1 AS one")
+
+    def test_the_downgraded_run_has_the_timeouts_of_the_version(self):
+        code, data = self.explain("SELECT ts_stat('select 1')", env={"FAKE_VERSION": "130005"})
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertNotIn("transaction_timeout", data["timeouts"])
+        self.assertEqual(data["timeouts"]["statement_timeout"], "30s")
 
 
 if __name__ == "__main__":

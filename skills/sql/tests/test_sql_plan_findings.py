@@ -378,13 +378,24 @@ class WriteModePassThroughTest(unittest.TestCase):
         for key in ("reason", "downgrade", "warnings"):
             self.assertNotIn(key, result)
 
-    def test_a_select_input_has_an_unchanged_output(self):
-        selected = self.piped(mode="select", ran="analyze", reason="select mode always analyzes", warnings=[])
-        for key in ("ran", "reason", "downgrade", "warnings"):
-            self.assertNotIn(key, selected)
-        self.assertEqual(
-            sorted(selected), sorted(["ok", "server_version_num", "analyze", "notes", "findings", "plan"])
+    def test_a_select_input_passes_the_run_keys_through(self):
+        selected = self.piped(
+            mode="select", ran="explain", reason="the statement calls query_to_xml",
+            downgrade=[{"kind": "function", "name": "query_to_xml"}], warnings=[],
         )
+        self.assertEqual(selected["ran"], "explain")
+        self.assertEqual(selected["reason"], "the statement calls query_to_xml")
+        self.assertEqual(selected["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
+        self.assertEqual(selected["warnings"], [])
+        self.assertTrue(selected["ok"])
+        self.assertEqual(selected["plan"], self.PLAN)
+
+    def test_a_select_analyze_input_passes_its_keys_and_an_unknown_mode_passes_none(self):
+        selected = self.piped(mode="select", ran="analyze", reason="r", downgrade=[], warnings=[])
+        self.assertEqual((selected["ran"], selected["downgrade"]), ("analyze", []))
+        other = self.piped(mode="diff", ran="analyze", reason="r", downgrade=[], warnings=[])
+        for key in ("ran", "reason", "downgrade", "warnings"):
+            self.assertNotIn(key, other)
 
     def test_an_input_with_no_mode_and_a_bare_plan_are_unchanged(self):
         document = {"ok": True, "server_version_num": 170000, "plan": self.PLAN, "ran": "analyze", "warnings": []}
