@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import re
@@ -69,6 +70,33 @@ class AskRuleTest(unittest.TestCase):
         rule = write_rule()[0]
         self.assertTrue(matches(rule, "python3 <skill folder>/scripts/setup_files.py write <repo root> --proposal <proposal file> --confirm <digest>"))
         self.assertFalse(matches(rule, "python3 <skill folder>/scripts/setup_files.py plan <repo root> --proposal <proposal file>"))
+
+
+class RuleAndGraderAgreeTest(unittest.TestCase):
+    """The ask rule of settings.json, the runner constant WRITE_SCRIPT (how the runner finds that rule) and grader D's
+    WRITE_CALL (how a trace call is named a write call) are three spellings of one call: they must agree."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_setup_turns", os.path.join(SKILL_DIR, "evals", "turns", "run_setup_turns.py"))
+        cls.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.runner)
+
+    def test_the_rule_holds_the_script_text_that_the_runner_searches_for(self):
+        self.assertIn(self.runner.WRITE_SCRIPT, write_rule()[0])
+
+    def test_all_three_name_the_write_calls_and_none_of_the_other_calls(self):
+        rule = write_rule()[0]
+        for command in WRITE_CALLS:
+            with self.subTest(command):
+                self.assertIn(self.runner.WRITE_SCRIPT, command)
+                self.assertTrue(self.runner.grade_setup.WRITE_CALL.search(command))
+                self.assertTrue(matches(rule, command))
+        for command in OTHER_CALLS:
+            with self.subTest(command):
+                self.assertNotIn(self.runner.WRITE_SCRIPT, command)
+                self.assertFalse(self.runner.grade_setup.WRITE_CALL.search(command))
+                self.assertFalse(matches(rule, command))
 
 
 class SetupMdStepSixTest(unittest.TestCase):
