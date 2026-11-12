@@ -173,13 +173,21 @@ class FreshCiRuleTest(RuleTextCase):
         text = section(read(ROOT_CLAUDE_MD), 8)
         start = text.index("Before you give the owner the merge command")
         self.rule = text[start:text.index("After merging, run", start)]
+        pairs = [(int(match.group(1)), line) for line in self.rule.splitlines() if (match := re.match(r"(\d+)\. ", line))]
+        numbers = [number for number, _ in pairs]
+        self.assertEqual(len(numbers), len(set(numbers)), f"the fresh-CI rule repeats a step number: {numbers}")
+        self.steps = dict(pairs)
+
+    def step(self, number):
+        self.assertIn(number, self.steps, f"the fresh-CI rule has no step {number}")
+        return self.steps[number]
 
     def test_the_rule_still_skips_a_pr_without_ci_checks(self):
         self.assert_in(self.rule, "Skip this check when the PR has no CI checks.")
 
     def test_the_check_is_an_ancestry_check_not_a_time_comparison(self):
-        self.assert_in(self.rule, "3. Find the head that the last CI run of the PR tested. If the base tip is an ancestor of that head "
-                                  "(`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6.")
+        self.assert_in(self.step(3), "if the base tip is an ancestor of that head "
+                                     "(`git merge-base --is-ancestor <base tip> <tested head>`), go to step 6.")
         self.assert_not_in(self.rule, "Compare the time")
 
     def test_the_git_merge_uses_the_fetched_base(self):
@@ -188,15 +196,31 @@ class FreshCiRuleTest(RuleTextCase):
     def test_the_pr_head_is_fetched_with_the_base_before_the_check(self):
         self.assert_in(self.rule, "1. Fetch the base branch and the PR head: `git fetch origin <base> pull/<n>/head`.")
 
-    def test_a_tested_head_missing_after_the_fetch_counts_as_stale(self):
-        self.assert_in(self.rule, "If the tested head is not in the local clone after step 1 (for example after a force push), "
-                                  "the CI result is stale: go to step 4.")
+    def test_the_fetch_makes_the_tested_head_available_locally(self):
+        self.assert_in(self.step(1), "The fetch brings the PR head into the local clone, so a tested head that was on the PR branch is there for step 3.")
 
-    def test_the_worktree_is_fast_forwarded_after_the_rest_update(self):
-        self.assert_in(self.rule, "After the REST call, run `git pull --ff-only` in the worktree of the PR branch, "
-                                  "so that it holds the new PR head.")
-        step_4 = next(line for line in self.rule.splitlines() if line.startswith("4. "))
-        self.assertIn("git pull --ff-only", step_4)
+    def test_a_tested_head_missing_from_the_local_clone_counts_as_stale(self):
+        self.assert_in(self.step(3), "First check that the tested head is in the local clone: `git cat-file -e <tested head>^{commit}`. "
+                                     "If it is missing (for example after a force push), the CI result is stale: go to step 4.")
+
+    def test_the_missing_head_check_comes_before_the_merge_base_command(self):
+        step_3 = self.step(3)
+        self.assertLess(step_3.index("git cat-file -e"), step_3.index("git merge-base"))
+        self.assertLess(step_3.index("the CI result is stale: go to step 4"), step_3.index("git merge-base"))
+
+    def test_a_base_tip_that_is_not_an_ancestor_goes_to_step_4(self):
+        self.assert_in(self.step(3), "go to step 6. If it is not, go to step 4.")
+
+    def test_step_4_opens_with_the_two_cases_that_lead_to_it(self):
+        self.assert_in(self.step(4), "4. If the base tip is not an ancestor of the tested head, or the tested head is stale, merge the base into the PR branch:")
+        self.assert_not_in(self.step(4), "Otherwise")
+
+    def test_the_worktree_of_the_pr_branch_is_found_and_fast_forwarded_after_the_rest_update(self):
+        self.assert_in(self.step(4), "After the REST call, find the worktree of the PR branch with `git worktree list` (match the branch name). "
+                                     "In that worktree, run `git pull --ff-only origin <PR branch>`, so that it holds the new PR head.")
+
+    def test_the_pull_names_the_remote_branch_and_needs_no_upstream(self):
+        self.assert_in(self.step(4), "This needs no upstream on the branch.")
 
     def test_a_pr_with_no_run_goes_to_the_wait_step(self):
         self.assert_in(self.rule, "2. If no run exists for the PR, go to step 6.")
@@ -218,17 +242,19 @@ class FreshCiRuleTest(RuleTextCase):
                        "9. Give the merge command only after the run is green and, when step 8 applied, the audit passed.")
 
     def test_the_steps_come_in_the_order_the_session_meets_them(self):
-        marks = ["1. Fetch", "2. If no run exists", "3. Find the head", "4. Otherwise merge", "5. On a merge conflict", "6. Wait for the CI run",
-                 "7. If the run fails", "8. If you merged", "9. Give the merge command"]
-        positions = [self.rule.index(mark) for mark in marks]
+        marks = {1: "1. Fetch", 2: "2. If no run exists", 3: "3. Find the head", 4: "4. If the base tip is not an ancestor",
+                 5: "5. On a merge conflict", 6: "6. Wait for the CI run", 7: "7. If the run fails", 8: "8. If you merged",
+                 9: "9. Give the merge command"}
+        self.assertEqual(sorted(self.steps), list(marks))
+        for number, mark in marks.items():
+            self.assertTrue(self.step(number).startswith(mark), self.step(number))
+        positions = [self.rule.index(mark) for mark in marks.values()]
         self.assertEqual(positions, sorted(positions))
 
     def test_the_merge_options_and_the_conflict_rule_sit_on_separate_lines(self):
-        steps = [line for line in self.rule.splitlines() if re.match(r"\d\. ", line)]
-        self.assertEqual(len(steps), 9)
-        self.assertIn("update-branch", steps[3])
-        self.assertNotIn("conflict", steps[3])
-        self.assertNotIn("update-branch", steps[4])
+        self.assertIn("update-branch", self.step(4))
+        self.assertNotIn("conflict", self.step(4))
+        self.assertNotIn("update-branch", self.step(5))
 
     def test_rebase_stays_banned_without_restating_the_general_force_push_ban(self):
         self.assert_in(self.rule, "Never rebase a PR branch for this: a rebase rewrites audited commits and needs a force-push.")
