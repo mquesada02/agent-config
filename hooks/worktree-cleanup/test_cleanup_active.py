@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from cleanup_support import HANDLE, MISSING, RUN_ID
+from cleanup_support import FULL_RUN_CURRENT, FULL_WORKER_LIST, HANDLE, MISSING, RUN_ID
 from test_cleanup_run_proof import RunProofCase
 
 SKIP_FLAG = "--skip-ownership"
@@ -53,7 +53,7 @@ class ActiveRefusalTest(ActiveCase):
         self.assert_active_refusal(result, "ctx_live")
         self.assertEqual(self.starts(result, "Ownership"), [])
         for call in self.worker_calls():
-            self.assertIn(f"--run {RUN_ID} --limit 100 --json", call)
+            self.assertIn(f"--run {RUN_ID} --limit 100 --json --full", call)
 
     def test_it_holds_under_a_149_proof(self):
         self.stub_show(parent=self.anchor_id)
@@ -175,7 +175,7 @@ class NoBoundRunTest(ActiveCase):
         self.assertEqual(self.worker_calls(), [])
 
     def test_a_run_with_an_empty_id_is_no_bound_run(self):
-        self.stub("orca orchestration run-current", json.dumps({"ok": True, "result": {"run": {"id": ""}}}))
+        self.stub(FULL_RUN_CURRENT, json.dumps({"ok": True, "result": {"run": {"id": ""}}}))
         self.assertEqual(self.run_cleanup(SKIP_FLAG, self.wt).returncode, 0)
         self.assertEqual(self.worker_calls(), [])
 
@@ -199,8 +199,7 @@ class CallsTest(ActiveCase):
         self.stub_worker_pages(self.worker_page([self.worker_row(worktree="other-id")], next_cursor="cur1"),
                                self.worker_page([self.active_row()]))
         self.run_cleanup(self.wt)
-        allowed = ("orca orchestration run-current --json",
-                   f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json",
+        allowed = (FULL_RUN_CURRENT, FULL_WORKER_LIST,
                    "orca worktree show", "orca terminal show", "orca worktree rm")
         for call in self.calls():
             if call.startswith("orca"):

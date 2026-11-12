@@ -173,7 +173,7 @@ def worker_rows(run_id):
     rows = []
     cursor = ()
     while True:
-        listed = read_json(run("orca", "orchestration", "worker-list", "--run", run_id, "--limit", "100", "--json", *cursor))
+        listed = read_json(run("orca", "orchestration", "worker-list", "--run", run_id, "--limit", "100", "--json", "--full", *cursor))
         result = listed.get("result") if isinstance(listed, dict) and listed.get("ok") is True else None
         workers = result.get("workers") if isinstance(result, dict) else None
         page = result.get("page") if isinstance(result, dict) else None
@@ -200,7 +200,7 @@ def row_worktree(row):
 def bound_run():
     """(run id, rows) of the Run that Orca binds to this terminal. (None, None) when no Run is bound.
     The rows are None when the worker list is not read in full; an empty list is a full read."""
-    current = read_json(run("orca", "orchestration", "run-current", "--json"))
+    current = read_json(run("orca", "orchestration", "run-current", "--json", "--full"))
     try:
         run_id = current["result"]["run"]["id"] if current["ok"] is True else None
     except (KeyError, TypeError):

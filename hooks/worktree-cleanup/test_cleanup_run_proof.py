@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from cleanup_support import CleanupCase, HANDLE, RUN_ID
+from cleanup_support import CleanupCase, FULL_RUN_CURRENT, FULL_WORKER_LIST, HANDLE, RUN_ID
 
 SUCCESS_LINES = ["Remote branch: deleted", "Switch and pull: main pulled with --ff-only",
                  "Worktree: removed", "Local branch: deleted"]
@@ -27,8 +27,7 @@ class RunProofCase(CleanupCase):
 
     def run_read_calls(self):
         """The two calls that read the bound Run when its list has one page."""
-        return ["orca orchestration run-current --json",
-                f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json"]
+        return [FULL_RUN_CURRENT, FULL_WORKER_LIST]
 
     def own_row(self, **kwargs):
         return self.worker_row(worktree=self.wt_id, **kwargs)
@@ -47,20 +46,20 @@ class RunProofCase(CleanupCase):
 class StubTest(RunProofCase):
     def test_the_full_argument_list_wins_over_the_two_argument_key(self):
         self.stub("orca orchestration worker-list", json.dumps(self.worker_page([])))
-        self.stub(f"orca orchestration worker-list --run {RUN_ID} --limit 100 --json",
-                  json.dumps(self.worker_page([self.own_row()])))
+        self.stub(FULL_WORKER_LIST, json.dumps(self.worker_page([self.own_row()])))
         self.assert_run_proof_passes(self.run_cleanup(self.wt))
 
-    def test_a_sequence_answers_the_calls_of_one_key_in_order(self):
+    def test_the_pages_are_answered_by_the_cursor_of_the_page_before(self):
         self.stub_worker_pages(self.worker_page([self.worker_row(worktree="other-id")], next_cursor="cur1"),
                                self.worker_page([self.own_row()]))
         self.assert_run_proof_passes(self.run_cleanup(self.wt))
         self.assertEqual(len(self.worker_calls()), 2)
 
-    def test_the_two_argument_key_answers_a_call_with_more_arguments(self):
-        self.stub("orca orchestration worker-list", json.dumps(self.worker_page([self.own_row()])))
-        self.assert_run_proof_passes(self.run_cleanup(self.wt))
-        self.assertIn(f"--run {RUN_ID} --limit 100 --json", self.worker_calls()[0])
+    def test_a_call_without_full_gets_the_compact_view(self):
+        self.stub(FULL_RUN_CURRENT, "", rc=1)
+        self.stub("orca orchestration run-current", json.dumps({"ok": True, "result": {"runId": RUN_ID, "objective": "x"}}))
+        self.assert_no_proof(self.run_cleanup(self.wt))
+        self.assertEqual(self.worker_calls(), [])
 
 
 class RunProofTest(RunProofCase):
@@ -161,7 +160,8 @@ class RunProofTest(RunProofCase):
         calls = self.worker_calls()
         self.assertEqual(len(calls), 2)
         for call in calls:
-            self.assertIn(f"--run {RUN_ID} --limit 100 --json", call)
+            self.assertIn(f"--run {RUN_ID} --limit 100 --json --full", call)
+        self.assertEqual(calls[1], f"{FULL_WORKER_LIST} --cursor cur1")
 
     def test_every_orca_call_is_one_the_spec_allows(self):
         self.stub_worker_pages(self.worker_page([self.own_row()]))
