@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""PreToolUse hook on Bash: the permission prompt of the `/sql setup` write call shows the real diff.
+
+The hook reads the hook input JSON on stdin. A command that does not call the setup script `write` step
+passes with no output. A write call must be exactly one simple command:
+
+    [VAR=value ...] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>
+
+The hook runs `setup_files.py plan` for the same repo and proposal, checks the plan digest against
+`--confirm`, and answers `ask` with the full diff of the plan in the decision reason, so that Claude Code
+shows the diff in the permission prompt. Every error is a `deny` with a reason that starts with
+`Setup write check:`; the hook never prints an allow and never crashes open (`decide` catches every
+exception). Exit code 0 always.
+
+Run log: when the environment variable SETUP_DIFF_PROMPT_LOG names a file, the hook appends one JSON line
+{"decision": "ask" or "deny", "reason": "..."} for every ask or deny that it prints (the two-turn runner
+of the sql skill reads it). A log write error never changes the decision.
+"""
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+PLAN_SECONDS = 15
+LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
+SCRIPT_NAME = "setup_files.py"
+DENY_PREFIX = "Setup write check: "
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+OPERATOR = re.compile(r"^[();<>|&]+$")
+FORM = "[VAR=value ...] python3 [-I] <path>/setup_files.py write <repo> --proposal <file> --confirm <digest>"
+FORM_HELP = "call write alone, as one simple command in this form: " + FORM
+
+
+def deny(reason):
+    return {"decision": "deny", "reason": DENY_PREFIX + reason}
+
+
+def split_words(command):
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def calls_write(words):
+    return any(os.path.basename(word) == SCRIPT_NAME and index + 1 < len(words) and words[index + 1] == "write"
+               for index, word in enumerate(words))
+
+
+def parse_write(words):
+    """(assignments, script, repo, proposal, confirm) of the exact write form, or a deny dictionary."""
+    if any(OPERATOR.match(word) for word in words):
+        return deny("this is a compound command, a pipe or a redirect; " + FORM_HELP)
+    index = 0
+    assignments = {}
+    while index < len(words) and ASSIGNMENT.match(words[index]):
+        name, _, value = words[index].partition("=")
+        assignments[name] = value
+        index += 1
+    if index >= len(words) or words[index] != "python3":
+        return deny("the command does not start with python3; " + FORM_HELP)
+    index += 1
+    if index < len(words) and words[index] == "-I":
+        index += 1
+    if index + 1 >= len(words) or os.path.basename(words[index]) != SCRIPT_NAME or words[index + 1] != "write":
+        return deny("the script is not called directly with write; " + FORM_HELP)
+    script = words[index]
+    rest = words[index + 2:]
+    if not rest or rest[0].startswith("--"):
+        return deny("the repo folder is missing after write; " + FORM_HELP)
+    repo, options = rest[0], rest[1:]
+    found = {}
+    while options:
+        if options[0] not in ("--proposal", "--confirm") or len(options) < 2 or options[0] in found:
+            return deny("unexpected, repeated or incomplete words after the repo folder; " + FORM_HELP)
+        found[options[0]] = options[1]
+        options = options[2:]
+    if set(found) != {"--proposal", "--confirm"}:
+        return deny("the command needs --proposal and --confirm; " + FORM_HELP)
+    return assignments, script, repo, found["--proposal"], found["--confirm"]
+
+
+def run_plan(script, repo, proposal, assignments, cwd, plan_seconds):
+    """The decoded plan, or a deny dictionary."""
+    env = dict(os.environ)
+    env.update(assignments)
+    try:
+        done = subprocess.run([sys.executable, "-I", script, "plan", repo, "--proposal", proposal],
+                              capture_output=True, text=True, timeout=plan_seconds, cwd=cwd, env=env)
+    except subprocess.TimeoutExpired:
+        return deny("plan did not end in %s seconds" % plan_seconds)
+    except OSError as error:
+        return deny("plan could not start: %s" % error)
+    try:
+        plan = json.loads(done.stdout)
+    except ValueError:
+        return deny("plan printed no JSON object (exit code %s)" % done.returncode)
+    if not isinstance(plan, dict):
+        return deny("plan printed no JSON object (exit code %s)" % done.returncode)
+    if plan.get("ok") is not True:
+        return deny("plan refused: %s" % (plan.get("message") or plan.get("reason") or "no message"))
+    if done.returncode != 0:
+        return deny("plan has ok true but exit code %s" % done.returncode)
+    if not isinstance(plan.get("digest"), str):
+        return deny("plan has no digest")
+    return plan
+
+
+def diff_text(plan):
+    texts = []
+    for name in ("rules_file", "allowlist"):
+        part = plan.get(name)
+        diff = part.get("diff") if isinstance(part, dict) else None
+        if isinstance(diff, str) and diff.strip():
+            texts.append(diff.rstrip("\n"))
+    return "\n\n".join(texts) if texts else "no file changes"
+
+
+def decide(hook_input, plan_seconds=PLAN_SECONDS):
+    """The decision dictionary {"decision", "reason"} (ask or deny), or None for a pass. Never raises."""
+    try:
+        return decide_checked(hook_input, plan_seconds)
+    except Exception as error:  # fail closed: a bug in the hook is a deny, never an allow
+        return deny("internal error in the hook: %s: %s" % (type(error).__name__, error))
+
+
+def decide_checked(hook_input, plan_seconds):
+    if not isinstance(hook_input, dict):
+        return deny("the hook input is not a JSON object")
+    if hook_input.get("tool_name") != "Bash":
+        return None
+    tool_input = hook_input.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str):
+        return deny("the Bash call has no command text")
+    if SCRIPT_NAME not in command:
+        return None
+    try:
+        words = split_words(command)
+    except ValueError as error:
+        return deny("the command cannot be split into shell words (%s)" % error)
+    if not calls_write(words):
+        return None
+    parsed = parse_write(words)
+    if isinstance(parsed, dict):
+        return parsed
+    assignments, script, repo, proposal, confirm = parsed
+    cwd = hook_input.get("cwd") if isinstance(hook_input.get("cwd"), str) else None
+    repo, proposal = os.path.expanduser(repo), os.path.expanduser(proposal)
+    if not (os.path.isabs(repo) and os.path.isabs(proposal)):
+        return deny("the repo folder and the proposal file must be absolute paths")
+    script = os.path.expanduser(script)
+    full = script if os.path.isabs(script) else os.path.join(cwd or os.getcwd(), script)
+    if not os.path.isfile(full):
+        return deny("the script %s was not found" % script)
+    plan = run_plan(full, repo, proposal, assignments, cwd, plan_seconds)
+    if "decision" in plan:
+        return plan
+    if plan["digest"] != confirm:
+        return deny("the digest differs from the plan: the files changed after the plan. "
+                    "Run plan again, then call write with the new digest")
+    return {"decision": "ask", "reason": "Diff to confirm:\n" + diff_text(plan)}
+
+
+def log(decision):
+    path = os.environ.get(LOG_VARIABLE)
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(decision) + "\n")
+    except OSError:
+        pass
+
+
+def main():
+    try:
+        data = json.loads(sys.stdin.read())
+    except ValueError:
+        data = None
+    decision = decide(data)
+    if decision is None:
+        return 0
+    log(decision)
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": decision["decision"],
+        "permissionDecisionReason": decision["reason"]}}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -141,6 +141,12 @@
             "command": "python3 -I ~/.claude/hooks/subagent-readonly/block_subagent_writes.py",
             "timeout": 10,
             "onFailure": "block"
+          },
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/setup-diff-prompt/setup_diff_prompt.py",
+            "timeout": 30,
+            "onFailure": "block"
           }
         ]
       },

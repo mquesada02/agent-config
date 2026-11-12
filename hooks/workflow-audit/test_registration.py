@@ -128,7 +128,9 @@ class HookOrderTest(AuditCase):
 
     def assert_same_in_every_order(self, command, denied, prefix):
         groups = self.bash_groups()
-        self.assertGreaterEqual(len(groups), 4)  # the audit group, the aws guard, the Orca hook and the rewrite hook
+        # the audit group, the aws guard, the Orca hook and the rewrite hook (the setup diff hook is a second command
+        # of the subagent guard group, so it adds no group)
+        self.assertGreaterEqual(len(groups), 4)
         for order in itertools.permutations(groups):
             with self.subTest(order=[group.get("matcher") for group in order]):
                 got_denied, reasons = self.combined(order, command)
@@ -169,7 +171,8 @@ class HookOrderTest(AuditCase):
         scripts = sorted(os.path.basename(word)
                          for group in self.bash_groups() for entry in group["hooks"] if repo_argv(entry["command"])
                          for word in repo_argv(entry["command"]) if word.startswith(REPO))
-        self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "block_subagent_writes.py", "redact_pre.py"])
+        self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "block_subagent_writes.py", "redact_pre.py",
+                                   "setup_diff_prompt.py"])
 
 
 if __name__ == "__main__":
