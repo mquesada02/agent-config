@@ -25,10 +25,10 @@ class ExtractTestCase(unittest.TestCase):
             handle.write(content if binary else content.encode("utf-8"))
         return path
 
-    def run_args(self, *args):
+    def run_args(self, *args, timeout=None):
         env = {"PATH": os.environ["PATH"], "HOME": self.dir}
         return subprocess.run(
-            [sys.executable, "-I", SCRIPT, *args], capture_output=True, text=True, env=env
+            [sys.executable, "-I", SCRIPT, *args], capture_output=True, text=True, env=env, timeout=timeout
         )
 
     def extract(self, content, name="a.ts", tags=None, expect=0):
@@ -906,13 +906,7 @@ class JsxTest(ExtractTestCase):
         for name in JSX_NAMES:
             with self.subTest(name=name):
                 path = self.write(name, src)
-                result = subprocess.run(
-                    [sys.executable, "-I", SCRIPT, path, "--tags", "sql"],
-                    capture_output=True,
-                    text=True,
-                    env={"PATH": os.environ["PATH"], "HOME": self.dir},
-                    timeout=8,
-                )
+                result = self.run_args(path, "--tags", "sql", timeout=8)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(json.loads(result.stdout)["statements"]), 1)
 
@@ -971,7 +965,8 @@ class JsxTest(ExtractTestCase):
 
     def test_plain_javascript_does_not_change(self):
         src = "<p>Don't</p>; const a = sql`SELECT 1`;\nconst b = sql`SELECT 2`;\n"
-        self.assertEqual(self.found(src, ("a.js", "a.mjs", "a.cjs")), (["SELECT 2"], [2]))
+        names = ("a.js", "a.mjs", "a.cjs", "a.ts", "a.mts", "a.cts")
+        self.assertEqual(self.found(src, names), (["SELECT 2"], [2]))
 
     def test_the_notes_name_the_jsx_scan_and_its_limits(self):
         with open(NOTES, encoding="utf-8") as handle:
