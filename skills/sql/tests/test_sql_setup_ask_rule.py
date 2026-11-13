@@ -96,6 +96,10 @@ class SetupMdStepSixTest(unittest.TestCase):
         self.assertRegex(step, r"(?s)hook.*permission prompt.*diff|diff.*permission prompt")
         self.assertRegex(step, r"you do not print the diff")
 
+    def test_the_prompt_starts_with_a_summary_and_the_full_diff_file_path(self):
+        step = self.step_six()
+        self.assertRegex(step, r"(?s)starts with a summary.*Full diff")
+
     def test_a_denial_that_starts_with_setup_write_check_is_not_a_decline(self):
         step = self.step_six()
         self.assertIn("Setup write check:", step)
