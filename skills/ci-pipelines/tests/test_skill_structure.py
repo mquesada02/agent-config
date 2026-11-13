@@ -293,6 +293,12 @@ class SecurityRules(unittest.TestCase):
         self.assertNotEqual(gate({"lint": {"result": "skipped"}, "audit": {"result": "success"}}), 0)
         self.assertNotEqual(gate({"lint": {"result": "success"}, "audit": {"result": "failure"}}), 0)
 
+    def test_sec_10_flags_a_gate_that_fails_a_skipped_audit_and_not_one_that_accepts_it(self):
+        rule = self.sec["SEC-10"]["Rule"]
+        self.assertIn("A gate check that fails when `audit` is `skipped` is also a finding.", rule)
+        self.assertIn("A gate check that already accepts a skipped `audit` is no finding", rule)
+        self.assertIn("when the gate check fails a skipped `audit`, change it to", self.sec["SEC-10"]["Fix"])
+
     def test_sec_10_fix_adds_a_sha_pinned_changes_job_and_removes_the_old_audit_step(self):
         fix = self.sec["SEC-10"]["Fix"]
         self.assertIn("`changes` job", fix)
