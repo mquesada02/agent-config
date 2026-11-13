@@ -382,8 +382,13 @@ def _write_static_review_only(tokens):
     return True
 
 
+def quote_identifier(name):
+    """The identifier `name` (as the guard read it) quoted for SQL: `"` doubled, never built from other text."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _name_text(token):
-    return token.value if token.kind == "word" else '"' + token.value.replace('"', '""') + '"'
+    return token.value if token.kind == "word" else quote_identifier(token.value)
 
 
 def _write_targets(tokens):

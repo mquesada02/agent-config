@@ -705,6 +705,34 @@ def facts(service, parsed, overrides):
     }
 
 
+# The `USING` operators that the order proof reads: the operator, its btree strategy number and its type entry field.
+ORDER_OPERATORS = (("<", 1, "lt"), (">", 5, "gt"))
+
+
+def order_operator_sql(operator, strategy):
+    """The SQL boolean for the type of `info.oid`: a default btree operator class that the type reaches (the type itself, or a
+    type that it casts to in an implicit, binary-coercible way) has, in its own family, the `strategy` member of the class
+    input type that is the operator `operator` as the session `search_path` resolves it (`USING <` or `USING >`). The
+    class input type is never the column type: a `varchar` column reaches the `text` class. A domain, array, range or enum
+    has no class of its own, so the answer is false (`USING` on it stays partial)."""
+    return f"""EXISTS (
+      SELECT 1 FROM pg_opclass oc
+      JOIN pg_am am ON am.oid = oc.opcmethod
+      JOIN pg_amop ao ON ao.amopfamily = oc.opcfamily
+      WHERE oc.opcdefault AND am.amname = 'btree'
+        AND (oc.opcintype = info.oid OR EXISTS (
+          SELECT 1 FROM pg_cast pc WHERE pc.castsource = info.oid AND pc.casttarget = oc.opcintype AND pc.castmethod = 'b' AND pc.castcontext = 'i'
+        ))
+        AND ao.amoppurpose = 's' AND ao.amopstrategy = {strategy}
+        AND ao.amoplefttype = oc.opcintype AND ao.amoprighttype = oc.opcintype
+        AND ao.amopopr = to_regoperator(format('{operator}(%s,%s)', oc.opcintype::regtype, oc.opcintype::regtype))
+    )"""
+
+
+ORDER_FIELDS_SQL = "\n    ".join(
+    f"'{field}', {order_operator_sql(operator, strategy)}," for operator, strategy, field in ORDER_OPERATORS
+)
+
 # The type session of `diff`. `{a}` and `{b}` are `(SELECT ARRAY[pg_typeof(...)...] ...)` scalar subqueries that read the
 # column types of A and B without running them (`LEFT JOIN ... ON false`). The catalog part strips domains, arrays and ranges
 # down to a leaf type and reads, for each type, its name, whether its leaf is `float4` or `float8`, and whether its leaf has an
@@ -744,34 +772,10 @@ SELECT json_build_object(
           ))
       ))
     ),
-    'lt', @LT@,
-    'gt', @GT@,
+    @ORDER_FIELDS@
     'leaf', info.leaf::bigint
   )), '{{}}'::json) FROM info)
-)"""
-
-
-def order_operator_sql(strategy, operator):
-    """The SQL boolean for the type of `info.oid`: a default btree operator class that the type reaches (the type itself, or a
-    type that it casts to in an implicit, binary-coercible way) has, in its own family, the `strategy` member of the class
-    input type that is the operator `operator` as the session `search_path` resolves it (`USING <` or `USING >`). The
-    class input type is never the column type: a `varchar` column reaches the `text` class. A domain, array, range or enum
-    has no class of its own, so the answer is false (`USING` on it stays partial)."""
-    return f"""EXISTS (
-      SELECT 1 FROM pg_opclass oc
-      JOIN pg_am am ON am.oid = oc.opcmethod
-      JOIN pg_amop ao ON ao.amopfamily = oc.opcfamily
-      WHERE oc.opcdefault AND am.amname = 'btree'
-        AND (oc.opcintype = info.oid OR EXISTS (
-          SELECT 1 FROM pg_cast pc WHERE pc.castsource = info.oid AND pc.casttarget = oc.opcintype AND pc.castmethod = 'b' AND pc.castcontext = 'i'
-        ))
-        AND ao.amoppurpose = 's' AND ao.amopstrategy = {strategy}
-        AND ao.amoplefttype = oc.opcintype AND ao.amoprighttype = oc.opcintype
-        AND ao.amopopr = to_regoperator(format('{operator}(%s,%s)', oc.opcintype::regtype, oc.opcintype::regtype))
-    )"""
-
-
-TYPES_SQL = TYPES_SQL.replace("@LT@", order_operator_sql(1, "<")).replace("@GT@", order_operator_sql(5, ">"))
+)""".replace("@ORDER_FIELDS@", ORDER_FIELDS_SQL)
 SAMPLE_LIMIT = 20
 
 
@@ -882,11 +886,6 @@ def resolve_order(order, items, names, mismatch, orderable):
     return "checked", None, keys
 
 
-def quote_identifier(name):
-    """The identifier `name` (as the guard read it) quoted for SQL: `"` doubled, never built from other text."""
-    return '"' + name.replace('"', '""') + '"'
-
-
 def proof_sql(sql_a, sql_b, count, text_columns, keys):
     """The proof `SELECT` of `diff`: all CTEs are `MATERIALIZED` (each statement runs once), the names start with `pgrun_`, and
     every user statement is followed by a newline before its closing parenthesis. `keys` is None or the normalized sort keys
@@ -911,7 +910,7 @@ def proof_sql(sql_a, sql_b, count, text_columns, keys):
     ]
     if keys:
         group = ", ".join(
-            f"c{position}" + (f" COLLATE {quote_identifier(collation)}" if collation is not None else "")
+            f"c{position}" + (f" COLLATE {sql_guard.quote_identifier(collation)}" if collation is not None else "")
             for position, _, _, collation, _ in keys
         )
         fields.append(f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)")
@@ -964,7 +963,7 @@ def diff(service, checked_a, checked_b, overrides):
     casts = [i for i in range(count) if i not in mismatch and not types[oids_a[i]]["equality"]]
     floats = [i for i in range(count) if types[oids_a[i]]["float"] or types[oids_b[i]]["float"]]
     orderable = [
-        {operator for operator, flag in (("<", "lt"), (">", "gt")) if types[oids_a[i]][flag]} for i in range(count)
+        {operator for operator, _, field in ORDER_OPERATORS if types[oids_a[i]][field]} for i in range(count)
     ]
     state, reason, keys = resolve_order(checked_a["order"], checked_a["items"], names_a, mismatch, orderable)
     if state == "checked" and sort_key_list(checked_b["order"], checked_b["items"], names_b, mismatch, orderable) != keys:
