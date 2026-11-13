@@ -432,6 +432,12 @@ class Router(unittest.TestCase):
         self.assertIn("required_checks", fields["Check"])
         self.assertNotIn("gh api", " ".join(fields.values()))
 
+    def test_every_naming_rule_09_row_carries_the_flag_mark_with_the_fix_in_the_flag_section(self):
+        fields = dict(rule_entries(rule_files()["naming"]))["NAME-09"]
+        self.assertIn("Mark every NAME-09 row ⚑", fields["Rule"])
+        self.assertIn("⚑ section", fields["Fix"])
+        self.assertIn("after the merge", fields["Fix"])
+
     def test_another_edit_points_to_every_rule_file(self):
         bullet = self.text[self.text.index("**Another edit**"):self.text.index("## Modules")]
         for rule_file in ("rules/naming.md", "rules/job-graph.md", "rules/cost.md", "rules/security.md",
@@ -515,6 +521,12 @@ class ReviewSteps(unittest.TestCase):
     def test_it_keeps_the_name_09_row_and_the_flag_mark(self):
         self.assertIn("name-09 row", self.text)
         self.assertIn("⚑", self.text)
+
+    def test_the_report_contract_gives_every_name_09_row_the_flag_mark(self):
+        contract = self.text[self.text.index("## report contract"):]
+        self.assertIn("always on a name-09 row", contract)
+        checks = self.text[self.text.index("## required checks"):self.text.index("## tool status")]
+        self.assertIn("add a name-09 row (suggestion) marked with ⚑", checks)
 
     def test_it_loads_the_job_graph_and_maintainability_rule_files(self):
         self.assertIn("rules/job-graph.md", self.text)

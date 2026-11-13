@@ -53,7 +53,7 @@ The security rules and the tool merge read these sources. Run no other command f
 
 ## Required checks
 
-Use the `required_checks` fact. With the status `detected` its value lists the required check names (an empty list is `none`). With the status `unknown`, section 3 reads `Required checks: unreadable (<source text of the fact>). Every current job name may be required.` In that case, when the review proposes a rename or a split, add a NAME-09 row (suggestion). Mark each finding that removes or renames a required check with ⚑.
+Use the `required_checks` fact. With the status `detected` its value lists the required check names (an empty list is `none`). With the status `unknown`, section 3 reads `Required checks: unreadable (<source text of the fact>). Every current job name may be required.` In that case, when the review proposes a rename or a split, add a NAME-09 row (suggestion) marked with ⚑. Mark each other finding that removes or renames a required check with ⚑.
 
 ## Tool status
 
@@ -71,7 +71,7 @@ The report is your final message. The title line is `# ci-pipelines review: <sco
    - `- zizmor: not on PATH. Install it with `uvx zizmor` or `brew install zizmor`.`
 
    A bullet has no other text than one of these two forms.
-5. One table for each severity that has a finding, in the order `## Critical`, `## Required`, `## Suggestions`. A severity with no finding has no table. The header is `| # | Rule | Where | Problem | Fix |`. Each row is one rule at one severity. The Rule cell is one rule id, followed by ⚑ when the fix needs a branch protection change. The Where cell holds all `file:line` places of that rule at that severity. Numbers start at 1 and follow the severity order, with no gap.
+5. One table for each severity that has a finding, in the order `## Critical`, `## Required`, `## Suggestions`. A severity with no finding has no table. The header is `| # | Rule | Where | Problem | Fix |`. Each row is one rule at one severity. The Rule cell is one rule id, followed by ⚑ when the fix needs a branch protection change, and always on a NAME-09 row. The Where cell holds all `file:line` places of that rule at that severity. Numbers start at 1 and follow the severity order, with no gap.
 6. `## ⚑ Branch protection change needed` with the exact admin steps (which checks to remove and which to add). Write it only when at least one row has ⚑.
 7. `## Job graph after the fixes` with a fenced ASCII sketch of the jobs after the fixes.
 8. `## Approve`, the last section. With at least one finding its text is exactly: `Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`.` With zero findings its text is exactly: `There is nothing to approve.` Copy this sentence exactly, and never change its examples (`1,3,5` and `1-12`) to fit the number of findings. Write no text after the approval line. When a tool or the intake script was not available, say it in the `Tools:` line (section 4) and in the `Intake:` line (section 2), never after the approval line.
