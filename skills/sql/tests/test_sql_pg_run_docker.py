@@ -19,6 +19,7 @@ VERSIONS = ("13", "18")
 PULL_SECONDS = 300
 READY_SECONDS = 120
 SUPERUSER = "postgres"
+APP_ROLE = "pgrun_app"
 # A synthetic value for a throwaway container that listens on 127.0.0.1 only.
 FIXTURE_SECRET = "pg-run-test-fixture"
 REPO_KEY = "example.invalid/o/r"
@@ -40,14 +41,67 @@ CREATE TABLE public.facts_t (id int NOT NULL, due_on date, note text);
 INSERT INTO public.facts_t VALUES (1, DATE '2026-01-01', 'x'), (2, NULL, NULL);
 CREATE FUNCTION pgrun_test.writes() RETURNS int LANGUAGE sql
   AS $f$ INSERT INTO pgrun_test.items VALUES (99) RETURNING a $f$;
-CREATE FUNCTION pgrun_test.probe() RETURNS int LANGUAGE plpgsql AS $f$
+CREATE FUNCTION pgrun_test.probe() RETURNS int LANGUAGE plpgsql STABLE AS $f$
 BEGIN
   RAISE EXCEPTION 'ro=% st=% lt=% idle=% tt=%',
     current_setting('default_transaction_read_only'), current_setting('statement_timeout'),
     current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'),
     coalesce(current_setting('transaction_timeout', true), 'unset');
 END $f$;
+CREATE FUNCTION pgrun_test.writes_stable() RETURNS int LANGUAGE plpgsql STABLE AS $f$
+BEGIN
+  RETURN pgrun_test.writes();
+END $f$;
+CREATE FUNCTION pgrun_test.stable_fn() RETURNS int LANGUAGE plpgsql STABLE AS $f$ BEGIN RETURN 1; END $f$;
+CREATE FUNCTION pgrun_test.immutable_fn() RETURNS int LANGUAGE plpgsql IMMUTABLE AS $f$ BEGIN RETURN 1; END $f$;
+CREATE FUNCTION pgrun_test."My""Fn"() RETURNS int LANGUAGE plpgsql VOLATILE AS $f$ BEGIN RETURN 1; END $f$;
+CREATE FUNCTION pgrun_test.vol_sfunc(int, int) RETURNS int LANGUAGE sql VOLATILE AS 'SELECT $1 + $2';
+CREATE FUNCTION pgrun_test.stable_sfunc(int, int) RETURNS int LANGUAGE sql STABLE AS 'SELECT $1 + $2';
+CREATE AGGREGATE pgrun_test.vol_sum(int) (SFUNC = pgrun_test.vol_sfunc, STYPE = int, INITCOND = '0');
+CREATE AGGREGATE pgrun_test.stable_sum(int) (SFUNC = pgrun_test.stable_sfunc, STYPE = int, INITCOND = '0');
+CREATE EXTENSION pgcrypto SCHEMA pgrun_test;
+CREATE VIEW pgrun_test.v_xml AS SELECT query_to_xml('select 1', true, true, '') AS x;
+CREATE VIEW pgrun_test.v_dblink AS SELECT pgrun_test.dblink_exec('dbname=nodb', 'select 1') AS r;
+CREATE VIEW pgrun_test.v_vol AS SELECT a, pgrun_test.writes() AS w FROM pgrun_test.items;
+CREATE VIEW pgrun_test.v_stable AS SELECT a, pgrun_test.stable_fn() AS s FROM pgrun_test.items;
+CREATE VIEW pgrun_test.v_mixed AS SELECT a, pgrun_test."My""Fn"() AS m FROM pgrun_test.items;
+CREATE DOMAIN pgrun_test.dom_x AS text CHECK (query_to_xml('select 1', true, true, '') IS NOT NULL OR VALUE IS NULL);
+CREATE ROLE pgrun_app LOGIN PASSWORD 'pg-run-test-fixture';
+GRANT USAGE ON SCHEMA pgrun_test TO pgrun_app;
+CREATE TABLE pgrun_test.rls_xml (a int);
+INSERT INTO pgrun_test.rls_xml VALUES (1);
+ALTER TABLE pgrun_test.rls_xml ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_xml ON pgrun_test.rls_xml FOR SELECT USING (query_to_xml('select 1', true, true, '') IS NOT NULL);
+CREATE TABLE pgrun_test.rls_vol (a int);
+INSERT INTO pgrun_test.rls_vol VALUES (1);
+ALTER TABLE pgrun_test.rls_vol ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_vol ON pgrun_test.rls_vol FOR SELECT USING (pgrun_test.writes() > 0);
+CREATE TABLE pgrun_test.rls_ok (a int);
+INSERT INTO pgrun_test.rls_ok VALUES (1);
+ALTER TABLE pgrun_test.rls_ok ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_ok ON pgrun_test.rls_ok FOR SELECT USING (true);
+GRANT SELECT ON pgrun_test.rls_xml, pgrun_test.rls_vol, pgrun_test.rls_ok TO pgrun_app;
+ALTER ROLE postgres SET search_path = "$user", public, pgrun_test;
 """
+
+# (label, statement, ran, names in `downgrade`). Each runs on version 13 and 18.
+STORED_SELECT_CASES = [
+    ("a view body that calls a string-SQL function", "SELECT * FROM pgrun_test.v_xml", "explain", ["query_to_xml"]),
+    ("a view body that calls a dblink function", "SELECT * FROM pgrun_test.v_dblink", "explain", ["dblink_exec"]),
+    ("a direct VOLATILE user function", "SELECT pgrun_test.writes()", "explain", ["pgrun_test.writes"]),
+    ("an unqualified VOLATILE user function on the search path", "SELECT writes()", "explain", ["pgrun_test.writes"]),
+    ("a VOLATILE user function in a view", "SELECT * FROM pgrun_test.v_vol", "explain", ["pgrun_test.writes"]),
+    ("a VOLATILE user function with a quoted name in a view", "SELECT * FROM pgrun_test.v_mixed", "explain", ['pgrun_test."My""Fn"']),
+    ("a VOLATILE extension function", "SELECT pgrun_test.gen_random_bytes(4)", "explain", ["pgrun_test.gen_random_bytes"]),
+    ("an aggregate with a VOLATILE transition function", "SELECT pgrun_test.vol_sum(a) FROM pgrun_test.items", "explain", ["pgrun_test.vol_sum"]),
+    ("an aggregate with a STABLE transition function", "SELECT pgrun_test.stable_sum(a) FROM pgrun_test.items", "analyze", []),
+    ("a STABLE user function", "SELECT pgrun_test.stable_fn()", "analyze", []),
+    ("a STABLE user function in a view", "SELECT * FROM pgrun_test.v_stable", "analyze", []),
+    ("an IMMUTABLE user function", "SELECT pgrun_test.immutable_fn()", "analyze", []),
+    ("a built-in function", "SELECT lower('A'), now(), random()", "analyze", []),
+    ("a cast to a domain whose constraint calls a scanned function (open case)", "SELECT 'x'::pgrun_test.dom_x", "analyze", []),
+    ("a statement with no call", "SELECT 1", "analyze", []),
+]
 
 
 def docker(*args, timeout=60):
@@ -141,9 +195,15 @@ class DockerServers:
                     f"[pgrun_{version}]\nhost=127.0.0.1\nport={self.ports[version]}\nuser={SUPERUSER}\n"
                     "dbname=postgres\noptions=-c default_transaction_read_only=off\n"
                 )
+                # A role that is neither a superuser nor an owner, so that row-level security applies to it.
+                handle.write(
+                    f"[pgrun_{version}_app]\nhost=127.0.0.1\nport={self.ports[version]}\nuser={APP_ROLE}\n"
+                    "dbname=postgres\noptions=-c default_transaction_read_only=off\n"
+                )
         with open(self.pass_file, "w") as handle:
             for version in VERSIONS:
                 handle.write(f"127.0.0.1:{self.ports[version]}:*:{SUPERUSER}:{FIXTURE_SECRET}\n")
+                handle.write(f"127.0.0.1:{self.ports[version]}:*:{APP_ROLE}:{FIXTURE_SECRET}\n")
         os.chmod(self.pass_file, 0o600)
         self.env = {
             "PATH": os.environ["PATH"], "HOME": self.home, "XDG_CONFIG_HOME": self.xdg,
@@ -155,13 +215,14 @@ class DockerServers:
         self.write_allowlist("")
 
     def write_allowlist(self, extra):
-        services = ", ".join(f'"pgrun_{v}"' for v in VERSIONS)
+        services = ", ".join(f'"pgrun_{v}{suffix}"' for v in VERSIONS for suffix in ("", "_app"))
         with open(os.path.join(self.xdg, "sql-skill", "allowlist.toml"), "w") as handle:
             handle.write(f'["{REPO_KEY}"]\nservices = [{services}]\n{extra}')
 
-    def run_explain(self, version, mode, statement):
+    def run_explain(self, version, mode, statement, role=""):
+        """`role` is "" (the superuser) or "_app" (the role that row-level security applies to)."""
         done = subprocess.run(
-            [sys.executable, "-I", SCRIPT, "explain", "--repo", self.repo, "--service", f"pgrun_{version}",
+            [sys.executable, "-I", SCRIPT, "explain", "--repo", self.repo, "--service", f"pgrun_{version}{role}",
              "--mode", mode, "--statement", statement],
             capture_output=True, text=True, env=self.env, timeout=120,
         )
@@ -176,9 +237,9 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     ports = {}
     SETUP_SQL = SETUP_SQL
 
-    def explain(self, version, statement):
+    def explain(self, version, statement, role=""):
         done = subprocess.run(
-            [sys.executable, "-I", SCRIPT, "explain", "--repo", self.repo, "--service", f"pgrun_{version}",
+            [sys.executable, "-I", SCRIPT, "explain", "--repo", self.repo, "--service", f"pgrun_{version}{role}",
              "--mode", "select", "--statement", statement],
             capture_output=True, text=True, env=self.env, timeout=120,
         )
@@ -203,7 +264,7 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     def test_the_session_is_read_only_although_the_service_entry_says_off(self):
         for version in VERSIONS:
             with self.subTest(version=version):
-                data = self.explain(version, "SELECT pgrun_test.writes()")
+                data = self.explain(version, "SELECT pgrun_test.writes_stable()")
                 self.assertFalse(data["ok"], data)
                 self.assertEqual(data["error"], "statement_failed")
                 self.assertIn("read-only", data["message"])
@@ -236,6 +297,55 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     def test_the_rows_are_unchanged_after_the_runs(self):
         for version in VERSIONS:
             self.assertEqual(self.rows(version), "5|15")
+
+    def test_each_stored_sql_and_user_function_case_gives_the_expected_run(self):
+        for version in VERSIONS:
+            for label, statement, ran, names in STORED_SELECT_CASES:
+                with self.subTest(version=version, case=label):
+                    data = self.explain(version, statement)
+                    self.assertTrue(data["ok"], data)
+                    self.assertEqual(data["ran"], ran, data)
+                    self.assertEqual([hit["name"] for hit in data["downgrade"]], names, data)
+                    self.assertEqual({hit["kind"] for hit in data["downgrade"]} - {"function"}, set())
+                    if ran == "analyze":
+                        self.assertEqual(
+                            data["reason"],
+                            "no call of a function that runs SQL from a string, and no VOLATILE user function, in the plan",
+                        )
+                        self.assertIn("Execution Time", data["plan"][0])
+                    else:
+                        self.assertNotIn("Execution Time", data["plan"][0])
+                        for name in names:
+                            self.assertIn(name, data["reason"])
+                    self.assertEqual(self.rows(version), "5|15")
+
+    def test_a_policy_of_a_role_without_superuser_rights_is_found_with_the_same_rights(self):
+        cases = (
+            ("a policy that calls a string-SQL function", "SELECT * FROM pgrun_test.rls_xml", "explain", ["query_to_xml"]),
+            ("a policy that calls a VOLATILE user function", "SELECT * FROM pgrun_test.rls_vol", "explain", ["pgrun_test.writes"]),
+            ("a policy with no call", "SELECT * FROM pgrun_test.rls_ok", "analyze", []),
+        )
+        for version in VERSIONS:
+            for label, statement, ran, names in cases:
+                with self.subTest(version=version, case=label):
+                    data = self.explain(version, statement, role="_app")
+                    self.assertTrue(data["ok"], data)
+                    self.assertEqual(data["ran"], ran, data)
+                    self.assertEqual([hit["name"] for hit in data["downgrade"]], names, data)
+                    self.assertEqual(self.rows(version), "5|15")
+
+    def test_a_downgraded_stored_call_never_runs(self):
+        # The view calls a function that inserts a row. A downgrade must not run it; a positive control shows that it does insert.
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                control = host_psql(self.ports[version], "-c", "SELECT sum(w) FROM pgrun_test.v_vol")
+                self.assertEqual(control.returncode, 0, control.stderr)
+                self.assertNotEqual(self.rows(version), "5|15")
+                restore = host_psql(self.ports[version], "-c", "DELETE FROM pgrun_test.items WHERE a = 99")
+                self.assertEqual(restore.returncode, 0, restore.stderr)
+                data = self.explain(version, "SELECT * FROM pgrun_test.v_vol")
+                self.assertEqual(data["ran"], "explain", data)
+                self.assertEqual(self.rows(version), "5|15")
 
     def probe_rows(self, version):
         done = host_psql(self.ports[version], "-c", "SELECT count(*) FROM pgrun_test.probe_t")
@@ -460,7 +570,47 @@ WRITE_TABLES = (
     "plain", "trig", "dis", "audit", "ruled_also", "sink", "ruled_instead", "ruled_nothing", "parent", "child",
     "cparent", "cchild", "nparent", "nchild", "dparent", "dchild", "uparent", "uchild", "part", "partb", "partd",
     "stmt_base", "inh_parent", "selfref", "cyc_a", "cyc_b", "ident", "ser",
+    "t_default", "t_def_vol", "t_check", "t_chk_vol", "t_nn", "t_text", "t_dom", "t_dom_over", "t_dom_arr", "t_dom_rng",
+    "t_dom_comp", "t_dom_vol", "t_gen", "t_rls_using", "t_rls_check", "t_rls_vol", "t_rls_mixed", "t_rls_ok",
+    "t_null_policies",
 )
+
+WRITE_ANALYZE_REASON = "no trigger, rule, external call or VOLATILE user function on the reached tables"
+
+# (label, statement, ran, names in `downgrade`). Each runs on version 13 and 18, as the superuser.
+STORED_WRITE_CASES = [
+    ("a column default that calls a string-SQL function", "INSERT INTO pgw.t_default (id) VALUES (1)", "explain", ["query_to_xml"]),
+    ("a view body that calls a string-SQL function", "UPDATE pgw.v_where SET v = v + 1", "explain", ["query_to_xml"]),
+    ("a view body that calls set_config", "UPDATE pgw.v_setcfg SET v = v + 1", "explain", ["set_config"]),
+    ("the USING qual of a policy", "UPDATE pgw.t_rls_using SET id = 2", "explain", ["query_to_xml"]),
+    ("the WITH CHECK qual of a policy", "INSERT INTO pgw.t_rls_check VALUES (1)", "explain", ["query_to_xml"]),
+    ("a view with CHECK OPTION", "INSERT INTO pgw.v_check VALUES (700, 7)", "explain", ["query_to_xml"]),
+    ("a CASCADED CHECK OPTION over a view that has none", "INSERT INTO pgw.v_cascaded VALUES (701, 7)", "explain", ["query_to_xml"]),
+    ("a CHECK constraint", "INSERT INTO pgw.t_check VALUES (1)", "explain", ["query_to_xml"]),
+    ("a domain constraint", "INSERT INTO pgw.t_dom VALUES (1)", "explain", ["query_to_xml"]),
+    ("a domain over a domain", "INSERT INTO pgw.t_dom_over VALUES (1)", "explain", ["query_to_xml"]),
+    ("a domain in an array", "INSERT INTO pgw.t_dom_arr VALUES (ARRAY[1])", "explain", ["query_to_xml"]),
+    ("a domain in a range", "INSERT INTO pgw.t_dom_rng VALUES ('[1,2)'::pgw.rng)", "explain", ["query_to_xml"]),
+    ("a domain in a composite type", "INSERT INTO pgw.t_dom_comp VALUES (ROW(1, 2))", "explain", ["query_to_xml"]),
+    ("a direct VOLATILE user function", "INSERT INTO pgw.plain SELECT 400, pgw.vol_fn()", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function in a column default", "INSERT INTO pgw.t_def_vol (id) VALUES (1)", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function in a CHECK constraint", "INSERT INTO pgw.t_chk_vol VALUES (1)", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function in a domain constraint", "INSERT INTO pgw.t_dom_vol VALUES (1)", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function in a view", "UPDATE pgw.v_vol SET v = v + 1", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function in a policy", "INSERT INTO pgw.t_rls_vol VALUES (1)", "explain", ["pgw.vol_fn"]),
+    ("a VOLATILE user function with a quoted name in a view", "UPDATE pgw.v_mixed SET v = v + 1", "explain", ['pgw."MyFn"']),
+    ("a VOLATILE user function with a quoted name in a policy", "INSERT INTO pgw.t_rls_mixed VALUES (1)", "explain", ['pgw."MyFn"']),
+    ("a STABLE user function", "INSERT INTO pgw.plain SELECT 401, pgw.stable_fn()", "analyze", []),
+    ("a built-in function", "INSERT INTO pgw.plain SELECT 402, floor(random() * 0)::int", "analyze", []),
+    ("a generated column through an IMMUTABLE wrapper (open case)", "INSERT INTO pgw.t_gen (id) VALUES (1)", "analyze", []),
+    ("a user-defined operator (open case)", "INSERT INTO pgw.plain SELECT 410, 1 WHERE 1 OPERATOR(pgw.===) 2", "analyze", []),
+    ("a STABLE user function that calls a scanned function (open case)", "INSERT INTO pgw.plain SELECT 411, pgw.stable_calls_scanned()", "analyze", []),
+    ("a cast to a domain in the statement (open case)", "INSERT INTO pgw.t_text VALUES ('x'::pgw.dom_txt)", "analyze", []),
+    ("an INSERT policy, which has a NULL USING qual", "INSERT INTO pgw.t_null_policies VALUES (2)", "analyze", []),
+    ("an UPDATE policy with no WITH CHECK", "UPDATE pgw.t_null_policies SET id = 3", "analyze", []),
+    ("a NOT NULL constraint", "INSERT INTO pgw.t_nn VALUES (1)", "analyze", []),
+    ("a write with no such call", "UPDATE pgw.plain SET v = v + 1", "analyze", []),
+]
 
 
 @unittest.skipIf(SKIP, SKIP or "")
@@ -518,11 +668,64 @@ class PgRunWriteDockerTest(DockerServers, unittest.TestCase):
                     for name in tables:
                         self.assertIn(name, data["reason"])
                     if ran == "analyze":
-                        self.assertEqual(data["reason"], "no trigger, rule or external call on the reached tables")
+                        self.assertEqual(data["reason"], WRITE_ANALYZE_REASON)
                         self.assertIn("Execution Time", data["plan"][0])
                     else:
                         self.assertNotIn("Execution Time", data["plan"][0])
                     self.assertEqual(self.snapshot(version), before)
+
+    def check_stored_case(self, version, label, statement, ran, names, role=""):
+        before = self.snapshot(version)
+        data = self.run_explain(version, "write", statement, role)
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["ran"], ran, (label, data))
+        self.assertEqual([hit["name"] for hit in data["downgrade"]], names, (label, data))
+        if ran == "analyze":
+            self.assertEqual(data["reason"], WRITE_ANALYZE_REASON)
+            self.assertIn("Execution Time", data["plan"][0])
+        else:
+            self.assertNotIn("Execution Time", data["plan"][0])
+            for name in names:
+                self.assertIn(name, data["reason"])
+        self.assertEqual(self.snapshot(version), before)
+
+    def test_each_stored_sql_and_user_function_case_gives_the_expected_run_and_leaves_the_data_unchanged(self):
+        for version in VERSIONS:
+            for label, statement, ran, names in STORED_WRITE_CASES:
+                with self.subTest(version=version, case=label):
+                    self.check_stored_case(version, label, statement, ran, names)
+
+    def test_a_domain_in_a_multirange_is_found_on_version_14_and_later(self):
+        with self.subTest(version="18"):
+            self.check_stored_case(
+                "18", "a domain in a multirange", "INSERT INTO pgw.t_dom_mrng VALUES ('{[1,2)}'::pgw.rng_multirange)",
+                "explain", ["query_to_xml"],
+            )
+
+    def test_the_role_without_superuser_rights_gets_the_catalog_run_and_the_function_check(self):
+        cases = (
+            ("a policy with no call", "INSERT INTO pgw.t_rls_ok SELECT 2 WHERE random() >= 0", "analyze", []),
+            ("a policy with a call, WITH CHECK", "INSERT INTO pgw.t_rls_check VALUES (1)", "explain", ["query_to_xml"]),
+            ("a policy with a call, USING", "UPDATE pgw.t_rls_using SET id = 2", "explain", ["query_to_xml"]),
+        )
+        for version in VERSIONS:
+            for label, statement, ran, names in cases:
+                with self.subTest(version=version, case=label):
+                    self.check_stored_case(version, label, statement, ran, names, role="_app")
+
+    def test_a_quoted_name_with_a_doubled_quote_is_matched_exactly(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                create = host_psql(
+                    self.ports[version], "-c",
+                    'CREATE FUNCTION pgw."My""Fn"() RETURNS int LANGUAGE plpgsql VOLATILE AS \'BEGIN RETURN 1; END\'; '
+                    'CREATE VIEW pgw.v_dq AS SELECT id, v FROM pgw.plain WHERE pgw."My""Fn"() > 0',
+                )
+                self.assertEqual(create.returncode, 0, create.stderr)
+                self.addCleanup(host_psql, self.ports[version], "-c", "DROP VIEW pgw.v_dq; DROP FUNCTION pgw.\"My\"\"Fn\"()")
+                self.check_stored_case(
+                    version, "a doubled quote", "UPDATE pgw.v_dq SET v = v + 1", "explain", ['pgw."My""Fn"']
+                )
 
     def test_explain_analyze_of_an_insert_an_update_and_a_delete_leaves_the_table_unchanged(self):
         for version in VERSIONS:

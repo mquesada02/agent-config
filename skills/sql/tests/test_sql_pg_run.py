@@ -1,15 +1,23 @@
+import contextlib
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 SCRIPT = os.path.join(SKILL, "scripts", "pg_run.py")
+sys.path.insert(0, os.path.join(SKILL, "scripts"))
+
+import pg_run  # noqa: E402
+import sql_guard  # noqa: E402
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
@@ -31,7 +39,7 @@ import json, os, sys
 argv = sys.argv[1:]
 names = ["PGOPTIONS", "PGPASSWORD", "PGSERVICE", "PGHOST", "PGHOSTADDR", "PGPORT", "PGUSER", "PGDATABASE",
          "PGSERVICEFILE", "PGPASSFILE", "PGCONNECT_TIMEOUT", "PGSSLMODE", "LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"]
-stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") or any(a.startswith("targets=") for a in argv) else None
+stdin = sys.stdin.read() if os.environ.get("FAKE_READ_STDIN") or any(a.startswith(("targets=", "calls=")) for a in argv) else None
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "stdin": stdin, "env": {n: os.environ.get(n) for n in names}}) + "\n")
 # The three sessions of `diff` are told apart by their argv: the describe session has `LIMIT 0`, the type session
@@ -49,6 +57,8 @@ if any("pgrun_ra AS MATERIALIZED" in a for a in argv):
     kind = "proof"
 if any(a.startswith("targets=") for a in argv):
     kind = "catalog"
+if any(a.startswith("calls=") for a in argv):
+    kind = "function_check"
 for a in argv:
     for prefix, name in (("EXPLAIN (VERBOSE", "discovery"), ("EXPLAIN (FORMAT JSON)", "plain"), ("EXPLAIN (ANALYZE", "analyze")):
         if a.startswith(prefix):
@@ -65,11 +75,14 @@ if fail:
 if probe:
     sys.stdout.write(os.environ.get("FAKE_VERSION", "180000") + "\n")
 else:
-    out = os.environ.get("FAKE_STDOUT_" + kind.upper(), os.environ.get("FAKE_STDOUT"))
+    # The generic FAKE_STDOUT is a plan: it does not apply to the function check, which returns a list of names.
+    out = os.environ.get("FAKE_STDOUT_" + kind.upper(), None if kind == "function_check" else os.environ.get("FAKE_STDOUT"))
     if out is None and kind == "discovery":
         out = json.dumps([{"Plan": {"Node Type": "ModifyTable", "Operation": "Update", "Schema": "public", "Relation Name": "t"}}])
     if out is None and kind == "catalog":
-        out = json.dumps({"hits": [], "sequence": False})
+        out = json.dumps({"hits": [], "sequence": False, "expressions": []})
+    if out is None and kind == "function_check":
+        out = "[]"
     if out is None and kind == "describe":
         out = "server_version_num\n" + os.environ.get("FAKE_VERSION", "180000") + "\n" + os.environ.get("FAKE_HEADERS", "id\nid\n")
     if out is None and kind == "types":
@@ -186,7 +199,29 @@ class PgRunTestCase(unittest.TestCase):
         return next(c for c in self.calls() if any("SHOW server_version_num" in a for a in c["argv"]))
 
     def explain_call(self):
-        return next(c for c in self.calls() if not any("SHOW server_version_num" in a for a in c["argv"]))
+        """The last call: the final run of an `explain` (the check runs come before it) or the only run of `facts`."""
+        return self.calls()[-1]
+
+    def kinds(self):
+        """The kinds of the recorded calls, in order."""
+        out = []
+        for call in self.calls():
+            argv = call["argv"]
+            if any("SHOW server_version_num" in a for a in argv):
+                out.append("probe")
+            elif variable_of(call, "targets") is not None:
+                out.append("catalog")
+            elif variable_of(call, "calls") is not None:
+                out.append("function_check")
+            else:
+                text = next(a for a in argv if a.startswith("EXPLAIN"))
+                out.append(
+                    "discovery" if text.startswith("EXPLAIN (VERBOSE") else "plain" if text.startswith("EXPLAIN (FORMAT") else "analyze"
+                )
+        return out
+
+    def call_of(self, kind):
+        return self.calls()[self.kinds().index(kind)]
 
 
 class GuardTest(PgRunTestCase):
@@ -321,7 +356,7 @@ class GuardTest(PgRunTestCase):
                     os.remove(self.log)
                 code, data = self.explain(statement)
                 self.assertEqual((code, data["ok"]), (0, True), data)
-                self.assertEqual(len(self.calls()), 2)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "analyze"])
 
     def test_each_refusal_has_its_reason_and_never_reaches_psql(self):
         for statement, reason, static in self.REFUSED:
@@ -422,8 +457,12 @@ class ConnectionTest(PgRunTestCase):
     def test_the_psql_command_lines(self):
         code, data = self.explain("SELECT 1 AS one")
         self.assertEqual(code, 0)
-        probe, run = self.calls()
-        for call in (probe, run):
+        probe, discovery, run = self.calls()
+        self.assertEqual(
+            [discovery["argv"][i + 1] for i, a in enumerate(discovery["argv"]) if a == "-c"],
+            ["BEGIN READ ONLY", "EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1 AS one", "ROLLBACK"],
+        )
+        for call in (probe, discovery, run):
             self.assertIn("-X", call["argv"])
             self.assertIn("-w", call["argv"])
             self.assertTrue(call["argv"][-1].startswith("service=app-dev options='"), call["argv"][-1])
@@ -1072,25 +1111,6 @@ def variable_of(call, name):
 class WriteRunTest(PgRunTestCase):
     """The write-mode steps, with a fake `psql` that answers by the content of its argv."""
 
-    def kinds(self):
-        """The kinds of the recorded calls, in order."""
-        out = []
-        for call in self.calls():
-            argv = call["argv"]
-            if any("SHOW server_version_num" in a for a in argv):
-                out.append("probe")
-            elif variable_of(call, "targets") is not None:
-                out.append("catalog")
-            else:
-                text = next(a for a in argv if a.startswith("EXPLAIN"))
-                out.append(
-                    "discovery" if text.startswith("EXPLAIN (VERBOSE") else "plain" if text.startswith("EXPLAIN (FORMAT") else "analyze"
-                )
-        return out
-
-    def call_of(self, kind):
-        return self.calls()[self.kinds().index(kind)]
-
     def test_the_session_flags_and_commands_of_each_run(self):
         for version, timeouts in (("160000", "-c statement_timeout=30s -c lock_timeout=2s -c idle_in_transaction_session_timeout=10s"),
                                   ("170000", "-c statement_timeout=30s -c lock_timeout=2s -c idle_in_transaction_session_timeout=10s -c transaction_timeout=60s")):
@@ -1136,7 +1156,7 @@ class WriteRunTest(PgRunTestCase):
             sorted(["ok", "action", "service", "mode", "server_version_num", "ran", "reason", "timeouts", "downgrade", "warnings", "plan"]),
         )
         self.assertEqual((data["mode"], data["ran"], data["downgrade"], data["warnings"]), ("write", "analyze", [], []))
-        self.assertEqual(data["reason"], "no trigger, rule or external call on the reached tables")
+        self.assertEqual(data["reason"], "no trigger, rule, external call or VOLATILE user function on the reached tables")
         self.assertIsInstance(data["plan"], list)
 
     def test_a_scan_name_gives_the_discovery_run_and_the_plain_run_and_no_catalog_run(self):
@@ -1231,7 +1251,10 @@ class WriteRunTest(PgRunTestCase):
         self.assertIn(":'plan_targets'", script_one)
 
     def test_a_trigger_or_a_rule_hit_gives_the_plain_run_and_its_reason(self):
-        hits = {"hits": [{"kind": "trigger", "name": "public.t"}, {"kind": "rule", "name": "s.v"}, {"kind": "trigger", "name": "public.t"}], "sequence": True}
+        hits = {
+            "hits": [{"kind": "trigger", "name": "public.t"}, {"kind": "rule", "name": "s.v"}, {"kind": "trigger", "name": "public.t"}],
+            "sequence": True, "expressions": [],
+        }
         code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_CATALOG": json.dumps(hits)})
         self.assertEqual((code, data["ran"]), (0, "explain"), data)
         self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "plain"])
@@ -1242,15 +1265,15 @@ class WriteRunTest(PgRunTestCase):
 
     def test_the_sequence_warning(self):
         for stdout, statement, expected in (
-            ({"hits": [], "sequence": True}, "INSERT INTO t VALUES (1)", ["sequence"]),
-            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (1)", []),
-            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (nextval('s'))", ["sequence"]),
-            ({"hits": [], "sequence": False}, 'INSERT INTO t VALUES (pg_catalog."nextval"(\'s\'))', ["sequence"]),
-            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES ('nextval')", []),
-            ({"hits": [], "sequence": False}, "INSERT INTO t SELECT nextval FROM s", []),
-            ({"hits": [], "sequence": False}, 'INSERT INTO t SELECT "nextval" FROM s', []),
-            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (nextval ('s'))", ["sequence"]),
-            ({"hits": [], "sequence": False}, "INSERT INTO t VALUES (pg_catalog.nextval/* c */('s'))", ["sequence"]),
+            ({"hits": [], "sequence": True, "expressions": []}, "INSERT INTO t VALUES (1)", ["sequence"]),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t VALUES (1)", []),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t VALUES (nextval('s'))", ["sequence"]),
+            ({"hits": [], "sequence": False, "expressions": []}, 'INSERT INTO t VALUES (pg_catalog."nextval"(\'s\'))', ["sequence"]),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t VALUES ('nextval')", []),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t SELECT nextval FROM s", []),
+            ({"hits": [], "sequence": False, "expressions": []}, 'INSERT INTO t SELECT "nextval" FROM s', []),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t VALUES (nextval ('s'))", ["sequence"]),
+            ({"hits": [], "sequence": False, "expressions": []}, "INSERT INTO t VALUES (pg_catalog.nextval/* c */('s'))", ["sequence"]),
         ):
             with self.subTest(statement=statement, sequence=stdout["sequence"]):
                 code, data = self.explain_write(statement, env={"FAKE_STDOUT_CATALOG": json.dumps(stdout)})
@@ -1291,7 +1314,12 @@ class WriteRunTest(PgRunTestCase):
             json.dumps({"hits": [{"kind": "view", "name": "t"}], "sequence": False}),
             json.dumps({"hits": [{"kind": "trigger", "name": 5}], "sequence": False}),
             json.dumps({"hits": [{"kind": "trigger"}], "sequence": False}),
-            json.dumps({"hits": [], "sequence": False}) + "\nextra",
+            json.dumps({"hits": [], "sequence": False, "expressions": []}) + "\nextra",
+            json.dumps({"hits": [], "sequence": False}),
+            json.dumps({"hits": [], "sequence": False, "expressions": {}}),
+            json.dumps({"hits": [], "sequence": False, "expressions": "x"}),
+            json.dumps({"hits": [], "sequence": False, "expressions": [None]}),
+            json.dumps({"hits": [], "sequence": False, "expressions": ["a", 5]}),
         ]
         for out in outputs:
             with self.subTest(out=out[:60]):
@@ -1828,6 +1856,300 @@ class SelectDowngradeTest(PgRunTestCase):
         self.assertEqual((code, data["ran"]), (0, "explain"), data)
         self.assertNotIn("transaction_timeout", data["timeouts"])
         self.assertEqual(data["timeouts"]["statement_timeout"], "30s")
+
+
+SELECT_ANALYZE_REASON = "no call of a function that runs SQL from a string, and no VOLATILE user function, in the plan"
+WRITE_ANALYZE_REASON = "no trigger, rule, external call or VOLATILE user function on the reached tables"
+UNREADABLE_REASON = "the plan or a stored expression has a text that the scan cannot read"
+CHECK_WORDS = re.compile(r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE)\b", re.IGNORECASE)
+
+
+def select_plan(*outputs):
+    return json.dumps([{"Plan": {"Node Type": "Result", "Output": list(outputs)}}])
+
+
+def write_plan(*outputs):
+    plan = {"Node Type": "ModifyTable", "Operation": "Insert", "Schema": "public", "Relation Name": "t", "Output": list(outputs)}
+    return json.dumps([{"Plan": plan}])
+
+
+def catalog_out(expressions, hits=(), sequence=False):
+    return json.dumps({"hits": list(hits), "sequence": sequence, "expressions": list(expressions)})
+
+
+def outside_strings(script):
+    """The text of a script without its single-quoted strings."""
+    return re.sub(r"'(?:[^']|'')*'", "''", script)
+
+
+class StoredSqlSelectTest(PgRunTestCase):
+    """Select mode: a discovery run, a plan scan and a function check (#547, #548)."""
+
+    def test_the_discovery_run_has_its_own_session_and_no_function_check_without_a_candidate(self):
+        code, data = self.explain("SELECT 1 AS one")
+        self.assertEqual((code, data["ran"], data["downgrade"]), (0, "analyze", []))
+        self.assertEqual(data["reason"], SELECT_ANALYZE_REASON)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "analyze"])
+        discovery = self.call_of("discovery")
+        self.assertEqual(commands_of(discovery), ["BEGIN READ ONLY", "EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1 AS one", "ROLLBACK"])
+        self.assertIn("default_transaction_read_only=on", discovery["argv"][-1])
+        self.assertEqual(discovery["argv"][-1], self.call_of("analyze")["argv"][-1])
+
+    def test_a_statement_scan_hit_downgrades_at_once_with_no_discovery_run(self):
+        code, data = self.explain("SELECT query_to_xml('select 1', true, true, '')")
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(self.kinds(), ["probe", "plain"])
+
+    def test_a_plan_scan_hit_gives_the_plain_run_and_no_function_check(self):
+        plan = select_plan("query_to_xml('select 1'::text, true, true, ''::text)")
+        code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
+        self.assertEqual(data["reason"], "the statement calls query_to_xml")
+        self.assertEqual(self.kinds(), ["probe", "discovery", "plain"])
+        self.assertEqual(commands_of(self.call_of("plain"))[1], "EXPLAIN (FORMAT JSON) SELECT * FROM v")
+
+    def test_each_name_of_the_select_list_is_found_in_a_plan(self):
+        for name in ("dblink_exec", "pg_notify", "set_config", "lo_export", "pg_advisory_xact_lock", "crosstab2", "ts_stat"):
+            with self.subTest(name=name):
+                self.reset_log()
+                plan = select_plan(f"{name}('x'::text)")
+                code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+                self.assertEqual((code, data["ran"], data["downgrade"]), (0, "explain", [{"kind": "function", "name": name}]), data)
+
+    def test_a_call_candidate_gives_the_function_check_and_a_clean_answer_keeps_analyze(self):
+        plan = select_plan("lower(t.a)", "public.f(t.b)", "lower(t.c)")
+        code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual((code, data["ran"], data["downgrade"]), (0, "analyze", []), data)
+        self.assertEqual(data["reason"], SELECT_ANALYZE_REASON)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "function_check", "analyze"])
+        check = self.call_of("function_check")
+        self.assertEqual(json.loads(variable_of(check, "calls")), [[None, "lower"], ["public", "f"]])
+        self.assertEqual(commands_of(check), [])
+        self.assertTrue(check["stdin"].startswith("BEGIN READ ONLY;"))
+        self.assertTrue(check["stdin"].rstrip().endswith("ROLLBACK;"))
+        self.assertEqual(check["argv"][-1], self.call_of("analyze")["argv"][-1])
+        self.assertIn("ON_ERROR_STOP=1", check["argv"])
+
+    def test_a_function_check_hit_downgrades_and_names_the_function(self):
+        plan = select_plan("public.writes(t.a)")
+        env = {"FAKE_STDOUT_DISCOVERY": plan, "FAKE_STDOUT_FUNCTION_CHECK": json.dumps(["public.writes", "s.\"My\"\"Fn\""])}
+        code, data = self.explain("SELECT * FROM v", env=env)
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(
+            data["downgrade"], [{"kind": "function", "name": "public.writes"}, {"kind": "function", "name": "s.\"My\"\"Fn\""}]
+        )
+        self.assertEqual(data["reason"], "the statement calls public.writes, s.\"My\"\"Fn\"")
+        self.assertEqual(self.kinds(), ["probe", "discovery", "function_check", "plain"])
+        self.assertEqual(data["warnings"], [])
+
+    def test_a_quoted_name_reaches_the_function_check_with_its_exact_text(self):
+        plan = select_plan('"My""Fn"(t.a)', '"MyFn"(1)')
+        self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual(json.loads(variable_of(self.call_of("function_check"), "calls")), [[None, 'My"Fn'], [None, "MyFn"]])
+
+    def test_a_malformed_function_check_output_is_bad_output_and_the_final_run_never_starts(self):
+        plan = select_plan("f(t.a)")
+        for out in ("", "not json", "{}", '"x"', "[1]", '[["a"]]', "[null]", '["a", 2]', '["a"]\nextra'):
+            with self.subTest(out=out):
+                self.reset_log()
+                code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan, "FAKE_STDOUT_FUNCTION_CHECK": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "function_check"])
+
+    def test_a_discovery_output_that_is_not_a_plan_list_is_bad_output(self):
+        for out in ("", "not json", "{}", '"x"'):
+            with self.subTest(out=out):
+                self.reset_log()
+                code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": out})
+                self.assertEqual((code, data["error"]), (1, "bad_output"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery"])
+
+    def test_a_plan_text_that_cannot_be_read_fails_closed(self):
+        plan = select_plan("it's")
+        code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "unreadable plan text"}])
+        self.assertEqual(data["reason"], UNREADABLE_REASON)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "plain"])
+
+    def test_a_scanned_name_and_an_unreadable_text_give_both_entries_and_the_unreadable_reason(self):
+        plan = json.dumps([{"Plan": {"Node Type": "Result", "Output": ["dblink('x'::text)", "it's"]}}])
+        code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual(
+            data["downgrade"], [{"kind": "function", "name": "dblink"}, {"kind": "function", "name": "unreadable plan text"}]
+        )
+        self.assertEqual(data["reason"], UNREADABLE_REASON)
+
+    def test_every_string_of_the_plan_at_any_depth_is_scanned(self):
+        plan = json.dumps([{"Plan": {"Node Type": "Result", "Plans": [{"Node Type": "Result", "Filter": ["x", {"deep": "pg_notify('c'::text)"}]}]}}])
+        code, data = self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "pg_notify"}])
+
+    def test_the_check_scripts_are_constant_read_only_and_hold_none_of_the_names(self):
+        self.explain("SELECT * FROM secret_view_one", env={"FAKE_STDOUT_DISCOVERY": select_plan("secret_fn_one(t.a)")})
+        script_one = self.call_of("function_check")["stdin"]
+        self.reset_log()
+        self.explain("SELECT * FROM secret_view_two", env={"FAKE_STDOUT_DISCOVERY": select_plan("secret_fn_two(t.a)")})
+        script_two = self.call_of("function_check")["stdin"]
+        self.assertEqual(script_one, script_two)
+        self.assertNotIn("secret_", script_one)
+        self.assertIn(":'calls'", script_one)
+        self.assertIsNone(CHECK_WORDS.search(outside_strings(script_one)))
+
+    def test_the_function_check_script_holds_the_built_in_rule_and_the_aggregate_rule(self):
+        self.explain("SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": select_plan("f(t.a)")})
+        script = self.call_of("function_check")["stdin"]
+        self.assertIn("16384", script)
+        self.assertIn("provolatile = 'v'", script)
+        for column in ("aggtransfn", "aggfinalfn", "aggcombinefn", "aggserialfn", "aggdeserialfn", "aggmtransfn", "aggminvtransfn", "aggmfinalfn"):
+            self.assertIn(column, script)
+
+    def test_a_failing_run_gives_statement_failed_and_no_later_psql_call(self):
+        stderr = 'ERROR:  relation "v" does not exist\n'
+        for failing, expected in (
+            ("discovery", ["probe", "discovery"]),
+            ("function_check", ["probe", "discovery", "function_check"]),
+        ):
+            with self.subTest(failing=failing):
+                self.reset_log()
+                env = {"FAKE_FAIL_KIND": failing, "FAKE_STDERR": stderr, "FAKE_EXIT": "1", "FAKE_STDOUT_DISCOVERY": select_plan("f(t.a)")}
+                code, data = self.explain("SELECT * FROM v", env=env)
+                self.assertEqual((code, data["error"]), (1, "statement_failed"), data)
+                self.assertEqual(self.kinds(), expected)
+
+    def test_each_connection_failure_kind_leaks_no_connection_value_in_the_new_runs(self):
+        for failing in ("discovery", "function_check"):
+            for name, stderr in (("auth", AUTH_STDERR), ("unreachable", UNREACHABLE_STDERR)):
+                with self.subTest(failing=failing, kind=name):
+                    env = {"FAKE_FAIL_KIND": failing, "FAKE_STDERR": stderr, "FAKE_EXIT": "2", "FAKE_STDOUT_DISCOVERY": select_plan("f(t.a)")}
+                    code, data = self.explain("SELECT * FROM v", env=env)
+                    self.assertEqual((code, data["error"]), (1, "connection_failed"))
+                    for canary in CANARIES:
+                        self.assertNotIn(canary, json.dumps(data))
+
+    def test_the_lists_are_in_one_place(self):
+        """`pg_run` holds no copy of a scan list: a name added to `sql_guard` in the same process is found in a plan."""
+        patched = sql_guard.STRING_SQL_NAMES | {"zz_probe_fn"}
+        env = {**self.env, "FAKE_STDOUT_DISCOVERY": select_plan("zz_probe_fn(t.a)")}
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(sql_guard, "STRING_SQL_NAMES", patched):
+            with contextlib.redirect_stdout(out):
+                pg_run.main(["explain", "--repo", self.repo, "--service", "app-dev", "--mode", "select", "--statement", "SELECT * FROM v"])
+        data = json.loads(out.getvalue())
+        self.assertEqual((data["ran"], data["downgrade"], data["reason"]), ("explain", [{"kind": "function", "name": "zz_probe_fn"}], "the statement calls zz_probe_fn"))
+
+
+class StoredSqlWriteTest(PgRunTestCase):
+    """Write mode: the plan scan, the stored expressions of the catalog run and the function check (#547, #548)."""
+
+    def test_a_plan_scan_hit_gives_the_plain_run_and_no_catalog_run(self):
+        env = {"FAKE_STDOUT_DISCOVERY": write_plan("query_to_xml('select 1'::text, true, true, ''::text)")}
+        code, data = self.explain_write("INSERT INTO t SELECT * FROM v", env=env)
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "query_to_xml"}])
+        self.assertEqual(data["reason"], "the statement calls query_to_xml")
+        self.assertEqual(self.kinds(), ["probe", "discovery", "plain"])
+
+    def test_the_write_list_names_are_found_in_a_plan_and_the_transaction_locks_are_not(self):
+        for name in ("setval", "set_config", "pg_advisory_lock", "lo_export", "dblink_connect"):
+            with self.subTest(name=name):
+                self.reset_log()
+                code, data = self.explain_write("INSERT INTO t SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": write_plan(f"{name}('x'::text)")})
+                self.assertEqual((code, data["downgrade"]), (0, [{"kind": "function", "name": name}]), data)
+        self.reset_log()
+        code, data = self.explain_write("INSERT INTO t SELECT * FROM v", env={"FAKE_STDOUT_DISCOVERY": write_plan("pg_advisory_xact_lock(1::bigint)")})
+        self.assertEqual((code, data["ran"]), (0, "analyze"), data)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "function_check", "analyze"])
+
+    def test_a_clean_run_keeps_the_four_runs_and_the_new_reason(self):
+        code, data = self.explain_write("INSERT INTO t VALUES (1)")
+        self.assertEqual((code, data["ran"], data["reason"]), (0, "analyze", WRITE_ANALYZE_REASON))
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "analyze"])
+
+    def test_a_stored_expression_with_a_scanned_name_gives_the_plain_run_and_no_function_check(self):
+        for text in (
+            "(query_to_xml('select 1'::text, true, true, ''::text) IS NOT NULL)",
+            "dblink_exec('x'::text)",
+            "set_config('a'::text, 'b'::text, false)",
+        ):
+            with self.subTest(text=text):
+                self.reset_log()
+                code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_CATALOG": catalog_out([text])})
+                self.assertEqual((code, data["ran"]), (0, "explain"), data)
+                self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "plain"])
+                self.assertEqual(len(data["downgrade"]), 1)
+                self.assertEqual(data["downgrade"][0]["kind"], "function")
+                self.assertIn(data["downgrade"][0]["name"], data["reason"])
+
+    def test_an_expression_text_that_cannot_be_read_fails_closed(self):
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_CATALOG": catalog_out(["(a = 'x"])})
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "unreadable expression text"}])
+        self.assertEqual(data["reason"], UNREADABLE_REASON)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "plain"])
+
+    def test_a_plan_text_that_cannot_be_read_fails_closed(self):
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_DISCOVERY": write_plan("it's")})
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "unreadable plan text"}])
+        self.assertEqual(data["reason"], UNREADABLE_REASON)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "plain"])
+
+    def test_the_candidates_of_the_plan_and_of_the_expressions_reach_one_function_check(self):
+        env = {
+            "FAKE_STDOUT_DISCOVERY": write_plan("lower(t.a)"),
+            "FAKE_STDOUT_CATALOG": catalog_out(["(check_fn(a) > 0)", "(lower(b) <> ''::text)"]),
+        }
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env=env)
+        self.assertEqual((code, data["ran"]), (0, "analyze"), data)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "function_check", "analyze"])
+        self.assertEqual(json.loads(variable_of(self.call_of("function_check"), "calls")), [[None, "check_fn"], [None, "lower"]])
+
+    def test_a_function_check_hit_downgrades_in_write_mode(self):
+        env = {"FAKE_STDOUT_CATALOG": catalog_out(["(check_fn(a) > 0)"]), "FAKE_STDOUT_FUNCTION_CHECK": '["public.check_fn"]'}
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env=env)
+        self.assertEqual((code, data["ran"]), (0, "explain"), data)
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": "public.check_fn"}])
+        self.assertEqual(data["reason"], "the statement calls public.check_fn")
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "function_check", "plain"])
+        self.assertEqual(data["warnings"], [])
+
+    def test_a_trigger_hit_skips_the_expression_scan_and_the_function_check(self):
+        hits = [{"kind": "trigger", "name": "public.t"}]
+        env = {"FAKE_STDOUT_CATALOG": catalog_out(["dblink('x'::text)", "f(a)"], hits=hits)}
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env=env)
+        self.assertEqual(data["downgrade"], [{"kind": "trigger", "name": "public.t"}])
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "plain"])
+
+    def test_the_function_check_has_no_candidate_when_there_is_no_call(self):
+        env = {"FAKE_STDOUT_CATALOG": catalog_out(["(a > 0)", "(b IS NOT NULL)"])}
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env=env)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "analyze"])
+
+    def test_the_catalog_script_reads_the_stored_expressions_by_a_fixed_text(self):
+        self.explain_write("INSERT INTO secret_t VALUES (1)")
+        script = self.call_of("catalog")["stdin"]
+        self.assertNotIn("secret_t", script)
+        for part in (
+            "'expressions'", "pg_get_expr", "polqual", "polwithcheck", "pg_get_viewdef", "check_option", "contype = 'c'",
+            "attgenerated", "contypid", "rngmultitypid",
+        ):
+            self.assertIn(part, script)
+        self.assertIsNone(CHECK_WORDS.search(outside_strings(script)))
+
+    def test_the_failing_function_check_gives_statement_failed_and_no_later_psql_call(self):
+        env = {
+            "FAKE_STDOUT_CATALOG": catalog_out(["f(a)"]), "FAKE_FAIL_KIND": "function_check",
+            "FAKE_STDERR": "ERROR:  boom\n", "FAKE_EXIT": "1",
+        }
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env=env)
+        self.assertEqual((code, data["error"]), (1, "statement_failed"), data)
+        self.assertEqual(self.kinds(), ["probe", "discovery", "catalog", "function_check"])
+
+    def test_the_downgrade_entries_of_a_plan_scan_are_sorted_without_duplicates(self):
+        plan = write_plan("setval('s'::regclass, 1)", "dblink('a'::text)", "setval('s'::regclass, 2)")
+        code, data = self.explain_write("INSERT INTO t VALUES (1)", env={"FAKE_STDOUT_DISCOVERY": plan})
+        self.assertEqual(data["downgrade"], [{"kind": "function", "name": n} for n in ("dblink", "setval")])
 
 
 if __name__ == "__main__":

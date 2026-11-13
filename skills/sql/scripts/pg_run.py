@@ -10,18 +10,21 @@ With no `--statement` the statement is read from stdin. The order of work: the
 allowlist check (`allowlist.py`), the guard of the mode (`sql_guard.py`), the server
 version probe, then the explain run: `psql -X -w` with `service=<name>` and the
 session options in the conninfo. In select mode it is `BEGIN READ ONLY`, `EXPLAIN (ANALYZE ...
-FORMAT JSON)`, `ROLLBACK`. When the statement calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`,
-`ts_stat`, `ts_rewrite`, `crosstab*`, `connectby`; see `sql_guard.py`), the run is a plain `EXPLAIN (FORMAT JSON)` and `downgrade`
-says why. The output has `ran`, `reason`, `downgrade` and `warnings` in both modes. It prints one JSON object. Every error text is
-redacted: the output has no key that holds raw `psql` text.
+FORMAT JSON)`, `ROLLBACK`, after a discovery run (`EXPLAIN (VERBOSE, FORMAT JSON)`, nothing runs) whose plan the guard scans
+(`sql_guard.scan_calls`) and, when the plan has a call candidate, a function check (a fixed catalog query for the VOLATILE
+user functions). When the statement or the plan calls a string-SQL function (`query_to_xml*`, `cursor_to_xml*`,
+`ts_stat`, `ts_rewrite`, `crosstab*`, `connectby`; see `sql_guard.py`) or a VOLATILE user function, the run is a plain
+`EXPLAIN (FORMAT JSON)` and `downgrade` says why. The output has `ran`, `reason`, `downgrade` and `warnings` in both modes. It
+prints one JSON object. Every error text is redacted: the output has no key that holds raw `psql` text.
 
 Write mode (`--mode write`) takes one `INSERT`, `UPDATE`, `DELETE` or `MERGE`. It sets no
 `default_transaction_read_only`. A discovery run (`EXPLAIN (VERBOSE, FORMAT JSON)` in `BEGIN READ WRITE`
-... `ROLLBACK`) finds the written tables; a catalog check finds the user triggers and rules of every reached
-table. With none, and none of the guard's scan names (see `sql_guard.py`), the run is `EXPLAIN (ANALYZE,
-BUFFERS, FORMAT JSON)`; otherwise it is a plain `EXPLAIN (FORMAT JSON)` and `downgrade` says why. Every write
-run ends in `ROLLBACK`. The output has `ran`, `reason`, `downgrade` and `warnings` (`["sequence"]` when the
-`ANALYZE` run moved a sequence counter, which `ROLLBACK` does not undo).
+... `ROLLBACK`) finds the written tables and its plan is scanned; a catalog check finds the user triggers and rules of every
+reached table and reads their stored expressions (CHECK, domain, generated, policy quals, view definitions), which are
+scanned; a function check finds the VOLATILE user functions among the calls. With none, and none of the guard's scan names (see
+`sql_guard.py`), the run is `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`; otherwise it is a plain `EXPLAIN (FORMAT JSON)` and
+`downgrade` says why. Every write run ends in `ROLLBACK`. The output has `ran`, `reason`, `downgrade` and `warnings`
+(`["sequence"]` when the `ANALYZE` run moved a sequence counter, which `ROLLBACK` does not undo).
 
 `facts` takes no statement. It checks the allowlist, probes the version, and runs one fixed catalog query
 in one read-only transaction (a script on stdin). The names (`table.column` or `schema.table.column`) reach
@@ -196,19 +199,29 @@ def server_version(service, overrides):
 
 def explain(service, checked, overrides):
     """One select statement (`checked` is the result of `sql_guard.check_select_scan`): `ANALYZE`, or a plain EXPLAIN
-    when it calls a string-SQL function, whose text argument could hold SQL that `ANALYZE` would run."""
+    when it calls a string-SQL function (in the text, or in a stored object that the plan shows), or a VOLATILE user
+    function, whose text argument or body could hold SQL that `ANALYZE` would run. A statement scan hit decides at once;
+    otherwise a discovery run reads the plan, and a function check looks up the call candidates of the plan."""
     version = server_version(service, overrides)
     options, timeouts = session_options(version, overrides)
+    flags = ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"]
     downgrade = [{"kind": "function", "name": name} for name in checked["scan"]]
+    if not downgrade:
+        discovery = run_psql(
+            service, options, flags, ["BEGIN READ ONLY", f"EXPLAIN (VERBOSE, FORMAT JSON) {checked['sql']}", "ROLLBACK"]
+        )
+        plan = plan_list(discovery, "The discovery run did not return one JSON plan list.")
+        downgrade, calls = scan_texts(plan_strings(plan), "select", UNREADABLE_PLAN)
+        if not downgrade and calls:
+            downgrade = function_check(service, options, flags, calls)
     if downgrade:
         ran, reason, text = "explain", downgrade_reason(downgrade), "EXPLAIN (FORMAT JSON)"
     else:
         buffers = "ANALYZE, BUFFERS" if version < EXPLICIT_BUFFERS_BELOW else "ANALYZE"
-        ran, reason, text = "analyze", "no call of a function that runs SQL from a string", f"EXPLAIN ({buffers}, FORMAT JSON)"
-    out = run_psql(
-        service, options, ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"],
-        ["BEGIN READ ONLY", f"{text} {checked['sql']}", "ROLLBACK"],
-    )
+        ran = "analyze"
+        reason = "no call of a function that runs SQL from a string, and no VOLATILE user function, in the plan"
+        text = f"EXPLAIN ({buffers}, FORMAT JSON)"
+    out = run_psql(service, options, flags, ["BEGIN READ ONLY", f"{text} {checked['sql']}", "ROLLBACK"])
     try:
         plan = json.loads(out)
     except (ValueError, RecursionError):  # not JSON, or nested too deeply
@@ -281,6 +294,49 @@ inserted(oid) AS (
   JOIN pg_namespace n ON n.nspname = e->>1
   JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = e->>2
   WHERE lower(e->>0) IN ('insert', 'merge')
+),
+types(oid) AS (
+  SELECT a.atttypid FROM pg_attribute a
+  WHERE a.attrelid IN (SELECT oid FROM reached) AND a.attnum > 0 AND NOT a.attisdropped
+  UNION
+  SELECT x.oid
+  FROM types t
+  JOIN pg_type ty ON ty.oid = t.oid
+  CROSS JOIN LATERAL (
+    SELECT ty.typbasetype AS oid WHERE ty.typtype = 'd'
+    UNION ALL
+    SELECT ty.typelem WHERE ty.typcategory = 'A'
+    UNION ALL
+    SELECT g.rngsubtype FROM pg_range g
+    WHERE g.rngtypid = ty.oid OR (to_jsonb(g)->>'rngmultitypid')::oid = ty.oid
+    UNION ALL
+    SELECT f.atttypid FROM pg_attribute f
+    WHERE ty.typtype = 'c' AND f.attrelid = ty.typrelid AND f.attnum > 0 AND NOT f.attisdropped
+  ) AS x
+),
+expressions(body) AS (
+  SELECT pg_get_expr(k.conbin, k.conrelid) FROM pg_constraint k
+  WHERE k.conrelid IN (SELECT oid FROM reached) AND k.contype = 'c' AND k.conbin IS NOT NULL
+  UNION ALL
+  SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d
+  JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+  WHERE d.adrelid IN (SELECT oid FROM reached) AND a.attgenerated <> '' AND d.adbin IS NOT NULL
+  UNION ALL
+  SELECT pg_get_expr(k.conbin, 0) FROM pg_constraint k
+  WHERE k.contypid IN (SELECT oid FROM types) AND k.contype = 'c' AND k.conbin IS NOT NULL
+  UNION ALL
+  SELECT pg_get_expr(p.polqual, p.polrelid) FROM pg_policy p
+  WHERE p.polrelid IN (SELECT oid FROM reached) AND p.polqual IS NOT NULL
+  UNION ALL
+  SELECT pg_get_expr(p.polwithcheck, p.polrelid) FROM pg_policy p
+  WHERE p.polrelid IN (SELECT oid FROM reached) AND p.polwithcheck IS NOT NULL
+  UNION ALL
+  SELECT pg_get_viewdef(v.oid) FROM pg_class v
+  WHERE v.oid IN (SELECT oid FROM reached) AND v.relkind = 'v'
+    AND EXISTS (
+      SELECT 1 FROM pg_class w CROSS JOIN LATERAL unnest(w.reloptions) AS o
+      WHERE w.oid IN (SELECT oid FROM reached) AND w.relkind = 'v' AND starts_with(o, 'check_option=')
+    )
 )
 SELECT json_build_object(
   'hits', coalesce((SELECT json_agg(json_build_object('kind', kind, 'name', name) ORDER BY kind, name) FROM hits), '[]'::json),
@@ -290,8 +346,43 @@ SELECT json_build_object(
     WHERE a.attrelid IN (SELECT oid FROM inserted WHERE oid IS NOT NULL)
       AND a.attnum > 0 AND NOT a.attisdropped
       AND (a.attidentity <> '' OR pg_get_expr(d.adbin, d.adrelid) LIKE '%nextval(%')
-  )
+  ),
+  'expressions', coalesce((SELECT json_agg(body) FROM expressions), '[]'::json)
 );
+ROLLBACK;
+"""
+
+# The fixed function check (#548). The call candidates reach the server only as the value of the psql variable `calls`
+# (JSON `[schema or null, name]` pairs), never as part of this text. A name with no schema matches a function in any schema
+# of the search path (every overload). A function is built in when its object id is below 16384 (`FirstNormalObjectId`: every
+# object that `initdb` creates); every other function is user-defined. An aggregate always has the label IMMUTABLE of its
+# own row, so it is reported when one of its support functions is user-defined and VOLATILE. The result is a JSON list
+# of `schema.name` texts.
+FUNCTION_CHECK_SCRIPT = """BEGIN READ ONLY;
+WITH wanted AS (
+  SELECT e->>0 AS schema_name, e->>1 AS fn_name
+  FROM json_array_elements(:'calls'::json) AS e
+),
+found AS (
+  SELECT DISTINCT p.oid, p.proname, p.prokind, p.provolatile, n.nspname
+  FROM wanted w
+  JOIN pg_proc p ON p.proname = w.fn_name
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE CASE WHEN w.schema_name IS NULL THEN n.nspname = ANY (current_schemas(true)) ELSE n.nspname = w.schema_name END
+)
+SELECT coalesce(json_agg(r.name ORDER BY r.name), '[]'::json)
+FROM (
+  SELECT DISTINCT format('%I.%I', f.nspname, f.proname) AS name
+  FROM found f
+  WHERE f.oid >= 16384 AND CASE WHEN f.prokind = 'a' THEN EXISTS (
+    SELECT 1 FROM pg_aggregate a
+    JOIN pg_proc s ON s.oid = ANY (ARRAY[
+      a.aggtransfn::oid, a.aggfinalfn::oid, a.aggcombinefn::oid, a.aggserialfn::oid,
+      a.aggdeserialfn::oid, a.aggmtransfn::oid, a.aggminvtransfn::oid, a.aggmfinalfn::oid
+    ])
+    WHERE a.aggfnoid = f.oid AND s.oid >= 16384 AND s.provolatile = 'v'
+  ) ELSE f.provolatile = 'v' END
+) AS r;
 ROLLBACK;
 """
 
@@ -352,33 +443,86 @@ def discovery_targets(out):
 
 
 def parse_catalog(out):
-    """`(hits, sequence)` of the catalog run, or a bad_output Failure."""
+    """`(hits, sequence, expressions)` of the catalog run, or a bad_output Failure. `expressions` is a list of texts."""
     try:
         data = json.loads(out)
     except (ValueError, RecursionError):
         data = None
     hits = data.get("hits") if isinstance(data, dict) else None
+    expressions = data.get("expressions") if isinstance(data, dict) else None
     if (
         not isinstance(hits, list) or type(data.get("sequence")) is not bool
+        or not isinstance(expressions, list) or any(not isinstance(text, str) for text in expressions)
         or any(
             not isinstance(hit, dict) or hit.get("kind") not in ("trigger", "rule") or not isinstance(hit.get("name"), str)
             for hit in hits
         )
     ):
         raise bad_output("The catalog run did not return one valid result.")
-    return [{"kind": hit["kind"], "name": hit["name"]} for hit in hits], data["sequence"]
+    return [{"kind": hit["kind"], "name": hit["name"]} for hit in hits], data["sequence"], expressions
+
+
+UNREADABLE_PLAN = "unreadable plan text"
+UNREADABLE_EXPRESSION = "unreadable expression text"
+UNREADABLE_REASON = "the plan or a stored expression has a text that the scan cannot read"
 
 
 def downgrade_reason(downgrade):
     functions = [hit["name"] for hit in downgrade if hit["kind"] == "function"]
     tables = sorted({hit["name"] for hit in downgrade if hit["kind"] != "function"})
+    if UNREADABLE_PLAN in functions or UNREADABLE_EXPRESSION in functions:
+        return UNREADABLE_REASON
     if functions:
         return "the statement calls " + ", ".join(functions)
     return "a reached table has a user trigger or a rule: " + ", ".join(tables)
 
 
+def plan_strings(plan):
+    """Every string value of a plan, at any depth (a new plan key needs no change here)."""
+    found = []
+    stack = [plan]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+        elif isinstance(node, str):
+            found.append(node)
+    return found
+
+
+def scan_texts(texts, mode, unreadable_name):
+    """`(downgrade entries, call candidates)` of the texts, scanned with the lists of `sql_guard.scan_calls`.
+    The entries are the sorted names on the scan list, then one entry that is named `unreadable_name` when a text cannot be read."""
+    names, calls, unreadable = set(), set(), False
+    for text in texts:
+        found = sql_guard.scan_calls(text, mode)
+        names.update(found["scan"])
+        calls.update(map(tuple, found["calls"]))
+        unreadable = unreadable or found["unreadable"]
+    entries = [{"kind": "function", "name": name} for name in sorted(names)]
+    if unreadable:
+        entries.append({"kind": "function", "name": unreadable_name})
+    return entries, calls
+
+
+def function_check(service, options, flags, calls):
+    """The `function` entries for the VOLATILE user functions among the call candidates `calls` (a set of `(schema or None, name)`)."""
+    payload = json.dumps([list(call) for call in sorted(calls, key=lambda call: (call[0] or "", call[1]))])
+    out = run_psql(service, options, flags + ["-v", f"calls={payload}"], [], stdin=FUNCTION_CHECK_SCRIPT)
+    try:
+        names = json.loads(out)
+    except (ValueError, RecursionError):
+        names = None
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise bad_output("The function check did not return one valid result.")
+    return [{"kind": "function", "name": name} for name in names]
+
+
 def explain_write(service, checked, overrides):
-    """One write statement: discovery, the catalog check, then `ANALYZE` or a plain EXPLAIN, always rolled back."""
+    """One write statement: discovery, the plan scan, the catalog check, the function check, then `ANALYZE` or a plain
+    EXPLAIN, always rolled back. The first step that finds something skips the later ones."""
     version = server_version(service, overrides)
     options, timeouts = session_options(version, overrides, "write")
     flags = ["-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"]
@@ -387,19 +531,30 @@ def explain_write(service, checked, overrides):
     plan_targets = discovery_targets(discovery)
     downgrade = [{"kind": "function", "name": name} for name in checked["scan"]]
     sequence = checked["nextval"]
+    calls = set()
+    if not downgrade:
+        plan = plan_list(discovery, "The discovery run did not return a plan with a usable ModifyTable node.")
+        downgrade, calls = scan_texts(plan_strings(plan), "write", UNREADABLE_PLAN)
     if not downgrade:
         catalog = run_psql(
             service, options,
             flags + ["-v", f"targets={json.dumps(checked['targets'])}", "-v", f"plan_targets={json.dumps(plan_targets)}"],
             [], stdin=CATALOG_SCRIPT,
         )
-        downgrade, found_sequence = parse_catalog(catalog)
+        downgrade, found_sequence, expressions = parse_catalog(catalog)
         sequence = sequence or found_sequence
+        if not downgrade:
+            downgrade, expression_calls = scan_texts(expressions, "write", UNREADABLE_EXPRESSION)
+            calls |= expression_calls
+        if not downgrade and calls:
+            downgrade = function_check(service, options, flags, calls)
     if downgrade:
         ran, reason, text = "explain", downgrade_reason(downgrade), "EXPLAIN (FORMAT JSON)"
     else:
         buffers = "ANALYZE, BUFFERS" if version < EXPLICIT_BUFFERS_BELOW else "ANALYZE"
-        ran, reason, text = "analyze", "no trigger, rule or external call on the reached tables", f"EXPLAIN ({buffers}, FORMAT JSON)"
+        ran = "analyze"
+        reason = "no trigger, rule, external call or VOLATILE user function on the reached tables"
+        text = f"EXPLAIN ({buffers}, FORMAT JSON)"
     out = run_psql(service, options, flags, ["BEGIN READ WRITE", f"{text} {sql}", "ROLLBACK"])
     return {
         "ok": True, "action": "explain", "service": service, "mode": "write",
