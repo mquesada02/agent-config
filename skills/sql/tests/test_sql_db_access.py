@@ -110,10 +110,41 @@ class DbAccessModuleTest(unittest.TestCase):
             with self.subTest(fact=fact):
                 self.assertIn(fact, body)
         risks = section(self.text, "Residual risk")
-        for fact in ("ts_rewrite", "view", "Unicode", "sweep", "2026-11-12"):
+        for fact in ("ts_rewrite", "CHECK OPTION", "view", "Unicode", "sweep", "2026-11-12"):
             with self.subTest(fact=fact):
                 self.assertIn(fact, risks)
         self.assertIn("`ran` (`analyze` or `explain`", section(self.text, "pg_run"))
+
+    def test_the_stored_sql_and_user_function_checks_are_documented(self):
+        reads = section(self.text, "Read-only path")
+        self.assertIn("discovery run", reads)
+        self.assertIn(
+            "no call of a function that runs SQL from a string, and no VOLATILE user function, in the plan", reads
+        )
+        writes = section(self.text, "Write mode")
+        self.assertIn("no trigger, rule, external call or VOLATILE user function on the reached tables", writes)
+        self.assertIn("the schema-qualified function name or the schema-qualified table name", writes)
+        for fact in ("16384", "VOLATILE", "FirstNormalObjectId"):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, self.text)
+        risks = section(self.text, "Residual risk")
+        for phrase in (
+            "IMMUTABLE wrapper", "user-defined operator", "user-defined cast", "cast in its own text", "volatility is a label",
+            "pg_terminate_backend", "runs SQL from a string argument",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, risks)
+        for old in (
+            "In select mode the downgrade to a plain `EXPLAIN` reads the statement only.",
+            "no trigger, rule or external call on the reached tables",
+            "The scan reads the statement only (see the Residual risk section).",
+            "The scan does not find that call, so `ANALYZE` still runs it.",
+            "a user-defined function or a trigger function with an external effect that the scan cannot see",
+            "a scanned function that is called from a column default, a `CHECK` constraint, a generated expression, "
+            "a domain constraint, a row-level security policy or the body of a view that the statement reads",
+        ):
+            with self.subTest(old=old):
+                self.assertNotIn(old, self.text)
 
     def test_the_rules_say_what_claude_never_does(self):
         body = section(self.text, "Rules")

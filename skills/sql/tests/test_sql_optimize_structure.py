@@ -307,6 +307,7 @@ class OptimizeModuleTest(unittest.TestCase):
     def test_a_select_downgrade_gets_the_plain_explain_note_and_no_plan_row(self):
         plan = section(self.text, "Plan findings")
         for fact in ("a `SELECT` that calls a function that runs SQL from a string", "query_to_xml*", "ts_rewrite", "connectby",
+                     "a call that a stored object hides", "VOLATILE user function",
                      "ran as plain EXPLAIN: <reason>.", "in either mode", "no `PLAN-*` row"):
             with self.subTest(fact=fact):
                 self.assertIn(fact, plan)
@@ -319,6 +320,7 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertIn("--mode write", write)
         self.assertIn("plan_findings.py -", write)
         self.assertRegex(write, r"(?i)rewrite of a write statement stays unproven")
+        self.assertIn("VOLATILE user function", write)
         self.assertIn("Note: <file>:<start_line>-<end_line> ran as plain EXPLAIN: <reason>.", self.text)
         self.assertIn(
             "Note: <file>:<start_line>-<end_line> writes to a table with a sequence, so the analysis moved the "
