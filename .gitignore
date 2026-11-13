@@ -16,6 +16,8 @@
 !hooks/redact-secrets/*.py
 !hooks/workflow-audit/
 !hooks/workflow-audit/**
+!hooks/worktree-branch/
+!hooks/worktree-branch/*.py
 !hooks/worktree-cleanup/
 !hooks/worktree-cleanup/**
 !scripts/
