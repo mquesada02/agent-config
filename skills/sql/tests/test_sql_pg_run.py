@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -866,30 +867,34 @@ class FactsTest(PgRunTestCase):
         self.assertEqual(data["facts"]["users.café"], {"nullable": False, "type": "text"})
         self.assertEqual(data["facts"]["users.i\td"], {"missing": True})
 
-    def test_the_problem_statement_names_are_read_with_the_server_rules(self):
-        self.assertEqual(self.parts_sent('"Order".id'), [[None, "Order", "id"]])
-        self.assertEqual(self.parts_sent("Order.id"), [[None, "order", "id"]])
-        self.assertEqual(self.parts_sent('"a.b".c'), [[None, "a.b", "c"]])
-        self.assertEqual(self.parts_sent('"x""y".id'), [[None, 'x"y', "id"]])
-        self.assertEqual(self.parts_sent("café.id"), [[None, "café", "id"]])
+    def test_names_are_read_with_the_server_rules(self):
+        cases = {
+            '"Order".id': (None, "Order", "id"),
+            "Order.id": (None, "order", "id"),
+            '"a.b".c': (None, "a.b", "c"),
+            '"x""y".id': (None, 'x"y', "id"),
+            "café.id": (None, "café", "id"),
+            'public."Order"."Id"': ("public", "Order", "Id"),
+            '"S".t.c': ("S", "t", "c"),
+            's."T".c': ("s", "T", "c"),
+            "S.T.C": ("s", "t", "c"),
+            '"select".id': (None, "select", "id"),
+            "ÀB.id": (None, "Àb", "id"),
+            "K.id": (None, "K", "id"),
+            "a$b_1.c": (None, "a$b_1", "c"),
+            "_x.y": (None, "_x", "y"),
+            '"we ird.t""x"."c ""1"': (None, 'we ird.t"x', 'c "1'),
+            '"a b"."1$"': (None, "a b", "1$"),
+            f"{'a' * 70}.id": (None, "a" * 63, "id"),
+            f'"{"É" * 40}".id': (None, "É" * 31, "id"),
+        }
+        for name, parts in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(pg_run.parse_name(name), parts)
 
-    def test_mixed_forms_and_a_quoted_keyword(self):
-        self.assertEqual(self.parts_sent('public."Order"."Id"'), [["public", "Order", "Id"]])
-        self.assertEqual(self.parts_sent('"S".t.c'), [["S", "t", "c"]])
-        self.assertEqual(self.parts_sent('s."T".c'), [["s", "T", "c"]])
-        self.assertEqual(self.parts_sent("S.T.C"), [["s", "t", "c"]])
-        self.assertEqual(self.parts_sent('"select".id'), [[None, "select", "id"]])
-
-    def test_an_unquoted_part_folds_ascii_letters_only_and_may_hold_digits_dollars_and_non_ascii_letters(self):
-        self.assertEqual(self.parts_sent("ÀB.id"), [[None, "Àb", "id"]])
-        self.assertEqual(self.parts_sent("K.id"), [[None, "K", "id"]])
-        self.assertEqual(self.parts_sent("a$b_1.c"), [[None, "a$b_1", "c"]])
-        self.assertEqual(self.parts_sent("A.B"), [[None, "a", "b"]])
-        self.assertEqual(self.parts_sent("_x.y"), [[None, "_x", "y"]])
-
-    def test_a_quoted_part_keeps_every_character_but_a_control_character(self):
-        self.assertEqual(self.parts_sent('"we ird.t""x"."c ""1"'), [[None, 'we ird.t"x', 'c "1']])
-        self.assertEqual(self.parts_sent('"a b"."1$"'), [[None, "a b", "1$"]])
+    def test_the_parts_of_valid_names_are_the_pairs_that_facts_sends(self):
+        sent = self.parts_sent('"Order".id', 'public."Order"."Id"', "Order.id", "café.id")
+        self.assertEqual(sent, [[None, "Order", "id"], ["public", "Order", "Id"], [None, "order", "id"], [None, "café", "id"]])
 
     def test_each_invalid_form_is_missing_and_runs_no_psql_call(self):
         invalid = [
@@ -899,10 +904,10 @@ class FactsTest(PgRunTestCase):
         ]
         for name in invalid:
             with self.subTest(name=name):
-                code, data = self.run_facts(name)
-                self.assertEqual((code, data["facts"]), (0, {name: {"missing": True}}))
-                self.assertEqual(self.calls(), [])
-                self.reset_log()
+                self.assertIsNone(pg_run.parse_name(name))
+        code, data = self.run_facts(*invalid)
+        self.assertEqual((code, data["facts"]), (0, {name: {"missing": True} for name in invalid}))
+        self.assertEqual(self.calls(), [])
 
     def test_parse_name_refuses_a_nul_character_and_a_lone_surrogate(self):
         for name in ("t.a\x00b", 't."a\x00b"', "t.a\udc80b", 't."a\udc80b"'):
@@ -920,17 +925,12 @@ class FactsTest(PgRunTestCase):
         for name in ("bad", "u.\ttab", '"T".id'):
             self.assertEqual(data["facts"][name], {"missing": True})
 
-    def test_a_part_is_cut_to_63_bytes_at_a_character_boundary_and_names_that_differ_after_the_cut_are_one_pair(self):
-        self.assertEqual(self.parts_sent(f"{'a' * 70}.id"), [[None, "a" * 63, "id"]])
-        self.assertEqual(self.parts_sent(f'"{"É" * 40}".id'), [[None, "É" * 31, "id"]])
+    def test_names_that_differ_only_after_the_cut_are_one_pair(self):
         self.assertEqual(self.parts_sent(f"{'a' * 70}.id", f"{'a' * 64}.id"), [[None, "a" * 63, "id"]])
         self.assertEqual(self.parts_sent(f"{'a' * 70}.id", f"{'a' * 62}b.id"), [[None, "a" * 63, "id"], [None, "a" * 62 + "b", "id"]])
 
     def test_the_ascii_fold_of_a_part_is_the_one_of_the_guard(self):
-        samples = [chr(code) for code in range(32, 127)] + ["K", "ſ", "ı", "É"]
-        for char in samples:
-            if char in '."' or not (char.isalpha() or char == "_"):
-                continue
+        for char in string.ascii_letters + "_KſıÉ":
             with self.subTest(char=char):
                 self.assertEqual(pg_run.parse_name(f"{char}.c")[1], sql_guard._ascii_lower(char))
 

@@ -600,8 +600,8 @@ ROLLBACK;
 # The identifier rules of the PostgreSQL scanner (`scan.l`): `ident_start` is a letter, `_` or a character at or above U+0080
 # (a byte `\200-\377` of the UTF-8 form); `ident_cont` adds the digits and `$`. The server folds only the ASCII letters of an
 # unquoted identifier and cuts every identifier to 63 bytes (`NAMEDATALEN` 64) at a character boundary.
-IDENT_START = string.ascii_letters + "_"
-IDENT_CONT = IDENT_START + string.digits + "$"
+ASCII_IDENT_START = string.ascii_letters + "_"
+IDENT_CONT = ASCII_IDENT_START + string.digits + "$"
 MAX_IDENT_BYTES = 63
 
 
@@ -618,11 +618,8 @@ def fold_identifier(part):
 def parse_name(name):
     """(schema or None, table, column) of a `table.column` or `schema.table.column` name in SQL identifier syntax
     (quoted or unquoted parts, read with the server rules), else None."""
-    try:
-        name.encode("utf-8")
-    except UnicodeEncodeError:
-        return None
-    if any(unicodedata.category(char) == "Cc" for char in name):
+    # `Cs` is a lone surrogate (a byte of the command line that is not valid UTF-8): the server cannot read it.
+    if any(unicodedata.category(char) in ("Cc", "Cs") for char in name):
         return None
     parts = []
     index = 0
@@ -640,6 +637,8 @@ def parse_name(name):
                 pieces.append('"')
                 start = close + 2
             part = "".join(pieces)
+            if not part:
+                return None
             index = close + 1
         else:
             end = index
@@ -650,8 +649,6 @@ def parse_name(name):
                 return None
             part = fold_identifier(part)
             index = end
-        if not part:
-            return None
         parts.append(cut_identifier(part))
         if index == len(name):
             break
