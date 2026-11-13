@@ -562,7 +562,7 @@ class ConnectionTest(PgRunTestCase):
             sorted(["ok", "action", "service", "mode", "server_version_num", "ran", "reason", "timeouts", "downgrade", "warnings", "plan"]),
         )
         self.assertEqual(data["downgrade"], [])
-        self.assertEqual(data["reason"], "no call of a function that runs SQL from a string")
+        self.assertEqual(data["reason"], "no call of a function that runs SQL from a string, and no VOLATILE user function, in the plan")
         self.assertEqual((data["ok"], data["action"], data["service"], data["mode"], data["ran"]), (True, "explain", "app-dev", "select", "analyze"))
         self.assertEqual(data["warnings"], [])
         self.assertIsInstance(data["plan"], list)

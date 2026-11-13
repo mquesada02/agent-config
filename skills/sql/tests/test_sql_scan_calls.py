@@ -34,6 +34,11 @@ class ScanCallsTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(sql_guard.scan_calls(text, "select")["calls"], sorted(expected, key=lambda c: (c[0] or "", c[1])))
 
+    def test_blanks_and_comments_between_a_name_and_the_parenthesis_do_not_hide_a_call(self):
+        for text in ("f (1)", "f\t(1)", "f\n(1)", "f/* c */(1)", "f -- c\n(1)"):
+            with self.subTest(text=text):
+                self.assertEqual(sql_guard.scan_calls(text, "select")["calls"], [[None, "f"]])
+
     def test_a_name_in_a_string_or_a_comment_is_no_call(self):
         for text in ("'query_to_xml(1)'", "x -- query_to_xml(1)", "/* query_to_xml(1) */ 1", "$$query_to_xml(1)$$"):
             with self.subTest(text=text):
