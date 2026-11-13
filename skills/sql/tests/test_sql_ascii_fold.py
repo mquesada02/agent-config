@@ -29,37 +29,37 @@ def _reason(result):
 class CaseFoldTest(unittest.TestCase):
     """The guard folds case with ASCII rules only, as the PostgreSQL scanner does."""
 
-    def test_a_long_s_first_word_is_not_select_in_select_mode_and_diff(self):  # red
+    def test_a_long_s_first_word_is_not_select_in_select_mode_and_diff(self):
         text = f"{LONG_S}elect 1"
         self.assertEqual(_reason(sql_guard.check_select(text)), "not_select")
         self.assertEqual(_reason(sql_guard.check_select_scan(text)), "not_select")
         self.assertEqual(_reason(sql_guard.check_diff(text)), "not_select")
 
-    def test_a_long_s_first_word_is_not_write_in_write_mode(self):  # guard
+    def test_a_long_s_first_word_is_not_write_in_write_mode(self):
         self.assertEqual(_reason(sql_guard.check_write(f"{LONG_S}elect 1")), "not_write")
 
-    def test_a_long_s_name_is_an_ordinary_identifier(self):  # guard
+    def test_a_long_s_name_is_an_ordinary_identifier(self):
         for text in (f"SELECT 1 AS {LONG_S}elect", f"SELECT {LONG_S}et_config('a', 'b', false)"):
             for check in (sql_guard.check_select, sql_guard.check_diff):
                 with self.subTest(text=text, check=check.__name__):
                     self.assertIsNone(_reason(check(text)))
         self.assertIsNone(_reason(sql_guard.check_write(f"INSERT INTO t VALUES ({LONG_S}et_config('a', 'b', false))")))
 
-    def test_a_dotless_i_first_word_is_not_write_in_select_mode_and_diff(self):  # red
+    def test_a_dotless_i_first_word_is_not_write_in_select_mode_and_diff(self):
         text = f"{DOTLESS_I}nsert into t values (1)"
         self.assertEqual(_reason(sql_guard.check_select(text)), "not_select")
         self.assertEqual(_reason(sql_guard.check_diff(text)), "not_select")
 
-    def test_a_dotless_i_first_word_is_not_write_in_write_mode(self):  # red
+    def test_a_dotless_i_first_word_is_not_write_in_write_mode(self):
         self.assertEqual(_reason(sql_guard.check_write(f"{DOTLESS_I}nsert into t values (1)")), "not_write")
 
     def test_a_dotless_i_main_word_after_a_with_list(self):
         text = f"WITH x AS (SELECT 1) {DOTLESS_I}nsert INTO t SELECT 1"
-        self.assertEqual(_reason(sql_guard.check_write(text)), "not_write")  # red
-        self.assertEqual(_reason(sql_guard.check_select(text)), "data_modifying")  # guard
-        self.assertEqual(_reason(sql_guard.check_diff(text)), "data_modifying")  # guard
+        self.assertEqual(_reason(sql_guard.check_write(text)), "not_write")
+        self.assertEqual(_reason(sql_guard.check_select(text)), "data_modifying")
+        self.assertEqual(_reason(sql_guard.check_diff(text)), "data_modifying")
 
-    def test_a_kelvin_sign_name_is_not_dblink(self):  # red
+    def test_a_kelvin_sign_name_is_not_dblink(self):
         text = f"SELECT dblin{KELVIN}('x')"
         self.assertIsNone(_reason(sql_guard.check_select(text)))
         result, refusal = sql_guard.check_select_scan(text)
@@ -70,7 +70,7 @@ class CaseFoldTest(unittest.TestCase):
         self.assertIsNone(refusal)
         self.assertEqual(result["scan"], [])
 
-    def test_the_ascii_dblink_is_still_refused(self):  # guard
+    def test_the_ascii_dblink_is_still_refused(self):
         self.assertEqual(_reason(sql_guard.check_select("SELECT dblink('x')")), "forbidden_function")
         self.assertEqual(_reason(sql_guard.check_diff("SELECT dblink('x')")), "forbidden_function")
         self.assertEqual(_reason(sql_guard.check_select("SELECT DBLINK('x')")), "forbidden_function")
@@ -84,27 +84,27 @@ class BlankCutTest(unittest.TestCase):
         self.assertIsNone(refusal, text)
         return result if isinstance(result, str) else result["sql"]
 
-    def test_blanks_is_the_set_that_is_blank_on_every_supported_version(self):  # red
+    def test_blanks_is_the_set_that_is_blank_on_every_supported_version(self):
         self.assertEqual(sql_guard.BLANKS, " \t\n\r\f")
 
-    def test_a_trailing_no_break_space_is_kept_in_select_mode_and_diff(self):  # red
+    def test_a_trailing_no_break_space_is_kept_in_select_mode_and_diff(self):
         text = f"SELECT 1 AS a{NBSP}"
         self.assertEqual(self.sent(sql_guard.check_select, text), text)
         self.assertEqual(self.sent(sql_guard.check_diff, text), text)
         self.assertEqual(self.sent(sql_guard.check_select_scan, text), text)
 
-    def test_a_trailing_no_break_space_is_kept_in_write_mode(self):  # guard
+    def test_a_trailing_no_break_space_is_kept_in_write_mode(self):
         text = f"{WRITE_INSERT}{NBSP}"
         self.assertEqual(self.sent(sql_guard.check_write, text), text)
 
-    def test_the_blanks_of_the_scanner_are_stripped_at_both_ends(self):  # guard
+    def test_the_blanks_of_the_scanner_are_stripped_at_both_ends(self):
         for blank in (" ", "\t", "\n", "\r", "\f"):
             with self.subTest(blank=repr(blank)):
                 self.assertEqual(self.sent(sql_guard.check_select, f"{blank}SELECT 1{blank};"), "SELECT 1")
                 self.assertEqual(self.sent(sql_guard.check_diff, f"{blank}SELECT 1{blank}"), "SELECT 1")
                 self.assertEqual(self.sent(sql_guard.check_write, f"{blank}{WRITE_INSERT}{blank}"), WRITE_INSERT)
 
-    def test_a_vertical_tab_at_the_edge_is_kept_in_every_mode(self):  # red
+    def test_a_vertical_tab_at_the_edge_is_kept_in_every_mode(self):
         for text, check in (
             ("SELECT 1 AS a\v", sql_guard.check_select),
             ("SELECT 1 AS a\v", sql_guard.check_diff),
@@ -114,13 +114,13 @@ class BlankCutTest(unittest.TestCase):
             with self.subTest(text=text, check=check.__name__):
                 self.assertEqual(self.sent(check, text), text)
 
-    def test_a_leading_no_break_space_makes_the_first_word_not_a_keyword(self):  # guard
+    def test_a_leading_no_break_space_makes_the_first_word_not_a_keyword(self):
         text = f"{NBSP}SELECT 1"
         self.assertEqual(_reason(sql_guard.check_select(text)), "not_select")
         self.assertEqual(_reason(sql_guard.check_diff(text)), "not_select")
         self.assertEqual(_reason(sql_guard.check_write(text)), "not_write")
 
-    def test_the_tokenizer_still_skips_the_vertical_tab_between_tokens(self):  # guard
+    def test_the_tokenizer_still_skips_the_vertical_tab_between_tokens(self):
         self.assertEqual(self.sent(sql_guard.check_select, "SELECT 1\f,\v2"), "SELECT 1\f,\v2")
 
 
@@ -130,7 +130,7 @@ class SourceRuleTest(unittest.TestCase):
     BANNED = {"upper", "lower", "casefold", "strip", "lstrip", "rstrip", "isspace", "isalpha", "isalnum", "isidentifier", "isdigit"}
     HELPERS = {"_ascii_upper", "_ascii_lower"}
 
-    def test_no_unicode_aware_call_remains_outside_the_two_helpers(self):  # red
+    def test_no_unicode_aware_call_remains_outside_the_two_helpers(self):
         with open(GUARD_PATH, encoding="utf-8") as handle:
             tree = ast.parse(handle.read())
         found = []
@@ -156,7 +156,7 @@ class SourceRuleTest(unittest.TestCase):
         visit(tree, None)
         self.assertEqual(found, [])
 
-    def test_the_comment_above_blanks_quotes_the_versions(self):  # red
+    def test_the_comment_above_blanks_quotes_the_versions(self):
         with open(GUARD_PATH, encoding="utf-8") as handle:
             lines = handle.read().splitlines()
         index = next(i for i, line in enumerate(lines) if line.startswith("BLANKS = "))
@@ -177,15 +177,15 @@ class DocumentRuleTest(unittest.TestCase):
         with open(DB_ACCESS_PATH, encoding="utf-8") as handle:
             self.text = handle.read()
 
-    def test_the_closed_divergences_are_gone(self):  # red
+    def test_the_closed_divergences_are_gone(self):
         for phrase in ("Unicode case fold, Unicode blanks", "a Unicode blank that", "the case fold of a letter"):
             self.assertNotIn(phrase, self.text)
 
-    def test_the_open_risks_are_named(self):  # red
+    def test_the_open_risks_are_named(self):
         for phrase in ("vertical tab", "single-byte", "Unicode"):
             self.assertIn(phrase, self.text)
 
-    def test_the_case_bullet_names_the_three_modes(self):  # red
+    def test_the_case_bullet_names_the_three_modes(self):
         bullet = re.search(r"^- the guard reads the case of a word[^\n]*$", self.text, re.M)
         self.assertIsNotNone(bullet)
         for phrase in ("select mode", "write mode", "diff"):
