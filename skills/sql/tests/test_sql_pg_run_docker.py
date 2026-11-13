@@ -343,15 +343,20 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
     def test_the_text_that_the_guard_sends_gives_the_server_result_of_the_text_of_the_user(self):
         nbsp_text = "SELECT 1 AS a "
         vertical_tab_text = "SELECT 1 AS a\v"
+        sent = {}
         for text in (nbsp_text, vertical_tab_text):
-            sent, refusal = sql_guard.check_select(text)
+            sent[text], refusal = sql_guard.check_select(text)
             self.assertIsNone(refusal)
-            self.assertEqual(sent, text)
         for version in VERSIONS:
-            nbsp = self.server_run(version, nbsp_text)
+            results = {}
+            for text in (nbsp_text, vertical_tab_text):
+                with self.subTest(version=version, text=repr(text)):
+                    written, guarded = self.server_run(version, text), self.server_run(version, sent[text])
+                    self.assertEqual((written.returncode, written.stdout), (guarded.returncode, guarded.stdout))
+                    results[text] = written
+            nbsp, tab = results[nbsp_text], results[vertical_tab_text]
             self.assertEqual(nbsp.returncode, 0, nbsp.stderr)
             self.assertEqual(nbsp.stdout.splitlines()[0], "a ")
-            tab = self.server_run(version, vertical_tab_text)
             if version == "13":
                 self.assertNotEqual(tab.returncode, 0)
                 self.assertIn("syntax error", tab.stderr)
