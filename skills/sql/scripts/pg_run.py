@@ -38,7 +38,9 @@ most 20 rows in each list), never a full result. Both statements pass `sql_guard
 user statement reaches the server only in a `-c` argument. Three read-only sessions: the names of the output columns and
 the version (`psql --csv`, `LIMIT 0`), the column types and catalog flags (`pg_typeof` through a join that is never
 true, so the statements are planned and not run), and the proof (one `SELECT` with `MATERIALIZED` CTEs named `pgrun_*`:
-`EXCEPT ALL` both ways and, for a top-level `ORDER BY` of A with resolvable keys, the same over `row_number()`).
+`EXCEPT ALL` both ways and, for a top-level `ORDER BY` of A with resolvable keys, the count of repeated key tuples of A).
+The order state is static: `checked` needs no ties in A and the same normalized top-level `ORDER BY` keys in B; B with
+other keys, no `ORDER BY` or keys that do not resolve gives `partial` with `b_order`.
 
 Exit code: 0 when `ok` is true, 1 when `ok` is false, 2 for a usage error (one
 line on stderr, nothing on stdout). Needs Python 3.11 or newer (tomllib).
@@ -800,14 +802,13 @@ def parse_types(out, count):
     return data["a"], data["b"], types
 
 
-def resolve_order(order, names, mismatch):
-    """`(state, reason, key columns)` for the order proof: `not_applicable`, or `partial` with a reason, or `checked` with
-    the 1-based key positions and their direction text. A key must name one output column of A, or be a position in range,
-    and its column must have the same type in A and B."""
-    if order is None:
-        return "not_applicable", None, None
-    if "keys" not in order:
-        return "partial", "sort_keys", None
+def sort_key_list(order, names, mismatch):
+    """The normalized sort keys of a statement, a list of `(1-based position, descending, effective nulls)`, or None when the
+    statement has no top-level `ORDER BY`, its keys were not extracted, or a key does not resolve. A key must name one output
+    column, or be a position in range, and its column must have the same type in A and B. The effective nulls is the written
+    one, else the PostgreSQL default (`last` for ascending, `first` for descending)."""
+    if order is None or "keys" not in order:
+        return None
     keys = []
     for key in order["keys"]:
         if key["operand"] == "position":
@@ -816,15 +817,26 @@ def resolve_order(order, names, mismatch):
             found = [index + 1 for index, name in enumerate(names) if name == key["value"]]
             position = found[0] if len(found) == 1 else None
         if position is None or position - 1 in mismatch:
-            return "partial", "sort_keys", None
-        text = f"c{position}" + (" DESC" if key["descending"] else "")
-        keys.append((position, text + (f" NULLS {key['nulls'].upper()}" if key["nulls"] else "")))
+            return None
+        keys.append((position, key["descending"], key["nulls"] or ("first" if key["descending"] else "last")))
+    return keys
+
+
+def resolve_order(order, names, mismatch):
+    """`(state, reason, keys)` for the order proof of A: `not_applicable`, or `partial` with the reason `sort_keys`, or
+    `checked` with the normalized sort keys (see `sort_key_list`)."""
+    if order is None:
+        return "not_applicable", None, None
+    keys = sort_key_list(order, names, mismatch)
+    if keys is None:
+        return "partial", "sort_keys", None
     return "checked", None, keys
 
 
 def proof_sql(sql_a, sql_b, count, text_columns, keys):
     """The proof `SELECT` of `diff`: all CTEs are `MATERIALIZED` (each statement runs once), the names start with `pgrun_`, and
-    every user statement is followed by a newline before its closing parenthesis. `keys` is None or the resolved sort keys."""
+    every user statement is followed by a newline before its closing parenthesis. `keys` is None or the normalized sort keys
+    of A, which the tie count groups by."""
     names = [f"c{i}" for i in range(1, count + 1)]
     columns = ", ".join(names)
     compared = ", ".join(f"{name}::text AS {name}" if index in text_columns else name for index, name in enumerate(names))
@@ -843,29 +855,14 @@ def proof_sql(sql_a, sql_b, count, text_columns, keys):
         "'oa', " + sample.format(name="pgrun_oa"), "'ob', " + sample.format(name="pgrun_ob"),
     ]
     if keys:
-        order = ", ".join(text for _, text in keys)
-        group = ", ".join(f"c{position}" for position, _ in keys)
-        for side, source in (("a", "ra"), ("b", "rb")):
-            parts.append(
-                f"pgrun_n{side} AS MATERIALIZED (SELECT row_number() OVER (ORDER BY {order}) AS rn, * FROM pgrun_{source})"
-            )
-        parts.append(
-            f"pgrun_xa AS MATERIALIZED (SELECT rn, {compared} FROM pgrun_na EXCEPT ALL SELECT rn, {compared} FROM pgrun_nb)"
-        )
-        parts.append(
-            f"pgrun_xb AS MATERIALIZED (SELECT rn, {compared} FROM pgrun_nb EXCEPT ALL SELECT rn, {compared} FROM pgrun_na)"
-        )
-        fields += [
-            f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)",
-            "'xa_count', (SELECT count(*) FROM pgrun_xa)", "'xb_count', (SELECT count(*) FROM pgrun_xb)",
-            "'xa', " + sample.format(name="pgrun_xa"), "'xb', " + sample.format(name="pgrun_xb"),
-        ]
+        group = ", ".join(f"c{position}" for position, _, _ in keys)
+        fields.append(f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)")
     return "WITH " + ",\n".join(parts) + "\nSELECT json_build_object(" + ", ".join(fields) + ")"
 
 
-def sample_rows(value, count, numbered):
-    """The sample rows of the proof as arrays in column order (`rn` first for a numbered row), or a bad_output Failure."""
-    names = (["rn"] if numbered else []) + [f"c{i}" for i in range(1, count + 1)]
+def sample_rows(value, count):
+    """The sample rows of the proof as arrays in column order, or a bad_output Failure."""
+    names = [f"c{i}" for i in range(1, count + 1)]
     if not isinstance(value, list) or len(value) > SAMPLE_LIMIT:
         raise bad_output("The proof run returned a sample that is not valid.")
     rows = []
@@ -882,15 +879,12 @@ def parse_proof(out, count, keyed):
         data = json.loads(out)
     except (ValueError, RecursionError):
         data = None
-    counts = ["ra", "rb", "oa_count", "ob_count"] + (["ties", "xa_count", "xb_count"] if keyed else [])
+    counts = ["ra", "rb", "oa_count", "ob_count"] + (["ties"] if keyed else [])
     if not isinstance(data, dict) or any(type(data.get(name)) is not int or data[name] < 0 for name in counts):
         raise bad_output("The proof run did not return one valid result.")
     proof = {name: data[name] for name in counts}
     for name in ("oa", "ob"):
-        proof[name] = sample_rows(data.get(name), count, False)
-    if keyed:
-        for name in ("xa", "xb"):
-            proof[name] = sample_rows(data.get(name), count, True)
+        proof[name] = sample_rows(data.get(name), count)
     return proof
 
 
@@ -912,6 +906,8 @@ def diff(service, checked_a, checked_b, overrides):
     casts = [i for i in range(count) if i not in mismatch and not types[oids_a[i]]["equality"]]
     floats = [i for i in range(count) if types[oids_a[i]]["float"] or types[oids_b[i]]["float"]]
     state, reason, keys = resolve_order(checked_a["order"], names_a, mismatch)
+    if state == "checked" and sort_key_list(checked_b["order"], names_b, mismatch) != keys:
+        state, reason, keys = "partial", "b_order", None
     proof_text = proof_sql(sql_a, sql_b, count, set(mismatch) | set(casts), keys)
     proof = parse_proof(
         run_psql(service, options, flags, ["BEGIN READ ONLY", proof_text, "ROLLBACK"]), count, keys is not None
@@ -929,18 +925,12 @@ def diff(service, checked_a, checked_b, overrides):
         "casts": [names_a[i] for i in casts],
         "floats": [names_a[i] for i in floats],
     }
-    order_equal = True
     if state == "checked" and proof["ties"] >= 1:
         state, reason = "partial", "ties"
-    if state == "checked":
-        result["order_mismatch"] = {
-            "count_a": proof["xa_count"], "count_b": proof["xb_count"], "a": proof["xa"], "b": proof["xb"],
-        }
-        order_equal = proof["xa_count"] == 0 and proof["xb_count"] == 0
     result["order"] = state
     if state == "partial":
         result["reason"] = reason
-    result["equal"] = not mismatch and proof["oa_count"] == 0 and proof["ob_count"] == 0 and order_equal
+    result["equal"] = not mismatch and proof["oa_count"] == 0 and proof["ob_count"] == 0
     return result
 
 

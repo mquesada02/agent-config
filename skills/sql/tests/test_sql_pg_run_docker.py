@@ -949,29 +949,38 @@ class PgRunDiffDockerTest(DockerServers, unittest.TestCase):
             self.assertEqual((data["only_a"]["count"], len(data["only_a"]["rows"])), (100, 20), data)
             self.assertEqual((data["only_b"]["count"], data["rows"]), (0, {"a": 100, "b": 0}))
 
-    def test_the_same_rows_in_another_order_are_checked_and_equal_and_with_no_order_by_not_applicable(self):
-        for version, data in self.each_version(
-            "SELECT id FROM diffs.t ORDER BY id", "SELECT id FROM diffs.t ORDER BY id DESC"
-        ):
-            self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
-            self.assertEqual(data["order_mismatch"], {"count_a": 0, "count_b": 0, "a": [], "b": []})
+    def test_the_reproduced_pairs_are_partial_with_b_order_and_the_same_rows_stay_equal(self):
+        a = "SELECT id, txt FROM diffs.t ORDER BY id"
+        for b in ("SELECT id, txt FROM diffs.t ORDER BY id DESC", "SELECT id, txt FROM diffs.t ORDER BY txt DESC",
+                  "SELECT id, txt FROM diffs.t"):
+            for version, data in self.each_version(a, b):
+                self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "b_order", True), data)
+                self.assertNotIn("order_mismatch", data)
         for version, data in self.each_version("SELECT id FROM diffs.t", "SELECT id FROM diffs.t ORDER BY id DESC"):
             self.assertEqual((data["order"], data["equal"]), ("not_applicable", True), data)
 
-    def test_a_rewrite_that_changes_the_rank_of_a_row(self):
+    def test_a_matching_pair_written_differently_is_checked(self):
+        for b in ("SELECT id, txt FROM diffs.t ORDER BY 1 ASC NULLS LAST", "SELECT id, txt FROM diffs.t ORDER BY ID"):
+            for version, data in self.each_version("SELECT id, txt FROM diffs.t ORDER BY id", b):
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+                self.assertNotIn("reason", data)
+                self.assertNotIn("order_mismatch", data)
+
+    def test_a_rewrite_that_changes_the_rows_of_a_top_n_is_not_equal_and_keeps_the_order_checked(self):
         a = "SELECT id FROM diffs.t ORDER BY id LIMIT 3"
         b = "SELECT id FROM diffs.t ORDER BY id LIMIT 3 OFFSET 1"
         for version, data in self.each_version(a, b):
             self.assertEqual(data["equal"], False, data)
             self.assertEqual((data["only_a"]["rows"], data["only_b"]["rows"]), ([[1]], [[4]]))
             self.assertEqual(data["order"], "checked")
-            self.assertEqual((data["order_mismatch"]["count_a"], data["order_mismatch"]["count_b"]), (3, 3))
-            self.assertEqual(data["order_mismatch"]["a"], [[1, 1], [2, 2], [3, 3]])
+            self.assertNotIn("order_mismatch", data)
 
     def test_an_order_by_with_ties_is_partial(self):
-        for version, data in self.each_version("SELECT id, k FROM diffs.ties ORDER BY k", "SELECT id, k FROM diffs.ties ORDER BY k, id"):
+        for version, data in self.each_version("SELECT id, k FROM diffs.ties ORDER BY k", "SELECT id, k FROM diffs.ties ORDER BY k"):
             self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "ties", True), data)
             self.assertNotIn("order_mismatch", data)
+        for version, data in self.each_version("SELECT id, k FROM diffs.ties ORDER BY k", "SELECT id, k FROM diffs.ties ORDER BY k, id"):
+            self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "b_order", True), data)
 
     def test_an_order_by_only_in_a_subquery_is_not_applicable(self):
         for version, data in self.each_version("SELECT id FROM (SELECT id FROM diffs.t ORDER BY id) AS s", "SELECT id FROM diffs.t"):

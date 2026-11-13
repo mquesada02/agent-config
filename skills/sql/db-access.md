@@ -129,10 +129,10 @@ Stored SQL is read where the run would evaluate it. The plan scan covers a view 
 - the guard lexer is hand written: it can differ from the server lexer in rare cases (a vertical tab: it is blank only on PostgreSQL 17 and later, and the guard tokenizer skips it on every version, so an older server rejects such text, which is the safe direction; the cut of the sent text strips only the blanks of every supported version), and the select-mode function list is a name list, not a proof (on 2026-11-12 a one-time sweep of the built-in functions of PostgreSQL 13 to 18 and of `dblink` and `tablefunc` found `ts_rewrite` as the only string-SQL function that the list lacked; the sweep read the catalogs of PostgreSQL 13 and 18 and the documentation for 14 to 17, so a function that a later version adds, or a function that the sweep misjudged, still reaches the server in `explain` select mode and in `diff`);
 - a user function with an external effect that the guard cannot see;
 - the three sessions of `diff` are not one transaction: a schema change between them makes the proof fail or compare the new types;
-- the order proof does not read the output order of B (see the Diff section);
+- the order proof does not read the order that the server returns for B: it compares the written top-level `ORDER BY` keys of B with those of A (see the Diff section);
 - the proof runs A and B: a volatile function can give a false difference, and a large result is cut by the 30 second `statement_timeout`;
 - a composite or a multirange column is compared as `text` (a conservative reading of "no equality operator");
-- `diff` returns up to 80 rows of the user's data to Claude (20 in each of `only_a`, `only_b` and the two lists of `order_mismatch`).
+- `diff` returns up to 40 rows of the user's data to Claude (20 in each of `only_a` and `only_b`).
 
 ## Write mode
 
@@ -184,13 +184,13 @@ With `ok` true, every result has `action` (`diff`), `service`, `server_version_n
 
 - A shape result has `reason` `shape` and `column_names` (`{"a": [...], "b": [...]}`), and `equal` is false. A and B differ in column count or in a column name, so nothing was compared.
 - A full result has `columns` (`{"a": [{"name", "type"}], "b": [...]}`), `rows` (`{"a": <count>, "b": <count>}`), `only_a` and `only_b` (`{"count": <full count>, "rows": [...]}`: at most 20 rows, as arrays in column order), `type_mismatch` (a list of `{"position", "name"}`), `casts`, `floats` (lists of column names) and `order`.
-- `equal` is true when the shape matches, `type_mismatch` is empty, both counts are 0, and the order check (when `order` is `checked`) found no difference.
+- `equal` is true when the shape matches, `type_mismatch` is empty, and both counts are 0. The order does not enter `equal`: it is reported in `order` and `reason`.
 
 Types and casts. Rows are compared as a multiset (`EXCEPT ALL`: a duplicate count counts). A column whose type differs between A and B is in `type_mismatch` and is compared as `text`. A column of a type with no equality operator that `EXCEPT` can use (for example `json` or `xml`) is compared as `text` and named in `casts`. A column of type `real` or `double precision` is compared exactly and named in `floats`: a difference there can be a rounding difference, so say so.
 
-Order. `order` is `not_applicable` when A has no top-level `ORDER BY`. When A has one with keys that are output column names or positions, both sides are numbered by those keys and the numbered rows are compared: `order` is `checked`, and `order_mismatch` has `count_a`, `count_b` and the samples `a` and `b` (arrays that start with the rank). `checked` means that both sides have the same rows at the same ranks. It does not read the output order of B. `order` is `partial` with `reason` `ties` (a sort key repeats, so the order is not fixed) or `sort_keys` (a key is an expression, a qualified name, `USING`, `COLLATE`, an input column that is not an output column, or a column with a type mismatch).
+Order. `order` is `not_applicable` when A has no top-level `ORDER BY`. When A has one with keys that are output column names or positions, the wrapper reads the top-level `ORDER BY` of B with the same key reader and compares the two lists of normalized keys (position, direction, and the nulls order, which is the PostgreSQL default when none is written: `NULLS LAST` for ascending, `NULLS FIRST` for descending), so `ORDER BY id` and `ORDER BY 1 ASC NULLS LAST` match. It counts the repeated key tuples of A (ties). `order` is `checked` when A has no ties and B has the same keys. `checked` does not read the order that the server returns for B. There is no `order_mismatch` field and no rank comparison. `order` is `partial` with one `reason`, chosen in this order: `sort_keys` (a key of A is an expression, a qualified name, `USING`, `COLLATE`, an input column that is not an output column, or a column with a type mismatch), then `b_order` (B has no top-level `ORDER BY`, its keys are not output column names or positions that resolve, or its normalized keys differ from those of A), then `ties` (a sort key of A repeats, so the order is not fixed).
 
-`diff` is the only action that returns rows of the user's data, and it returns samples only: at most 20 rows in each of `only_a` and `only_b`, and the same cap in each list of `order_mismatch`. A statement with a volatile function (`random()`, `now()`) can give a false difference.
+`diff` is the only action that returns rows of the user's data, and it returns samples only: at most 20 rows in each of `only_a` and `only_b`. A statement with a volatile function (`random()`, `now()`) can give a false difference.
 
 ## Facts
 

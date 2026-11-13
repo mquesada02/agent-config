@@ -26,6 +26,7 @@ REWRITE_LABELS = (
     "Rewrite (proven by the database diff only: no repo tests ran):",
     "Rewrite (partial proof by the database diff: order not checked, ties):",
     "Rewrite (partial proof by the database diff: order not checked, sort keys):",
+    "Rewrite (partial proof by the database diff: order not checked, B order):",
     "Rewrite (unproven: no database):",
     "Rewrite (unproven: the database diff failed):",
     "Rewrite (unproven: write statement, no database diff):",
