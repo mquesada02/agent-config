@@ -18,7 +18,7 @@ def error_row(call_id, seconds, text=VALIDATION, is_error=True, as_list=False):
 
 
 def malformed_rows(call_id="m1", seconds=5):
-    """A Write, an Edit and a Bash call, each without its path or command."""
+    """A Write, an Edit, a Bash and a NotebookEdit call, each without its path or command."""
     return [call_row("Write", {"command": "x"}, call_id + "w", seconds), call_row("Edit", {"old_string": "a"}, call_id + "e", seconds),
             call_row("Bash", {"cmd": "ls"}, call_id + "b", seconds), call_row("NotebookEdit", {}, call_id + "n", seconds)]
 
