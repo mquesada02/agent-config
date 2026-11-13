@@ -30,6 +30,7 @@ parentheses, and returns `(result, None)` with `sql` and `order` (the sort keys 
 """
 import collections
 import re
+import string
 
 Token = collections.namedtuple("Token", "kind value start")
 
@@ -98,14 +99,18 @@ SCAN_PREFIXES = ("dblink",) + STRING_SQL_PREFIXES
 ADVISORY_PREFIXES = ("pg_advisory", "pg_try_advisory")
 
 
+_UPPER_TABLE = str.maketrans(string.ascii_lowercase, string.ascii_uppercase)
+_LOWER_TABLE = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
 def _ascii_upper(text):
     """The PostgreSQL scanner folds ASCII letters only: `str.upper` would also map U+017F (long s) to `S`."""
-    return "".join(char.upper() if "a" <= char <= "z" else char for char in text)
+    return text.translate(_UPPER_TABLE)
 
 
 def _ascii_lower(text):
     """The PostgreSQL scanner folds ASCII letters only: `str.lower` would also map U+212A (Kelvin sign) to `k`."""
-    return "".join(char.lower() if "A" <= char <= "Z" else char for char in text)
+    return text.translate(_LOWER_TABLE)
 
 
 def _quoted_end(text, start, quote, backslash):
