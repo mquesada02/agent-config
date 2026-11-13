@@ -509,7 +509,7 @@ def scan_texts(texts, mode, unreadable_name):
 
 def function_check(service, options, flags, calls):
     """The `function` entries for the VOLATILE user functions among the call candidates `calls` (a set of `(schema or None, name)`)."""
-    payload = json.dumps([list(call) for call in sorted(calls, key=lambda call: (call[0] or "", call[1]))])
+    payload = json.dumps(sorted(calls, key=lambda call: (call[0] or "", call[1])))
     out = run_psql(service, options, flags + ["-v", f"calls={payload}"], [], stdin=FUNCTION_CHECK_SCRIPT)
     try:
         names = json.loads(out)

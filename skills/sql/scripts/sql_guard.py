@@ -431,16 +431,12 @@ def _scan_name(token):
     return None
 
 
-def _call_listed(name, mode):
-    """True when the lower-cased `name` is on the scan list of `mode`. The lists are read at call time."""
+def _call_listed(token, mode):
+    """True when the word or quoted identifier `token` is on the scan list of `mode`. The lists are read at call time,
+    through the helpers of the statement scans, so the two scans cannot disagree."""
     if mode == "select":
-        return (
-            name in FORBIDDEN_NAMES or name.startswith(FORBIDDEN_PREFIXES)
-            or name in STRING_SQL_NAMES or name.startswith(STRING_SQL_PREFIXES)
-        )
-    if name == "set_config" or name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
-        return True
-    return name.startswith(ADVISORY_PREFIXES) and "_xact_" not in name
+        return _forbidden_name(token) or _string_sql_name(token) is not None
+    return _scan_name(token) is not None or (token.kind in ("word", "qident") and _ascii_lower(token.value) == "set_config")
 
 
 def _call_name(token):
@@ -458,7 +454,7 @@ def scan_calls(text, mode):
         raise ValueError(mode)
     tokens, unterminated = tokenize(text)
     names = ("word", "qident")
-    scan = {_ascii_lower(t.value) for t in tokens if t.kind in names and _call_listed(_ascii_lower(t.value), mode)}
+    scan = {_ascii_lower(t.value) for t in tokens if t.kind in names and _call_listed(t, mode)}
     calls = set()
     for index, token in enumerate(tokens[:-1]):
         if token.kind not in names or not _is_punct(tokens[index + 1], "("):
