@@ -1,6 +1,9 @@
 # S5 with `extension` events: the quote must be found in real user input of the audited transcripts, through `audit record` and `audit check`.
 import json
 import os
+import shutil
+import stat
+import subprocess
 import unittest
 
 from audit_support import (ABSENT, HERE, ask_rows, edit_row, extension_event, owner_row, phase_commit_event, queued_row, round_event, stamp,
@@ -345,15 +348,28 @@ class FixtureTest(LedgerChecksCase):
         self.assertEqual({row["version"] for row in rows if "version" in row}, {"2.1.301"})
 
 
-class RebaseRoundTest(ExtensionCase):
-    """The one final round that follows a rebase (CLAUDE.md section 6 step 3) is not counted against the cap, but only with the proof of a rebase."""
+class RebaseCase(ExtensionCase):
     FINAL = {"phase": "final"}
+
+    def with_extension(self, events):
+        """The S5 item of `events` and an extension of 4 final rounds (cap 7)."""
+        return self.s5([owner_row(QUOTE, 100, HUMAN)],
+                       events + [extension_event(phase="final", rounds=4, time=stamp(EXTENSION_AT), quote=QUOTE)])
+
+    def past_the_cap(self, item, number):
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn(f"code-review final: round {number} is past the cap of 7", item["evidence"])
+
+
+class RebaseRoundTest(RebaseCase):
+    """The one final round that follows a rebase (CLAUDE.md section 6 step 3) is not counted against the cap, but only with the proof of a rebase."""
 
     def setUp(self):
         super().setUp()
         self.original = self.commit("feat: phase", name="phase.txt")
         self.git("checkout", "-q", "main")
         self.commit("chore: main moves", name="main.txt")
+        self.git("push", "-q", "origin", "main")
         self.git("checkout", "-q", "feature")
         self.git("rebase", "-q", "main")
         self.rebased = self.git("rev-parse", "HEAD")
@@ -371,15 +387,6 @@ class RebaseRoundTest(ExtensionCase):
         """Final rounds 1 to 7 (cap 3 plus 4 extension rounds) after the phase commit `first`, then `second` and the final rounds `later`."""
         return self.with_extension([round_event(), phase_commit_event(first)] + [round_event(n, **self.FINAL) for n in range(1, 8)]
                                    + [phase_commit_event(second)] + [round_event(n, **self.FINAL) for n in later])
-
-    def with_extension(self, events):
-        """The S5 item of `events` and an extension of 4 final rounds (cap 7)."""
-        return self.s5([owner_row(QUOTE, 100, HUMAN)],
-                       events + [extension_event(phase="final", rounds=4, time=stamp(EXTENSION_AT), quote=QUOTE)])
-
-    def past_the_cap(self, item, number):
-        self.assertEqual(item["result"], "fail", item["evidence"])
-        self.assertIn(f"code-review final: round {number} is past the cap of 7", item["evidence"])
 
     def exempt(self, first, second, later=(8,)):
         item = self.run_s5(first, second, later)
@@ -436,6 +443,129 @@ class RebaseRoundTest(ExtensionCase):
         item = self.s5([], events)
         self.assertEqual(item["result"], "pass", item["evidence"])
         self.assertNotIn("exempt", item["evidence"])
+
+
+FAILING_ANCESTOR_SHIM = """#!/bin/sh
+case " $* " in
+  *" merge-base --is-ancestor "*) echo "fatal: simulated failure" >&2; exit 5 ;;
+esac
+exec "$REAL_GIT" "$@"
+"""
+
+
+class TwoRebasesTest(RebaseCase):
+    """Two rebases in one task: each phase commit is proven by its base (the merge base with the PR base branch), not by its parent."""
+
+    def moved_main_and_rebased(self, name, text):
+        """Main moves, `feature` is rebased onto it and the phase commit is amended with a new patch. Returns the rewritten phase commit."""
+        self.move_main(name)
+        self.git("checkout", "-q", "feature")
+        self.git("rebase", "-q", "main")
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write(text)
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        self.git("push", "-q", "--force", "origin", "feature")
+        return self.git("rev-parse", "HEAD")
+
+    def move_main(self, name):
+        """A pushed commit on main; leaves main checked out. Returns it."""
+        self.git("checkout", "-q", "main")
+        sha = self.commit("chore: main moves again", name=name)
+        self.git("push", "-q", "origin", "main")
+        return sha
+
+    def setUp(self):
+        """Three phase commits on top of an implementation commit: `first`, then `second` and `third` after two rebases (only `third` is on
+        HEAD's history, and the parent of each is rewritten by the rebase after it)."""
+        super().setUp()
+        self.base = self.move_main("main.txt")
+        self.git("checkout", "-q", "feature")
+        self.git("reset", "-q", "--hard", "main")
+        self.commit("feat: implementation", name="impl.txt")
+        self.first = self.commit("feat: phase", name="phase.txt")
+        self.second = self.moved_main_and_rebased("main2.txt", "resolved differently")
+        self.third = self.moved_main_and_rebased("main3.txt", "resolved again")
+        self.tip = self.third
+
+    def three(self, first, second, third):
+        """The S5 item: final rounds 1 to 7 after `first`, round 8 after `second` and round 9 after `third` (cap 3 plus 4 extension rounds)."""
+        return self.with_extension([round_event(), phase_commit_event(first)] + [round_event(n, **self.FINAL) for n in range(1, 8)]
+                                   + [phase_commit_event(second), round_event(8, **self.FINAL),
+                                      phase_commit_event(third), round_event(9, **self.FINAL)])
+
+    def only_the_last_is_exempt(self, second):
+        item = self.three(self.first, second, self.third)
+        self.past_the_cap(item, 9)
+        self.assertIn(f"round 9 after phase-commit {self.third[:7]}", item["evidence"])
+        self.assertNotIn("round 8 after", item["evidence"])
+
+    def side_branch(self, start, *names):
+        """One commit per name on a new branch at `start` (each with a patch unlike the first phase commit); back on `feature`."""
+        self.git("checkout", "-q", "-b", f"side-{start[:7]}", start)
+        sha = None
+        for name in names:
+            sha = self.commit(f"side {name}", name=name)
+        self.git("checkout", "-q", "feature")
+        return sha
+
+    def test_two_real_rebases_exempt_both_rounds(self):
+        item = self.three(self.first, self.second, self.third)
+        self.assertEqual(item["result"], "pass", item["evidence"])
+        self.assertIn(f"round 8 after phase-commit {self.second[:7]}", item["evidence"])
+        self.assertIn(f"round 9 after phase-commit {self.third[:7]}", item["evidence"])
+
+    def test_the_earlier_phase_commit_is_not_an_ancestor_of_head(self):
+        self.assertFalse(self.is_ancestor(self.second))
+
+    def test_a_missing_second_phase_commit_gives_no_exemption(self):
+        self.past_the_cap(self.three(self.first, "b" * 40, self.third), 9)
+
+    def test_a_second_phase_commit_whose_base_is_not_an_ancestor_of_head_gives_no_exemption(self):
+        side = self.side_branch(self.move_main("main4.txt"), "s1.txt")
+        item = self.three(self.first, side, self.third)
+        self.past_the_cap(item, 9)
+        self.assertNotIn("after phase-commit", item["evidence"])
+
+    def test_a_second_phase_commit_on_the_base_of_the_earlier_one_gives_no_exemption(self):
+        self.only_the_last_is_exempt(self.side_branch(self.base, "s1.txt"))
+
+    def test_a_second_phase_commit_on_an_older_base_gives_no_exemption(self):
+        self.only_the_last_is_exempt(self.side_branch(self.git("rev-parse", f"{self.base}^"), "s1.txt"))
+
+    def test_a_rewrite_without_a_base_move_gives_no_exemption_for_the_last_phase_commit_too(self):
+        self.git("reset", "-q", "--hard", self.first)
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write("rewritten in place")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.tip = self.git("rev-parse", "HEAD")
+        item = self.with_extension([round_event(), phase_commit_event(self.first)] + [round_event(n, **self.FINAL) for n in range(1, 8)]
+                                   + [phase_commit_event(self.tip), round_event(8, **self.FINAL)])
+        self.past_the_cap(item, 8)
+        self.assertNotIn("after phase-commit", item["evidence"])
+
+    def test_a_second_phase_commit_with_the_same_patch_gives_no_exemption(self):
+        self.git("checkout", "-q", "-b", "same", f"{self.second}^")
+        self.git("cherry-pick", self.first)
+        same = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "feature")
+        self.only_the_last_is_exempt(same)
+
+    def test_a_git_failure_fails_closed_and_names_the_problem(self):
+        folder = os.path.join(self.root, "shim")
+        os.makedirs(folder)
+        path = os.path.join(folder, "git")
+        with open(path, "w") as handle:
+            handle.write(FAILING_ANCESTOR_SHIM)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        self.env.update(PATH=folder + os.pathsep + os.environ["PATH"], REAL_GIT=shutil.which("git"))
+        item = self.three(self.first, self.second, self.third)
+        self.past_the_cap(item, 9)
+        self.assertIn("rebase proof unavailable: evidence unavailable: git merge-base exited with status 5: fatal: simulated failure", item["evidence"])
+        self.assertNotIn("not counting", item["evidence"])
+
+    def is_ancestor(self, sha):
+        return subprocess.run(["git", "-C", self.repo, "merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0
 
 
 class CommandTest(ExtensionCase):

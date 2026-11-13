@@ -1626,14 +1626,15 @@ def _unbacked_size_approvals(approvals, units):
 FINAL_REVIEW = (CODE_REVIEW, "final")
 
 
-def check_s5(ledger, audited, problem, worktree=None):
+def check_s5(ledger, audited, problem, worktree=None, base_branch=None):
     """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`; they are needed
-    only when the ledger holds an extension or a size-approval. With a `worktree`, a section 6 final round that follows a rebase
-    (see `_rebase_exempt_rounds`) does not count against the cap; without one, no round is exempt."""
+    only when the ledger holds an extension or a size-approval. With a `worktree` and the PR `base_branch`, a section 6 final round that
+    follows a rebase (see `_rebase_exempt_rounds`) does not count against the cap; without them, no round is exempt."""
     exempt, note = {}, ""
-    if worktree is not None and ledger.rounds.get(FINAL_REVIEW, 0) > ledger.effective_cap(*FINAL_REVIEW) and len(ledger.commits) > 1:
+    if (worktree is not None and base_branch is not None and ledger.rounds.get(FINAL_REVIEW, 0) > ledger.effective_cap(*FINAL_REVIEW)
+            and len(ledger.commits) > 1):
         try:
-            exempt = _rebase_exempt_rounds(worktree, ledger)
+            exempt = _rebase_exempt_rounds(worktree, base_branch, ledger)
         except Unavailable as unavailable:
             note = f" (rebase proof unavailable: {unavailable})"
     exempt_text = ", ".join(f"round {number} after phase-commit {sha[:7]}" for number, sha in exempt.items())
@@ -1668,11 +1669,15 @@ def _is_known_commit(worktree, sha):
         raise Unavailable(str(problem))
 
 
-def _is_ancestor_of_head(worktree, sha):
-    result = _git(worktree, "merge-base", "--is-ancestor", sha, "HEAD")
+def _is_ancestor(worktree, ancestor, descendant):
+    result = _git(worktree, "merge-base", "--is-ancestor", ancestor, descendant)
     if result.returncode in (0, 1):
         return result.returncode == 0
     raise Unavailable(f"git merge-base exited with status {result.returncode}: {result.stderr.strip()}")
+
+
+def _is_ancestor_of_head(worktree, sha):
+    return _is_ancestor(worktree, sha, "HEAD")
 
 
 def _patch_id(worktree, sha):
@@ -1689,29 +1694,48 @@ def _patch_id(worktree, sha):
     return result.stdout.split()[0] if result.stdout.strip() else None
 
 
-def _is_rebase_of(worktree, before, sha):
-    """True when the phase commit `sha` proves a rebase of the phase commit `before`: it exists, it is an ancestor of HEAD, its patch-id differs
-    (section 6 step 3 requires a new final round only then) and its parent differs (the base moved). False when any of this cannot be shown."""
-    if not (_is_known_commit(worktree, sha) and _is_known_commit(worktree, before) and _is_ancestor_of_head(worktree, sha)):
+def _base_of(worktree, sha, base_ref):
+    """The merge base of the commit `sha` with `base_ref`, or None when they share none."""
+    try:
+        return _git_output(worktree, "merge-base", sha, base_ref) or None
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+
+
+def _is_rebase_of(worktree, base_ref, before, sha, last):
+    """True when the phase commit `sha` proves a rebase of the phase commit `before`: both exist, its patch-id differs (section 6 step 3
+    requires a new final round only then), its base (the merge base with `base_ref`) is an ancestor of HEAD and a strict descendant of the base
+    of `before` (the base branch moved forward). The `last` phase commit must also be an ancestor of HEAD; an earlier one may have been rewritten
+    by a later rebase. False when any of this cannot be shown."""
+    if not (_is_known_commit(worktree, sha) and _is_known_commit(worktree, before)):
+        return False
+    if last and not _is_ancestor_of_head(worktree, sha):
         return False
     new_id, old_id = _patch_id(worktree, sha), _patch_id(worktree, before)
     if new_id is None or old_id is None or new_id == old_id:
         return False
-    try:
-        new_parent, old_parent = (_git_output(worktree, "rev-parse", "--verify", "-q", f"{commit}^") for commit in (sha, before))
-    except RuntimeError as problem:
-        raise Unavailable(str(problem))
-    return new_parent is not None and old_parent is not None and new_parent != old_parent
+    new_base, old_base = _base_of(worktree, sha, base_ref), _base_of(worktree, before, base_ref)
+    if new_base is None or old_base is None or new_base == old_base:
+        return False
+    return _is_ancestor_of_head(worktree, new_base) and _is_ancestor(worktree, old_base, new_base)
 
 
-def _rebase_exempt_rounds(worktree, ledger):
+def _rebase_exempt_rounds(worktree, base_branch, ledger):
     """{round number: phase-commit sha} of the section 6 final rounds that S5 does not count against the cap: for each phase-commit after the
     first, the first final round after it, when `_is_rebase_of` holds for it and the phase-commit before it. Raises Unavailable when git cannot answer."""
+    base_ref = f"refs/remotes/origin/{base_branch}"
+    try:
+        known = _git_output(worktree, "rev-parse", "--verify", "-q", base_ref + "^{commit}")
+    except RuntimeError as problem:
+        raise Unavailable(str(problem))
+    if not known:
+        raise Unavailable(f"no such ref origin/{base_branch}")
     exempt = {}
     for (position, event), (_, before) in zip(ledger.commits[1:], ledger.commits):
         first = next((round_event for later, round_event in ledger.round_events
                       if later > position and (round_event["loop"], round_event["phase"]) == FINAL_REVIEW), None)
-        if first is not None and first["round"] not in exempt and _is_rebase_of(worktree, before["sha"], event["sha"]):
+        if first is not None and first["round"] not in exempt and _is_rebase_of(worktree, base_ref, before["sha"], event["sha"],
+                                                                                event is ledger.commits[-1][1]):
             exempt[first["round"]] = event["sha"]
     return exempt
 
@@ -1837,7 +1861,7 @@ def _check_item(name, check, *args):
     return _s_item(name, passed, evidence)
 
 
-def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
+def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem, base_branch):
     """(S3 to S6 and XC, the ledger or None when it cannot be used, the S3 evidence). `audited` is None when the transcripts cannot be read,
     with the reason in `problem`."""
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
@@ -1845,7 +1869,7 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem):
         return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")], None, s3_evidence
     agents = None if audited is None else _agents(audited)
     text = str(problem)
-    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text, worktree),
+    return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text, worktree, base_branch),
             _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
 
 
@@ -2052,11 +2076,11 @@ def _transcript_items(worktree, dir_fd):
     return items, audited, None
 
 
-def _run_items(worktree, dir_fd, branch, remote_url, base_result):
+def _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch):
     """(the items S1 to S10 and XC in record order, the audited transcripts, the reason they cannot be read).
     The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
     items, audited, problem = _transcript_items(worktree, dir_fd)
-    ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem)
+    ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem, base_branch)
     items += ledger_items
     items.append(_check_item("S7", check_s7, audited, str(problem)))
     passed, evidence = check_s8(worktree, base_result)
@@ -2085,7 +2109,7 @@ def _record(argv):
     if dir_fd is None:
         raise Refusal("unsafe runtime folder")
     try:
-        run_items, audited, _ = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch))
+        run_items, audited, _ = _run_items(worktree, dir_fd, branch, remote_url, _commit_base(worktree, base_branch), base_branch)
         items = run_items + l_items
         warning = _versions_warning(audited)
         result = "pass" if all(item["result"] == "pass" for item in items) else "fail"
@@ -2422,7 +2446,7 @@ def _check(argv):
         raise Refusal("unsafe runtime folder")
     try:
         base_result = _commit_base(worktree, base_branch)
-        items, audited, problem = _run_items(worktree, dir_fd, branch, remote_url, base_result)
+        items, audited, problem = _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch)
         digest = _digest(worktree, dir_fd, branch, remote_url, audited, problem, base_result)
     finally:
         os.close(dir_fd)
