@@ -435,11 +435,6 @@ class Router(unittest.TestCase):
     def test_every_naming_rule_09_row_carries_the_flag_mark_with_the_fix_in_the_flag_section(self):
         fields = dict(rule_entries(rule_files()["naming"]))["NAME-09"]
         self.assertIn("Mark every NAME-09 row ⚑", fields["Rule"])
-        self.assertIn("⚑ section", fields["Fix"])
-        self.assertIn("After the merge", fields["Fix"])
-
-    def test_the_naming_rule_09_fix_is_one_fixed_sentence_that_puts_the_change_after_the_merge(self):
-        fields = dict(rule_entries(rule_files()["naming"]))["NAME-09"]
         self.assertIn("After the merge, an admin changes the required checks as the ⚑ section shows.",
                       fields["Fix"])
         self.assertNotIn("before merging", fields["Fix"].lower())
