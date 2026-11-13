@@ -11,8 +11,12 @@ tree as this hook (TRUSTED_SCRIPT): the hook runs `plan` unsandboxed before the 
 script or a loader variable that the model chose.
 
 The hook runs `setup_files.py plan` for the same repo and proposal, checks the plan digest against
-`--confirm`, and answers `ask` with the full diff of the plan in the decision reason, so that Claude Code
-shows the diff in the permission prompt. Every error is a `deny` with a reason that starts with
+`--confirm`, and answers `ask` with a decision reason that Claude Code shows in the permission prompt. The prompt
+folds the reason after about 9 lines, so the reason starts with `Diff to confirm:`, one summary line per changed
+file, a counts line (when a count is not zero) and `Full diff: <path>`, then the raw diff. The path is a private
+file (a per-user folder of mode 0700 under the temp folder, `<plan digest>.diff` of mode 0600) that holds the same
+raw diff text. When that file cannot be written the line is `Full diff: not written (<short reason>)` and the
+answer stays `ask`. Every other error is a `deny` with a reason that starts with
 `Setup write check:`; the hook never prints an allow and never crashes open (`decide` catches every
 exception). Exit code 0 always.
 
@@ -20,14 +24,18 @@ Run log: when the environment variable SETUP_DIFF_PROMPT_LOG names a file, the h
 {"decision": "ask" or "deny", "reason": "..."} for every ask or deny that it prints (the two-turn runner
 of the sql skill reads it). A log write error never changes the decision.
 """
+import errno
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
 
 PLAN_SECONDS = 15
+HEX_DIGEST = re.compile(r"[0-9a-f]+\Z")
 LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
 SCRIPT_NAME = "setup_files.py"
 # The hook runs `plan` outside the sandbox and before the permission prompt, so it runs only this script, never a path or a
@@ -125,14 +133,158 @@ def run_plan(script, repo, proposal, assignments, cwd, plan_seconds):
     return plan
 
 
-def diff_text(plan):
-    texts = []
+class NotWritten(Exception):
+    """The full diff file was not written: the message is the short reason of the `Full diff: not written (...)` line."""
+
+
+def changed_parts(plan):
+    """[(name, part, diff text)] of the plan parts that have a diff, rules file first."""
+    found = []
     for name in ("rules_file", "allowlist"):
         part = plan.get(name)
         diff = part.get("diff") if isinstance(part, dict) else None
         if isinstance(diff, str) and diff.strip():
-            texts.append(diff.rstrip("\n"))
+            found.append((name, part, diff.rstrip("\n")))
+    return found
+
+
+def diff_text(plan):
+    texts = [diff for _, _, diff in changed_parts(plan)]
     return "\n\n".join(texts) if texts else "no file changes"
+
+
+def count_changes(diff):
+    """(added, removed): the lines after the first hunk line that start with + or -; no hunk line counts nothing."""
+    added = removed = 0
+    in_hunk = False
+    for line in diff.split("\n"):  # not splitlines(): it also splits on form feed, U+2028 and others inside a SQL line
+        if line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            added += 1
+        elif in_hunk and line.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def summary_line(name, part, diff, repo):
+    path = part.get("path")
+    if not isinstance(path, str):
+        shown = name
+    else:
+        prefix = os.path.join(os.path.abspath(repo), "")
+        shown = path[len(prefix):] if name == "rules_file" and path.startswith(prefix) else path
+    added, removed = count_changes(diff)
+    return "%s: %s, +%d -%d" % (shown, "new file" if part.get("exists") is False else "changed", added, removed)
+
+
+def counts_line(plan):
+    counts = [len(plan[key]) if isinstance(plan.get(key), list) else 0
+              for key in ("appended_rules", "skipped_rules", "conflicts", "warnings")]
+    if not any(counts):
+        return None
+    return "Appended rules: %d, skipped rules: %d, conflicts: %d, warnings: %d" % tuple(counts)
+
+
+def owned_by_me(info):
+    return info.st_uid == os.geteuid()
+
+
+def open_diff_folder():
+    """(folder path, descriptor) of the private per-user diff folder; raises NotWritten or OSError."""
+    folder = os.path.join(tempfile.gettempdir(), "setup-diff-prompt-%d" % os.geteuid())
+    try:
+        os.mkdir(folder, 0o700)
+    except FileExistsError:
+        pass
+    try:
+        # O_NONBLOCK: a FIFO that another user planted at this path must not block the open (a directory ignores the flag)
+        fd = os.open(folder, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise NotWritten("folder is a symbolic link")
+        raise
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise NotWritten("folder is not a directory")
+        if not owned_by_me(info):
+            raise NotWritten("not owned by this user")
+        if info.st_mode & 0o077:
+            raise NotWritten("folder is not private")
+    except BaseException:
+        os.close(fd)
+        raise
+    return folder, fd
+
+
+def classify_existing_file(dir_fd, name):
+    """The stat of an existing diff file after a read-only, non-blocking, no-follow open; raises NotWritten."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise NotWritten("file is a symbolic link")
+        raise
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if not stat.S_ISREG(info.st_mode):
+        raise NotWritten("file is not a regular file")
+    if not owned_by_me(info):
+        raise NotWritten("not owned by this user")
+    return info
+
+
+def write_diff_file(dir_fd, name, text):
+    try:
+        fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
+    except FileExistsError:
+        first = classify_existing_file(dir_fd, name)
+        fd = os.open(name, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+        info = os.fstat(fd)
+        if (info.st_dev, info.st_ino) != (first.st_dev, first.st_ino):
+            os.close(fd)
+            raise NotWritten("file changed while it was checked")
+    try:
+        os.fchmod(fd, 0o600)
+        os.ftruncate(fd, 0)
+        view = memoryview(text.encode("utf-8"))
+        while view:
+            view = view[os.write(fd, view):]
+    finally:
+        os.close(fd)
+
+
+def write_full_diff(digest, text):
+    """The path of the private file that now holds `text`; raises NotWritten with a short reason."""
+    if not HEX_DIGEST.match(digest):
+        raise NotWritten("digest is not hexadecimal")
+    name = digest + ".diff"
+    try:
+        folder, dir_fd = open_diff_folder()
+        try:
+            write_diff_file(dir_fd, name, text)
+        finally:
+            os.close(dir_fd)
+    except OSError as error:
+        raise NotWritten(error.strerror or type(error).__name__)
+    return os.path.join(folder, name)
+
+
+def ask_reason(plan, repo):
+    lines = ["Diff to confirm:"]
+    lines += [summary_line(name, part, diff, repo) for name, part, diff in changed_parts(plan)]
+    counts = counts_line(plan)
+    if counts:
+        lines.append(counts)
+    raw = diff_text(plan)
+    try:
+        lines.append("Full diff: " + write_full_diff(plan["digest"], raw))
+    except NotWritten as reason:
+        lines.append("Full diff: not written (%s)" % reason)
+    return "\n".join(lines) + "\n" + raw
 
 
 def decide(hook_input, plan_seconds=PLAN_SECONDS):
@@ -186,7 +338,7 @@ def decide_checked(hook_input, plan_seconds):
     if plan["digest"] != confirm:
         raise Refusal("the digest differs from the plan: the files changed after the plan. "
                     "Run plan again, then call write with the new digest")
-    return {"decision": "ask", "reason": "Diff to confirm:\n" + diff_text(plan)}
+    return {"decision": "ask", "reason": ask_reason(plan, repo)}
 
 
 def log(decision):
