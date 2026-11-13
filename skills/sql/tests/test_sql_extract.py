@@ -25,10 +25,10 @@ class ExtractTestCase(unittest.TestCase):
             handle.write(content if binary else content.encode("utf-8"))
         return path
 
-    def run_args(self, *args):
+    def run_args(self, *args, timeout=None):
         env = {"PATH": os.environ["PATH"], "HOME": self.dir}
         return subprocess.run(
-            [sys.executable, "-I", SCRIPT, *args], capture_output=True, text=True, env=env
+            [sys.executable, "-I", SCRIPT, *args], capture_output=True, text=True, env=env, timeout=timeout
         )
 
     def extract(self, content, name="a.ts", tags=None, expect=0):
@@ -818,6 +818,200 @@ class ErrorTest(ExtractTestCase):
         self.assertIn(result.returncode, (0, 1), result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(json.loads(result.stdout)["form"], "js")
+
+
+JSX_NAMES = ("a.jsx", "a.tsx")
+NOTES = os.path.join(SKILL_DIR, "sources", "postgres-js.md")
+
+
+class JsxTest(ExtractTestCase):
+    def found(self, src, names=JSX_NAMES):
+        """(texts, start lines) of the statements, for each name; the results must agree."""
+        results = []
+        for name in names:
+            with self.subTest(name=name):
+                data = self.extract(src, name=name, tags="sql")
+                results.append(
+                    ([s["text"] for s in data["statements"]], [s["start_line"] for s in data["statements"]])
+                )
+        self.assertTrue(all(r == results[0] for r in results), results)
+        return results[0]
+
+    def test_text_with_an_apostrophe_a_quote_or_a_backtick_before_a_template(self):
+        for text in ("Don't", 'Say "hi', "Use the ` key"):
+            same = "<p>" + text + "</p>; const a = sql`SELECT 1`;\nconst b = sql`SELECT 2`;\n"
+            later = "<p>" + text + "</p>;\nconst a = sql`SELECT 1`;\nconst b = sql`SELECT 2`;\n"
+            with self.subTest(text=text):
+                self.assertEqual(self.found(same), (["SELECT 1", "SELECT 2"], [1, 2]))
+                self.assertEqual(self.found(later), (["SELECT 1", "SELECT 2"], [2, 3]))
+
+    def test_a_template_in_a_child_and_in_an_attribute_value(self):
+        child = "const a = <div>{sql`SELECT 1`}</div>;\nconst b = sql`SELECT 2`;\n"
+        self.assertEqual(self.found(child), (["SELECT 1", "SELECT 2"], [1, 2]))
+        attribute = "const a = <Q q={sql`SELECT 1`} title=\"it's\" />;\nconst b = sql`SELECT 2`;\n"
+        self.assertEqual(self.found(attribute), (["SELECT 1", "SELECT 2"], [1, 2]))
+
+    def test_nested_elements_a_fragment_and_a_self_closing_tag(self):
+        src = "const a = <><ul><li>Don't</li><br/><li>say \"x</li></ul></>; const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+
+    def test_attribute_strings(self):
+        src = "const a = <a title=\"it's\" alt='say \"x\"' />; const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+        spanning = "const a = <a title=\"x\ny'z\" />; const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(spanning), (["SELECT 1"], [2]))
+
+    def test_text_that_spans_lines_keeps_the_lines_right(self):
+        src = "const a = <p>\nDon't\nmore `\n</p>;\nconst b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [5]))
+
+    def test_comment_marks_in_text_are_text(self):
+        src = "const a = <p>a // b /* c</p>; const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+
+    def test_an_element_after_return_and_after_an_arrow(self):
+        arrow = "const f = () => <p>Don't</p>; const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(arrow), (["SELECT 1"], [1]))
+        ret = "function g() { return <p>Don't</p>; } const b = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(ret), (["SELECT 1"], [1]))
+
+    def test_an_element_in_an_interpolation_keeps_the_parent(self):
+        src = "const a = sql`SELECT ${<p>{sql`x`}</p>} y`;\n"
+        for name in JSX_NAMES:
+            with self.subTest(name=name):
+                data = self.extract(src, name=name, tags="sql")
+                self.assertEqual([s["parent"] for s in data["statements"]], [None, 0])
+                self.assertEqual(data["statements"][1]["text"], "x")
+
+    def test_a_comparison_is_not_jsx(self):
+        src = "const x = a < b; if (a < b && c > d) {} const q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+
+    def test_a_comparison_after_a_postfix_operator_or_a_shift_is_not_jsx(self):
+        for expression in ("let a = x-- <y;", "let a = x++ <y;", "let a = 1 <<b;", "for (let i=0;i++ <n;) {}"):
+            with self.subTest(expression=expression):
+                src = expression + "\nconst q = sql`SELECT 1`;\n"
+                self.assertEqual(self.found(src), (["SELECT 1"], [2]))
+
+    def test_an_element_after_export_default(self):
+        src = "export default <p>Don't</p>; const a = sql`SELECT 1`;\nconst b = sql`SELECT 2`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1", "SELECT 2"], [1, 2]))
+
+    def test_a_method_named_default_with_type_parameters_is_not_jsx(self):
+        src = "const o = { default<T>(x: T) { return x; } };\nconst q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, ("a.tsx",)), (["SELECT 1"], [2]))
+
+    def test_many_postfix_comparisons_do_not_take_quadratic_time(self):
+        src = "let x = 0;\n" + "x++ <y;\n" * 20000 + "const q = sql`SELECT 1`;\n"
+        for name in JSX_NAMES:
+            with self.subTest(name=name):
+                path = self.write(name, src)
+                result = self.run_args(path, "--tags", "sql", timeout=8)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(json.loads(result.stdout)["statements"]), 1)
+
+    def test_a_template_with_an_interpolation_in_a_container_keeps_the_parent(self):
+        src = "const a = <A f={sql`SELECT ${sql`SELECT 2`}`} />;\n"
+        for name in JSX_NAMES:
+            with self.subTest(name=name):
+                data = self.extract(src, name=name, tags="sql")
+                self.assertEqual([s["parent"] for s in data["statements"]], [None, 0])
+
+    def test_a_slash_after_an_element_is_a_division(self):
+        src = "const a = <p/> / 2; const q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+
+    def test_a_mismatched_close_is_accepted(self):
+        src = "const a = <a></b>; const q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [1]))
+
+    def test_a_slash_in_text_with_the_template_on_a_later_line(self):
+        src = "<p>a / b</p>;\nconst q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src), (["SELECT 1"], [2]))
+
+    def test_deep_nesting_does_not_crash(self):
+        depth = 500
+        elements = "const a = " + "<a>" * depth + "x" + "</a>" * depth + ";\nconst q = sql`SELECT 1`;\n"
+        containers = "const a = " + "<a>{" * depth + "1" + "}</a>" * depth + ";\nconst q = sql`SELECT 1`;\n"
+        for src in (elements, containers):
+            for name in JSX_NAMES:
+                with self.subTest(name=name):
+                    result = self.run_args(self.write(name, src), "--tags", "sql")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    statements = json.loads(result.stdout)["statements"]
+                    self.assertEqual([s["text"] for s in statements], ["SELECT 1"])
+
+    def test_tsx_generic_arrow_functions_and_type_arguments_are_not_jsx(self):
+        forms = (
+            "const f = <T,>(x: T) => x;",
+            "const f = <T extends U>(x: T) => x;",
+            "const f = <T = U>(x: T) => x;",
+            "const f = <const T,>(x: T) => x;",
+            "const v = f<T>(x);",
+        )
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertEqual(self.found(form + "\nconst q = sql`SELECT 1`;\n", ("a.tsx",)), (["SELECT 1"], [2]))
+
+    def test_tsx_forms_that_are_jsx(self):
+        for form in ("const e = <T>(x)</T>;", "const e = <T extends>x</T>;"):
+            with self.subTest(form=form):
+                self.assertEqual(self.found(form + "\nconst q = sql`SELECT 1`;\n", ("a.tsx",)), (["SELECT 1"], [2]))
+
+    def test_ts_keeps_the_type_assertion(self):
+        src = "const n = <number>x;\nconst q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, ("a.ts", "a.mts", "a.cts")), (["SELECT 1"], [2]))
+
+    def test_plain_javascript_does_not_change(self):
+        src = "<p>Don't</p>; const a = sql`SELECT 1`;\nconst b = sql`SELECT 2`;\n"
+        names = ("a.js", "a.mjs", "a.cjs", "a.ts", "a.mts", "a.cts")
+        self.assertEqual(self.found(src, names), (["SELECT 2"], [2]))
+
+    def test_the_notes_name_the_jsx_scan_and_its_limits(self):
+        with open(NOTES, encoding="utf-8") as handle:
+            notes = handle.read()
+        for needle in (
+            "JSX",
+            "generic arrow",
+            "unterminated JSX element",
+            "mismatched",
+            "attr=<b/>",
+            "<Foo<string> x={1} />",
+            "<a /* c */ b/>",
+            "x: <T>(a: T) => T",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, notes)
+
+
+class JsxErrorTest(ExtractTestCase):
+    def failure(self, src, name="a.jsx"):
+        data = self.extract(src, name=name, tags="sql", expect=1)
+        self.assertEqual(data["statements"], [])
+        return data["error"]["message"], data["error"]["line"]
+
+    def test_an_unclosed_element_in_text_in_a_tag_and_in_a_container(self):
+        jsx = "unterminated JSX element"
+        for name in JSX_NAMES:
+            with self.subTest(name=name):
+                self.assertEqual(self.failure("const a = 1;\nconst b = <div>\n<p>x</p>\n", name), (jsx, 2))
+                self.assertEqual(self.failure('const a = <div\n  title="x"\n', name), (jsx, 1))
+                self.assertEqual(self.failure("const a = <div>\n{ f(1,\n", name), (jsx, 1))
+
+    def test_the_innermost_open_element_gives_the_line(self):
+        self.assertEqual(self.failure("const x = <a>\n\n<b>text\n"), ("unterminated JSX element", 3))
+
+    def test_a_block_comment_that_is_not_closed_in_a_container(self):
+        self.assertEqual(self.failure("const a = <div>{ /* open\n"), ("unterminated JSX element", 1))
+
+    def test_with_no_element_open_the_old_messages_stay(self):
+        self.assertEqual(self.failure("const q = sql`SELECT 1\n"), ("unterminated template literal", 1))
+        self.assertEqual(self.failure("const a = 1;\n/* open\n"), ("unterminated block comment", 2))
+
+    def test_a_mixed_stack_is_decided_by_the_innermost_open_frame(self):
+        self.assertEqual(self.failure("const q = `x ${ <p>{ `y "), ("unterminated template literal", 1))
+        self.assertEqual(self.failure("const q = `x ${ <p>{ f("), ("unterminated JSX element", 1))
 
 
 if __name__ == "__main__":
