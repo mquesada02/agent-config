@@ -1,4 +1,4 @@
-# Text tests of tickets #100, #164, #166, #489 and #494: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
+# Text tests of tickets #100, #164, #166, #489, #494 and #574: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13 and 14) and the test-command declaration of this repo.
 import os
 import re
 import shutil
@@ -316,6 +316,41 @@ class ContextStopRuleTest(RuleTextCase):
 
     def test_headless_sessions_are_covered_with_auto_compact_as_the_backstop(self):
         self.assert_in(self.text, "Headless sessions are covered too. The hook skips them; auto-compact is their backstop.")
+
+
+class ResearchBranchRuleTest(RuleTextCase):
+    """Ticket #574: the research-branch rule in section 8 and its cancellation of the wayfinder wording in section 11."""
+
+    def setUp(self):
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        start = text.index("A research branch is named")
+        self.rule = text[start:text.index("\n\n", start)]
+
+    def test_the_rule_names_the_branch_the_file_the_base_and_the_session_that_commits(self):
+        self.assert_in(self.rule, "`research/<description>`", "`docs/research/<description>.md`",
+                       "The base is `develop` when the repo has one, else `main`.",
+                       "the session that started the research (the wayfinder session or a coordinator)")
+
+    def test_the_rule_uses_the_code_path_review_audit_pr_squash_and_cleanup(self):
+        self.assert_in(self.rule, "section 6 review loop", "the audit and the PR (section 6 step 5)",
+                       "The owner squash-merges the PR.", "After the merge, the cleanup rule below applies.")
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        self.assertGreater(text.index("After merging, run `~/.claude/hooks/worktree-cleanup/cleanup"), text.index(self.rule))
+
+    def test_the_rule_covers_only_research_branches(self):
+        self.assert_in(self.rule, "This rule covers only `research/*` branches.")
+
+    def test_the_rule_sits_after_the_merge_bullets_and_before_the_fresh_ci_rule(self):
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        self.assertGreater(text.index("A research branch is named"), text.index("- if not, create a merge commit"))
+        self.assertLess(text.index("A research branch is named"), text.index("Before you give the owner the merge command"))
+
+    def test_section_eleven_cancels_the_wayfinder_throwaway_wording_in_the_cancelled_list(self):
+        text = section(read(ROOT_CLAUDE_MD), 11)
+        entry = "the `/mattpocock-skills:wayfinder` wording \"throwaway `research/<name>` branch\""
+        self.assert_in(text, entry, "replaced by the research-branch rule of section 8")
+        self.assertGreater(text.index(entry), text.index("These plugin rules are cancelled"))
+        self.assertLess(text.index(entry), text.index("any other skill text that says to stop"))
 
 
 class WorktreeCleanupRuleTest(RuleTextCase):
