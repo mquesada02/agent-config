@@ -13,7 +13,6 @@
 # Exit codes of `check`: 0 it ran (a failed item is output, not an error), 2 it refused.
 # Exit codes of `sessions show`: 0 the blocks are printed, 2 the sessions cannot be audited or it refused.
 # Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
-import contextlib
 import json
 import os
 import re
@@ -1664,26 +1663,33 @@ def check_s5(ledger, audited, problem, worktree=None, base_branch=None):
         f"; exempt post-rebase final round: {exempt_text}" if exempt else "")
 
 
-@contextlib.contextmanager
-def _unavailable_if_git_fails(command):
-    """Turns a timeout or an OS error of the git call inside the block into Unavailable that names `command`."""
-    import subprocess  # imported here: the hook's common path never runs git
+class _unavailable_if_git_fails:
+    """A `with` block that turns a timeout, an OS error or a `_git_output` failure of the git call inside it into Unavailable.
+    The timeout and OS error messages name `command`. A class, not `contextlib`: the hook's common path never runs git, so it loads no more."""
 
-    try:
-        yield
-    except subprocess.TimeoutExpired:
-        raise Unavailable(f"git {command} timed out after {GIT_TIMEOUT_SECONDS} seconds")
-    except OSError as problem:
-        raise Unavailable(f"git {command} failed: {problem}")
+    def __init__(self, command):
+        self.command = command
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, kind, problem, trace):
+        if problem is None:
+            return
+        import subprocess  # imported here: the hook's common path never runs git
+
+        if isinstance(problem, subprocess.TimeoutExpired):
+            raise Unavailable(f"git {self.command} timed out after {GIT_TIMEOUT_SECONDS} seconds")
+        if isinstance(problem, OSError):
+            raise Unavailable(f"git {self.command} failed: {problem}")
+        if isinstance(problem, RuntimeError):
+            raise Unavailable(str(problem))
 
 
 def _is_known_commit(worktree, ref):
     """True when `ref` (a commit or a ref) names a commit, False when it names none (status 1). Any other git problem raises Unavailable."""
     with _unavailable_if_git_fails("rev-parse"):
-        try:
-            return bool(_git_output(worktree, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", no_result=(1,)))
-        except RuntimeError as problem:
-            raise Unavailable(str(problem))
+        return bool(_git_output(worktree, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", no_result=(1,)))
 
 
 def _is_ancestor(worktree, ancestor, descendant):
@@ -1717,10 +1723,7 @@ def _patch_id(worktree, sha):
 def _base_of(worktree, sha, base_ref):
     """The merge base of the commit `sha` with `base_ref`, or None when they share no commit (status 1). Any other git problem raises Unavailable."""
     with _unavailable_if_git_fails("merge-base"):
-        try:
-            return _git_output(worktree, "merge-base", sha, base_ref, no_result=(1,)) or None
-        except RuntimeError as problem:
-            raise Unavailable(str(problem))
+        return _git_output(worktree, "merge-base", sha, base_ref, no_result=(1,)) or None
 
 
 def _is_rebase_of(worktree, base_ref, before, sha, last):
