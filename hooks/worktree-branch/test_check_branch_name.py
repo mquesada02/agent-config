@@ -11,7 +11,8 @@ import check_branch_name as hook  # noqa: E402
 
 RULES = hook.BranchRules(hook.load_reader())
 CREATE = "orca worktree create --name x"
-START = "orca orchestration " + "-".join(("worker", "start")) + " --task t --agent claude"
+START_WORDS = "orca orchestration " + "-".join(("worker", "start"))
+START = f"{START_WORDS} --task t --agent claude"
 
 
 def reason(command):
@@ -78,7 +79,7 @@ class BranchNameTest(unittest.TestCase):
         for form in ("--worktree path:/w/x", "--worktree current", "--worktree=branch:fix/a", ""):
             with self.subTest(form=form):
                 self.assertIsNone(reason(f"{START} {form}"))
-        self.assertIsNone(reason("orca orchestration " + "-".join(("worker", "start")) + " --help"))
+        self.assertIsNone(reason(f"{START_WORDS} --help"))
 
     def test_wrapped_commands(self):
         for wrapper in ("bash -c '{}'", "sh -c \"{}\"", "eval '{}'", "echo a | {}", "true && {}", "echo $({})", "x=`{}`", "bash -c 'eval \"{}\"'",

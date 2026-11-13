@@ -29,7 +29,7 @@ CREATE_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
 NEW_WORKTREES = ("new-child", "new-top-level")
 CLI_VARIABLES = ("$ORCA_CLI_COMMAND", "${ORCA_CLI_COMMAND}")
 SUBSTITUTION_START = re.compile(r"\$\(|`")
-GATED_TEXT =re.compile(r"worker-start|worktree\W+create")
+GATED_TEXT = re.compile(r"worker-start|worktree\W+create")
 CREATE_NOTICE = "Pass --branch <type>/<description> (type: feat, fix, chore, hotfix, release or research), as CLAUDE.md section 10 says."
 START_NOTICE = ("worker-start cannot name a branch. Create the worktree with `orca worktree create --branch <type>/<description> "
                 "--parent-worktree <your worktree>`, then use `worker-start --worktree path:<that path>` (CLAUDE.md section 10).")
@@ -76,26 +76,30 @@ class BranchRules:
     def is_orca(self, word):
         return self.audit._is_orca(word) or word in CLI_VARIABLES
 
+    def create_reason(self, arguments):
+        if self.audit._is_help(arguments):
+            return None
+        names = option_values(arguments, "--branch", CREATE_VALUE_OPTIONS)
+        if not names:
+            return f"orca worktree create has no --branch. {CREATE_NOTICE}"
+        for name in names:
+            if not BRANCH_NAME.fullmatch(name):
+                return f"the branch name {name!r} breaks the Conventional Branch rule. {CREATE_NOTICE}"
+        return None
+
+    def start_reason(self, arguments):
+        values = option_values(arguments, "--worktree", self.audit.ORCA_VALUE_OPTIONS)
+        if any(value in NEW_WORKTREES for value in values):
+            return f"worker-start with a new worktree gives a hyphen name. {START_NOTICE}"
+        return None
+
     def orca_reason(self, words):
         """The deny reason of a command that starts with the program word `words[0]`, or None."""
         head = self.create_head(words)
         if head is not None:
-            arguments = words[len(head):]
-            if self.audit._is_help(arguments):
-                return None
-            names = option_values(arguments, "--branch", CREATE_VALUE_OPTIONS)
-            if not names:
-                return f"orca worktree create has no --branch. {CREATE_NOTICE}"
-            for name in names:
-                if not BRANCH_NAME.fullmatch(name):
-                    return f"the branch name {name!r} breaks the Conventional Branch rule. {CREATE_NOTICE}"
-            return None
+            return self.create_reason(words[len(head):])
         head = self.start_head(words)
-        if head is not None:
-            values = option_values(words[len(head):], "--worktree", self.audit.ORCA_VALUE_OPTIONS)
-            if any(value in NEW_WORKTREES for value in values):
-                return f"worker-start with a new worktree gives a hyphen name. {START_NOTICE}"
-        return None
+        return None if head is None else self.start_reason(words[len(head):])
 
     def segment_reason(self, segment, depth):
         words = self.audit._command_words(segment)
@@ -139,11 +143,13 @@ class BranchRules:
             text = self.audit._join_as_bash(self.audit.strip_data_heredocs(command, self.audit.DATA_COMMANDS))
             for segment in (item for item in self.audit.split_command(text) if isinstance(item, list)):
                 reason = self.segment_reason(segment, depth)
-                for word in segment:
-                    for body in ([] if reason else self.substitution_bodies(word)):
-                        reason = reason or self.command_reason(body, depth + 1)
                 if reason:
                     return reason
+                for word in segment:
+                    for body in self.substitution_bodies(word):
+                        reason = self.command_reason(body, depth + 1)
+                        if reason:
+                            return reason
             return None
         except Exception as error:  # a ValueError of the reader, a RecursionError, or any other failure
             if GATED_TEXT.search(command):
