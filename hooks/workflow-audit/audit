@@ -13,6 +13,7 @@
 # Exit codes of `check`: 0 it ran (a failed item is output, not an error), 2 it refused.
 # Exit codes of `sessions show`: 0 the blocks are printed, 2 the sessions cannot be audited or it refused.
 # Both hooks must never break a session: a hook error denies a command that matches the gate and changes nothing else.
+import contextlib
 import json
 import os
 import re
@@ -171,7 +172,8 @@ def _git(cwd, *args):
 
 def _git_output(cwd, *args, no_result=(1, 128)):
     """The stripped stdout of a git call that succeeded, None for a status that git uses for "no result"
-    (1 for a missing ref or a detached HEAD, 128 outside a repository). Any other status raises."""
+    (1 for a missing ref or a detached HEAD, 128 outside a repository). Any other status raises. A caller can narrow `no_result`:
+    with `(1,)`, status 128 raises too."""
     result = _git(cwd, *args)
     if result.returncode == 0:
         return result.stdout.strip()
@@ -1662,29 +1664,31 @@ def check_s5(ledger, audited, problem, worktree=None, base_branch=None):
         f"; exempt post-rebase final round: {exempt_text}" if exempt else "")
 
 
-def _is_known_commit(worktree, ref):
-    """True when `ref` (a commit or a ref) names a commit, False for a missing one (status 1). Any other git problem raises Unavailable."""
+@contextlib.contextmanager
+def _unavailable_if_git_fails(command):
+    """Turns a timeout or an OS error of the git call inside the block into Unavailable that names `command`."""
     import subprocess  # imported here: the hook's common path never runs git
 
     try:
-        return bool(_git_output(worktree, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", no_result=(1,)))
-    except RuntimeError as problem:
-        raise Unavailable(str(problem))
+        yield
     except subprocess.TimeoutExpired:
-        raise Unavailable(f"git rev-parse timed out after {GIT_TIMEOUT_SECONDS} seconds")
+        raise Unavailable(f"git {command} timed out after {GIT_TIMEOUT_SECONDS} seconds")
     except OSError as problem:
-        raise Unavailable(f"git rev-parse failed: {problem}")
+        raise Unavailable(f"git {command} failed: {problem}")
+
+
+def _is_known_commit(worktree, ref):
+    """True when `ref` (a commit or a ref) names a commit, False when it names none (status 1). Any other git problem raises Unavailable."""
+    with _unavailable_if_git_fails("rev-parse"):
+        try:
+            return bool(_git_output(worktree, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", no_result=(1,)))
+        except RuntimeError as problem:
+            raise Unavailable(str(problem))
 
 
 def _is_ancestor(worktree, ancestor, descendant):
-    import subprocess  # imported here: the hook's common path never runs git
-
-    try:
+    with _unavailable_if_git_fails("merge-base"):
         result = _git(worktree, "merge-base", "--is-ancestor", ancestor, descendant)
-    except subprocess.TimeoutExpired:
-        raise Unavailable(f"git merge-base timed out after {GIT_TIMEOUT_SECONDS} seconds")
-    except OSError as problem:
-        raise Unavailable(f"git merge-base failed: {problem}")
     if result.returncode in (0, 1):
         return result.returncode == 0
     raise Unavailable(f"git merge-base exited with status {result.returncode}: {result.stderr.strip()}")
@@ -1698,38 +1702,25 @@ def _patch_id(worktree, sha):
     """The `git patch-id --stable` of one commit, or None for a commit without a patch (an empty commit, a merge commit)."""
     import subprocess  # imported here: the hook's common path never runs git
 
-    try:
+    with _unavailable_if_git_fails("diff-tree"):
         shown = _git(worktree, "diff-tree", "-p", "--no-color", "--root", sha)
-    except subprocess.TimeoutExpired:
-        raise Unavailable(f"git diff-tree timed out after {GIT_TIMEOUT_SECONDS} seconds")
-    except OSError as problem:
-        raise Unavailable(f"git diff-tree failed: {problem}")
     if shown.returncode != 0:
         raise Unavailable(f"git diff-tree exited with status {shown.returncode}: {shown.stderr.strip()}")
-    try:
+    with _unavailable_if_git_fails("patch-id"):
         result = subprocess.run(["git", "-C", worktree, "patch-id", "--stable"], input=shown.stdout, capture_output=True, text=True,
                                 errors="replace", timeout=GIT_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        raise Unavailable(f"git patch-id timed out after {GIT_TIMEOUT_SECONDS} seconds")
-    except OSError as problem:
-        raise Unavailable(f"git patch-id failed: {problem}")
     if result.returncode != 0:
         raise Unavailable(f"git patch-id exited with status {result.returncode}: {result.stderr.strip()}")
     return result.stdout.split()[0] if result.stdout.strip() else None
 
 
 def _base_of(worktree, sha, base_ref):
-    """The merge base of the commit `sha` with `base_ref`, or None when they share none (status 1). Any other git problem raises Unavailable."""
-    import subprocess  # imported here: the hook's common path never runs git
-
-    try:
-        return _git_output(worktree, "merge-base", sha, base_ref, no_result=(1,)) or None
-    except RuntimeError as problem:
-        raise Unavailable(str(problem))
-    except subprocess.TimeoutExpired:
-        raise Unavailable(f"git merge-base timed out after {GIT_TIMEOUT_SECONDS} seconds")
-    except OSError as problem:
-        raise Unavailable(f"git merge-base failed: {problem}")
+    """The merge base of the commit `sha` with `base_ref`, or None when they share no commit (status 1). Any other git problem raises Unavailable."""
+    with _unavailable_if_git_fails("merge-base"):
+        try:
+            return _git_output(worktree, "merge-base", sha, base_ref, no_result=(1,)) or None
+        except RuntimeError as problem:
+            raise Unavailable(str(problem))
 
 
 def _is_rebase_of(worktree, base_ref, before, sha, last):

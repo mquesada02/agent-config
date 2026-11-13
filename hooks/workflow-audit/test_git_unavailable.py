@@ -15,7 +15,7 @@ from test_ledger_checks import FINAL, LedgerChecksCase
 
 SHIM = """#!/bin/sh
 case " $* " in
-  %s) echo "fatal: simulated failure" >&2; exit %d ;;
+  %s) : > "%s"; echo "fatal: simulated failure" >&2; exit %d ;;
 esac
 exec "$REAL_GIT" "$@"
 """
@@ -57,14 +57,19 @@ class RebasedCase(LedgerChecksCase):
         self.git("push", "-q", "--force", "origin", "feature")
 
     def shim(self, pattern, status):
-        """A `git` in front of the real one that fails with `status` for the calls that match the shell `pattern`."""
+        """A `git` in front of the real one that fails with `status` for the calls that match the shell `pattern`.
+        It creates a marker file when it fails a call: `assert_shim_fired` checks it."""
         folder = os.path.join(self.root, "shim")
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, "git")
+        self.marker = os.path.join(folder, "fired")
         with open(path, "w") as handle:
-            handle.write(SHIM % (pattern, status))
+            handle.write(SHIM % (pattern, self.marker, status))
         os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
         self.env.update(PATH=folder + os.pathsep + os.environ["PATH"], REAL_GIT=shutil.which("git"))
+
+    def assert_shim_fired(self):
+        self.assertTrue(os.path.exists(self.marker), "the shim pattern matched no git call: real git ran")
 
 
 class S5Test(RebasedCase):
@@ -88,14 +93,17 @@ class S5Test(RebasedCase):
     def test_status_128_from_rev_parse_gives_no_exemption_and_names_git(self):
         self.shim(REV_PARSE_OF_THE_BASE, 128)
         self.unavailable("git rev-parse exited with status 128: fatal: simulated failure")
+        self.assert_shim_fired()
 
     def test_status_128_from_merge_base_gives_no_exemption_and_names_git(self):
         self.shim(MERGE_BASE_OF_A_COMMIT, 128)
         self.unavailable("git merge-base exited with status 128: fatal: simulated failure")
+        self.assert_shim_fired()
 
     def test_status_1_from_merge_base_is_no_merge_base_and_gives_no_exemption_without_a_note(self):
         self.shim(MERGE_BASE_OF_A_COMMIT, 1)
         item = self.s5()
+        self.assert_shim_fired()
         self.assertEqual(item["result"], "fail", item["evidence"])
         self.assertNotIn("unavailable", item["evidence"])
 
@@ -119,6 +127,7 @@ class S6Test(RebasedCase):
     def test_status_128_from_rev_parse_fails_with_the_git_message(self):
         self.shim(REV_PARSE_OF_A_SHA, 128)
         item = self.s6()
+        self.assert_shim_fired()
         self.assertEqual(item["result"], "fail", item["evidence"])
         self.assertIn("evidence unavailable: git rev-parse exited with status 128: fatal: simulated failure", item["evidence"])
         self.assertNotIn("unknown commit", item["evidence"])
@@ -126,6 +135,7 @@ class S6Test(RebasedCase):
     def test_status_128_from_diff_tree_fails_with_the_git_message(self):
         self.shim(DIFF_TREE, 128)
         item = self.s6()
+        self.assert_shim_fired()
         self.assertEqual(item["result"], "fail", item["evidence"])
         self.assertIn("evidence unavailable: git diff-tree exited with status 128: fatal: simulated failure", item["evidence"])
 
@@ -164,22 +174,22 @@ class HelperTest(unittest.TestCase):
 
     def calls(self):
         return {
-            "rev-parse": lambda: audit._is_known_commit("/w", "abc"),
-            "merge-base": lambda: audit._is_ancestor("/w", "a", "b"),
-            "diff-tree": lambda: audit._patch_id("/w", "abc"),
-            "merge-base of a commit": lambda: audit._base_of("/w", "abc", "refs/remotes/origin/main"),
+            "_is_known_commit": ("rev-parse", lambda: audit._is_known_commit("/w", "abc")),
+            "_is_ancestor": ("merge-base", lambda: audit._is_ancestor("/w", "a", "b")),
+            "_patch_id": ("diff-tree", lambda: audit._patch_id("/w", "abc")),
+            "_base_of": ("merge-base", lambda: audit._base_of("/w", "abc", "refs/remotes/origin/main")),
         }
 
     def test_a_timeout_is_unavailable_and_names_the_command(self):
-        for name, call in self.calls().items():
+        for name, (command, call) in self.calls().items():
             with self.subTest(name=name), mock.patch.object(audit, "_git", side_effect=self.TIMEOUT):
-                with self.assertRaisesRegex(audit.Unavailable, f"git {name.split()[0]} timed out after {audit.GIT_TIMEOUT_SECONDS} seconds"):
+                with self.assertRaisesRegex(audit.Unavailable, f"git {command} timed out after {audit.GIT_TIMEOUT_SECONDS} seconds"):
                     call()
 
     def test_an_os_error_is_unavailable_and_names_the_command(self):
-        for name, call in self.calls().items():
+        for name, (command, call) in self.calls().items():
             with self.subTest(name=name), mock.patch.object(audit, "_git", side_effect=FileNotFoundError("no git")):
-                with self.assertRaisesRegex(audit.Unavailable, f"git {name.split()[0]} failed: no git"):
+                with self.assertRaisesRegex(audit.Unavailable, f"git {command} failed: no git"):
                     call()
 
     def test_a_patch_id_timeout_in_git_patch_id_is_unavailable(self):
