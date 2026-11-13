@@ -40,6 +40,16 @@ The `value` and `fragment` positions are only reported. The format tickets decid
 
 If `error` is not null, stop. Show its `message` and its `line` (the line can be null when the file cannot be read), and ask the user to fix the file. The script exits with code 1 in this case, and with code 2 for a usage error (it prints no JSON then).
 
+## JSX scan
+
+In `.jsx` and `.tsx` files the extractor scans each JSX element as one unit, from its opening `<` to its matching close. JSX text and attribute strings never open a JavaScript string, template, regex or comment, so an apostrophe, a double quote or a backtick in JSX text does not hide a later template. A `{...}` child or attribute value is JavaScript again, so a template inside it is found. Other extensions do not change.
+
+- An element starts at a `<` where an expression can start (not after a name, number, string, `)`, `]`, `}`, a postfix `++` or `--`, or the end of a template), when a name or `>` (a fragment) follows. A regex keyword such as `return` and the words `export default` (`export default <p/>`) before the `<` do not count as values.
+- In `.tsx`, a generic arrow function is TypeScript, not JSX (the rule of the TypeScript parser for `.tsx`): after `<`, an optional `const` and a name, a `,`, an `=` that is not `=>`, or `extends` followed by something other than `=`, `>` or `/`. Examples: `<T,>(x: T) => x`, `<T extends U>(x: T) => x`. Type arguments in a call (`f<T>(x)`) are TypeScript too.
+- An element that is still open at the end of the file gives the error `unterminated JSX element` with the line of the innermost element that is still open.
+- Tag names are not compared, so a mismatched close such as `<a></b>` is accepted and closes `a`.
+- Known limits, not handled and not tested (the result for these inputs is not defined): an element used as an attribute value (`attr=<b/>`), type arguments on a component (`<Foo<string> x={1} />`), a comment inside a tag (`<a /* c */ b/>`), and a generic function type in a type position in `.tsx` (`x: <T>(a: T) => T`).
+
 ## Rules
 
 These rules check how a postgres.js template is composed. They work with no database (PGJS-02 can also read a column type from the catalog when the database is allowlisted). A fix of a `PGJS-*` finding repairs the template. It is not a rewrite of the SQL text.

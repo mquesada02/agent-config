@@ -19,6 +19,7 @@ import re
 import sys
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
+JSX_EXTENSIONS = (".jsx", ".tsx")
 SQL_EXTENSION = ".sql"
 
 REGEX_KEYWORDS = frozenset(
@@ -46,6 +47,13 @@ NOT_NAME_WORDS = VALUE_WORDS | CLAUSE_START_WORDS | {"CONFLICT"}
 
 NUMBER = re.compile(r"(?:\d|\.\d)[\w.]*")
 TEMPLATE_SPECIAL = re.compile(r"[\\`$]")
+JSX_TEXT_SPECIAL = re.compile(r"[<{]")
+# The rule of the TypeScript parser for `.tsx`: after `<`, an optional `const` and a name, a `,`,
+# an `=` that is not `=>`, or `extends` followed by something other than `=`, `>` or `/` makes a
+# generic arrow function. Every other `<` before a name starts JSX.
+GENERIC_ARROW = re.compile(
+    r"<\s*(?:const\s+)?(?:[^\W\d]|\$)[\w$]*\s*(?:,|=(?!>)|extends(?![\w$])\s*[^=>/\s])"
+)
 DOLLAR_QUOTE = re.compile(r"\$(?:[^\W\d]\w*)?\$")
 PARAMETER = re.compile(r"\$\d+")
 SQL_OPERATOR_CHARS = frozenset("+-*/<>=~!@#%^&|?:\\")
@@ -414,11 +422,17 @@ class Template:
         self.tag = None
 
 
-def tokenize_js(source):
-    """Return (tokens, templates). Raises ExtractError on an unterminated construct."""
+def tokenize_js(source, jsx=False, tsx=False):
+    """Return (tokens, templates). Raises ExtractError on an unterminated construct.
+
+    With `jsx`, a JSX element is scanned as one unit (its text and attribute strings make no
+    JavaScript token). With `tsx`, the TypeScript generic arrow forms are not JSX.
+    """
     text, n = source.text, len(source.text)
     tokens, templates = [], []
-    stack = []  # ["tpl", Template] or ["expr", Template, depth]
+    # ["tpl", Template], ["expr", Template, depth], ["jsx", enclosing, state, open element starts]
+    # or ["jexpr", enclosing, depth]. `enclosing` is the Template that holds the frame, or None.
+    stack = []
     i = 0
     while i < n:
         top = stack[-1] if stack else None
@@ -448,6 +462,9 @@ def tokenize_js(source):
                 else:
                     i = j + 1
             continue
+        if top is not None and top[0] == "jsx":
+            i = scan_jsx(text, stack, tokens, i)
+            continue
         c = text[i]
         if c.isspace():
             i += 1
@@ -458,7 +475,7 @@ def tokenize_js(source):
             j = text.find("*/", i + 2)
             if j < 0:
                 if stack:
-                    raise ExtractError("unterminated template literal", source.line(stack[0][1].start))
+                    raise unterminated_frame(source, stack)
                 raise ExtractError("unterminated block comment", source.line(i))
             i = j + 2
         elif c in "'\"":
@@ -483,6 +500,9 @@ def tokenize_js(source):
             tokens.append(("tpl", "`", i, i + 1))
             stack.append(["tpl", record])
             i += 1
+        elif jsx and c == "<" and jsx_starts(text, i, tokens, tsx):
+            stack.append(["jsx", stack[-1][1] if stack else None, "tag", [i]])
+            i += 1
         elif c == "/" and slash_starts_regex(tokens):
             i = scan_regex(text, i, tokens)
         elif (end := name_end(text, i)) > i:
@@ -503,13 +523,16 @@ def tokenize_js(source):
                 tokens.append(("p", "?.", i, i + 2))
                 i += 2
             else:
-                if c == "{" and stack and stack[-1][0] == "expr":
+                if c == "{" and stack and stack[-1][0] in ("expr", "jexpr"):
                     stack[-1][2] += 1
-                elif c == "}" and stack and stack[-1][0] == "expr":
+                elif c == "}" and stack and stack[-1][0] in ("expr", "jexpr"):
                     if stack[-1][2] == 0:
-                        record = stack[-1][1]
-                        record.interpolations[-1]["end"] = i + 1
-                        tokens.append(("iend", "}", i, i + 1))
+                        if stack[-1][0] == "expr":
+                            record = stack[-1][1]
+                            record.interpolations[-1]["end"] = i + 1
+                            tokens.append(("iend", "}", i, i + 1))
+                        else:
+                            tokens.append(("p", "}", i, i + 1))
                         stack.pop()
                         i += 1
                         continue
@@ -517,15 +540,114 @@ def tokenize_js(source):
                 tokens.append(("p", c, i, i + 1))
                 i += 1
     if stack:
-        raise ExtractError("unterminated template literal", source.line(stack[0][1].start))
+        raise unterminated_frame(source, stack)
     return tokens, templates
+
+
+def unterminated_frame(source, stack):
+    """The error for the frames that are still open at the end of the file: the innermost decides."""
+    if stack[-1][0] in ("tpl", "expr"):
+        first = next(frame for frame in stack if frame[0] in ("tpl", "expr"))
+        return ExtractError("unterminated template literal", source.line(first[1].start))
+    frame = next(frame for frame in reversed(stack) if frame[0] == "jsx")
+    return ExtractError("unterminated JSX element", source.line(frame[3][-1]))
+
+
+def jsx_starts(text, i, tokens, tsx):
+    """True when the `<` at `i` starts a JSX element (or a fragment), not a comparison or a type."""
+    if not (slash_starts_regex(tokens) or after_export_default(tokens)):
+        return False
+    if tokens and punct(tokens[-1], "<"):
+        return False
+    if after_postfix_operator(tokens):
+        return False
+    if i + 1 >= len(text) or (text[i + 1] != ">" and name_end(text, i + 1) == i + 1):
+        return False
+    return not (tsx and GENERIC_ARROW.match(text, i))
+
+
+def after_export_default(tokens):
+    """The words `export default` right before an element: `export default <p/>`."""
+    return len(tokens) > 1 and name_is(tokens[-1], "default") and name_is(tokens[-2], "export")
+
+
+def after_postfix_operator(tokens):
+    """The last two tokens are a postfix `++` or `--` (two joined punctuation tokens after a value)."""
+    if len(tokens) < 3:
+        return False
+    first, second = tokens[-2], tokens[-1]
+    return (
+        first[0] == "p"
+        and second[0] == "p"
+        and first[1] == second[1]
+        and first[1] in ("+", "-")
+        and first[3] == second[2]
+        and not slash_starts_regex(tokens[-3:-2])
+    )
+
+
+def scan_jsx(text, stack, tokens, i):
+    """Advance the JSX frame on top of `stack` from `i`; return the new position."""
+    frame = stack[-1]
+    n = len(text)
+    opens = frame[3]
+    if frame[2] == "text":
+        m = JSX_TEXT_SPECIAL.search(text, i)
+        if m is None:
+            return n
+        j = m.start()
+        if text[j] == "{":
+            return open_container(stack, tokens, frame, j)
+        if text.startswith("</", j):
+            k = text.find(">", j)
+            if k < 0:
+                return n
+            opens.pop()
+            return close_element(stack, tokens, frame, k + 1)
+        opens.append(j)
+        frame[2] = "tag"
+        return j + 1
+    while i < n:
+        c = text[i]
+        if c in "\"'":
+            k = text.find(c, i + 1)
+            if k < 0:
+                return n
+            i = k + 1
+        elif c == "{":
+            return open_container(stack, tokens, frame, i)
+        elif c == ">":
+            frame[2] = "text"
+            return i + 1
+        elif text.startswith("/>", i):
+            opens.pop()
+            return close_element(stack, tokens, frame, i + 2)
+        else:
+            i += 1
+    return n
+
+
+def open_container(stack, tokens, frame, i):
+    stack.append(["jexpr", frame[1], 0])
+    tokens.append(("p", "{", i, i + 1))
+    return i + 1
+
+
+def close_element(stack, tokens, frame, end):
+    """An element ended at `end`. When no element is open, the JSX frame ends as one value token."""
+    if frame[3]:
+        frame[2] = "text"
+    else:
+        stack.pop()
+        tokens.append(("jsx", "", end, end))
+    return end
 
 
 def slash_starts_regex(tokens):
     if not tokens:
         return True
     kind, text = tokens[-1][0], tokens[-1][1]
-    if kind in ("num", "str", "regex", "tpl_end"):
+    if kind in ("num", "str", "regex", "tpl_end", "jsx"):
         return False
     if kind == "name":
         return text in REGEX_KEYWORDS
@@ -823,8 +945,8 @@ class Detector:
         return False
 
 
-def extract_js_file(source, given_tags):
-    tokens, templates = tokenize_js(source)
+def extract_js_file(source, given_tags, jsx=False, tsx=False):
+    tokens, templates = tokenize_js(source, jsx, tsx)
     detector = Detector(tokens, given_tags if given_tags is not None else [])
     detected, factory_names = detector.run()
     tags = given_tags if given_tags is not None else detected
@@ -903,7 +1025,7 @@ def parse_arguments(argv):
         form = "js"
     else:
         raise UsageError("unsupported file form: " + (extension or file_argument))
-    return file_argument, tags, form
+    return file_argument, tags, form, extension in JSX_EXTENSIONS, extension == ".tsx"
 
 
 def result(file_argument, form, error=None, detected=(), factory_names=(), tags=(), statements=()):
@@ -920,7 +1042,7 @@ def result(file_argument, form, error=None, detected=(), factory_names=(), tags=
 
 def main(argv):
     try:
-        file_argument, tags, form = parse_arguments(argv)
+        file_argument, tags, form, jsx, tsx = parse_arguments(argv)
     except UsageError as error:
         sys.stderr.write(str(error).replace("\n", " ") + "\n")
         return 2
@@ -937,7 +1059,7 @@ def main(argv):
         if form == "sql":
             output = result(file_argument, form, statements=extract_sql_file(source))
         else:
-            detected, factory_names, matched, statements = extract_js_file(source, tags)
+            detected, factory_names, matched, statements = extract_js_file(source, tags, jsx, tsx)
             output = result(file_argument, form, None, detected, factory_names, matched, statements)
     except ExtractError as error:
         output = result(file_argument, form, {"message": error.message, "line": error.line})
