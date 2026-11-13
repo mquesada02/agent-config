@@ -74,7 +74,7 @@ class S5Test(RebasedCase):
                   + [phase_commit_event(self.tip), round_event(4, **FINAL)])
         return self.items(events)["S5"]
 
-    def unavailable(self, status, text):
+    def unavailable(self, text):
         item = self.s5()
         self.assertEqual(item["result"], "fail", item["evidence"])
         self.assertIn("code-review final: round 4 is past the cap of 3", item["evidence"])
@@ -87,11 +87,11 @@ class S5Test(RebasedCase):
 
     def test_status_128_from_rev_parse_gives_no_exemption_and_names_git(self):
         self.shim(REV_PARSE_OF_THE_BASE, 128)
-        self.unavailable(128, "git rev-parse exited with status 128: fatal: simulated failure")
+        self.unavailable("git rev-parse exited with status 128: fatal: simulated failure")
 
     def test_status_128_from_merge_base_gives_no_exemption_and_names_git(self):
         self.shim(MERGE_BASE_OF_A_COMMIT, 128)
-        self.unavailable(128, "git merge-base exited with status 128: fatal: simulated failure")
+        self.unavailable("git merge-base exited with status 128: fatal: simulated failure")
 
     def test_status_1_from_merge_base_is_no_merge_base_and_gives_no_exemption_without_a_note(self):
         self.shim(MERGE_BASE_OF_A_COMMIT, 1)
