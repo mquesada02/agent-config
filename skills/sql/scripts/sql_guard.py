@@ -23,6 +23,10 @@ Its reasons, in this order: `empty`, `unterminated`, `multiple_statements`, `not
 whose effect `ROLLBACK` cannot undo, or that run SQL from a string argument, so the run goes down
 to a plain `EXPLAIN`. The tokens are the only input: the guard never connects.
 
+`scan_calls(text, mode)` reads the function calls of a plan string or a stored expression text (`mode` is `select` or
+`write`) and returns `scan` (the names on the scan list of the mode), `calls` (the call candidates `[schema, name]`) and
+`unreadable`. The lists are the ones above, read at call time: `pg_run` holds no copy.
+
 `check_diff(text)` is the guard of one statement of `pg_run diff`. It runs `check_select`, then refuses the
 names of the scan lists below (string-SQL functions and effects that `ROLLBACK` cannot undo) and unbalanced
 parentheses, and returns `(result, None)` with `sql` and `order` (the sort keys of a top-level `ORDER BY`), or
@@ -425,6 +429,49 @@ def _scan_name(token):
     if name.startswith(ADVISORY_PREFIXES) and "_xact_" not in name:
         return name
     return None
+
+
+def _call_listed(name, mode):
+    """True when the lower-cased `name` is on the scan list of `mode`. The lists are read at call time."""
+    if mode == "select":
+        return (
+            name in FORBIDDEN_NAMES or name.startswith(FORBIDDEN_PREFIXES)
+            or name in STRING_SQL_NAMES or name.startswith(STRING_SQL_PREFIXES)
+        )
+    if name == "set_config" or name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
+        return True
+    return name.startswith(ADVISORY_PREFIXES) and "_xact_" not in name
+
+
+def _call_name(token):
+    """The name of a word (ASCII-folded) or a quoted identifier (exact text), as `pg_proc.proname` holds it."""
+    return _ascii_lower(token.value) if token.kind == "word" else token.value
+
+
+def scan_calls(text, mode):
+    """The function calls of one text that the server will run (a plan string or a stored expression text).
+    `mode` is `"select"` or `"write"`. It returns `scan` (the sorted lower-cased names on the scan list of the mode, for
+    every word or quoted identifier, whether or not a `(` follows it), `calls` (the sorted `[schema or None, name]`
+    candidates: a word or quoted identifier directly followed by `(`; a quoted identifier keeps its case) and `unreadable`
+    (True when a quote, dollar-quote or comment is unterminated). The tokens are the only input."""
+    if mode not in ("select", "write"):
+        raise ValueError(mode)
+    tokens, unterminated = tokenize(text)
+    names = ("word", "qident")
+    scan = {_ascii_lower(t.value) for t in tokens if t.kind in names and _call_listed(_ascii_lower(t.value), mode)}
+    calls = set()
+    for index, token in enumerate(tokens[:-1]):
+        if token.kind not in names or not _is_punct(tokens[index + 1], "("):
+            continue
+        schema = None
+        if index >= 2 and _is_punct(tokens[index - 1], ".") and tokens[index - 2].kind in names:
+            schema = _call_name(tokens[index - 2])
+        calls.add((schema, _call_name(token)))
+    return {
+        "scan": sorted(scan),
+        "calls": [[schema, name] for schema, name in sorted(calls, key=lambda call: (call[0] or "", call[1]))],
+        "unreadable": unterminated,
+    }
 
 
 def check_write(text):
