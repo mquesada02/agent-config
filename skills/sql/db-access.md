@@ -200,7 +200,15 @@ Order. `order` is `not_applicable` when A has no top-level `ORDER BY`. When A ha
 python3 <skill folder>/scripts/pg_run.py facts --repo <repo root> --service <name> --names <name> [<name> ...]
 ```
 
-A name is `table.column` or `schema.table.column`. The parts are matched exactly (case-sensitive, with no quote handling and no case folding), so write them as they are in the catalog. An unqualified table is found through the `search_path` of the session. A name of another shape, or with a character that is not printable ASCII, is `missing` and is never sent to the server. When no name is sent, the command makes no `psql` call at all. The command takes no statement, so it needs no guard and no `--mode`. At least one name is required (a usage error, exit 2, otherwise). A name that starts with `-` is a usage error.
+A name is `table.column` or `schema.table.column`, written as the SQL writes it. The script reads each part with the PostgreSQL rules for identifiers, so Claude copies the parts with their quotes and does no folding:
+- A dot outside quotes separates the parts. A name with one part, four or more parts, or an empty part is invalid.
+- An unquoted part starts with a letter, `_` or a non-ASCII letter, and goes on with those, digits and `$` (the `ident_start` and `ident_cont` rules of `scan.l`). It is folded to lower case with ASCII rules only (`A-Z` become `a-z`; a non-ASCII letter stays as it is). Any other character, a space for example, makes the name invalid. Reserved words are not checked.
+- A quoted part (`"..."`) keeps its case, `""` inside it stands for one `"`, and a dot, a space or a non-ASCII letter belongs to the name. An unterminated quote, an empty quoted part, text after the closing quote that is not a dot, and the `U&"..."` form make the name invalid.
+- A control character (also U+0080 to U+009F), in any part, makes the name invalid.
+- Each part is cut to 63 bytes (at a character boundary), as the server cuts an identifier.
+- The parser assumes a UTF-8 server encoding, and it does not accept a space around a dot (SQL does). Both are residual risks: such a name is `missing` or may not match.
+
+An unqualified table is found through the `search_path` of the session. An invalid name is `missing` and is never sent to the server. When no name is sent, the command makes no `psql` call at all. The command takes no statement, so it needs no guard and no `--mode`. At least one name is required (a usage error, exit 2, otherwise). A name that starts with `-` is a usage error.
 
 The command checks the allowlist first, as `explain` does. It reads the server version, then runs one fixed catalog query in one read-only transaction, with the session options and the timeouts of the Timeouts and versions section. The names reach the server only as one quoted value, never as SQL text.
 
