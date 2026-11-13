@@ -322,9 +322,9 @@ class ResearchBranchRuleTest(RuleTextCase):
     """Ticket #574: the research-branch rule in section 8 and its cancellation of the wayfinder wording in section 11."""
 
     def setUp(self):
-        text = section(read(ROOT_CLAUDE_MD), 8)
-        start = text.index("A research branch is named")
-        self.rule = text[start:text.index("\n\n", start)]
+        self.section8 = section(read(ROOT_CLAUDE_MD), 8)
+        start = self.section8.index("A research branch is named")
+        self.rule = self.section8[start:self.section8.index("\n\n", start)]
 
     def test_the_rule_names_the_branch_the_file_the_base_and_the_session_that_commits(self):
         self.assert_in(self.rule, "`research/<description>`", "`docs/research/<description>.md`",
@@ -334,16 +334,15 @@ class ResearchBranchRuleTest(RuleTextCase):
     def test_the_rule_uses_the_code_path_review_audit_pr_squash_and_cleanup(self):
         self.assert_in(self.rule, "section 6 review loop", "the audit and the PR (section 6 step 5)",
                        "The owner squash-merges the PR.", "After the merge, the cleanup rule below applies.")
-        text = section(read(ROOT_CLAUDE_MD), 8)
-        self.assertGreater(text.index("After merging, run `~/.claude/hooks/worktree-cleanup/cleanup"), text.index(self.rule))
 
     def test_the_rule_covers_only_research_branches(self):
         self.assert_in(self.rule, "This rule covers only `research/*` branches.")
 
-    def test_the_rule_sits_after_the_merge_bullets_and_before_the_fresh_ci_rule(self):
-        text = section(read(ROOT_CLAUDE_MD), 8)
+    def test_the_rule_sits_after_the_merge_bullets_and_before_the_fresh_ci_rule_and_the_cleanup_rule(self):
+        text = self.section8
         self.assertGreater(text.index("A research branch is named"), text.index("- if not, create a merge commit"))
         self.assertLess(text.index("A research branch is named"), text.index("Before you give the owner the merge command"))
+        self.assertLess(text.index("A research branch is named"), text.index("After merging, run `~/.claude/hooks/worktree-cleanup/cleanup"))
 
     def test_section_eleven_cancels_the_wayfinder_throwaway_wording_in_the_cancelled_list(self):
         text = section(read(ROOT_CLAUDE_MD), 11)
