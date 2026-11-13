@@ -47,7 +47,7 @@ GRADER_FILE = os.path.join("graders", f"{JUDGE}.md")
 # The rules that the in-run grader and this script share. The script reads each one from the grader file by the
 # start of its line, so the two judges cannot drift. The other rules differ: the grader judge sees the report
 # only, this judge also sees the workflow files.
-FLAG_RULE, NAME_09_ROW, NAME_09_FIX = "A row marked with ⚑", "A NAME-09 row", "A NAME-09 Fix"
+FLAG_RULE, NAME_09_ROW, NAME_09_FIX = f"A row marked with {FLAG}", "A NAME-09 row", "A NAME-09 Fix"
 CRITERION_HEAD = (
     "Judge one finding row of a CI review report. The row passes when its Fix cell names a concrete edit "
     "(what to add, change, remove or rename, with the key or value when the edit needs one) and that edit, "
@@ -63,21 +63,20 @@ def criterion(grader_path):
     Raises OSError when the grader cannot be read and ValueError when a shared rule is missing or malformed."""
     with open(grader_path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
-    rules = []
+    rules = {}
     for start in (FLAG_RULE, NAME_09_ROW, NAME_09_FIX):
         found = [line.strip() for line in lines if line.startswith(start)]
         if len(found) != 1:
             raise ValueError(f"{len(found)} lines start with {start!r}, not 1")
-        rule = found[0]
-        if start == FLAG_RULE:
-            # The grader line goes on with the verdict sentences of the grader judge. Keep the first sentence.
-            if ". " not in rule:
-                raise ValueError(f"the line that starts with {start!r} has no sentence end")
-            rule = rule.split(". ")[0] + "."
+        rules[start] = found[0]
+    # The flag line goes on with the verdict sentences of the grader judge. Keep its first sentence.
+    if ". " not in rules[FLAG_RULE]:
+        raise ValueError(f"the line that starts with {FLAG_RULE!r} has no sentence end")
+    rules[FLAG_RULE] = rules[FLAG_RULE].split(". ")[0] + "."
+    for start, rule in rules.items():
         if rule == start or not rule.endswith("."):
             raise ValueError(f"the line that starts with {start!r} is not a full sentence")
-        rules.append(rule)
-    return "\n".join([CRITERION_HEAD, *rules, CRITERION_TAIL])
+    return "\n".join([CRITERION_HEAD, *rules.values(), CRITERION_TAIL])
 
 
 def judged_runs(result_path, pattern):

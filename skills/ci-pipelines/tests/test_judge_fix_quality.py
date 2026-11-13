@@ -161,13 +161,13 @@ class JudgeFixQuality(unittest.TestCase):
         for start in SHARED_STARTS:
             with self.subTest(start=start):
                 line = next(l for l in GRADER.splitlines() if l.startswith(start))
-                changed = GRADER.replace(line, line.replace("passes", "PASSES-CHANGED", 1).replace(
-                    "never needs", "NEEDS-CHANGED", 1), 1)
-                self.assertNotEqual(changed, GRADER)
+                word = "never needs" if start == SHARED_STARTS[2] else "passes"
+                self.assertIn(word, line)
+                changed = GRADER.replace(line, line.replace(word, "CHANGED-WORD", 1), 1)
                 self.tmp.cleanup()
                 self.setUp()
                 prompt = self.prompt_for_grader(changed)
-                self.assertTrue("PASSES-CHANGED" in prompt or "NEEDS-CHANGED" in prompt)
+                self.assertEqual(prompt.count("CHANGED-WORD"), 1)
                 for shared in self.shared_lines(changed):
                     self.assertIn(shared, prompt)
 
