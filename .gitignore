@@ -10,6 +10,8 @@
 !hooks/forked-skills/*.py
 !hooks/subagent-readonly/
 !hooks/subagent-readonly/*.py
+!hooks/setup-diff-prompt/
+!hooks/setup-diff-prompt/*.py
 !hooks/redact-secrets/
 !hooks/redact-secrets/*.py
 !hooks/workflow-audit/

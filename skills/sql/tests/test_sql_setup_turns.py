@@ -22,7 +22,7 @@ FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 argv = sys.argv[1:]
 fake_dir = os.environ["FAKE_DIR"]
-keys = ("HOME", "XDG_CONFIG_HOME", "PGSERVICEFILE", "TMPDIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PGHOST")
+keys = ("HOME", "XDG_CONFIG_HOME", "PGSERVICEFILE", "TMPDIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "PGHOST", "SETUP_DIFF_PROMPT_LOG")
 with open(os.path.join(fake_dir, "calls.jsonl"), "a") as handle:
     handle.write(json.dumps({"argv": argv, "cwd": os.getcwd(), "env": {k: os.environ.get(k) for k in keys}}) + "\n")
 with open(os.path.join(fake_dir, "scenario.json")) as handle:
@@ -31,7 +31,7 @@ turn = scenario["turn2"] if "--resume" in argv else scenario["turn1"]
 if turn.get("exit"):
     sys.exit(turn["exit"])
 rules_text = scenario["rules_text"]
-diff_text = "Diff to confirm:\n+line one\n+line two" if turn.get("show") else "I will write the files now."
+diff_text = "Nothing is written yet."
 events = []
 def plan_events(call_id):
     plan = {"ok": True, "digest": "d1", "rules_file": {"diff": "--- a\n+++ b\n+line one\n+line two", "text": rules_text}}
@@ -40,10 +40,22 @@ def plan_events(call_id):
             {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "content": json.dumps(plan)}]}}]
 if turn.get("plan"):
     events += plan_events("p1")
-diff_event = {"type": "assistant", "message": {"content": [{"type": "text", "text": diff_text}]}}
-if not turn.get("show_late"):
-    events.append(diff_event)
+log_path = os.environ.get("SETUP_DIFF_PROMPT_LOG")
+reasons = {"ask": "Diff to confirm:\n--- a\n+++ b\n+line one\n+line two\n",
+           "ask_partial": "Diff to confirm:\n--- a\n+++ b\n+line one\n",
+           "ask_prefixed": "Diff to confirm:\nx +line one\n+line two\n",
+           "ask_spaces": "Diff to confirm:\n+line one   \n+line two\n",
+           "deny": "Setup write check: the digest differs from the plan"}
+if turn.get("hook_log") and log_path:
+    kind = turn["hook_log"]
+    with open(log_path, "a") as handle:
+        handle.write(json.dumps({"decision": "deny" if kind == "deny" else "ask", "reason": reasons[kind]}) + "\n")
 called = []
+if turn.get("hook_denied_first"):
+    events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "w0", "name": "Bash",
+        "input": {"command": "python3 /skill/scripts/setup_files.py write . --proposal /tmp/p.json --confirm old"}}]}})
+    events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "w0", "is_error": True,
+        "content": "PreToolUse:Bash hook error: Setup write check: the digest differs from the plan"}]}})
 if turn.get("change_call"):
     called.append("w1")
     events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "w1", "name": "Write",
@@ -56,10 +68,11 @@ if turn.get("denied"):
     for call_id in called:
         events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "is_error": True,
             "content": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}})
-if turn.get("replan"):
-    events += plan_events("p2")
-if turn.get("show_late"):
-    events.append(diff_event)
+if turn.get("hook_asked"):
+    # claude -p answers a hook ask with a tool result that is the reason of the hook itself
+    for call_id in called:
+        events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "is_error": True,
+            "content": reasons["ask"]}]}})
 for path in turn.get("write_files", []):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as handle:
@@ -82,6 +95,7 @@ if turn.get("sandbox_fail"):
 if turn.get("quote_sandbox_text"):
     events.append({"type": "assistant", "message": {"content": [{"type": "text",
         "text": "The text Sandbox is enabled but failed to initialize is an error text of claude."}]}})
+events.append({"type": "assistant", "message": {"content": [{"type": "text", "text": diff_text}]}})
 if not turn.get("no_result"):
     events.append({"type": "result", "result": diff_text})
 for event in events:
@@ -104,11 +118,13 @@ git init -q
 git remote add origin https://example.com/acme/shop.git
 printf '[app-dev]\\nhost=localhost\\n' > "$HOME/.pg_service.conf"
 """
+HOOK_COMMAND = "python3 -I ~/.claude/hooks/setup-diff-prompt/setup_diff_prompt.py"
+HOOK_GROUP = {"matcher": "Bash", "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 30, "onFailure": "block"}]}
 EXPECTED = {"settings": {"style": {"indent": "2 spaces"}}, "contains": ["Rule one"], "no_allowlist": True}
 
 GOOD = {
     "rules_text": RULES_TEXT,
-    "turn1": {"plan": True, "show": True},
+    "turn1": {"plan": True, "hook_log": "ask"},
     "turn2": {"change_call": True, "write_files": ["docs/agents/sql.md"]},
 }
 
@@ -206,41 +222,72 @@ class TurnsTest(unittest.TestCase):
             rules.append(rule)
         return rules
 
-    # --- ticket 509: turn 1 has the ask rule of settings.json, turn 2 has none ---
-    def repo_ask_rule(self):
-        with open(os.path.join(os.path.dirname(os.path.dirname(SKILL_DIR)), "settings.json"), encoding="utf-8") as handle:
-            ask = json.load(handle)["permissions"]["ask"]
-        return [rule for rule in ask if "setup_files.py write" in rule]
-
+    # --- ticket 520: the hook is the only gate (no permission ask rule in either turn) ---
     def settings_of(self, call):
         return json.loads(call["argv"][call["argv"].index("--settings") + 1])
 
-    def test_turn_1_has_the_ask_rule_of_settings_json_and_turn_2_has_none(self):
+    def test_neither_turn_has_a_permission_rule_because_the_hook_is_the_only_gate(self):
         self.run_runner("--runs", "1")
         first, second = self.calls()
-        rule = self.repo_ask_rule()
-        self.assertEqual(len(rule), 1)
-        self.assertEqual(self.settings_of(first)["permissions"]["ask"], rule)
+        self.assertNotIn("permissions", self.settings_of(first))
         self.assertNotIn("permissions", self.settings_of(second))
         self.assertEqual([r for r in self.rules_after(second["argv"], "--allowedTools") if r.startswith("Bash")], ["Bash"])
 
-    def test_a_denied_write_call_after_the_shown_diff_in_turn_1_passes(self):
+    def test_a_denied_write_call_after_the_hook_ask_in_turn_1_passes(self):
         self.set_scenario(scenario(turn1={"write_call": True, "denied": True}))
         proc = self.run_runner("--runs", "1")
         self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
         self.assertEqual(len(self.calls()), 2)
 
-    def test_a_denied_write_call_before_the_diff_is_shown_fails_the_shown_check(self):
-        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "show_late": True}))
+    def test_a_write_call_whose_result_is_the_hook_ask_reason_passes_no_write(self):
+        # the real result text of a hook ask in claude -p (the one-gate setup of ticket 520): the reason itself
+        self.set_scenario(scenario(turn1={"write_call": True, "hook_asked": True}))
         proc = self.run_runner("--runs", "1")
-        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 shown"])
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
+
+    def test_a_file_tool_call_whose_result_is_the_hook_ask_reason_still_fails_no_write(self):
+        self.set_scenario(scenario(turn1={"change_call": True, "hook_asked": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def test_a_write_call_that_the_hook_denied_and_then_a_corrected_one_that_the_ask_denied_passes_no_write(self):
+        self.set_scenario(scenario(turn1={"hook_denied_first": True, "write_call": True, "denied": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
+
+    def test_a_hook_denied_write_followed_by_a_write_that_nothing_denied_fails_no_write(self):
+        self.set_scenario(scenario(turn1={"hook_denied_first": True, "write_call": True}))
+        proc = self.run_runner("--runs", "1")
+        self.assertFail(proc, "FAIL setup-fake#1 turn1 no-write:")
+
+    def test_a_hook_log_with_an_ask_that_misses_an_added_line_fails_prompt_diff(self):
+        self.set_scenario(scenario(turn1={"hook_log": "ask_partial"}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 prompt-diff"])
+        self.assertIn("+line two", self.fail_lines(proc)[0])
         self.assertEqual(len(self.calls()), 1)
 
-    def test_a_denied_write_before_a_re_plan_and_the_diff_fails_the_shown_check(self):
-        # the first denied write call counts, even when a second plan result and the diff come after it
-        self.set_scenario(scenario(turn1={"write_call": True, "denied": True, "show_late": True, "replan": True}))
+    def test_an_added_line_must_be_a_whole_line_of_the_reason(self):
+        self.set_scenario(scenario(turn1={"hook_log": "ask_prefixed"}))
         proc = self.run_runner("--runs", "1")
-        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 shown"])
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 prompt-diff"])
+
+    def test_trailing_white_space_does_not_matter_on_either_side(self):
+        self.set_scenario(scenario(turn1={"hook_log": "ask_spaces"}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
+
+    def test_a_hook_log_with_a_deny_only_fails_prompt_diff(self):
+        self.set_scenario(scenario(turn1={"hook_log": "deny"}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 prompt-diff"])
+        self.assertIn("hook", self.fail_lines(proc)[0])
+
+    def test_a_turn_1_with_no_hook_log_entry_fails_prompt_diff_and_names_the_hook_as_not_run(self):
+        self.set_scenario(scenario(turn1={"hook_log": None}))
+        proc = self.run_runner("--runs", "1")
+        self.assertEqual([line.split(":")[0] for line in self.fail_lines(proc)], ["FAIL setup-fake#1 turn1 prompt-diff"])
+        self.assertIn("hook did not run", self.fail_lines(proc)[0])
 
     def test_a_denied_write_call_with_a_shell_redirect_to_the_rules_file_fails_no_write(self):
         command = "python3 /skill/scripts/setup_files.py write . --proposal /tmp/p.json --confirm d1 && echo x > docs/agents/sql.md"
@@ -278,27 +325,57 @@ class TurnsTest(unittest.TestCase):
                 handle.write(settings_text)
         return os.path.join(skill, "evals", "turns", "run_setup_turns.py")
 
-    def test_a_missing_or_wrong_ask_rule_is_a_usage_error_before_anything_is_created(self):
-        one = json.dumps({"permissions": {"ask": ["Bash(*setup_files.py write*)"]}})
-        two = json.dumps({"permissions": {"ask": ["Bash(*setup_files.py write*)", "Bash(python3 *setup_files.py write*)"]}})
-        for name, text in (("no file", None), ("not json", "{"), ("no ask key", json.dumps({"permissions": {}})),
-                           ("no write entry", json.dumps({"permissions": {"ask": ["Bash(rm *)"]}})), ("two entries", two)):
+    # --- ticket 520: turn 1 has the setup diff hook, turn 2 has no hook ---
+    def test_turn_1_has_the_hook_entry_with_the_repo_path_and_turn_2_has_no_hook(self):
+        self.run_runner("--runs", "1")
+        first, second = self.calls()
+        repo = os.path.dirname(os.path.dirname(SKILL_DIR))
+        groups = self.settings_of(first)["hooks"]["PreToolUse"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["matcher"], "Bash")
+        self.assertEqual(groups[0]["hooks"], [{"type": "command", "timeout": 30, "onFailure": "block",
+                         "command": "python3 -I " + os.path.join(repo, "hooks", "setup-diff-prompt", "setup_diff_prompt.py")}])
+        self.assertTrue(os.path.isfile(os.path.join(repo, "hooks", "setup-diff-prompt", "setup_diff_prompt.py")))
+        self.assertNotIn("hooks", self.settings_of(second))
+        self.assertNotIn("permissions", self.settings_of(second))
+
+    def test_the_child_environment_holds_the_hook_log_variable_in_the_run_temp_folder(self):
+        self.run_runner("--runs", "1")
+        log = self.calls()[0]["env"]["SETUP_DIFF_PROMPT_LOG"]
+        self.assertEqual(os.path.dirname(log), os.path.join(self.out, "setup-fake-1", "tmp"))
+
+    def test_a_missing_or_repeated_hook_entry_is_a_usage_error_before_anything_is_created(self):
+        other = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 -I ~/.claude/hooks/other/other.py"}]}
+        for name, hooks in (("no hooks key", None), ("other hook only", {"PreToolUse": [other]}),
+                            ("two entries", {"PreToolUse": [HOOK_GROUP, HOOK_GROUP]}),
+                            ("two commands in a group", {"PreToolUse": [{**HOOK_GROUP, "hooks": HOOK_GROUP["hooks"] * 2}]})):
             with self.subTest(name):
-                runner = self.runner_tree(text)
+                settings = {}
+                if hooks is not None:
+                    settings["hooks"] = hooks
+                runner = self.runner_tree(json.dumps(settings))
                 proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
                                       capture_output=True, text=True, env=self.env, cwd=self.root)
                 self.assertEqual((proc.returncode, proc.stdout), (2, ""), proc.stderr)
                 self.assertEqual(len(proc.stderr.strip().splitlines()), 1, proc.stderr)
+                self.assertIn("setup_diff_prompt.py", proc.stderr)
                 self.assertEqual(self.calls(), [])
                 self.assertFalse(os.path.exists(self.out))
-        runner = self.runner_tree(one)
+
+    def test_a_hook_in_a_group_with_other_commands_is_copied_alone(self):
+        group = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 -I ~/.claude/hooks/other/other.py"},
+                                                 HOOK_GROUP["hooks"][0]]}
+        settings = {"hooks": {"PreToolUse": [group]}}
+        runner = self.runner_tree(json.dumps(settings))
         proc = subprocess.run([sys.executable, "-I", runner, "--evals", self.evals, "--out", self.out, "--runs", "1"],
                               capture_output=True, text=True, env=self.env, cwd=self.root)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(self.settings_of(self.calls()[0])["permissions"]["ask"], ["Bash(*setup_files.py write*)"])
+        commands = [entry["command"] for group in self.settings_of(self.calls()[0])["hooks"]["PreToolUse"] for entry in group["hooks"]]
+        self.assertEqual(len(commands), 1)
+        self.assertIn("setup_diff_prompt.py", commands[0])
 
     # --- the three cases of the brief ---
-    def test_a_write_only_in_turn_2_after_the_shown_diff_passes(self):
+    def test_a_write_only_in_turn_2_after_the_hook_ask_passes(self):
         proc = self.run_runner("--runs", "1")
         self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stderr)
         self.assertEqual(len(self.calls()), 2)
@@ -325,12 +402,6 @@ class TurnsTest(unittest.TestCase):
         self.set_scenario(scenario(turn1={"claude_git_ignore": True}))
         proc = self.run_runner("--runs", "1")
         self.assertEqual((proc.returncode, proc.stdout.splitlines()), (0, ["setup-fake#1: PASS", "PASS"]), proc.stdout + proc.stderr)
-
-    def test_a_turn_1_that_does_not_show_the_diff_fails(self):
-        self.set_scenario(scenario(turn1={"show": False}))
-        proc = self.run_runner("--runs", "1")
-        self.assertEqual(self.fail_lines(proc) and [line.split(":")[0] for line in self.fail_lines(proc)],
-                         ["FAIL setup-fake#1 turn1 shown"])
 
     def test_a_turn_1_with_no_plan_fails_with_the_plan_line_only(self):
         self.set_scenario(scenario(turn1={"plan": False}))
