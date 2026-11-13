@@ -11,6 +11,9 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 SCRIPT = os.path.join(SKILL, "scripts", "pg_run.py")
+sys.path.insert(0, os.path.join(SKILL, "scripts"))
+
+import sql_guard  # noqa: E402
 
 VERSIONS = ("13", "18")
 PULL_SECONDS = 300
@@ -322,6 +325,53 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
         done = host_psql(self.ports[version], "-c", "SELECT count(*), sum(id) FROM public.facts_t")
         self.assertEqual(done.returncode, 0, done.stderr)
         return done.stdout.strip()
+
+    def server_run(self, version, text):
+        """The text on the server as the user wrote it, with the result header shown."""
+        return host_psql(self.ports[version], "-P", "tuples_only=off", "-c", text)
+
+    def test_a_long_s_select_is_a_syntax_error_on_the_server_and_refused_by_the_guard(self):
+        text = "ſelect 1"
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                done = self.server_run(version, text)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("syntax error", done.stderr)
+        sql, refusal = sql_guard.check_select(text)
+        self.assertEqual((sql, refusal["reason"]), (None, "not_select"))
+
+    def test_the_text_that_the_guard_sends_gives_the_server_result_of_the_text_of_the_user(self):
+        nbsp_text = "SELECT 1 AS a "
+        vertical_tab_text = "SELECT 1 AS a\v"
+        for version in VERSIONS:
+            for text in (nbsp_text, vertical_tab_text):
+                with self.subTest(version=version, text=repr(text)):
+                    sent, refusal = sql_guard.check_select(text)
+                    self.assertIsNone(refusal)
+                    self.assertEqual(sent, text)
+                    written, guarded = self.server_run(version, text), self.server_run(version, sent)
+                    self.assertEqual((written.returncode, written.stdout), (guarded.returncode, guarded.stdout))
+            nbsp = self.server_run(version, nbsp_text)
+            self.assertEqual(nbsp.returncode, 0, nbsp.stderr)
+            self.assertEqual(nbsp.stdout.splitlines()[0], "a ")
+            tab = self.server_run(version, vertical_tab_text)
+            if version == "13":
+                self.assertNotEqual(tab.returncode, 0)
+                self.assertIn("syntax error", tab.stderr)
+            else:
+                self.assertEqual(tab.returncode, 0, tab.stderr)
+                self.assertEqual(tab.stdout.splitlines()[0], "a")
+
+    def test_a_kelvin_sign_name_is_another_function_on_the_server_and_has_no_dblink_scan_in_the_guard(self):
+        text = "SELECT dblinK('x')"
+        result, refusal = sql_guard.check_select_scan(text)
+        self.assertIsNone(refusal)
+        self.assertEqual(result["scan"], [])
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                done = self.server_run(version, text)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertIn("does not exist", done.stderr)
 
     def test_facts_reads_nullability_and_type_from_the_catalog(self):
         for version in VERSIONS:
