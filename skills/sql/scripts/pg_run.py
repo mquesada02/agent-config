@@ -39,8 +39,11 @@ user statement reaches the server only in a `-c` argument. Three read-only sessi
 the version (`psql --csv`, `LIMIT 0`), the column types and catalog flags (`pg_typeof` through a join that is never
 true, so the statements are planned and not run), and the proof (one `SELECT` with `MATERIALIZED` CTEs named `pgrun_*`:
 `EXCEPT ALL` both ways and, for a top-level `ORDER BY` of A with resolvable keys, the count of repeated key tuples of A).
-The order state is static: `checked` needs no ties in A and the same normalized top-level `ORDER BY` keys in B; B with
-other keys, no `ORDER BY` or keys that do not resolve gives `partial` with `b_order`.
+The order state is static: `checked` needs no ties in A and the same normalized top-level `ORDER BY` keys in B (position,
+direction, nulls, `COLLATE` collation and `USING` operator); B with other keys, no `ORDER BY` or keys that do not resolve
+gives `partial` with `b_order`. A key may be a position, an output column name, a qualified name or a name with `COLLATE`
+that is exactly one select-list item, and `USING <` or `USING >` when the type session proves the operator; see
+`db-access.md` (Diff, Order) for the exact rule.
 
 Exit code: 0 when `ok` is true, 1 when `ok` is false, 2 for a usage error (one
 line on stderr, nothing on stdout). Needs Python 3.11 or newer (tomllib).
@@ -741,9 +744,34 @@ SELECT json_build_object(
           ))
       ))
     ),
+    'lt', @LT@,
+    'gt', @GT@,
     'leaf', info.leaf::bigint
   )), '{{}}'::json) FROM info)
 )"""
+
+
+def order_operator_sql(strategy, operator):
+    """The SQL boolean for the type of `info.oid`: a default btree operator class that the type reaches (the type itself, or a
+    type that it casts to in an implicit, binary-coercible way) has, in its own family, the `strategy` member of the class
+    input type that is the operator `operator` as the session `search_path` resolves it (`USING <` or `USING >`). The
+    class input type is never the column type: a `varchar` column reaches the `text` class. A domain, array, range or enum
+    has no class of its own, so the answer is false (`USING` on it stays partial)."""
+    return f"""EXISTS (
+      SELECT 1 FROM pg_opclass oc
+      JOIN pg_am am ON am.oid = oc.opcmethod
+      JOIN pg_amop ao ON ao.amopfamily = oc.opcfamily
+      WHERE oc.opcdefault AND am.amname = 'btree'
+        AND (oc.opcintype = info.oid OR EXISTS (
+          SELECT 1 FROM pg_cast pc WHERE pc.castsource = info.oid AND pc.casttarget = oc.opcintype AND pc.castmethod = 'b' AND pc.castcontext = 'i'
+        ))
+        AND ao.amoppurpose = 's' AND ao.amopstrategy = {strategy}
+        AND ao.amoplefttype = oc.opcintype AND ao.amoprighttype = oc.opcintype
+        AND ao.amopopr = to_regoperator(format('{operator}(%s,%s)', oc.opcintype::regtype, oc.opcintype::regtype))
+    )"""
+
+
+TYPES_SQL = TYPES_SQL.replace("@LT@", order_operator_sql(1, "<")).replace("@GT@", order_operator_sql(5, ">"))
 SAMPLE_LIMIT = 20
 
 
@@ -793,6 +821,7 @@ def parse_types(out, count):
         if (
             not re.fullmatch(r"\d{1,10}", key) or not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
             or type(entry.get("float")) is not bool or type(entry.get("equality")) is not bool
+            or type(entry.get("lt")) is not bool or type(entry.get("gt")) is not bool
             or type(entry.get("leaf")) is not int or str(entry["leaf"]) not in data["types"]
         ):
             raise bad_output(message)
@@ -802,41 +831,67 @@ def parse_types(out, count):
     return data["a"], data["b"], types
 
 
-def sort_key_list(order, names, mismatch):
-    """The normalized sort keys of a statement, a list of `(1-based position, descending, effective nulls)`, or None when the
-    statement has no top-level `ORDER BY`, its keys were not extracted, or a key does not resolve. A key must name one output
-    column, or be a position in range, and its column must have the same type in A and B. The effective nulls is the written
-    one, else the PostgreSQL default (`last` for ascending, `first` for descending)."""
+def reference_position(parts, items, names):
+    """The 1-based output position of a reference key (`t.col`, or a bare name with `COLLATE`), or None. `items` is the
+    select list as `sql_guard` read it. The key resolves only when the list is known, has one item for each output column,
+    exactly one item is that reference (the same folded parts), and that item's output name is the name of the column at
+    its position (this rejects a postfix keyword that the guard read as an alias)."""
+    if items is None or len(items) != len(names):
+        return None
+    found = [index for index, item in enumerate(items) if item["ref"] == parts]
+    if len(found) != 1 or items[found[0]]["name"] != names[found[0]]:
+        return None
+    return found[0] + 1
+
+
+def sort_key_list(order, items, names, mismatch, orderable):
+    """The normalized sort keys of a statement, a list of `(1-based position, descending, effective nulls, collation,
+    operator)`, or None when the statement has no top-level `ORDER BY`, its keys were not extracted, or a key does not
+    resolve. A key is a position in range, one output column name, or a reference that is one select item (see
+    `reference_position`); its column must have the same type in A and B; a `USING` operator must be in `orderable[position - 1]`
+    (the operators that the type session proved for that column). The effective nulls is the written one, else the PostgreSQL
+    default (`last` for ascending, `first` for descending). The collation and the operator are as the guard read them."""
     if order is None or "keys" not in order:
         return None
     keys = []
     for key in order["keys"]:
         if key["operand"] == "position":
             position = key["value"] if 1 <= key["value"] <= len(names) else None
+        elif key["operand"] == "ref":
+            position = reference_position(key["value"], items, names)
         else:
             found = [index + 1 for index, name in enumerate(names) if name == key["value"]]
             position = found[0] if len(found) == 1 else None
         if position is None or position - 1 in mismatch:
             return None
-        keys.append((position, key["descending"], key["nulls"] or ("first" if key["descending"] else "last")))
+        if key["using"] is not None and key["using"] not in orderable[position - 1]:
+            return None
+        nulls = key["nulls"] or ("first" if key["descending"] else "last")
+        keys.append((position, key["descending"], nulls, key["collation"], key["using"]))
     return keys
 
 
-def resolve_order(order, names, mismatch):
+def resolve_order(order, items, names, mismatch, orderable):
     """`(state, reason, keys)` for the order proof of A: `not_applicable`, or `partial` with the reason `sort_keys`, or
     `checked` with the normalized sort keys (see `sort_key_list`)."""
     if order is None:
         return "not_applicable", None, None
-    keys = sort_key_list(order, names, mismatch)
+    keys = sort_key_list(order, items, names, mismatch, orderable)
     if keys is None:
         return "partial", "sort_keys", None
     return "checked", None, keys
 
 
+def quote_identifier(name):
+    """The identifier `name` (as the guard read it) quoted for SQL: `"` doubled, never built from other text."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def proof_sql(sql_a, sql_b, count, text_columns, keys):
     """The proof `SELECT` of `diff`: all CTEs are `MATERIALIZED` (each statement runs once), the names start with `pgrun_`, and
     every user statement is followed by a newline before its closing parenthesis. `keys` is None or the normalized sort keys
-    of A, which the tie count groups by."""
+    of A, which the tie count groups by (a key with a collation groups `COLLATE` that collation; the `USING` equality is the
+    default equality of the family, which `GROUP BY` uses)."""
     names = [f"c{i}" for i in range(1, count + 1)]
     columns = ", ".join(names)
     compared = ", ".join(f"{name}::text AS {name}" if index in text_columns else name for index, name in enumerate(names))
@@ -855,7 +910,10 @@ def proof_sql(sql_a, sql_b, count, text_columns, keys):
         "'oa', " + sample.format(name="pgrun_oa"), "'ob', " + sample.format(name="pgrun_ob"),
     ]
     if keys:
-        group = ", ".join(f"c{position}" for position, _, _ in keys)
+        group = ", ".join(
+            f"c{position}" + (f" COLLATE {quote_identifier(collation)}" if collation is not None else "")
+            for position, _, _, collation, _ in keys
+        )
         fields.append(f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)")
     return "WITH " + ",\n".join(parts) + "\nSELECT json_build_object(" + ", ".join(fields) + ")"
 
@@ -905,8 +963,11 @@ def diff(service, checked_a, checked_b, overrides):
     mismatch = [i for i in range(count) if oids_a[i] != oids_b[i]]
     casts = [i for i in range(count) if i not in mismatch and not types[oids_a[i]]["equality"]]
     floats = [i for i in range(count) if types[oids_a[i]]["float"] or types[oids_b[i]]["float"]]
-    state, reason, keys = resolve_order(checked_a["order"], names_a, mismatch)
-    if state == "checked" and sort_key_list(checked_b["order"], names_b, mismatch) != keys:
+    orderable = [
+        {operator for operator, flag in (("<", "lt"), (">", "gt")) if types[oids_a[i]][flag]} for i in range(count)
+    ]
+    state, reason, keys = resolve_order(checked_a["order"], checked_a["items"], names_a, mismatch, orderable)
+    if state == "checked" and sort_key_list(checked_b["order"], checked_b["items"], names_b, mismatch, orderable) != keys:
         state, reason, keys = "partial", "b_order", None
     proof_text = proof_sql(sql_a, sql_b, count, set(mismatch) | set(casts), keys)
     proof = parse_proof(

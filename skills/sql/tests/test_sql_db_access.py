@@ -116,6 +116,23 @@ class DbAccessModuleTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(text, body)
 
+    def test_the_order_paragraph_lists_the_key_forms_and_the_select_list_rule(self):
+        paragraphs = [p for p in section(self.text, "Diff").split("\n\n") if p.startswith("Order.")]
+        self.assertEqual(len(paragraphs), 1)
+        order = paragraphs[0]
+        for text in (
+            "`COLLATE <collation>`", "`USING <` or `USING >`", "default btree operator class", "`t.col`", "`s.t.col`",
+            "exactly one select-list item", "square brackets", "`WITHIN`", "`*`", "`USING <` and `ASC` are different keys",
+            "never a guess", "tie count", "`sort_keys`", "`b_order`", "`ties`",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, order)
+        self.assertNotIn("an expression, a qualified name, `USING`, `COLLATE`", order)
+
+    def test_the_residual_risk_section_names_the_using_search_path_risk(self):
+        body = section(self.text, "Residual risk")
+        self.assertRegex(body, r"`USING`[^\n]*`search_path`")
+
     def test_the_select_downgrade_is_documented_and_the_open_issue_note_is_gone(self):
         self.assertNotIn("tracked in issue #476", self.text)
         body = section(self.text, "Read-only path")

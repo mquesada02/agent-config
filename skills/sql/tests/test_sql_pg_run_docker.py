@@ -991,6 +991,44 @@ class PgRunDiffDockerTest(DockerServers, unittest.TestCase):
             for version, data in self.each_version(a, a):
                 self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "sort_keys", True), data)
 
+    def test_collate_c_is_checked_and_a_nondeterministic_collation_counts_its_equal_values_as_ties(self):
+        a = 'SELECT id, w FROM diffs.words ORDER BY w COLLATE "C"'
+        for version, data in self.each_version(a, a):
+            self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+        a = "SELECT id, w FROM diffs.words ORDER BY w COLLATE ci"
+        for version, data in self.each_version(a, a):
+            self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "ties", True), data)
+        a = "SELECT id, w FROM diffs.distinct_words ORDER BY w COLLATE ci"
+        for version, data in self.each_version(a, a):
+            self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+
+    def test_a_rewrite_that_changes_the_collation_is_partial_with_b_order(self):
+        a = 'SELECT id, w FROM diffs.distinct_words ORDER BY w COLLATE "C"'
+        for b in ("SELECT id, w FROM diffs.distinct_words ORDER BY w", "SELECT id, w FROM diffs.distinct_words ORDER BY w COLLATE ci"):
+            for version, data in self.each_version(a, b):
+                self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "b_order", True), data)
+
+    def test_using_is_checked_on_integer_and_varchar_and_partial_on_types_that_the_catalog_test_does_not_prove(self):
+        for a in ("SELECT id FROM diffs.t ORDER BY id USING >", "SELECT id, vc FROM diffs.words ORDER BY vc USING <"):
+            for version, data in self.each_version(a, a):
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+        for column in ("d", "arr", "r", "m"):
+            a = f"SELECT id, {column} FROM diffs.kinds ORDER BY {column} USING <"
+            for version, data in self.each_version(a, a):
+                self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "sort_keys", True), data)
+
+    def test_a_qualified_key_on_a_join_is_checked_when_it_is_one_select_item_and_partial_otherwise(self):
+        join = "FROM diffs.owners o JOIN diffs.pets p ON p.owner_id = o.id"
+        for a in (f"SELECT o.name AS owner, p.name AS pet {join} ORDER BY p.name", f"SELECT o.name, p.name {join} ORDER BY p.name"):
+            for version, data in self.each_version(a, a):
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+        a = f"SELECT o.name AS owner, p.name AS pet {join} ORDER BY p.id"
+        for version, data in self.each_version(a, a):
+            self.assertEqual((data["order"], data["reason"]), ("partial", "sort_keys"), data)
+        a = f"SELECT o.name, p.name {join} ORDER BY o.name COLLATE \"C\", p.name USING >"
+        for version, data in self.each_version(a, a):
+            self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+
     def test_a_position_beyond_the_columns_is_a_statement_error_of_the_server(self):
         for version, data in self.each_version("SELECT id FROM diffs.t ORDER BY 5", "SELECT id FROM diffs.t"):
             self.assertEqual((data["ok"], data["error"]), (False, "statement_failed"), data)

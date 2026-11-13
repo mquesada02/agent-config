@@ -31,6 +31,22 @@ BEGIN
 END
 $wide$;
 
+-- Sort key forms. The nondeterministic collation `ci` is in `public`: the key reader does not read a schema-qualified collation.
+CREATE COLLATION public.ci (provider = icu, locale = 'und-u-ks-level2', deterministic = false);
+CREATE TABLE diffs.words (id int PRIMARY KEY, w text, vc varchar(10));
+INSERT INTO diffs.words VALUES (1, 'a', 'a'), (2, 'A', 'A'), (3, 'b', 'b'), (4, 'c', 'c');
+CREATE TABLE diffs.distinct_words (id int PRIMARY KEY, w text);
+INSERT INTO diffs.distinct_words VALUES (1, 'a'), (2, 'b'), (3, 'c');
+CREATE DOMAIN diffs.pos AS int;
+CREATE TYPE diffs.mood AS ENUM ('sad', 'ok', 'happy');
+CREATE TABLE diffs.kinds (id int PRIMARY KEY, d diffs.pos, arr int[], r int4range, m diffs.mood);
+INSERT INTO diffs.kinds VALUES
+  (1, 1, '{1}', '[1,2)', 'sad'), (2, 2, '{2}', '[2,3)', 'ok'), (3, 3, '{3}', '[3,4)', 'happy');
+CREATE TABLE diffs.owners (id int PRIMARY KEY, name text);
+INSERT INTO diffs.owners VALUES (1, 'ann'), (2, 'bob');
+CREATE TABLE diffs.pets (id int PRIMARY KEY, owner_id int, name text);
+INSERT INTO diffs.pets VALUES (1, 1, 'cat'), (2, 1, 'dog'), (3, 2, 'eel');
+
 CREATE SEQUENCE diffs.seq;
 
 CREATE FUNCTION diffs.probe() RETURNS text LANGUAGE plpgsql AS $f$
