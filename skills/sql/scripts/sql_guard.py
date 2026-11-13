@@ -30,6 +30,7 @@ parentheses, and returns `(result, None)` with `sql` and `order` (the sort keys 
 """
 import collections
 import re
+import string
 
 Token = collections.namedtuple("Token", "kind value start")
 
@@ -38,6 +39,10 @@ Token = collections.namedtuple("Token", "kind value start")
 # where the server does not, and could hide a `;` in a dollar-quoted string that the server never opens.
 IDENT_START = "A-Za-z_\x80-\U0010ffff"
 WHITESPACE = " \t\n\r\f\v"
+# The blanks that the cut of the sent text strips. The `space` rule of `scan.l` (checked on 2026-11-13) is `[ \t\n\r\f]` on
+# PostgreSQL 13 to 16 and `[ \t\n\r\f\v]` on PostgreSQL 17 and 18. The cut strips the set that is blank on every supported
+# version, so each server reads the text of the user as written. Any other character (a no-break space) is an identifier character.
+BLANKS = " \t\n\r\f"
 WORD = re.compile(rf"[{IDENT_START}][{IDENT_START}0-9$]*")
 LINE_END = re.compile(r"[\n\r]")  # PostgreSQL ends a `--` comment at a line feed or a carriage return
 # The text between two parts of one string literal (scan.l `quotecontinue`): blanks and `--` comments,
@@ -92,6 +97,20 @@ STRING_SQL_PREFIXES = ("query_to_xml", "cursor_to_xml", "crosstab")
 SCAN_NAMES = frozenset(["lo_export", "setval"]) | STRING_SQL_NAMES
 SCAN_PREFIXES = ("dblink",) + STRING_SQL_PREFIXES
 ADVISORY_PREFIXES = ("pg_advisory", "pg_try_advisory")
+
+
+_UPPER_TABLE = str.maketrans(string.ascii_lowercase, string.ascii_uppercase)
+_LOWER_TABLE = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def _ascii_upper(text):
+    """The PostgreSQL scanner folds ASCII letters only: `str.upper` would also map U+017F (long s) to `S`."""
+    return text.translate(_UPPER_TABLE)
+
+
+def _ascii_lower(text):
+    """The PostgreSQL scanner folds ASCII letters only: `str.lower` would also map U+212A (Kelvin sign) to `k`."""
+    return text.translate(_LOWER_TABLE)
 
 
 def _quoted_end(text, start, quote, backslash):
@@ -183,7 +202,7 @@ def tokenize(text):
                 index += 1
         elif word_match := WORD.match(text, index):
             word = word_match.group()
-            if word.lower() == "e" and text.startswith("'", index + 1):
+            if _ascii_lower(word) == "e" and text.startswith("'", index + 1):
                 end = _escape_string_end(text, index + 1)
                 if end == -1:
                     tokens.append(Token("bad", "", index))
@@ -191,7 +210,7 @@ def tokenize(text):
                     break
                 tokens.append(Token("string", text[index:end], index))
                 index = end
-            elif word.lower() == "u" and text.startswith('&"', index + 1):
+            elif _ascii_lower(word) == "u" and text.startswith('&"', index + 1):
                 tokens.append(Token("uamp", word, index))
                 index += len(word)
             else:
@@ -220,14 +239,14 @@ def _static_review_only(first):
     if first.kind == "punct" and first.value == "(":
         return False
     if first.kind == "word":
-        return first.value.upper() not in ANALYZABLE_FIRST
+        return _ascii_upper(first.value) not in ANALYZABLE_FIRST
     return True
 
 
 def _forbidden_name(token):
     if token.kind not in ("word", "qident"):
         return False
-    name = token.value.lower()
+    name = _ascii_lower(token.value)
     return name in FORBIDDEN_NAMES or name.startswith(FORBIDDEN_PREFIXES)
 
 
@@ -243,20 +262,20 @@ def _select_tokens(text):
     if semicolons and semicolons[0] != len(tokens) - 1:
         return (*_refuse("multiple_statements"), None)
     first = tokens[0]
-    first_word = first.value.upper() if first.kind == "word" else None
+    first_word = _ascii_upper(first.value) if first.kind == "word" else None
     if first_word in WRITE_WORDS:
         return (*_refuse("write_statement"), None)
     if first_word not in SELECT_WORDS:
         return (*_refuse("not_select", _static_review_only(first)), None)
     for token in tokens:
-        if token.kind == "word" and token.value.upper() in DATA_MODIFYING_WORDS:
+        if token.kind == "word" and _ascii_upper(token.value) in DATA_MODIFYING_WORDS:
             return (*_refuse("data_modifying"), None)
     if any(_forbidden_name(t) for t in tokens):
         return (*_refuse("forbidden_function"), None)
     if any(t.kind == "uamp" for t in tokens):
         return (*_refuse("unicode_identifier"), None)
     cut = tokens[semicolons[0]].start if semicolons else len(text)
-    return text[:cut].strip(), None, tokens
+    return text[:cut].strip(BLANKS), None, tokens
 
 
 def check_select(text):
@@ -267,7 +286,7 @@ def check_select(text):
 def _string_sql_name(token):
     if token.kind not in ("word", "qident"):
         return None
-    name = token.value.lower()
+    name = _ascii_lower(token.value)
     if name in STRING_SQL_NAMES or name.startswith(STRING_SQL_PREFIXES):
         return name
     return None
@@ -294,7 +313,7 @@ def _is_punct(token, value):
 
 
 def _is_word(token, word):
-    return token.kind == "word" and token.value.upper() == word
+    return token.kind == "word" and _ascii_upper(token.value) == word
 
 
 def _after_parentheses(tokens, index):
@@ -341,7 +360,7 @@ def _is_write_main(tokens):
         if _is_punct(tokens[index], ","):
             index += 1
             continue
-        return tokens[index].kind == "word" and tokens[index].value.upper() in WRITE_WORDS
+        return tokens[index].kind == "word" and _ascii_upper(tokens[index].value) in WRITE_WORDS
 
 
 def _write_static_review_only(tokens):
@@ -351,11 +370,11 @@ def _write_static_review_only(tokens):
         return False
     if first.kind != "word":
         return True
-    word = first.value.upper()
+    word = _ascii_upper(first.value)
     if word in ANALYZABLE_FIRST:
         return False
     if word in SELECT_WORDS:
-        return any(t.kind == "word" and t.value.upper() in DATA_MODIFYING_WORDS for t in tokens)
+        return any(t.kind == "word" and _ascii_upper(t.value) in DATA_MODIFYING_WORDS for t in tokens)
     return True
 
 
@@ -369,7 +388,7 @@ def _write_targets(tokens):
     for index, token in enumerate(tokens):
         if token.kind != "word":
             continue
-        verb = token.value.upper()
+        verb = _ascii_upper(token.value)
         position = index + 1
         if verb in ("INSERT", "MERGE"):
             follower = "INTO"
@@ -393,14 +412,14 @@ def _write_targets(tokens):
             else:
                 break
         if parts:
-            targets.append([verb.lower(), ".".join(parts)])
+            targets.append([_ascii_lower(verb), ".".join(parts)])
     return targets
 
 
 def _scan_name(token):
     if token.kind not in ("word", "qident"):
         return None
-    name = token.value.lower()
+    name = _ascii_lower(token.value)
     if name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
         return name
     if name.startswith(ADVISORY_PREFIXES) and "_xact_" not in name:
@@ -418,21 +437,21 @@ def check_write(text):
     semicolons = [i for i, t in enumerate(tokens) if _is_semicolon(t)]
     if semicolons and semicolons[0] != len(tokens) - 1:
         return _write_refuse("multiple_statements")
-    first_word = tokens[0].value.upper() if tokens[0].kind == "word" else None
+    first_word = _ascii_upper(tokens[0].value) if tokens[0].kind == "word" else None
     body = tokens[:semicolons[0]] if semicolons else tokens
     if not (first_word in WRITE_WORDS or (first_word == "WITH" and _is_write_main(body))):
         static = _write_static_review_only(tokens)
         select_form = first_word in SELECT_WORDS and not static
         return _write_refuse("not_write", static, "not_write_select" if select_form else "not_write_other")
-    if any(t.kind in ("word", "qident") and t.value.lower() == "set_config" for t in tokens):
+    if any(t.kind in ("word", "qident") and _ascii_lower(t.value) == "set_config" for t in tokens):
         return _write_refuse("forbidden_function")
     if any(t.kind == "uamp" for t in tokens):
         return _write_refuse("unicode_identifier")
     cut = tokens[semicolons[0]].start if semicolons else len(text)
     return {
-        "sql": text[:cut].strip(WHITESPACE),
+        "sql": text[:cut].strip(BLANKS),
         "nextval": any(
-            t.kind in ("word", "qident") and t.value.lower() == "nextval" and i + 1 < len(tokens) and _is_punct(tokens[i + 1], "(")
+            t.kind in ("word", "qident") and _ascii_lower(t.value) == "nextval" and i + 1 < len(tokens) and _is_punct(tokens[i + 1], "(")
             for i, t in enumerate(tokens)
         ),
         "scan": sorted({name for name in map(_scan_name, tokens) if name}),
@@ -476,10 +495,6 @@ def _balanced(tokens):
     return depth == 0
 
 
-def _ascii_lower(text):
-    return "".join(char.lower() if "A" <= char <= "Z" else char for char in text)
-
-
 def _sort_key(tokens):
     """The key dict of one `ORDER BY` key (one operand, then ASC or DESC, then NULLS FIRST or LAST), or None."""
     if not tokens:
@@ -499,7 +514,7 @@ def _sort_key(tokens):
         rest = rest[1:]
     nulls = None
     if len(rest) == 2 and _is_word(rest[0], "NULLS") and (_is_word(rest[1], "FIRST") or _is_word(rest[1], "LAST")):
-        nulls = rest[1].value.lower()
+        nulls = _ascii_lower(rest[1].value)
         rest = []
     if rest:
         return None
@@ -527,7 +542,7 @@ def _order_keys(body):
             depth += 1
         elif _is_punct(token, ")"):
             depth -= 1
-        elif depth == 0 and token.kind == "word" and token.value.upper() in ORDER_END_WORDS:
+        elif depth == 0 and token.kind == "word" and _ascii_upper(token.value) in ORDER_END_WORDS:
             break
         elif depth == 0 and _is_punct(token, ","):
             parts.append(current)
@@ -554,7 +569,7 @@ def check_diff(text):
     body = tokens[:semicolons[0]] if semicolons else tokens
     for token in body:
         if token.kind in ("word", "qident"):
-            name = token.value.lower()
+            name = _ascii_lower(token.value)
             if name in SCAN_NAMES or name.startswith(SCAN_PREFIXES):
                 return _diff_refuse("forbidden_function")
     if not _balanced(body):
