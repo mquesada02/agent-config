@@ -53,7 +53,7 @@ The security rules and the tool merge read these sources. Run no other command f
 
 ## Required checks
 
-Use the `required_checks` fact. With the status `detected` its value lists the required check names (an empty list is `none`). With the status `unknown`, section 3 reads `Required checks: unreadable (<source text of the fact>). Every current job name may be required.` In that case, when the review proposes a rename or a split, add a NAME-09 row (suggestion) marked with ⚑. Mark each other finding that removes or renames a required check with ⚑.
+Use the `required_checks` fact. With the status `detected` its value lists the required check names (an empty list is `none`). With the status `unknown`, section 3 reads `Required checks: unreadable (<source text of the fact>). Every current job name may be required.` In that case, when the review proposes a rename or a split, add a NAME-09 row (suggestion) marked with ⚑. Its Fix cell is the fixed sentence of NAME-09, which never says "before merging". Mark each other finding that removes or renames a required check with ⚑.
 
 ## Tool status
 
