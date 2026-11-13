@@ -202,10 +202,11 @@ python3 <skill folder>/scripts/pg_run.py facts --repo <repo root> --service <nam
 
 A name is `table.column` or `schema.table.column`, written as the SQL writes it. The script reads each part with the PostgreSQL rules for identifiers, so Claude copies the parts with their quotes and does no folding:
 - A dot outside quotes separates the parts. A name with one part, four or more parts, or an empty part is invalid.
-- An unquoted part starts with a letter, `_` or a non-ASCII letter, and goes on with those, digits and `$` (the `ident_start` and `ident_cont` rules of `scan.l`). It is folded to lower case with ASCII rules only (`A-Z` become `a-z`; a non-ASCII letter stays as it is). Any other character, a space for example, makes the name invalid. Reserved words are not checked.
+- An unquoted part starts with a letter, `_` or any character at or above U+0080, and goes on with those, digits and `$` (the `ident_start` and `ident_cont` rules of `scan.l`). It is folded to lower case with ASCII rules only (`A-Z` become `a-z`; a non-ASCII letter stays as it is). Any other character, a space for example, makes the name invalid. Reserved words are not checked.
 - A quoted part (`"..."`) keeps its case, `""` inside it stands for one `"`, and a dot, a space or a non-ASCII letter belongs to the name. An unterminated quote, an empty quoted part, text after the closing quote that is not a dot, and the `U&"..."` form make the name invalid.
-- A control character (also U+0080 to U+009F), in any part, makes the name invalid.
-- Each part is cut to 63 bytes (at a character boundary), as the server cuts an identifier.
+- A control character (also U+0080 to U+009F), in any part, makes the name invalid. So does a character that UTF-8 cannot encode (a byte that is not valid UTF-8 in the name).
+- Each part is cut to 63 bytes (at a character boundary), as the server cuts an identifier. Two names that differ only after the cut are one name for the catalog query.
+- The keys of `facts` stay the names exactly as you gave them, in the same order.
 - The parser assumes a UTF-8 server encoding, and it does not accept a space around a dot (SQL does). Both are residual risks: such a name is `missing` or may not match.
 
 An unqualified table is found through the `search_path` of the session. An invalid name is `missing` and is never sent to the server. When no name is sent, the command makes no `psql` call at all. The command takes no statement, so it needs no guard and no `--mode`. At least one name is required (a usage error, exit 2, otherwise). A name that starts with `-` is a usage error.
