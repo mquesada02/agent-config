@@ -801,7 +801,7 @@ def proof_sql(sql_a, sql_b, count, text_columns, keys):
         "'oa', " + sample.format(name="pgrun_oa"), "'ob', " + sample.format(name="pgrun_ob"),
     ]
     if keys:
-        group = ", ".join(f"c{key[0]}" for key in keys)
+        group = ", ".join(f"c{position}" for position, _, _ in keys)
         fields.append(f"'ties', (SELECT count(*) FROM (SELECT 1 FROM pgrun_ra GROUP BY {group} HAVING count(*) > 1) AS k)")
     return "WITH " + ",\n".join(parts) + "\nSELECT json_build_object(" + ", ".join(fields) + ")"
 
@@ -852,6 +852,8 @@ def diff(service, checked_a, checked_b, overrides):
     casts = [i for i in range(count) if i not in mismatch and not types[oids_a[i]]["equality"]]
     floats = [i for i in range(count) if types[oids_a[i]]["float"] or types[oids_b[i]]["float"]]
     state, reason, keys = resolve_order(checked_a["order"], names_a, mismatch)
+    if state == "checked" and sort_key_list(checked_b["order"], names_b, mismatch) != keys:
+        state, reason, keys = "partial", "b_order", None
     proof_text = proof_sql(sql_a, sql_b, count, set(mismatch) | set(casts), keys)
     proof = parse_proof(
         run_psql(service, options, flags, ["BEGIN READ ONLY", proof_text, "ROLLBACK"]), count, keys is not None
@@ -869,8 +871,6 @@ def diff(service, checked_a, checked_b, overrides):
         "casts": [names_a[i] for i in casts],
         "floats": [names_a[i] for i in floats],
     }
-    if state == "checked" and sort_key_list(checked_b["order"], names_b, mismatch) != keys:
-        state, reason = "partial", "b_order"
     if state == "checked" and proof["ties"] >= 1:
         state, reason = "partial", "ties"
     result["order"] = state

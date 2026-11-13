@@ -1523,7 +1523,7 @@ class DiffSessionTest(DiffTestCase):
     def test_the_proof_has_materialized_pgrun_ctes_and_an_alias_on_every_subquery_in_from(self):
         self.diff("SELECT id FROM t ORDER BY id", "SELECT id FROM t ORDER BY id")
         proof = self.proof_text()
-        for name in ("ra", "rb", "a", "b", "oa", "ob", "na", "nb", "xa", "xb"):
+        for name in ("ra", "rb", "a", "b", "oa", "ob"):
             self.assertIn(f"pgrun_{name} AS MATERIALIZED (", proof, name)
         self.assertIn("EXCEPT ALL", proof)
         self.assertIn(") AS k)", proof)
@@ -1782,6 +1782,7 @@ class DiffOrderTest(DiffTestCase):
         self.assertNotIn("order_mismatch", data)
         for removed in ("row_number", "pgrun_na", "pgrun_nb", "pgrun_xa", "pgrun_xb", "xa_count", "xb_count"):
             self.assertNotIn(removed, self.proof_text())
+        self.assertNotIn("HAVING count(*) > 1", self.proof_text())
 
     def test_keys_that_cannot_be_extracted_or_resolved_make_the_order_partial_with_reason_sort_keys(self):
         for a, headers in (
