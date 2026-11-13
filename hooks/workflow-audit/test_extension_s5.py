@@ -456,6 +456,13 @@ exec "$REAL_GIT" "$@"
 class TwoRebasesTest(RebaseCase):
     """Two rebases in one task: each phase commit is proven by its base (the merge base with the PR base branch), not by its parent."""
 
+    def move_main(self, name):
+        """A pushed commit on main; leaves main checked out. Returns it."""
+        self.git("checkout", "-q", "main")
+        sha = self.commit("chore: main moves again", name=name)
+        self.git("push", "-q", "origin", "main")
+        return sha
+
     def moved_main_and_rebased(self, name, text):
         """Main moves, `feature` is rebased onto it and the phase commit is amended with a new patch. Returns the rewritten phase commit."""
         self.move_main(name)
@@ -466,13 +473,6 @@ class TwoRebasesTest(RebaseCase):
         self.git("commit", "-q", "-a", "--amend", "--no-edit")
         self.git("push", "-q", "--force", "origin", "feature")
         return self.git("rev-parse", "HEAD")
-
-    def move_main(self, name):
-        """A pushed commit on main; leaves main checked out. Returns it."""
-        self.git("checkout", "-q", "main")
-        sha = self.commit("chore: main moves again", name=name)
-        self.git("push", "-q", "origin", "main")
-        return sha
 
     def setUp(self):
         """Three phase commits on top of an implementation commit: `first`, then `second` and `third` after two rebases (only `third` is on
@@ -562,6 +562,13 @@ class TwoRebasesTest(RebaseCase):
         item = self.three(self.first, self.second, self.third)
         self.past_the_cap(item, 9)
         self.assertIn("rebase proof unavailable: evidence unavailable: git merge-base exited with status 5: fatal: simulated failure", item["evidence"])
+        self.assertNotIn("not counting", item["evidence"])
+
+    def test_a_missing_base_ref_fails_closed_and_names_the_problem(self):
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        item = self.three(self.first, self.second, self.third)
+        self.past_the_cap(item, 9)
+        self.assertIn("rebase proof unavailable: evidence unavailable: no such ref origin/main", item["evidence"])
         self.assertNotIn("not counting", item["evidence"])
 
     def is_ancestor(self, sha):

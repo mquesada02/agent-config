@@ -1711,11 +1711,11 @@ def _is_rebase_of(worktree, base_ref, before, sha, last):
         return False
     if last and not _is_ancestor_of_head(worktree, sha):
         return False
-    new_id, old_id = _patch_id(worktree, sha), _patch_id(worktree, before)
-    if new_id is None or old_id is None or new_id == old_id:
-        return False
     new_base, old_base = _base_of(worktree, sha, base_ref), _base_of(worktree, before, base_ref)
     if new_base is None or old_base is None or new_base == old_base:
+        return False
+    new_id, old_id = _patch_id(worktree, sha), _patch_id(worktree, before)
+    if new_id is None or old_id is None or new_id == old_id:
         return False
     return _is_ancestor_of_head(worktree, new_base) and _is_ancestor(worktree, old_base, new_base)
 
@@ -1724,18 +1724,15 @@ def _rebase_exempt_rounds(worktree, base_branch, ledger):
     """{round number: phase-commit sha} of the section 6 final rounds that S5 does not count against the cap: for each phase-commit after the
     first, the first final round after it, when `_is_rebase_of` holds for it and the phase-commit before it. Raises Unavailable when git cannot answer."""
     base_ref = f"refs/remotes/origin/{base_branch}"
-    try:
-        known = _git_output(worktree, "rev-parse", "--verify", "-q", base_ref + "^{commit}")
-    except RuntimeError as problem:
-        raise Unavailable(str(problem))
-    if not known:
+    if not _is_known_commit(worktree, base_ref):
         raise Unavailable(f"no such ref origin/{base_branch}")
     exempt = {}
+    last_commit = ledger.commits[-1][1]
     for (position, event), (_, before) in zip(ledger.commits[1:], ledger.commits):
         first = next((round_event for later, round_event in ledger.round_events
                       if later > position and (round_event["loop"], round_event["phase"]) == FINAL_REVIEW), None)
         if first is not None and first["round"] not in exempt and _is_rebase_of(worktree, base_ref, before["sha"], event["sha"],
-                                                                                event is ledger.commits[-1][1]):
+                                                                                event is last_commit):
             exempt[first["round"]] = event["sha"]
     return exempt
 
