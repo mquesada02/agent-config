@@ -22,6 +22,7 @@ COST_MONO_CASES = {
     "cost-08-full-history-checkout": (["COST-08"], []),
     "mono-01-no-affected-run": (["MONO-01"], ["COST-08"]),
     "mono-02-no-tool": (["MONO-02"], []),
+    "mono-02-filter-full-history": ([], ["COST-08"]),
 }
 SEC_CASES = {
     "sec-01-tag-pin": (["SEC-01"], []),
@@ -287,7 +288,7 @@ class NewFixtures(unittest.TestCase):
                     cls.texts[path] = read(path)
 
     def test_the_new_cases_exist(self):
-        self.assertEqual(len(self.cases), 47)
+        self.assertEqual(len(self.cases), 48)
 
     def test_no_new_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():

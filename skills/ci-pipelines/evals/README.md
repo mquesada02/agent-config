@@ -52,7 +52,7 @@ Notes on the cost and monorepo cases:
 
 - COST-04 has mixed parts, so it has one case for each part. `cost-04-missing-timeout` is the required part, with no history. `cost-04-timeout-too-high-with-history` is the measured part: every job has a timeout, the recorded `repo/intake.json` has `run_history` detected, and each timeout is more than 2× the proposal. Its prompt tells the review not to run the intake script. `cost-04-timeout-too-high-no-history` is the same workflow with the sandbox's unknown history, and it forbids COST-04.
 - `cost-06-too-many-workers` uses 4 workers. The sandbox visibility is unreadable, so the default private, 2 vCPU applies.
-- `mono-01-no-affected-run` forbids COST-08, because its `fetch-depth: 0` is in a job that MONO-01 covers. `cost-08-full-history-checkout` (not a monorepo) expects COST-08.
+- `mono-01-no-affected-run` forbids COST-08, because its `fetch-depth: 0` is in a job that MONO-01 covers. `mono-02-filter-full-history` forbids COST-08, because its `fetch-depth: 0` is in jobs that already run the MONO-02 pnpm filter. `cost-08-full-history-checkout` (not a monorepo) expects COST-08.
 
 Every fixture is synthetic. No text comes from a private repo.
 

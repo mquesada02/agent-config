@@ -198,6 +198,12 @@ class CostAndMonorepoRules(unittest.TestCase):
         self.assertIn("in a job of a PR run that runs a task of the repo's monorepo tool", fields["Check"])
         self.assertIn("A job that runs only on a push to main is still a COST-08 finding", fields["Check"])
 
+    def test_cost_08_skips_a_checkout_of_a_job_that_runs_the_mono_02_pnpm_filter(self):
+        fields = self.cost["COST-08"]
+        self.assertIn("MONO-02", fields["Check"])
+        self.assertIn("MONO-02", fields["Fix"])
+        self.assertIn("pnpm filter", fields["Check"])
+
     def test_mono_02_proposes_the_pnpm_filter_and_adds_no_tool(self):
         fields = self.mono["MONO-02"]
         self.assertIn("pnpm filter", fields["Rule"])
