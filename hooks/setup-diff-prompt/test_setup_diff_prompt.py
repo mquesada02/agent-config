@@ -2,10 +2,12 @@ import importlib.util
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "setup_diff_prompt.py")
@@ -53,7 +55,18 @@ class HookCase(unittest.TestCase):
         self.repo = os.path.join(self.root, "repo")
         os.makedirs(self.repo)
         self.proposal = os.path.join(self.root, "proposal.json")
+        # tempfile ignores a TMPDIR that is not a usable folder, so every test points it at an existing folder of its own.
+        self.tmpdir = os.path.join(self.root, "tmp")
+        os.makedirs(self.tmpdir)
+        self.diff_dir = os.path.join(self.tmpdir, "setup-diff-prompt-%d" % os.geteuid())
         self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": RULES_DIFF}})
+
+    def diff_path(self, digest=DIGEST):
+        return os.path.join(self.diff_dir, digest + ".diff")
+
+    def expected_reason(self, summary, raw, counts=None, digest=DIGEST):
+        lines = ["Diff to confirm:"] + summary + ([counts] if counts else []) + ["Full diff: " + self.diff_path(digest)]
+        return "\n".join(lines) + "\n" + raw
 
     def set_plan(self, plan, mode="ok"):
         folder = os.path.dirname(self.script)
@@ -79,8 +92,8 @@ class HookCase(unittest.TestCase):
 
     def run_hook(self, payload=None, raw=None, env=None):
         text = raw if raw is not None else json.dumps(payload)
-        proc = subprocess.run([sys.executable, "-I", self.hook], input=text, capture_output=True, text=True,
-                              env={**os.environ, **(env or {})}, cwd=self.root)
+        proc = subprocess.run([sys.executable, "-I", self.hook], input=text, capture_output=True, text=True, timeout=30,
+                              env={**os.environ, "TMPDIR": self.tmpdir, **(env or {})}, cwd=self.root)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout) if proc.stdout.strip() else None
 
@@ -113,12 +126,14 @@ class AskTest(HookCase):
     def test_an_allowlist_diff_follows_the_rules_diff_after_a_blank_line(self):
         self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": RULES_DIFF}, "allowlist": {"diff": ALLOWLIST_DIFF}})
         _, reason = self.decision(self.run_hook(self.payload(self.write_command())))
-        self.assertEqual(reason, "Diff to confirm:\n" + RULES_DIFF.rstrip("\n") + "\n\n" + ALLOWLIST_DIFF.rstrip("\n"))
+        self.assertEqual(reason, self.expected_reason(
+            ["rules_file: changed, +1 -1", "allowlist: changed, +1 -0"],
+            RULES_DIFF.rstrip("\n") + "\n\n" + ALLOWLIST_DIFF.rstrip("\n")))
 
     def test_a_plan_with_no_diff_text_asks_with_a_no_file_changes_line(self):
         self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": ""}, "allowlist": {"diff": ""}})
         _, reason = self.decision(self.run_hook(self.payload(self.write_command())))
-        self.assertEqual(reason, "Diff to confirm:\nno file changes")
+        self.assertEqual(reason, self.expected_reason([], "no file changes"))
 
     def test_the_plan_is_run_with_the_same_repo_and_proposal_in_the_hook_cwd(self):
         folder = os.path.join(self.root, "elsewhere")
@@ -183,6 +198,211 @@ class AskTest(HookCase):
             with self.subTest(prefix):
                 self.assertDenied(self.run_hook(self.payload(self.write_command(prefix=prefix))), "XDG_CONFIG_HOME")
         self.assertIsNone(self.ran())
+
+
+class FullDiffTest(HookCase):
+    """The reason starts with a summary and the path of a private file that holds the whole diff (ticket 538)."""
+
+    def ask(self, **env):
+        kind, reason = self.decision(self.run_hook(self.payload(self.write_command()), env=env))
+        self.assertEqual(kind, "ask", reason)
+        return reason
+
+    def rules_plan(self, **extra):
+        part = {"path": os.path.join(self.repo, "docs", "agents", "sql.md"), "exists": False, "diff": RULES_DIFF}
+        return {"ok": True, "digest": DIGEST, "rules_file": part, **extra}
+
+    def raw_part(self, reason):
+        return reason.split("Full diff: ", 1)[1].split("\n", 1)[1]
+
+    def assertNotWritten(self, reason, word):
+        self.assertIn("Full diff: not written (%s)" % word, reason.splitlines())
+        self.assertIn(RULES_DIFF.rstrip("\n"), reason)
+
+    def test_a_new_rules_file_has_a_summary_line_with_the_path_relative_to_the_repo(self):
+        self.set_plan(self.rules_plan())
+        self.assertEqual(self.ask().splitlines()[1], "docs/agents/sql.md: new file, +1 -1")
+
+    def test_a_changed_rules_file_says_changed(self):
+        plan = self.rules_plan()
+        plan["rules_file"]["exists"] = True
+        self.set_plan(plan)
+        self.assertEqual(self.ask().splitlines()[1], "docs/agents/sql.md: changed, +1 -1")
+
+    def test_both_files_have_a_summary_line_each_and_the_allowlist_path_is_shown_as_the_plan_gives_it(self):
+        plan = self.rules_plan(allowlist={"path": "/home/u/.config/sql/allowlist.toml", "exists": False, "diff": ALLOWLIST_DIFF})
+        self.set_plan(plan)
+        lines = self.ask().splitlines()
+        self.assertEqual(lines[1:3], ["docs/agents/sql.md: new file, +1 -1",
+                                      "/home/u/.config/sql/allowlist.toml: new file, +1 -0"])
+
+    def test_a_rules_path_outside_the_repo_is_shown_as_the_plan_gives_it(self):
+        plan = self.rules_plan()
+        plan["rules_file"]["path"] = "/elsewhere/sql.md"
+        self.set_plan(plan)
+        self.assertEqual(self.ask().splitlines()[1], "/elsewhere/sql.md: new file, +1 -1")
+
+    def test_the_counts_line_is_present_when_a_count_is_not_zero(self):
+        self.set_plan(self.rules_plan(appended_rules=["a", "b"], skipped_rules=["c"], conflicts=[], warnings=["w"]))
+        lines = self.ask().splitlines()
+        self.assertEqual(lines[2], "Appended rules: 2, skipped rules: 1, conflicts: 0, warnings: 1")
+        self.assertTrue(lines[3].startswith("Full diff: "))
+
+    def test_the_counts_line_is_absent_when_every_count_is_zero_or_missing_or_not_a_list(self):
+        for extra in ({}, {"appended_rules": [], "skipped_rules": [], "conflicts": [], "warnings": []},
+                      {"appended_rules": "x", "conflicts": None}):
+            with self.subTest(extra):
+                self.set_plan(self.rules_plan(**extra))
+                lines = self.ask().splitlines()
+                self.assertTrue(lines[2].startswith("Full diff: "), lines)
+
+    def test_a_removed_line_that_starts_with_two_dashes_is_counted_and_the_headers_are_not(self):
+        diff = "--- a/x\n+++ b/x\n@@ -1,2 +1 @@\n--- removed\n+added\n context\n"
+        plan = self.rules_plan()
+        plan["rules_file"]["diff"] = diff
+        self.set_plan(plan)
+        self.assertEqual(self.ask().splitlines()[1], "docs/agents/sql.md: new file, +1 -1")
+
+    def test_a_line_separator_other_than_newline_inside_a_diff_line_does_not_split_the_count(self):
+        for separator in ("\x0c", "\x0b", "\x1c", "\x85", " ", " "):
+            with self.subTest(repr(separator)):
+                plan = self.rules_plan()
+                plan["rules_file"]["diff"] = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n+a%s-b\n" % separator
+                self.set_plan(plan)
+                self.assertEqual(self.ask().splitlines()[1].split(": ", 1)[1], "new file, +1 -0")
+
+    def test_a_part_diff_with_no_hunk_line_counts_zero(self):
+        plan = self.rules_plan()
+        plan["rules_file"]["diff"] = "+not a diff\n-text"
+        self.set_plan(plan)
+        self.assertEqual(self.ask().splitlines()[1], "docs/agents/sql.md: new file, +0 -0")
+
+    def test_the_full_diff_line_is_within_the_first_nine_lines_for_every_plan_shape(self):
+        both = self.rules_plan(allowlist={"path": "/a.toml", "exists": True, "diff": ALLOWLIST_DIFF},
+                               appended_rules=["a"], conflicts=["c"])
+        shapes = (both, self.rules_plan(), {"ok": True, "digest": DIGEST}, {"ok": True, "digest": DIGEST, "rules_file": {"diff": ""}})
+        for plan in shapes:
+            with self.subTest(plan):
+                self.set_plan(plan)
+                lines = self.ask().splitlines()
+                self.assertLess([n for n, line in enumerate(lines) if line.startswith("Full diff: ")][0], 9)
+
+    def test_the_file_holds_exactly_the_raw_diff_part_of_the_reason(self):
+        self.set_plan(self.rules_plan(allowlist={"path": "/a.toml", "exists": False, "diff": ALLOWLIST_DIFF}))
+        reason = self.ask()
+        self.assertEqual(self.raw_part(reason), RULES_DIFF.rstrip("\n") + "\n\n" + ALLOWLIST_DIFF.rstrip("\n"))
+        self.assertIn("Full diff: " + self.diff_path(), reason.splitlines())
+        with open(self.diff_path(), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.raw_part(reason))
+
+    def test_a_plan_with_no_diff_has_no_summary_line_and_the_file_holds_no_file_changes(self):
+        self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": ""}, "appended_rules": ["a"]})
+        reason = self.ask()
+        self.assertEqual(reason, self.expected_reason([], "no file changes",
+                                                      counts="Appended rules: 1, skipped rules: 0, conflicts: 0, warnings: 0"))
+        with open(self.diff_path(), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "no file changes")
+
+    def test_the_folder_has_mode_0700_and_the_file_mode_0600(self):
+        self.ask()
+        self.assertEqual(stat.S_IMODE(os.stat(self.diff_dir).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(self.diff_path()).st_mode), 0o600)
+
+    def test_a_private_folder_that_exists_is_reused(self):
+        os.mkdir(self.diff_dir, 0o700)
+        os.chmod(self.diff_dir, 0o700)
+        self.assertIn("Full diff: " + self.diff_path(), self.ask().splitlines())
+
+    def test_a_second_write_with_the_same_digest_and_a_shorter_diff_leaves_the_file_equal_to_the_second_diff(self):
+        self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": RULES_DIFF + "+" + "x" * 500 + "\n"}})
+        self.ask()
+        self.set_plan({"ok": True, "digest": DIGEST, "rules_file": {"diff": RULES_DIFF}})
+        reason = self.ask()
+        with open(self.diff_path(), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.raw_part(reason))
+        self.assertEqual(self.raw_part(reason), RULES_DIFF.rstrip("\n"))
+
+    def test_a_folder_that_is_a_symbolic_link_is_not_written(self):
+        os.makedirs(os.path.join(self.root, "elsewhere"))
+        os.symlink(os.path.join(self.root, "elsewhere"), self.diff_dir)
+        self.assertNotWritten(self.ask(), "folder is a symbolic link")
+        self.assertEqual(os.listdir(os.path.join(self.root, "elsewhere")), [])
+
+    def test_a_folder_that_is_a_regular_file_is_not_written_and_the_answer_is_still_ask(self):
+        with open(self.diff_dir, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        self.assertNotWritten(self.ask(), "folder is not a directory")
+
+    def test_a_folder_that_is_a_fifo_is_not_written_and_does_not_block(self):
+        os.mkfifo(self.diff_dir)
+        self.assertNotWritten(self.ask(), "folder is not a directory")
+
+    def test_a_folder_with_group_or_other_permission_bits_is_not_written(self):
+        os.mkdir(self.diff_dir)
+        os.chmod(self.diff_dir, 0o755)
+        self.assertNotWritten(self.ask(), "folder is not private")
+
+    def test_a_file_that_is_a_symbolic_link_is_not_written_through(self):
+        os.mkdir(self.diff_dir, 0o700)
+        os.chmod(self.diff_dir, 0o700)
+        target = os.path.join(self.root, "target.txt")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("keep")
+        os.symlink(target, self.diff_path())
+        self.assertNotWritten(self.ask(), "file is a symbolic link")
+        with open(target, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "keep")
+
+    def test_a_dangling_symbolic_link_for_the_file_is_not_written_through(self):
+        os.mkdir(self.diff_dir, 0o700)
+        os.chmod(self.diff_dir, 0o700)
+        os.symlink(os.path.join(self.root, "missing.txt"), self.diff_path())
+        self.assertNotWritten(self.ask(), "file is a symbolic link")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "missing.txt")))
+
+    def test_a_file_that_is_a_directory_or_a_fifo_is_not_written_and_does_not_block(self):
+        for make in (os.mkdir, os.mkfifo):
+            with self.subTest(make.__name__):
+                os.makedirs(self.diff_dir, mode=0o700, exist_ok=True)
+                os.chmod(self.diff_dir, 0o700)
+                make(self.diff_path())
+                self.assertNotWritten(self.ask(), "file is not a regular file")
+                if make is os.mkdir:
+                    os.rmdir(self.diff_path())
+                else:
+                    os.remove(self.diff_path())
+
+    def test_a_digest_that_is_not_hexadecimal_is_not_written(self):
+        self.set_plan({"ok": True, "digest": "XYZ", "rules_file": {"diff": RULES_DIFF}})
+        kind, reason = self.decision(self.run_hook(self.payload(self.write_command(digest="XYZ"))))
+        self.assertEqual(kind, "ask")
+        self.assertNotWritten(reason, "digest is not hexadecimal")
+
+    def decide_with_owner(self, owners):
+        module = load_module(self.hook)
+        with mock.patch.object(tempfile, "tempdir", self.tmpdir), \
+                mock.patch.object(module, "owned_by_me", side_effect=owners):
+            return module.decide(self.payload(self.write_command()))
+
+    def test_a_folder_of_another_user_is_not_written(self):
+        decided = self.decide_with_owner([False])
+        self.assertEqual(decided["decision"], "ask")
+        self.assertIn("Full diff: not written (not owned by this user)", decided["reason"].splitlines())
+
+    def test_a_file_of_another_user_is_not_written(self):
+        os.mkdir(self.diff_dir, 0o700)
+        os.chmod(self.diff_dir, 0o700)
+        with open(self.diff_path(), "w", encoding="utf-8") as handle:
+            handle.write("old")
+        decided = self.decide_with_owner([True, False])
+        self.assertEqual(decided["decision"], "ask")
+        self.assertIn("Full diff: not written (not owned by this user)", decided["reason"].splitlines())
+        with open(self.diff_path(), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "old")
+
+    def test_every_other_error_still_denies_so_a_failed_plan_is_not_turned_into_an_ask(self):
+        self.set_plan({"ok": False, "message": "broken"}, mode="fail")
+        self.assertDenied(self.run_hook(self.payload(self.write_command())), "broken")
 
 
 class DenyTest(HookCase):
