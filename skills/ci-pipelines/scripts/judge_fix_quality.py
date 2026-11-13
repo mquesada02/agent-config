@@ -50,6 +50,7 @@ CRITERION = (
     "branch protection are in the flag section below. The skill does not change branch protection itself.\n"
     "A NAME-09 row (the required checks cannot be read) passes when the flag section below names the exact "
     "old and new check names. Its Fix cell may point to that section or repeat its steps.\n"
+    "A NAME-09 Fix never needs a workflow edit, because the rename or split comes from another finding, so a NAME-09 row is exempt from the workflow edit rule for flag rows below.\n"
     "Answer on one line: PASS or FAIL, a colon, and one short reason (at most 25 words)."
 )
 

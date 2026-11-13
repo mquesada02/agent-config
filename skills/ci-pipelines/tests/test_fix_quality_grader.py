@@ -48,6 +48,13 @@ class FixQualityGrader(unittest.TestCase):
         self.assertIn("cannot be read", line)
         self.assertIn("⚑ section names the exact old and new check names", line)
 
+    def test_a_name_09_fix_never_needs_a_workflow_edit(self):
+        for path in PATHS:
+            line = next(l for l in criterion(path).splitlines() if l.startswith("A NAME-09 Fix"))
+            self.assertIn("never needs a workflow edit", line, path)
+            self.assertIn("rename or split comes from another finding", line, path)
+            self.assertIn("a NAME-09 row is exempt from the workflow edit rule for flag rows below", line, path)
+
     def test_the_criterion_does_not_ask_for_files_the_judge_cannot_see(self):
         text = criterion(PATHS[0])
         self.assertIn("not the workflow files", text)

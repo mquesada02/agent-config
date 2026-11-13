@@ -125,6 +125,14 @@ class JudgeFixQuality(unittest.TestCase):
         self.assertIn("A NAME-09 row", prompt)
         self.assertIn("the flag section below names the exact old and new check names", prompt)
 
+    def test_the_criterion_says_a_name_09_fix_never_needs_a_workflow_edit(self):
+        self.add_case("name-09-x", [report("Tell the user.")])
+        self.run_script()
+        prompt = self.prompts()[0]
+        self.assertIn("A NAME-09 Fix never needs a workflow edit, because the rename or split comes from "
+                      "another finding, so a NAME-09 row is exempt from the workflow edit rule for flag rows "
+                      "below.", prompt)
+
     def test_an_escaped_pipe_stays_inside_its_cell(self):
         self.add_case("name-01-x", [report("Set `if: a \\|\\| b`.")])
         code, out, _ = self.run_script()
