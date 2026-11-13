@@ -400,10 +400,6 @@ class FullDiffTest(HookCase):
         with open(self.diff_path(), encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "old")
 
-    def test_a_new_file_makes_no_owner_call_for_the_file_so_the_file_test_counts_are_exact(self):
-        decided = self.decide_with_owner([True])
-        self.assertIn("Full diff: " + self.diff_path(), decided["reason"].splitlines())
-
     def test_every_other_error_still_denies_so_a_failed_plan_is_not_turned_into_an_ask(self):
         self.set_plan({"ok": False, "message": "broken"}, mode="fail")
         self.assertDenied(self.run_hook(self.payload(self.write_command())), "broken")

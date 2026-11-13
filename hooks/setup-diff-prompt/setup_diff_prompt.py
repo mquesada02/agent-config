@@ -35,7 +35,6 @@ import sys
 import tempfile
 
 PLAN_SECONDS = 15
-HEX_DIGEST = re.compile(r"[0-9a-f]+\Z")
 LOG_VARIABLE = "SETUP_DIFF_PROMPT_LOG"
 SCRIPT_NAME = "setup_files.py"
 # The hook runs `plan` outside the sandbox and before the permission prompt, so it runs only this script, never a path or a
@@ -138,18 +137,18 @@ class NotWritten(Exception):
 
 
 def changed_parts(plan):
-    """[(name, part, diff text)] of the plan parts that have a diff, rules file first."""
+    """[(name, part)] of the plan parts that have a diff, rules file first."""
     found = []
     for name in ("rules_file", "allowlist"):
         part = plan.get(name)
         diff = part.get("diff") if isinstance(part, dict) else None
         if isinstance(diff, str) and diff.strip():
-            found.append((name, part, diff.rstrip("\n")))
+            found.append((name, part))
     return found
 
 
-def diff_text(plan):
-    texts = [diff for _, _, diff in changed_parts(plan)]
+def diff_text(parts):
+    texts = [part["diff"].rstrip("\n") for _, part in parts]
     return "\n\n".join(texts) if texts else "no file changes"
 
 
@@ -167,14 +166,14 @@ def count_changes(diff):
     return added, removed
 
 
-def summary_line(name, part, diff, repo):
+def summary_line(name, part, repo):
     path = part.get("path")
     if not isinstance(path, str):
         shown = name
     else:
         prefix = os.path.join(os.path.abspath(repo), "")
         shown = path[len(prefix):] if name == "rules_file" and path.startswith(prefix) else path
-    added, removed = count_changes(diff)
+    added, removed = count_changes(part["diff"])
     return "%s: %s, +%d -%d" % (shown, "new file" if part.get("exists") is False else "changed", added, removed)
 
 
@@ -187,6 +186,8 @@ def counts_line(plan):
 
 
 def owned_by_me(info):
+    """Whether the os.stat result belongs to the effective user. It is its own function so that a test can replace it
+    (a test cannot change the owner of a file without root)."""
     return info.st_uid == os.geteuid()
 
 
@@ -241,6 +242,8 @@ def write_diff_file(dir_fd, name, text):
     try:
         fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
     except FileExistsError:
+        # The file is opened twice: first read-only, to classify it without blocking or writing, then for writing. The
+        # device and inode of the two opens must match, so the file cannot be swapped between them.
         first = classify_existing_file(dir_fd, name)
         fd = os.open(name, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
         info = os.fstat(fd)
@@ -255,6 +258,9 @@ def write_diff_file(dir_fd, name, text):
             view = view[os.write(fd, view):]
     finally:
         os.close(fd)
+
+
+HEX_DIGEST = re.compile(r"[0-9a-f]+\Z")
 
 
 def write_full_diff(digest, text):
@@ -274,12 +280,13 @@ def write_full_diff(digest, text):
 
 
 def ask_reason(plan, repo):
+    parts = changed_parts(plan)
     lines = ["Diff to confirm:"]
-    lines += [summary_line(name, part, diff, repo) for name, part, diff in changed_parts(plan)]
+    lines += [summary_line(name, part, repo) for name, part in parts]
     counts = counts_line(plan)
     if counts:
         lines.append(counts)
-    raw = diff_text(plan)
+    raw = diff_text(parts)
     try:
         lines.append("Full diff: " + write_full_diff(plan["digest"], raw))
     except NotWritten as reason:
