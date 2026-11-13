@@ -259,6 +259,12 @@ class SecurityRules(unittest.TestCase):
             for phrase in wanted:
                 self.assertIn(phrase, self.sec[rule_id]["Rule"], rule_id)
 
+    def test_sec_10_fix_gives_a_cron_with_an_odd_minute_that_a_user_can_paste(self):
+        fix = self.sec["SEC-10"]["Fix"]
+        cron = re.search(r"cron: '(\d+) \d+ \* \* \d'", fix)
+        self.assertIsNotNone(cron, fix)
+        self.assertEqual(int(cron.group(1)) % 2, 1)
+
     def test_every_check_is_mechanical(self):
         for rule_id, fields in self.sec.items():
             self.assertTrue(fields["Check"].startswith("mechanical"), rule_id)

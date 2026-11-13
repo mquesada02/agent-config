@@ -48,6 +48,8 @@ CRITERION = (
     "\"improve the name\", fails.\n"
     "A row marked with the flag passes when its Fix cell names the workflow edit and the admin steps for "
     "branch protection are in the flag section below. The skill does not change branch protection itself.\n"
+    "A NAME-09 row (the required checks cannot be read) passes when the flag section below names the exact "
+    "old and new check names. Its Fix cell may point to that section or repeat its steps.\n"
     "Answer on one line: PASS or FAIL, a colon, and one short reason (at most 25 words)."
 )
 
@@ -118,7 +120,7 @@ def workflow_text(evals, case):
 def question(files, section, cells):
     _, rule, where, problem, fix = cells
     lines = [CRITERION, "", "Workflow files:", files, ""]
-    if FLAG in rule:
+    if FLAG in rule or rule.startswith("NAME-09"):
         lines += ["Flag section:", section or "(the report has no flag section)", ""]
     lines += [f"Row: rule {rule} | where {where} | problem {problem} | fix {fix}"]
     return "\n".join(lines)

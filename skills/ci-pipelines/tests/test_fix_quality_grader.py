@@ -43,6 +43,11 @@ class FixQualityGrader(unittest.TestCase):
         self.assertIn("admin steps", text)
         self.assertIn("⚑ section", text)
 
+    def test_a_name_09_row_passes_when_the_flag_section_names_the_old_and_new_check_names(self):
+        line = next(l for l in criterion(PATHS[0]).splitlines() if "NAME-09" in l)
+        self.assertIn("cannot be read", line)
+        self.assertIn("⚑ section names the exact old and new check names", line)
+
     def test_the_criterion_does_not_ask_for_files_the_judge_cannot_see(self):
         text = criterion(PATHS[0])
         self.assertIn("not the workflow files", text)

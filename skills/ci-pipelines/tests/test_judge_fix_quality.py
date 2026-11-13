@@ -107,6 +107,24 @@ class JudgeFixQuality(unittest.TestCase):
         self.assertIn("admin steps", first)
         self.assertNotIn("Admin step: add the required check", second)
 
+    def test_a_name_09_row_gets_the_flag_section_even_without_the_flag_mark(self):
+        text = report("Add the job `ci-passed`.", "Rename the job.", "Tell the user the check names.")
+        text = text.replace("| NAME-03 |", "| NAME-09 |")
+        flag_section = "## ⚑ Branch protection change needed\n\nRemove `test`, add `CI passed`.\n\n"
+        self.assertIn("\n## Approve", text)
+        self.add_case("name-09-x", [text.replace("## Approve", flag_section + "## Approve")])
+        self.run_script()
+        first, second, third = self.prompts()
+        self.assertNotIn("Remove `test`, add `CI passed`.", second)
+        self.assertIn("Remove `test`, add `CI passed`.", third)
+
+    def test_the_criterion_passes_a_name_09_row_when_the_flag_section_names_the_old_and_new_check_names(self):
+        self.add_case("name-09-x", [report("Tell the user.")])
+        self.run_script()
+        prompt = self.prompts()[0]
+        self.assertIn("A NAME-09 row", prompt)
+        self.assertIn("the flag section below names the exact old and new check names", prompt)
+
     def test_an_escaped_pipe_stays_inside_its_cell(self):
         self.add_case("name-01-x", [report("Set `if: a \\|\\| b`.")])
         code, out, _ = self.run_script()
