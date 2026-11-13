@@ -83,3 +83,78 @@ ALTER TABLE pgw.cyc_a ADD FOREIGN KEY (b) REFERENCES pgw.cyc_b (id) ON DELETE CA
 CREATE TABLE pgw.ident (id int GENERATED ALWAYS AS IDENTITY, v int);
 CREATE TABLE pgw.ser (id serial, v int);
 CREATE SEQUENCE pgw.plain_seq;
+CREATE ROLE pgrun_app LOGIN PASSWORD 'pg-run-test-fixture';
+GRANT USAGE ON SCHEMA pgw TO pgrun_app;
+CREATE FUNCTION pgw.vol_fn() RETURNS int LANGUAGE plpgsql VOLATILE AS 'BEGIN RETURN 1; END';
+CREATE FUNCTION pgw.stable_fn() RETURNS int LANGUAGE plpgsql STABLE AS 'BEGIN RETURN 1; END';
+CREATE FUNCTION pgw."MyFn"() RETURNS int LANGUAGE plpgsql VOLATILE AS 'BEGIN RETURN 1; END';
+CREATE FUNCTION pgw.stable_calls_scanned() RETURNS int LANGUAGE plpgsql STABLE AS $f$
+BEGIN
+  RETURN length(query_to_xml('select 1', true, true, '')::text);
+END $f$;
+CREATE FUNCTION pgw.imm_wrap(text) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $f$
+BEGIN
+  RETURN query_to_xml($1, true, true, '')::text;
+END $f$;
+CREATE FUNCTION pgw.op_fn(int, int) RETURNS boolean LANGUAGE plpgsql AS $f$
+BEGIN
+  RETURN length(query_to_xml('select 1', true, true, '')::text) > $1 + $2;
+END $f$;
+CREATE OPERATOR pgw.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = pgw.op_fn);
+CREATE TABLE pgw.t_default (id int, x text DEFAULT query_to_xml('select 1', true, true, '')::text);
+CREATE TABLE pgw.t_def_vol (id int, x int DEFAULT pgw.vol_fn());
+CREATE TABLE pgw.t_check (id int CHECK (query_to_xml('select 1', true, true, '') IS NOT NULL));
+CREATE TABLE pgw.t_chk_vol (id int CHECK (pgw.vol_fn() > 0));
+CREATE TABLE pgw.t_nn (id int NOT NULL);
+CREATE TABLE pgw.t_text (x text);
+CREATE DOMAIN pgw.dom_check AS int CHECK (query_to_xml('select 1', true, true, '') IS NOT NULL);
+CREATE DOMAIN pgw.dom_over AS pgw.dom_check;
+CREATE DOMAIN pgw.dom_vol AS int CHECK (pgw.vol_fn() > 0);
+CREATE DOMAIN pgw.dom_txt AS text CHECK (query_to_xml('select 1', true, true, '') IS NOT NULL);
+CREATE TYPE pgw.rng AS RANGE (SUBTYPE = pgw.dom_check);
+CREATE TYPE pgw.comp AS (a pgw.dom_check, b int);
+CREATE TABLE pgw.t_dom (id pgw.dom_check);
+CREATE TABLE pgw.t_dom_over (id pgw.dom_over);
+CREATE TABLE pgw.t_dom_arr (ids pgw.dom_check[]);
+CREATE TABLE pgw.t_dom_rng (r pgw.rng);
+CREATE TABLE pgw.t_dom_comp (c pgw.comp);
+CREATE TABLE pgw.t_dom_vol (id pgw.dom_vol);
+DO $f$
+BEGIN
+  IF current_setting('server_version_num')::int >= 140000 THEN
+    EXECUTE 'CREATE TABLE pgw.t_dom_mrng (m pgw.rng_multirange)';
+  END IF;
+END $f$;
+CREATE TABLE pgw.t_gen (id int, g text GENERATED ALWAYS AS (pgw.imm_wrap('select 1')) STORED);
+CREATE TABLE pgw.t_rls_using (id int);
+INSERT INTO pgw.t_rls_using VALUES (1);
+ALTER TABLE pgw.t_rls_using ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_su ON pgw.t_rls_using FOR SELECT USING (true);
+CREATE POLICY p_uu ON pgw.t_rls_using FOR UPDATE USING (query_to_xml('select 1', true, true, '') IS NOT NULL);
+CREATE TABLE pgw.t_rls_check (id int);
+ALTER TABLE pgw.t_rls_check ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_ci ON pgw.t_rls_check FOR INSERT WITH CHECK (query_to_xml('select 1', true, true, '') IS NOT NULL);
+CREATE TABLE pgw.t_rls_vol (id int);
+ALTER TABLE pgw.t_rls_vol ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_vi ON pgw.t_rls_vol FOR INSERT WITH CHECK (pgw.vol_fn() > 0);
+CREATE TABLE pgw.t_rls_mixed (id int);
+ALTER TABLE pgw.t_rls_mixed ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_mi ON pgw.t_rls_mixed FOR INSERT WITH CHECK (pgw."MyFn"() > 0);
+CREATE TABLE pgw.t_rls_ok (id int);
+INSERT INTO pgw.t_rls_ok VALUES (1);
+ALTER TABLE pgw.t_rls_ok ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_ok ON pgw.t_rls_ok USING (true) WITH CHECK (true);
+CREATE TABLE pgw.t_null_policies (id int);
+INSERT INTO pgw.t_null_policies VALUES (1);
+ALTER TABLE pgw.t_null_policies ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_np_i ON pgw.t_null_policies FOR INSERT WITH CHECK (true);
+CREATE POLICY p_np_u ON pgw.t_null_policies FOR UPDATE USING (true);
+CREATE POLICY p_np_s ON pgw.t_null_policies FOR SELECT USING (true);
+GRANT SELECT, INSERT, UPDATE ON pgw.t_rls_using, pgw.t_rls_check, pgw.t_rls_ok TO pgrun_app;
+CREATE VIEW pgw.v_where AS SELECT id, v FROM pgw.plain WHERE query_to_xml('select 1', true, true, '') IS NOT NULL;
+CREATE VIEW pgw.v_setcfg AS SELECT id, v FROM pgw.plain WHERE set_config('pgrun.flag', '1', false) <> '';
+CREATE VIEW pgw.v_mixed AS SELECT id, v FROM pgw.plain WHERE pgw."MyFn"() > 0;
+CREATE VIEW pgw.v_vol AS SELECT id, v FROM pgw.plain WHERE pgw.vol_fn() > 0;
+CREATE VIEW pgw.v_check AS SELECT id, v FROM pgw.plain WHERE query_to_xml('select 1', true, true, '') IS NOT NULL WITH CHECK OPTION;
+CREATE VIEW pgw.v_inner AS SELECT id, v FROM pgw.plain WHERE query_to_xml('select 1', true, true, '') IS NOT NULL;
+CREATE VIEW pgw.v_cascaded AS SELECT id, v FROM pgw.v_inner WITH CASCADED CHECK OPTION;
