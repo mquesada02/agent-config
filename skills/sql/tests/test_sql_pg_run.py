@@ -809,7 +809,7 @@ class FactsTest(PgRunTestCase):
         self.assertIn("-c transaction_timeout=60s", last)
 
     def test_the_script_on_stdin_is_constant_and_holds_none_of_the_names(self):
-        hostile = ["t.c'; DROP TABLE secret; --", 'a."b"', "x.y\\z", "s.t.$$c$$"]
+        hostile = ['"t.c\'; DROP TABLE secret; --".c', 'a."b"', '"x.y\\z".c', 's.t."$$c$$"']
         self.run_facts("users.id", rows=[])
         self.run_facts(*hostile, rows=[])
         first, second = [c for c in self.calls() if c["stdin"]]
@@ -851,13 +851,88 @@ class FactsTest(PgRunTestCase):
                                 "facts": {"nodot": {"missing": True}, "a.b.c.d": {"missing": True}}})
         self.assertEqual(self.calls(), [])
 
-    def test_a_name_with_a_non_ascii_or_control_character_is_missing_and_is_not_sent(self):
+    def parts_sent(self, *names):
+        """The `[schema, table, column]` of each pair that `facts` sends for the names (empty when no call is made)."""
+        code, data = self.run_facts(*names, rows=[])
+        self.assertEqual(code, 0, data)
+        calls = self.calls()
+        return [row[1:] for row in self.sent_names(calls[-1])] if calls else []
+
+    def test_a_name_with_a_non_ascii_letter_is_sent_and_one_with_a_control_character_is_missing_and_is_not_sent(self):
         names = ["users.café", "users.i\td", "users.ok"]
         code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": False, "type": "text"}])
         self.assertEqual(code, 0, data)
-        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "users", "ok"]])
-        self.assertEqual(data["facts"]["users.café"], {"missing": True})
+        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "users", "café"], [1, None, "users", "ok"]])
+        self.assertEqual(data["facts"]["users.café"], {"nullable": False, "type": "text"})
         self.assertEqual(data["facts"]["users.i\td"], {"missing": True})
+
+    def test_the_problem_statement_names_are_read_with_the_server_rules(self):
+        self.assertEqual(self.parts_sent('"Order".id'), [[None, "Order", "id"]])
+        self.assertEqual(self.parts_sent("Order.id"), [[None, "order", "id"]])
+        self.assertEqual(self.parts_sent('"a.b".c'), [[None, "a.b", "c"]])
+        self.assertEqual(self.parts_sent('"x""y".id'), [[None, 'x"y', "id"]])
+        self.assertEqual(self.parts_sent("café.id"), [[None, "café", "id"]])
+
+    def test_mixed_forms_and_a_quoted_keyword(self):
+        self.assertEqual(self.parts_sent('public."Order"."Id"'), [["public", "Order", "Id"]])
+        self.assertEqual(self.parts_sent('"S".t.c'), [["S", "t", "c"]])
+        self.assertEqual(self.parts_sent('s."T".c'), [["s", "T", "c"]])
+        self.assertEqual(self.parts_sent("S.T.C"), [["s", "t", "c"]])
+        self.assertEqual(self.parts_sent('"select".id'), [[None, "select", "id"]])
+
+    def test_an_unquoted_part_folds_ascii_letters_only_and_may_hold_digits_dollars_and_non_ascii_letters(self):
+        self.assertEqual(self.parts_sent("ÀB.id"), [[None, "Àb", "id"]])
+        self.assertEqual(self.parts_sent("K.id"), [[None, "K", "id"]])
+        self.assertEqual(self.parts_sent("a$b_1.c"), [[None, "a$b_1", "c"]])
+        self.assertEqual(self.parts_sent("A.B"), [[None, "a", "b"]])
+        self.assertEqual(self.parts_sent("_x.y"), [[None, "_x", "y"]])
+
+    def test_a_quoted_part_keeps_every_character_but_a_control_character(self):
+        self.assertEqual(self.parts_sent('"we ird.t""x"."c ""1"'), [[None, 'we ird.t"x', 'c "1']])
+        self.assertEqual(self.parts_sent('"a b"."1$"'), [[None, "a b", "1$"]])
+
+    def test_each_invalid_form_is_missing_and_runs_no_psql_call(self):
+        invalid = [
+            "nodot", "a.b.c.d", ".b", "a.", "a..b", '"".id', '""."id"', '"a.b', '"a"b.c', '"a" .b', "a b.c",
+            "1a.c", "$a.c", 'U&"x".c', 'U&"d\\0061t\\0061".c', "a.b-c", "a.b'c", "a.b;c", "a.(b)",
+            "t.i\td", 't."i\td"', "t.\x85x", 't."\x85"', "t.i\x7fd",
+        ]
+        for name in invalid:
+            with self.subTest(name=name):
+                code, data = self.run_facts(name)
+                self.assertEqual((code, data["facts"]), (0, {name: {"missing": True}}))
+                self.assertEqual(self.calls(), [])
+                self.reset_log()
+
+    def test_parse_name_refuses_a_nul_character_and_a_lone_surrogate(self):
+        for name in ("t.a\x00b", 't."a\x00b"', "t.a\udc80b", 't."a\udc80b"'):
+            with self.subTest(name=name):
+                self.assertIsNone(pg_run.parse_name(name))
+
+    def test_invalid_and_valid_names_together_send_the_valid_pairs_once_and_keep_the_given_keys_in_order(self):
+        names = ["T.id", "bad", "t.id", '"t".id', "u.\ttab", '"T".id']
+        code, data = self.run_facts(*names, rows=[{"i": 0, "nullable": True, "type": "text"}])
+        self.assertEqual(code, 0, data)
+        self.assertEqual(self.sent_names(self.explain_call()), [[0, None, "t", "id"], [1, None, "T", "id"]])
+        self.assertEqual(list(data["facts"]), names)
+        for name in ("T.id", "t.id", '"t".id'):
+            self.assertEqual(data["facts"][name], {"nullable": True, "type": "text"})
+        for name in ("bad", "u.\ttab", '"T".id'):
+            self.assertEqual(data["facts"][name], {"missing": True})
+
+    def test_a_part_is_cut_to_63_bytes_at_a_character_boundary_and_names_that_differ_after_the_cut_are_one_pair(self):
+        self.assertEqual(self.parts_sent(f"{'a' * 70}.id"), [[None, "a" * 63, "id"]])
+        self.assertEqual(self.parts_sent(f'"{"É" * 40}".id'), [[None, "É" * 31, "id"]])
+        self.assertEqual(self.parts_sent(f"{'a' * 70}.id", f"{'a' * 64}.id"), [[None, "a" * 63, "id"]])
+        self.assertEqual(self.parts_sent(f"{'a' * 70}.id", f"{'a' * 62}b.id"), [[None, "a" * 63, "id"], [None, "a" * 62 + "b", "id"]])
+
+    def test_the_ascii_fold_of_a_part_is_the_one_of_the_guard(self):
+        samples = [chr(code) for code in range(32, 127)] + ["K", "ſ", "ı", "É"]
+        for char in samples:
+            if char in '."' or not (char.isalpha() or char == "_"):
+                continue
+            with self.subTest(char=char):
+                self.assertEqual(pg_run.parse_name(f"{char}.c")[1], sql_guard._ascii_lower(char))
 
     def test_the_rows_map_to_nullable_type_and_missing(self):
         rows = [
