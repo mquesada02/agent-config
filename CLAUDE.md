@@ -138,7 +138,7 @@ The loop session is the session that runs this loop: the main section 7 session,
 This loop differs from section 6 on purpose in two ways. It has no `/simplify`: step (b) only applies the recorded Minor findings. It has no verifier subagent: the quoted line is the evidence, and the loop session confirms it. So the loop session confirms the findings that it raises in (c) itself.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
-5. For each one of the created tickets, dispatch an Orca worker (see section 11) that executes each of these steps:
+5. For each one of the created tickets, create its worktree as section 10 says (`orca worktree create --branch <type>/<description> --parent-worktree <your own worktree>`), then dispatch an Orca worker (see section 11) into it with `worker-start --worktree path:<that path>`. The worker executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
 5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3. The worker applies every fix to the spec issue body.
@@ -188,6 +188,12 @@ When spawning subagents or Orca workers, make sure to use Sonnet models for toke
 Always work inside a git worktree, for every task, including one-line fixes, non-code changes and config repositories (`~/.claude`, dotfiles). Never work directly in the main checkout.
 - Create worktrees with /orca-cli, in Orca's configured workspace folder. If Orca isn't running or the repo isn't managed by Orca, stop and ask the user.
 - Every Orca ticket worker gets its own child worktree: its parent (lineage) is the coordinator's worktree, and its git base is the repository's default branch, not the coordinator's branch.
+- Every branch is named `<type>/<description>`, as the Conventional Branch specification (https://conventionalbranch.org/#specification, version 1.1.0) says. The name tells what the branch does, not who made it.
+  - Type, from the label of the issue: bug → `fix`, enhancement → `feat`, documentation or config-only → `chore`. Use `hotfix` or `release` only when the owner asks. With no issue, pick the type by the same meanings. `research/<description>` stays allowed (section 8).
+  - Description: lowercase `a-z`, digits and hyphens that say what the branch does. A dot is allowed only between two letters or digits. No leading, trailing or consecutive hyphen or dot. No issue number: the PR and the Orca worktree link the issue. Example: `fix/successor-terminal-close`.
+  - Pass the whole name with `--branch <type>/<description>` to `orca worktree create`. The Orca setting Branch Prefix is None. A taken name gets a numeric suffix (`fix/a-b-2`), which is still valid.
+  - `orchestration worker-start` cannot name a branch: `--name` turns the slash into a hyphen. So create the worktree first with `orca worktree create --branch <type>/<description> --parent-worktree <the coordinator's own worktree>`, then run `worker-start --worktree path:<that path>`. Never use `--worktree new-child` or `--worktree new-top-level`.
+  - The hook `~/.claude/hooks/worktree-branch/check_branch_name.py` denies `orca worktree create` without a valid `--branch`, and `worker-start` with `--worktree new-child` or `new-top-level`. Existing branches keep their names.
 - Outside a git repository, skip worktrees and work in place.
 - After the branch is merged, clean up with `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>` (see section 8).
 
