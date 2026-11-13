@@ -162,6 +162,8 @@ When merging a PR, follow these rules:
 - if **base** is `develop` or `main`, you must squash-merge the PR
 - if not, create a merge commit 
 
+A research branch is named `research/<description>`. Its findings are not throwaway: they reach the base branch through the same path as code. The base is `develop` when the repo has one, else `main`. A research subagent cannot push, so the session that started the research (the wayfinder session or a coordinator) commits the findings as `docs/research/<description>.md` on that branch in its own worktree. That session then runs the section 6 review loop, the audit and the PR (section 6 step 5). The owner squash-merges the PR. After the merge, the cleanup rule below applies. This rule covers only `research/*` branches.
+
 Before you give the owner the merge command, check that the CI result of the PR is still valid. Skip this check when the PR has no CI checks. Follow these steps:
 1. Fetch the base branch and the PR head: `git fetch origin <base> pull/<n>/head`. The fetch brings the PR head into the local clone, so a tested head that was on the PR branch is there for step 3.
 2. If no run exists for the PR, go to step 6.
@@ -212,6 +214,7 @@ Always work inside a git worktree, for every task, including one-line fixes, non
     - the `/mattpocock-skills:wayfinder` sentence "never resolve more than one ticket per session" (the whole sentence, with its research-ticket exception)
     - the `/mattpocock-skills:wayfinder` charting step "Stop — charting is one session's work; it hand-resolves nothing"
     - the `/mattpocock-skills:ask-matt` advice to `/handoff` and continue in a fresh thread
+    - the `/mattpocock-skills:wayfinder` wording "throwaway `research/<name>` branch" (step 5, "Fire the research subagents"), replaced by the research-branch rule of section 8
     - any other skill text that says to stop, end a session or start a fresh session for context reasons
   - `/mattpocock-skills:to-tickets` sizes each slice for one fresh context window. That is ticket sizing, not a reason to stop.
   - Every stop that is not about context keeps working: caps, questions for the owner, a failed audit, confirmation before a destructive action, and any stop defined for a reason other than context.
