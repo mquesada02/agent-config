@@ -82,7 +82,13 @@ ALTER TABLE pgrun_test.rls_ok ENABLE ROW LEVEL SECURITY;
 CREATE POLICY p_ok ON pgrun_test.rls_ok FOR SELECT USING (true);
 GRANT SELECT ON pgrun_test.rls_xml, pgrun_test.rls_vol, pgrun_test.rls_ok TO pgrun_app;
 ALTER ROLE postgres SET search_path = "$user", public, pgrun_test;
+CREATE TABLE public."Order" (id int NOT NULL, "Id" text);
+CREATE TABLE public."order" (id text);
+CREATE TABLE public."we ird.t""x" ("c ""1" numeric(10,2) NOT NULL);
+CREATE TABLE public."café" ("naïve" boolean);
 """
+# The server cuts the 70-letter name to 63 bytes (a NOTICE, no error).
+SETUP_SQL += f"CREATE TABLE public.{'a' * 70} (id smallint NOT NULL);\n"
 
 # (label, statement, ran, names in `downgrade`). Each runs on version 13 and 18.
 STORED_SELECT_CASES = [
@@ -517,6 +523,29 @@ class PgRunDockerTest(DockerServers, unittest.TestCase):
                 self.assertEqual(data[valid_shape], {"missing": True})
                 self.assertEqual(data["x'; DROP TABLE facts_t; --"], {"missing": True})
                 self.assertEqual(data["facts_t.id"], {"nullable": False, "type": "integer"})
+                self.assertEqual(self.facts_rows(version), "2|3")
+
+    def test_facts_reads_quoted_and_unquoted_names_with_the_server_rules(self):
+        cases = {
+            '"Order".id': {"nullable": False, "type": "integer"},
+            "Order.id": {"nullable": True, "type": "text"},
+            "order.id": {"nullable": True, "type": "text"},
+            '"order".id': {"nullable": True, "type": "text"},
+            'public."Order"."Id"': {"nullable": True, "type": "text"},
+            'Order."Id"': {"missing": True},
+            '"we ird.t""x"."c ""1"': {"nullable": False, "type": "numeric(10,2)"},
+            'public."we ird.t""x"."c ""1"': {"nullable": False, "type": "numeric(10,2)"},
+            "café.naïve": {"nullable": True, "type": "boolean"},
+            '"café"."naïve"': {"nullable": True, "type": "boolean"},
+            "CAFÉ.naïve": {"missing": True},
+            f"{'a' * 70}.id": {"nullable": False, "type": "smallint"},
+            "Order.id'; DROP TABLE facts_t; --": {"missing": True},
+        }
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                data = self.facts(version, *cases)
+                self.assertEqual(data, cases)
+                self.assertEqual(list(data), list(cases))
                 self.assertEqual(self.facts_rows(version), "2|3")
 
     def test_facts_leaves_the_data_unchanged_although_the_service_entry_says_read_write(self):

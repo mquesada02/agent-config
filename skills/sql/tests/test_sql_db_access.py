@@ -57,6 +57,15 @@ class DbAccessModuleTest(unittest.TestCase):
             self.assertIn(error, facts)
         self.assertNotIn("refused", facts)
 
+    def test_the_facts_section_states_the_identifier_rules_of_the_names(self):
+        facts = section(self.text, "Facts")
+        self.assertNotIn("no quote handling", facts)
+        self.assertNotIn("no case folding", facts)
+        self.assertNotRegex(facts, r"(?i)case-sensitive")
+        for needle in ("ident_start", "ident_cont", "ASCII rules only", '`""`', "`U&\"...\"`", "63 bytes", "UTF-8", "control character"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, facts)
+
     def test_the_intro_and_the_no_full_result_section_name_facts(self):
         self.assertIn("facts", self.text.split("\n## ", 1)[0])
         self.assertRegex(section(self.text, "No full result"), r"(?i)`pg_run facts` returns catalog metadata only")
@@ -289,6 +298,13 @@ class OptimizeDatabasePathTest(unittest.TestCase):
         self.assertRegex(self.path, r"(?i)user named|ask which")
         self.assertRegex(self.path, r"\$\{\.\.\.\}")
         self.assertRegex(self.path, r"\$n")
+
+    def test_the_catalog_facts_step_tells_claude_to_copy_each_part_as_the_sql_writes_it(self):
+        facts = next(p for p in re.split(r"\n\n", self.path) if "Catalog facts" in p)
+        self.assertIn("Copy each part as the SQL writes it, with its quotes", facts)
+        self.assertIn('`"Order".id`', facts)
+        self.assertIn("the script folds the case of an unquoted part", facts)
+        self.assertRegex(facts, r"(?i)do not fold, unquote or re-quote")
 
     def test_a_failed_call_is_one_note_line_and_no_plan_row_is_written(self):
         self.assertRegex(self.path, r"`Note:")

@@ -52,6 +52,7 @@ import re
 import string
 import subprocess
 import sys
+import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -596,12 +597,65 @@ ROLLBACK;
 """
 
 
+# The identifier rules of the PostgreSQL scanner (`scan.l`): `ident_start` is a letter, `_` or a character at or above U+0080
+# (a byte `\200-\377` of the UTF-8 form); `ident_cont` adds the digits and `$`. The server folds only the ASCII letters of an
+# unquoted identifier and cuts every identifier to 63 bytes (`NAMEDATALEN` 64) at a character boundary.
+ASCII_IDENT_START = string.ascii_letters + "_"
+IDENT_CONT = ASCII_IDENT_START + string.digits + "$"
+MAX_IDENT_BYTES = 63
+
+
+def cut_identifier(part):
+    """The part cut to 63 bytes of UTF-8 without a half character, as the server cuts an identifier."""
+    return part.encode("utf-8")[:MAX_IDENT_BYTES].decode("utf-8", errors="ignore")
+
+
+def fold_identifier(part):
+    """The part with `A-Z` folded to `a-z`; every other character stays (the rule of `sql_guard._ascii_lower`)."""
+    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in part)
+
+
 def parse_name(name):
-    """(schema or None, table, column) of a `table.column` or `schema.table.column` name, else None."""
-    if any(not 32 <= ord(char) <= 126 for char in name):
+    """(schema or None, table, column) of a `table.column` or `schema.table.column` name in SQL identifier syntax
+    (quoted or unquoted parts, read with the server rules), else None."""
+    # `Cs` is a lone surrogate (a byte of the command line that is not valid UTF-8): the server cannot read it.
+    if any(unicodedata.category(char) in ("Cc", "Cs") for char in name):
         return None
-    parts = name.split(".")
-    if len(parts) not in (2, 3) or not all(parts):
+    parts = []
+    index = 0
+    while True:
+        if name.startswith('"', index):
+            pieces = []
+            start = index + 1
+            while True:
+                close = name.find('"', start)
+                if close < 0:
+                    return None
+                pieces.append(name[start:close])
+                if not name.startswith('"', close + 1):
+                    break
+                pieces.append('"')
+                start = close + 2
+            part = "".join(pieces)
+            if not part:
+                return None
+            index = close + 1
+        else:
+            end = index
+            while end < len(name) and (name[end] in IDENT_CONT or ord(name[end]) >= 128):
+                end += 1
+            part = name[index:end]
+            if not part or part[0] in string.digits + "$":
+                return None
+            part = fold_identifier(part)
+            index = end
+        parts.append(cut_identifier(part))
+        if index == len(name):
+            break
+        if name[index] != ".":
+            return None
+        index += 1
+    if len(parts) not in (2, 3):
         return None
     return (parts[0] if len(parts) == 3 else None, *parts[-2:])
 
