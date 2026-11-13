@@ -1656,10 +1656,19 @@ class DiffOrderTest(DiffTestCase):
     ORDERED = "SELECT id FROM t ORDER BY id"
 
     def proof(self, **extra):
-        data = {"ra": 2, "rb": 2, "oa_count": 0, "ob_count": 0, "oa": [], "ob": [], "ties": 0,
-                "xa_count": 0, "xb_count": 0, "xa": [], "xb": []}
+        data = {"ra": 2, "rb": 2, "oa_count": 0, "ob_count": 0, "oa": [], "ob": [], "ties": 0}
         data.update(extra)
         return json.dumps(data)
+
+    def order(self, a, b, headers="id\nid\n", extra_env=None, **proof):
+        """The `diff` output for A and B with the given output headers (two columns when the headers have a comma)."""
+        env = {"FAKE_HEADERS": headers, "FAKE_STDOUT_PROOF": self.proof(**proof)}
+        if "," in headers:
+            env["FAKE_STDOUT_TYPES"] = types_json([23, 23], [23, 23])
+        env.update(extra_env or {})
+        code, data = self.diff(a, b, env=env)
+        self.assertEqual(code, 0, data)
+        return data
 
     def test_no_order_by_in_a_is_not_applicable_and_builds_no_numbered_cte(self):
         code, data = self.diff("SELECT id FROM t", "SELECT id FROM t ORDER BY id")
@@ -1673,11 +1682,12 @@ class DiffOrderTest(DiffTestCase):
     def test_resolved_keys_with_no_repeated_key_are_checked(self):
         code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": self.proof()})
         self.assertEqual((code, data["order"], data["equal"]), (0, "checked", True), data)
-        self.assertEqual(data["order_mismatch"], {"count_a": 0, "count_b": 0, "a": [], "b": []})
+        self.assertNotIn("order_mismatch", data)
         self.assertNotIn("reason", data)
         proof = self.proof_text()
-        self.assertIn("row_number() OVER (ORDER BY c1) AS rn", proof)
         self.assertIn("GROUP BY c1 HAVING count(*) > 1", proof)
+        for removed in ("row_number", "pgrun_na", "pgrun_nb", "pgrun_xa", "pgrun_xb"):
+            self.assertNotIn(removed, proof)
 
     def test_the_keys_are_built_on_the_output_columns_with_their_direction_and_nulls(self):
         a = 'SELECT x, "Y z" FROM t ORDER BY 2 DESC NULLS LAST, X ASC NULLS FIRST'
@@ -1686,27 +1696,92 @@ class DiffOrderTest(DiffTestCase):
             "FAKE_STDOUT_PROOF": self.proof(),
         })
         self.assertEqual(data["order"], "checked", data)
-        self.assertIn("ORDER BY c2 DESC NULLS LAST, c1 NULLS FIRST) AS rn", self.proof_text())
+        self.assertIn("GROUP BY c2, c1 HAVING count(*) > 1", self.proof_text())
 
-    def test_a_nonzero_order_mismatch_count_makes_equal_false_and_zero_counts_make_it_true(self):
-        for extra, expected in (
-            ({"xa_count": 1, "xa": [{"rn": 1, "c1": 1}]}, False), ({"xb_count": 2, "xb": [{"rn": 2, "c1": 1}]}, False), ({}, True),
+    def test_the_reproduced_pairs_give_partial_b_order_and_equal_stays_true(self):
+        for b in ("SELECT id, name FROM t ORDER BY id DESC", "SELECT id, name FROM t ORDER BY name DESC"):
+            with self.subTest(b=b):
+                data = self.order("SELECT id, name FROM t ORDER BY id", b, "id,name\nid,name\n")
+                self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "b_order", True), data)
+                self.assertNotIn("order_mismatch", data)
+
+    def test_b_with_no_order_by_or_with_keys_that_do_not_resolve_gives_b_order(self):
+        for b in (
+            "SELECT id FROM t", "SELECT id FROM (SELECT id FROM t ORDER BY id) AS s", "SELECT id FROM t ORDER BY id + 1",
+            "SELECT id FROM t ORDER BY t.id", "SELECT id FROM t ORDER BY 5", "SELECT id FROM t ORDER BY 0",
+            "SELECT id FROM t ORDER BY id USING <", 'SELECT id FROM t ORDER BY id COLLATE "C"',
+            "SELECT id FROM t ORDER BY id, id + 1",
+            "SELECT id FROM t ORDER BY id UNION ALL SELECT id FROM t ORDER BY id",
         ):
-            with self.subTest(extra=extra):
-                code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": self.proof(**extra)})
-                self.assertEqual((code, data["order"], data["equal"]), (0, "checked", expected), data)
-        self.assertEqual(data["only_a"]["count"], 0)
+            with self.subTest(b=b):
+                data = self.order(self.ORDERED, b)
+                self.assertEqual((data["order"], data["reason"]), ("partial", "b_order"), data)
 
-    def test_the_order_mismatch_samples_are_arrays_with_the_rank_first(self):
-        proof = self.proof(xa_count=1, xa=[{"rn": 3, "c1": 9}])
-        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
-        self.assertEqual(data["order_mismatch"], {"count_a": 1, "count_b": 0, "a": [[3, 9]], "b": []})
+    def test_b_with_an_extra_or_a_missing_key_gives_b_order(self):
+        headers = "id,name\nid,name\n"
+        for a, b in (
+            ("SELECT id, name FROM t ORDER BY id", "SELECT id, name FROM t ORDER BY id, name"),
+            ("SELECT id, name FROM t ORDER BY id, name", "SELECT id, name FROM t ORDER BY id"),
+            ("SELECT id, name FROM t ORDER BY id, name", "SELECT id, name FROM t ORDER BY name, id"),
+        ):
+            with self.subTest(a=a, b=b):
+                data = self.order(a, b, headers)
+                self.assertEqual((data["order"], data["reason"]), ("partial", "b_order"), data)
 
-    def test_a_repeated_key_makes_the_order_partial_with_reason_ties_and_the_numbered_diff_is_not_used(self):
-        proof = self.proof(ties=2, xa_count=5, xa=[{"rn": 1, "c1": 1}])
-        code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
+    def test_equal_keys_written_differently_are_checked(self):
+        headers = "id,name\nid,name\n"
+        for a, b in (
+            ("SELECT id, name FROM t ORDER BY id", "SELECT id, name FROM t ORDER BY 1"),
+            ("SELECT id, name FROM t ORDER BY 1 ASC NULLS LAST", "SELECT id, name FROM t ORDER BY id"),
+            ("SELECT id, name FROM t ORDER BY id NULLS LAST", "SELECT id, name FROM t ORDER BY ID ASC"),
+            ("SELECT id, name FROM t ORDER BY id DESC", "SELECT id, name FROM t ORDER BY 1 DESC NULLS FIRST"),
+            ("SELECT id, name FROM t ORDER BY id DESC NULLS FIRST", "SELECT id, name FROM t ORDER BY id DESC"),
+            ("SELECT id, name FROM t ORDER BY name DESC, 1", "SELECT id, name FROM t ORDER BY 2 DESC NULLS FIRST, id"),
+            ("SELECT id, name FROM t ORDER BY id", 'SELECT id, name FROM t ORDER BY "id"'),
+        ):
+            with self.subTest(a=a, b=b):
+                data = self.order(a, b, headers)
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+                self.assertNotIn("reason", data)
+
+    def test_a_different_direction_or_nulls_order_gives_b_order(self):
+        for a, b in (
+            ("SELECT id FROM t ORDER BY id", "SELECT id FROM t ORDER BY id DESC"),
+            ("SELECT id FROM t ORDER BY id", "SELECT id FROM t ORDER BY id NULLS FIRST"),
+            ("SELECT id FROM t ORDER BY id DESC", "SELECT id FROM t ORDER BY id"),
+            ("SELECT id FROM t ORDER BY id DESC", "SELECT id FROM t ORDER BY id DESC NULLS LAST"),
+            ("SELECT id FROM t ORDER BY id NULLS FIRST", "SELECT id FROM t ORDER BY id NULLS LAST"),
+        ):
+            with self.subTest(a=a, b=b):
+                data = self.order(a, b)
+                self.assertEqual((data["order"], data["reason"]), ("partial", "b_order"), data)
+
+    def test_a_with_no_order_by_stays_not_applicable_whatever_b_has(self):
+        data = self.order("SELECT id FROM t", "SELECT id FROM t ORDER BY id DESC")
+        self.assertEqual((data["order"], "reason" in data), ("not_applicable", False))
+
+    def test_b_order_wins_over_ties_and_sort_keys_wins_over_b_order(self):
+        data = self.order(self.ORDERED, "SELECT id FROM t ORDER BY id DESC", ties=2)
+        self.assertEqual((data["order"], data["reason"]), ("partial", "b_order"), data)
+        data = self.order("SELECT id FROM t ORDER BY id + 1", "SELECT id FROM t ORDER BY id DESC", ties=2)
+        self.assertEqual((data["order"], data["reason"]), ("partial", "sort_keys"), data)
+
+    def test_a_repeated_key_with_the_same_keys_in_b_gives_reason_ties(self):
+        data = self.order(self.ORDERED, self.ORDERED, ties=2)
         self.assertEqual((data["order"], data["reason"], data["equal"]), ("partial", "ties", True), data)
         self.assertNotIn("order_mismatch", data)
+
+    def test_the_order_never_changes_equal(self):
+        for b in (self.ORDERED, "SELECT id FROM t ORDER BY id DESC", "SELECT id FROM t"):
+            with self.subTest(b=b):
+                self.assertTrue(self.order(self.ORDERED, b)["equal"])
+        self.assertFalse(self.order(self.ORDERED, self.ORDERED, oa_count=1, oa=[{"c1": 1}])["equal"])
+
+    def test_the_proof_has_no_rank_comparison_and_the_output_has_no_order_mismatch(self):
+        data = self.order(self.ORDERED, "SELECT id FROM t ORDER BY id DESC")
+        self.assertNotIn("order_mismatch", data)
+        for removed in ("row_number", "pgrun_na", "pgrun_nb", "pgrun_xa", "pgrun_xb", "xa_count", "xb_count"):
+            self.assertNotIn(removed, self.proof_text())
 
     def test_keys_that_cannot_be_extracted_or_resolved_make_the_order_partial_with_reason_sort_keys(self):
         for a, headers in (
@@ -1739,9 +1814,9 @@ class DiffOrderTest(DiffTestCase):
         env = {"FAKE_HEADERS": "id,v\nid,v\n", "FAKE_STDOUT_TYPES": types, "FAKE_STDOUT_PROOF": self.proof()}
         code, data = self.diff("SELECT id, v FROM t ORDER BY id", "SELECT id, v FROM t ORDER BY id", env=env)
         self.assertEqual((data["order"], data["equal"]), ("checked", False))
-        self.assertIn("pgrun_na", self.proof_text())
+        self.assertIn("GROUP BY c1 HAVING count(*) > 1", self.proof_text())
 
-    def test_a_proof_without_the_numbered_fields_is_bad_output_when_the_keys_resolved(self):
+    def test_a_proof_without_the_tie_count_is_bad_output_when_the_keys_resolved(self):
         proof = json.dumps({"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []})
         code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
         self.assertEqual((code, data["error"]), (1, "bad_output"))

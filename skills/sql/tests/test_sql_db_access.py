@@ -83,23 +83,27 @@ class DbAccessModuleTest(unittest.TestCase):
                 self.assertIn(f"`{name}`", body)
         for key in (
             "action", "service", "server_version_num", "timeouts", "equal", "reason", "column_names", "columns", "rows",
-            "only_a", "only_b", "type_mismatch", "casts", "floats", "order", "order_mismatch", "count_a", "count_b",
+            "only_a", "only_b", "type_mismatch", "casts", "floats", "order",
             "statement", "static_review_only",
         ):
             with self.subTest(key=key):
                 self.assertIn(f"`{key}`", body)
+        self.assertIn("There is no `order_mismatch` field", body)
+        self.assertNotIn("`count_a`", body)
         self.assertIn('"count"', body)
-        for value in ("checked", "partial", "not_applicable", "ties", "sort_keys", "shape"):
+        for value in ("checked", "partial", "not_applicable", "ties", "sort_keys", "b_order", "shape"):
             with self.subTest(value=value):
                 self.assertIn(f"`{value}`", body)
         self.assertRegex(body, r"(?i)at most 20 rows")
         self.assertRegex(body, r"(?i)only action that returns rows")
         self.assertRegex(body, r"(?i)one read-only transaction")
-        self.assertRegex(body, r"(?i)does not read the output order of B")
+        self.assertRegex(body, r"(?i)does not read the order that the server returns for B")
+        self.assertNotIn("order_mismatch` has", body)
+        self.assertNotRegex(self.text, r"(?i)up to 80 rows")
 
     def test_the_residual_risk_section_names_the_diff_risks(self):
         body = section(self.text, "Residual risk")
-        for text in ("not one transaction", "output order of B", "80 rows", "volatile", "multirange"):
+        for text in ("not one transaction", "order that the server returns for B", "40 rows", "volatile", "multirange"):
             with self.subTest(text=text):
                 self.assertIn(text, body)
 

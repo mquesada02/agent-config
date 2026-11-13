@@ -372,6 +372,7 @@ class OptimizeModuleTest(unittest.TestCase):
             "Rewrite (proven by the database diff only: no repo tests ran):",
             "Rewrite (partial proof by the database diff: order not checked, ties):",
             "Rewrite (partial proof by the database diff: order not checked, sort keys):",
+            "Rewrite (partial proof by the database diff: order not checked, B order):",
             "Rewrite (unproven: no database):",
             "Rewrite (unproven: the database diff failed):",
             "Rewrite (unproven: write statement, no database diff):",
@@ -379,14 +380,17 @@ class OptimizeModuleTest(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 self.assertIn(f"`{label}`", proof)
+        self.assertNotIn("`order_mismatch`", proof)
+        self.assertNotIn("B needs the same `ORDER BY`", proof)
         for needle in (
             "pg_run.py diff --repo <repo root> --service <name> --a='<A>' --b='<B>'", "`--a=<sql>`",
             "`CLAUDE.md` or `AGENTS.md`", "`test` script of `package.json`", "at most 2 workers",
             "`--test-concurrency=2`", "`--maxWorkers=2`", "no pipe and no redirect",
             "Note: no repo tests ran for <place>, so the rewrite is proven by the database diff only.",
             "Note: the repo tests were not run: the limit of 2 workers cannot be set for <command>.",
-            "`column_names`", "`type_mismatch`", "`order_mismatch`", "`casts`", "`floats`", "`ties`", "`sort_keys`",
-            "It does not mean that B returns its rows in that order", "`INSERT`, `UPDATE`, `DELETE` or `MERGE`",
+            "`column_names`", "`type_mismatch`", "`casts`", "`floats`", "`ties`", "`sort_keys`", "`b_order`",
+            "B has the same top-level `ORDER BY` keys as A", "It does not read the order that the server returns for B",
+"`INSERT`, `UPDATE`, `DELETE` or `MERGE`",
             "make no `diff` call", "tool hook", "`all` covers no rewrite",
             "When the tests pass, the `Note:` line quotes the passing test line of the runner output verbatim",
         ):
