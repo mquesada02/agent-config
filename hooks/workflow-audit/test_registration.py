@@ -167,12 +167,15 @@ class HookOrderTest(AuditCase):
     def test_a_heredoc_is_denied_by_the_rewrite_hook_in_every_order(self):
         self.assert_same_in_every_order("cat <<EOF\nx\nEOF", True, "redact_pre.py: ")
 
+    def test_a_worktree_create_without_a_branch_is_denied_by_the_branch_hook_in_every_order(self):
+        self.assert_same_in_every_order("orca worktree create --name x", True, "Blocked by ~/.claude/hooks/worktree-branch/check_branch_name.py")
+
     def test_the_hooks_that_the_order_test_runs_include_the_audit_gate_the_aws_guard_the_subagent_guard_and_the_rewrite_hook(self):
         scripts = sorted(os.path.basename(word)
                          for group in self.bash_groups() for entry in group["hooks"] if repo_argv(entry["command"])
                          for word in repo_argv(entry["command"]) if word.startswith(REPO))
-        self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "block_subagent_writes.py", "redact_pre.py",
-                                   "setup_diff_prompt.py"])
+        self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "block_subagent_writes.py", "check_branch_name.py",
+                                   "redact_pre.py", "setup_diff_prompt.py"])
 
 
 if __name__ == "__main__":
