@@ -584,7 +584,7 @@ def after_postfix_operator(tokens):
         and first[1] == second[1]
         and first[1] in ("+", "-")
         and first[3] == second[2]
-        and not slash_starts_regex(tokens[-3:-2])
+        and not regex_can_follow(tokens[-3])
     )
 
 
@@ -652,7 +652,12 @@ def slash_starts_regex(tokens):
         return True
     if after_postfix_operator(tokens):
         return False
-    kind, text = tokens[-1][0], tokens[-1][1]
+    return regex_can_follow(tokens[-1])
+
+
+def regex_can_follow(token):
+    """True when a `/` right after this one token starts a regex."""
+    kind, text = token[0], token[1]
     if kind in ("num", "str", "regex", "tpl_end", "jsx"):
         return False
     if kind == "name":

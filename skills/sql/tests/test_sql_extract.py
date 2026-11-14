@@ -1019,7 +1019,7 @@ class SlashTest(ExtractTestCase):
     def test_the_notes_state_the_two_slash_rules(self):
         with open(NOTES, encoding="utf-8") as handle:
             notes = handle.read()
-        for needle in ("## Regex or division", "i++ / 2", "export default /re/"):
+        for needle in ("## Regex or division", "i++ / 2", "export default /re/", "obj.default / 2", "a + +/re/.source"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, notes)
 
