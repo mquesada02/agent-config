@@ -19,6 +19,10 @@ def say(line):
     print(line, flush=True)
 
 
+def say_row(row):
+    say(f"{row['path']} [{row.get('branch') or 'no branch'}]")
+
+
 def repo_rows():
     """(rows, truncated) of the non-main Orca worktrees of the repo that holds the working folder. None when not readable."""
     top = git(os.getcwd(), "rev-parse", "--show-toplevel")
@@ -45,8 +49,7 @@ def creator_gone(row):
     return not caller or anchor_worktree(caller) is None
 
 
-def pushed_text(path, branch):
-    tip = git(path, "rev-parse", "HEAD").stdout.strip()
+def pushed_text(path, branch, tip):
     sha, error = remote_ref_sha(path, f"{BRANCH_PREFIX}{branch}")
     if error:
         return "push state unknown"
@@ -55,8 +58,7 @@ def pushed_text(path, branch):
     return "remote branch differs from the tip" if sha else "not pushed"
 
 
-def pr_text(path, branch):
-    tip = git(path, "rev-parse", "HEAD").stdout.strip()
+def pr_text(path, branch, tip):
     prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,headRefOid", cwd=path))
     if not isinstance(prs, list):
         return "PR state unknown"
@@ -80,7 +82,8 @@ def state_text(row):
     clean = check_clean(path)
     docker = check_docker(path)
     parts = [clean[0].removeprefix("Clean: ") if clean else "clean"]
-    parts += [pushed_text(path, branch), pr_text(path, branch)] if branch else ["no branch checked out"]
+    tip = git(path, "rev-parse", "HEAD").stdout.strip()
+    parts += [pushed_text(path, branch, tip), pr_text(path, branch, tip)] if branch else ["no branch checked out"]
     parts += [terminals_text(path), docker[0].removeprefix("Docker: ") if docker else "no compose stack"]
     return "; ".join(parts)
 
@@ -107,13 +110,13 @@ def main():
         say("List: Orca cut the list short, some worktrees are missing")
     say(f"Owned worktrees ({len(owned)}):")
     for row, reason in owned:
-        say(f"{row['path']} [{row.get('branch') or 'no branch'}]")
+        say_row(row)
         say(f"  owned: {reason}; {state_text(row)}")
     say(f"Orphans ({len(orphans)}): no proof, no live creator terminal. Never claimed; the owner runs the command.")
     for row in orphans:
-        say(f"{row['path']} [{row.get('branch') or 'no branch'}]")
+        say_row(row)
         say(f"  {state_text(row)}")
-        say(f"{SKIP_COMMAND.format(path=os.path.realpath(row['path']))}")
+        say(SKIP_COMMAND.format(path=os.path.realpath(row["path"])))
     say(f"Not listed: {others} worktrees of live terminals of other sessions")
     return 0
 

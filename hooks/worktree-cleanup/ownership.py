@@ -10,7 +10,6 @@ import runtime_dir  # noqa: E402  (the shared runtime folder of the context-hand
 
 REMOTE = "origin"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
-SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 LINEAGE_MAX_STEPS = 20
 
 
