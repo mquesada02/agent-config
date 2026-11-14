@@ -567,12 +567,14 @@ def jsx_starts(text, i, tokens, tsx):
 
 
 def after_export_default(tokens):
-    """The words `export default` right before an element: `export default <p/>`."""
+    """The words `export default` right before an element or a regex: `export default <p/>`."""
     return len(tokens) > 1 and name_is(tokens[-1], "default") and name_is(tokens[-2], "export")
 
 
 def after_postfix_operator(tokens):
-    """The last two tokens are a postfix `++` or `--` (two joined punctuation tokens after a value)."""
+    """The last two tokens are a postfix `++` or `--` (two joined punctuation tokens after a value).
+
+    A `<` or a `/` after it is a comparison or a division."""
     if len(tokens) < 3:
         return False
     first, second = tokens[-2], tokens[-1]
@@ -582,7 +584,7 @@ def after_postfix_operator(tokens):
         and first[1] == second[1]
         and first[1] in ("+", "-")
         and first[3] == second[2]
-        and not slash_starts_regex(tokens[-3:-2])
+        and not regex_can_follow(tokens[-3])
     )
 
 
@@ -646,7 +648,16 @@ def close_element(stack, tokens, frame, end):
 def slash_starts_regex(tokens):
     if not tokens:
         return True
-    kind, text = tokens[-1][0], tokens[-1][1]
+    if after_export_default(tokens):
+        return True
+    if after_postfix_operator(tokens):
+        return False
+    return regex_can_follow(tokens[-1])
+
+
+def regex_can_follow(token):
+    """True when a `/` right after this one token starts a regex."""
+    kind, text = token[0], token[1]
     if kind in ("num", "str", "regex", "tpl_end", "jsx"):
         return False
     if kind == "name":
