@@ -985,6 +985,45 @@ class JsxTest(ExtractTestCase):
                 self.assertIn(needle, notes)
 
 
+SLASH_NAMES = ("a.js", "a.ts", "a.jsx", "a.tsx")
+
+
+class SlashTest(ExtractTestCase):
+    found = JsxTest.found
+
+    def test_a_slash_after_a_postfix_operator_is_a_division(self):
+        for operator in ("++", "--"):
+            src = "let i = 0;\nconst h = i" + operator + " / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n"
+            with self.subTest(operator=operator):
+                self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [2]))
+
+    def test_chained_postfix_operators_are_divisions(self):
+        src = "let a = 1, b = 1, c = 1;\nconst h = a++ / b++ / c; const q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [2]))
+
+    def test_a_slash_after_export_default_starts_a_regex(self):
+        src = "export default /a`b/;\nconst q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [2]))
+
+    def test_the_controls_keep_their_result(self):
+        controls = (
+            "const h = obj.default / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = a + +/re/.source; const q = sql`SELECT 1`;\n",
+            "const h = a + b / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = i / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+        )
+        for src in controls:
+            with self.subTest(src=src):
+                self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [1]))
+
+    def test_the_notes_state_the_two_slash_rules(self):
+        with open(NOTES, encoding="utf-8") as handle:
+            notes = handle.read()
+        for needle in ("## Regex or division", "i++ / 2", "export default /re/"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, notes)
+
+
 class JsxErrorTest(ExtractTestCase):
     def failure(self, src, name="a.jsx"):
         data = self.extract(src, name=name, tags="sql", expect=1)

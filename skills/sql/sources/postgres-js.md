@@ -40,6 +40,13 @@ The `value` and `fragment` positions are only reported. The format tickets decid
 
 If `error` is not null, stop. Show its `message` and its `line` (the line can be null when the file cannot be read), and ask the user to fix the file. The script exits with code 1 in this case, and with code 2 for a usage error (it prints no JSON then).
 
+## Regex or division
+
+In every JavaScript and TypeScript file the extractor decides from the last tokens whether a `/` starts a regex or is a division. Two rules apply before the usual rule (a regex starts after an operator, an opening bracket or a regex keyword such as `return`):
+
+- After a postfix `++` or `--`, the `/` is a division: `i++ / 2`. Two separate operators, as in `a + +/re/.source`, are not a postfix operator, so the `/` there starts a regex.
+- Right after the words `export default`, the `/` starts a regex: `export default /re/`. The name `default` in any other place is a value, so `obj.default / 2` is a division.
+
 ## JSX scan
 
 In `.jsx` and `.tsx` files the extractor scans each JSX element as one unit, from its opening `<` to its matching close. JSX text and attribute strings never open a JavaScript string, template, regex or comment, so an apostrophe, a double quote or a backtick in JSX text does not hide a later template. A `{...}` child or attribute value is JavaScript again, so a template inside it is found. Other extensions do not change.
