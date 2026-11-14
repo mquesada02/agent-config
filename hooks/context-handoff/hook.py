@@ -86,6 +86,7 @@ SUCCESSOR_STEPS_INTRO = """
    Then copy these successor steps word for word into the handoff, under the heading "Successor steps":"""
 SUCCESSOR_COMMON_STEPS = """
    Every role: check each Orca ID that you take from the handoff with Orca before you use it (`run-show`, `task-list`, `worker-show`). A worker does this after its new Dispatch arrives.
+   Plain session and coordinator: after the steps of your role, run `~/.claude/hooks/worktree-cleanup/list-owned`. It is read-only. It lists the worktrees of this repo that you own (yours, your workers' and your predecessors') and the orphans. Take the owned worktrees into your own work. Never claim an orphan: its row holds the command for the owner.
    Every role: if any takeover step fails, except the close of the old terminal, keep the old terminal open, tell the user what failed, and stop. The takeover is done when you have read the handoff (and, for a coordinator, bound the Run)."""
 PLAIN_SUCCESSOR_STEPS = """
    Plain session only:

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+# Read-only list of the worktrees of this repo that the session owns, and of the orphans (spec #608). Standard library only.
+#   list-owned
+# A worktree is owned by the session by one of these proofs (the ones that `cleanup` uses): its own worktree, a child of its
+# worktree, a worktree that its terminal or a predecessor in the handoff chain created, or a worktree of a Dispatch of its bound Run.
+# An orphan has no such proof and no live creator terminal. It is never claimed: the owner runs the `cleanup --skip-ownership` command.
+# The script runs no removal and changes no worktree, branch, terminal or file.
+# Exit codes: 0 listed; 1 the worktrees of the repo could not be read.
+import os
+import sys
+
+from ownership import (SKIP_COMMAND, anchor_worktree, bound_run, check_clean, check_docker, git, ownership_reason, read_json,
+                       remote_ref_sha, run, run_proof)
+
+BRANCH_PREFIX = "refs/heads/"
+
+
+def say(line):
+    print(line, flush=True)
+
+
+def say_row(row):
+    say(f"{row['path']} [{row.get('branch') or 'no branch'}]")
+
+
+def repo_rows():
+    """(rows, truncated) of the non-main Orca worktrees of the repo that holds the working folder. None when not readable."""
+    top = git(os.getcwd(), "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return None
+    shown = read_json(run("orca", "worktree", "show", "--worktree", f"path:{os.path.realpath(top.stdout.strip())}", "--json"))
+    try:
+        repo_id = shown["result"]["worktree"]["repoId"]
+        listed = read_json(run("orca", "worktree", "list", "--repo", f"id:{repo_id}", "--limit", "500", "--json"))
+        result = listed["result"]
+        worktrees = result["worktrees"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(repo_id, str) or not isinstance(worktrees, list):
+        return None
+    rows = [row for row in worktrees if isinstance(row, dict) and row.get("repoId") == repo_id
+            and not row.get("isMainWorktree") and not row.get("isArchived") and isinstance(row.get("path"), str)]
+    return rows, result.get("truncated") is True
+
+
+def creator_gone(row):
+    provenance = row.get("cliProvenance")
+    caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
+    return not caller or anchor_worktree(caller) is None
+
+
+def pushed_text(path, branch, tip):
+    sha, error = remote_ref_sha(path, f"{BRANCH_PREFIX}{branch}")
+    if error:
+        return "push state unknown"
+    if sha == tip:
+        return "pushed"
+    return "remote branch differs from the tip" if sha else "not pushed"
+
+
+def pr_text(path, branch, tip):
+    prs = read_json(run("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,headRefOid", cwd=path))
+    if not isinstance(prs, list):
+        return "PR state unknown"
+    prs = [pr for pr in prs if isinstance(pr, dict)]
+    if not prs:
+        return "no PR"
+    return ", ".join(f"PR #{pr.get('number')} {pr.get('state')}" + ("" if pr.get("headRefOid") == tip else " (tip differs)") for pr in prs)
+
+
+def terminals_text(path):
+    listed = read_json(run("orca", "terminal", "list", "--worktree", f"path:{path}", "--json"))
+    try:
+        return f"{len(listed['result']['terminals'])} live terminals"
+    except (KeyError, TypeError):
+        return "live terminals unknown"
+
+
+def state_text(row):
+    path = os.path.realpath(row["path"])
+    branch = (row.get("branch") or "").removeprefix(BRANCH_PREFIX)
+    clean = check_clean(path)
+    docker = check_docker(path)
+    parts = [clean[0].removeprefix("Clean: ") if clean else "clean"]
+    tip = git(path, "rev-parse", "HEAD").stdout.strip()
+    parts += [pushed_text(path, branch, tip), pr_text(path, branch, tip)] if branch else ["no branch checked out"]
+    parts += [terminals_text(path), docker[0].removeprefix("Docker: ") if docker else "no compose stack"]
+    return "; ".join(parts)
+
+
+def main():
+    found = repo_rows()
+    if found is None:
+        say("List: could not read the worktrees of this repo from Orca")
+        return 1
+    rows, truncated = found
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+    anchor = anchor_worktree(handle)
+    _run_id, dispatches = bound_run()
+    owned, orphans, others = [], [], 0
+    for row in rows:
+        reason = ownership_reason(row, anchor, handle) or ("Run worker" if run_proof(row.get("id"), handle, dispatches) else None)
+        if reason:
+            owned.append((row, reason))
+        elif creator_gone(row):
+            orphans.append(row)
+        else:
+            others += 1
+    if truncated:
+        say("List: Orca cut the list short, some worktrees are missing")
+    say(f"Owned worktrees ({len(owned)}):")
+    for row, reason in owned:
+        say_row(row)
+        say(f"  owned: {reason}; {state_text(row)}")
+    say(f"Orphans ({len(orphans)}): no proof, no live creator terminal. Never claimed; the owner runs the command.")
+    for row in orphans:
+        say_row(row)
+        say(f"  {state_text(row)}")
+        say(SKIP_COMMAND.format(path=os.path.realpath(row["path"])))
+    say(f"Not listed: {others} worktrees of live terminals of other sessions")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
