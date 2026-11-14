@@ -22,7 +22,7 @@ How a workflow spends runner minutes: triggers, concurrency, path filters, timeo
 - **Severity:** required
 - **Rule:** A workflow that has the gate job (NAME-08) has no workflow-level `paths` or `paths-ignore`. To skip work, a first `changes` job uses `dorny/paths-filter` (SHA-pinned, `pull-requests: read`, no checkout on PRs) and gives outputs such as `code` and `docs_only`. Each heavy job has `if: needs.changes.outputs.code == 'true'`. The gate accepts `skipped` for jobs that have such an `if:`.
 - **Check:** mechanical
-- **Fix:** Remove the workflow-level `paths` and `paths-ignore`, add a `changes` job with `dorny/paths-filter`, and put `if: needs.changes.outputs.code == 'true'` on each heavy job.
+- **Fix:** Remove the workflow-level `paths` and `paths-ignore`, add a `changes` job whose filter step has the exact line `uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3` of the create templates (never a SHA that you wrote yourself), and put `if: needs.changes.outputs.code == 'true'` on each heavy job.
 
 ### COST-04
 - **Severity:** required (a missing `timeout-minutes`), suggestion (measured: a timeout more than 2× above the proposed value)
