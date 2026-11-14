@@ -216,7 +216,7 @@ No handoff of the 30-file sample failed, and no successor halted with "handoff l
 
 | Session | Role | Context at the block | Launcher result |
 |---|---|---|---|
-| `F1` (a `.claude` worktree) | worker | 400,124 | "successor failed: the Dispatch does not match the worker handle and Task"; a rerun said a launch already ran; a later run gave "ok" |
+| `F1` (a `.claude` worktree) | worker | 400,124 | "successor failed: the Dispatch does not match the worker handle and Task"; a rerun said a launch already ran; a later run gave "ok" and started a successor |
 | `F2` (a worktree of repo F) | worker | 401,882 | "successor failed: the Dispatch does not match the worker handle and Task" |
 | `F3` (a worktree of repo J) | worker | 400,612 | "successor failed: worker handle is not this terminal" (twice) |
 | `F4` (a worktree of repo F) | worker | 404,534 | "successor failed: the Dispatch does not match the worker handle and Task" |
