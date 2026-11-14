@@ -10,7 +10,7 @@ Run the extractor with no `--tags`. The script accepts `--tags` for a `.sql` fil
 python3 <skill folder>/scripts/extract.py <file>
 ```
 
-It prints one JSON object. The keys are `file`, `form` (`sql`), `detected_tags`, `factory_names`, `tags`, `statements` and `error`. For a `.sql` file `detected_tags`, `factory_names` and `tags` are always empty.
+It prints one JSON object. The keys are `file`, `form` (`sql`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements` and `error`. For a `.sql` file `detected_tags`, `factory_names`, `tags`, `detected_receivers` and `receivers` are always empty. Each statement has the key `source` with the value `sql`.
 
 Each item of `statements` is one statement of the file:
 

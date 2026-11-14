@@ -11,15 +11,16 @@ Load this module when the SQL is in a postgres.js tagged template of a JavaScrip
 python3 <skill folder>/scripts/extract.py <file> --tags sql,this.sql,tx
 ```
 
-It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `statements` and `error`.
+It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements` and `error`. The `detected_receivers` and `receivers` keys are for the `pg` driver (`--receivers` adds receivers to the detected ones); this module does not use them.
 
 - `detected_tags`: the tags that the file shows. It finds them in these forms: a variable that holds `postgres(...)`, a member form such as `this.sql = postgres(...)`, a class field, and the first parameter of a `.begin(tx => ...)` callback. Tell the user about a detected tag that is not in the repo tag list, because the repo list may miss it.
 - `factory_names`: the local names that the file binds to the postgres.js package (`import postgres from 'postgres'`, `require('postgres')`).
 - `tags`: the tag list that the run matched. It is the `--tags` list, or `detected_tags` when you gave none.
 - A tag that the file imports from another module (`import { sql } from './db'`) cannot be detected. The repo tag list must name it.
 
-Each item of `statements` is one template:
+Each item of `statements` has a `source` key: `template` for a postgres.js template, `pg` for SQL that a `pg` receiver's `query()` call gets as a string. This module reads the items with `source` `template`. Each of them is one template:
 
+- `source`: `template`.
 - `tag`: the tag text (`sql`, `this.sql`, `tx`).
 - `start_line` and `end_line`: the lines of its opening and closing backtick.
 - `text`: the exact text between the backticks. The `${...}` text stays in it.

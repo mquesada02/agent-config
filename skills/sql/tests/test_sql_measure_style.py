@@ -266,6 +266,38 @@ class MaskingTest(MeasureCase):
         self.assertEqual(measure("--tags", "db", path)["statements"], 1)
 
 
+class PgStatementTest(MeasureCase):
+    HEAD = "import { Pool } from 'pg'\nconst pool = new Pool()\n"
+
+    def test_a_pg_statement_votes_with_its_decoded_value(self):
+        path = self.write("a.ts", self.HEAD + "pool.query('select a from t')\n")
+        out = measure(path)
+        self.assertEqual(out["statements"], 1)
+        self.assertEqual(out["properties"]["keyword_case"]["counts"], {"upper": 0, "lower": 1})
+
+    def test_a_pg_template_votes_as_a_template_does(self):
+        pg = self.write("a.ts", self.HEAD + "pool.query(`\n  SELECT a\n    FROM t\n`)\n")
+        template = self.write(
+            "b.ts",
+            "import postgres from 'postgres'\nconst sql = postgres('x')\nexport const q = sql`\n  SELECT a\n    FROM t\n`\n",
+        )
+        self.assertEqual(self.props(pg)["indent"]["counts"], {"2 spaces": 1})
+        self.assertEqual(self.props(pg), self.props(template))
+
+    def test_an_escaped_line_break_is_a_line_break_for_the_votes(self):
+        path = self.write("a.ts", self.HEAD + "pool.query('SELECT a\\n  b,\\n    c\\n  FROM t')\n")
+        self.assertEqual(self.props(path)["indent"]["counts"], {"2 spaces": 1})
+
+    def test_a_pg_statement_counts_toward_the_minimum_of_three(self):
+        path = self.write(
+            "a.ts",
+            self.HEAD + "pool.query('select a from t')\npool.query('select b from t')\npool.query('select c from t')\n",
+        )
+        out = measure(path)
+        self.assertEqual(out["statements"], 3)
+        self.assertEqual(out["style"]["keyword_case"], "lower")
+
+
 class ErrorsTest(MeasureCase):
     def test_a_missing_file_goes_in_errors_with_the_extractor_message(self):
         missing = os.path.join(self.tmp, "missing.sql")

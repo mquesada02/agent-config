@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Find the SQL of a source file and print one JSON object.
 
-Usage: python3 extract.py <file> [--tags <t1,t2,...>]
+Usage: python3 extract.py <file> [--tags <t1,t2,...>] [--receivers <r1,r2,...>]
 
 The file form comes from the extension: `.sql` (statements) or a JavaScript or
-TypeScript extension (postgres.js tagged templates). For each template or
-statement the output has its line range, its tag, its text and its
-interpolations, each with a position (`value`, `fragment` or `keyword`).
-The output also lists the tags that the file shows (tag detection).
+TypeScript extension (postgres.js tagged templates and `pg` statements). For
+each template or statement the output has its source (`sql`, `template` or
+`pg`), its line range, its tag, its text and its interpolations, each with a
+position (`value`, `fragment` or `keyword`). A `pg` statement is the SQL that a
+string literal or an untagged template literal without `${` gives to the
+`query()` call of a `pg` receiver; it also has a `pg` object (see the spec of
+the `pg` source form). The output also lists the tags that the file shows (tag
+detection) and the `pg` receivers that it shows (receiver detection). The given
+receivers are added to the detected ones; they never replace them.
 
 Exit code: 0 when the file was read, 1 when "error" is set (the JSON is still
 printed), 2 for a usage error (one line on stderr, nothing on stdout).
@@ -17,6 +22,10 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import sql_guard  # noqa: E402
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
 JSX_EXTENSIONS = (".jsx", ".tsx")
@@ -387,6 +396,7 @@ def extract_sql_file(source):
         ]
         statements.append(
             {
+                "source": "sql",
                 "tag": None,
                 "start_line": source.line(start),
                 "end_line": source.line(end - 1),
@@ -483,7 +493,7 @@ def tokenize_js(source, jsx=False, tsx=False):
             while j < n:
                 d = text[j]
                 if d == "\\":
-                    j += 2
+                    j += 3 if text.startswith("\r\n", j + 1) else 2
                     continue
                 if d == c:
                     j += 1
@@ -766,6 +776,11 @@ class Detector:
                 stack.append("class" if is_body else "block")
                 if is_body:
                     pending = False
+            # A method parameter list or a call in the class body is not the class body.
+            elif punct(token, "(") and stack and stack[-1] in ("class", "parens"):
+                stack.append("parens")
+            elif punct(token, ")") and stack and stack[-1] == "parens":
+                stack.pop()
             elif punct(token, "}") and stack:
                 stack.pop()
         return flags
@@ -838,27 +853,61 @@ class Detector:
         return set(self.factory_names) | {"postgres"}
 
     def find_variables(self):
-        t = self.tokens
         factories = self.factories()
-        for i, token in enumerate(t):
+        for i, token in enumerate(self.tokens):
             if token[0] != "name":
                 continue
             if not self.assigned_from_factory(i, factories):
                 continue
-            previous = self.at(i - 1)
-            if punct(previous, ":"):
-                continue
-            if previous[0] == "name" and previous[1] in ("const", "let", "var"):
-                self.add_tag(token[1], token[2])
-            elif punct(previous, "."):
-                found = chain_ending_at(t, i)
-                if found is not None:
-                    self.add_tag(found[0], t[found[1]][2])
-            elif self.in_class[i]:
-                if not self.is_static(i):
-                    self.add_tag("this." + token[1], token[2])
-            else:
-                self.add_tag(token[1], token[2])
+            bound = self.binding(i)
+            if bound is not None:
+                self.add_tag(*bound)
+
+    def binding(self, i):
+        """(name, offset) that the assignment of the name token `i` binds, or None.
+
+        A name after `const`, `let` or `var`, a plain assignment, a member form after `.`, and
+        a non-static class field (`this.NAME`) bind; an object key (`NAME:`) and a static field do not."""
+        t = self.tokens
+        token = t[i]
+        previous = self.at(i - 1)
+        if punct(previous, ":") and not self.is_clause_colon(i - 1):
+            return None
+        if previous[0] == "name" and previous[1] in ("const", "let", "var"):
+            return token[1], token[2]
+        if punct(previous, "."):
+            found = chain_ending_at(t, i)
+            return None if found is None else (found[0], t[found[1]][2])
+        if self.in_class[i]:
+            return None if self.is_static(i) else ("this." + token[1], token[2])
+        return token[1], token[2]
+
+    def declares_after_comma(self, i):
+        """True when the comma before the name token `i` separates the declarators of a `const`, `let`
+        or `var` or the parameters of a parameter list; false for an object literal or an array."""
+        depth = 0
+        for k in range(i - 1, -1, -1):
+            token = self.tokens[k]
+            if token[0] == "p" and token[1] in ")]}":
+                depth += 1
+            elif token[0] == "p" and token[1] in "([{":
+                if depth == 0:
+                    return token[1] == "("
+                depth -= 1
+            elif depth == 0 and token[0] == "name" and token[1] in ("const", "let", "var"):
+                return True
+            elif depth == 0 and punct(token, ";"):
+                return False
+        return False
+
+    def is_clause_colon(self, c):
+        """True when the colon at `c` ends a `case X:` or `default:` clause or a statement label,
+        so that the name after it starts a statement; false for an object value or a type annotation."""
+        label = self.at(c - 1)
+        if name_is(label, "default") or name_is(self.at(c - 2), "case"):
+            return True
+        starts_statement = punct(self.at(c - 2), ";") or punct(self.at(c - 2), "}") or self.at(c - 2)[0] == "eof"
+        return label[0] == "name" and starts_statement and not self.in_class[c - 1]
 
     def is_static(self, i):
         j = i - 1
@@ -870,9 +919,31 @@ class Detector:
 
     def assigned_from_factory(self, i, factories):
         """NAME [: type] = [await] FACTORY( ... starting at the name token `i`."""
+
+        def is_factory_call(j, awaited):
+            callee = self.at(j)
+            return callee[0] == "name" and callee[1] in factories and punct(self.at(j + 1), "(")
+
+        return self.assigned_from(i, is_factory_call)
+
+    def assigned_from(self, i, matches):
+        """NAME [: type] = [await] ... starting at the name token `i`.
+
+        `matches(j, awaited)` judges the value that starts at token `j` (after the `await`, if any)."""
         t = self.tokens
         j = i + 1
         if punct(self.at(j), ":"):
+            # Only a declaration, a parameter or a class field has a type annotation: a case
+            # clause, a statement label and the like have a colon but no annotation.
+            before = self.at(i - 1)
+            declared = (
+                (self.in_class[i] and not punct(before, "?"))
+                or punct(before, "(")
+                or (punct(before, ",") and self.declares_after_comma(i))
+                or (before[0] == "name" and before[1] in ("const", "let", "var") + tuple(CLASS_MODIFIERS))
+            )
+            if not declared:
+                return False
             depth, count = 0, 0
             j += 1
             while j < len(t) and count < MAX_TYPE_ANNOTATION_TOKENS:
@@ -884,7 +955,7 @@ class Detector:
                         depth -= 1
                         if depth < 0:
                             return False
-                    elif token[1] == ";":
+                    elif token[1] == ";" or (token[1] == "," and depth <= 0):
                         return False
                     elif token[1] == "=" and depth <= 0:
                         break
@@ -898,10 +969,10 @@ class Detector:
         if punct(nxt, "="):
             return False
         j += 1
-        if name_is(self.at(j), "await"):
+        awaited = name_is(self.at(j), "await")
+        if awaited:
             j += 1
-        callee = self.at(j)
-        return callee[0] == "name" and callee[1] in factories and punct(self.at(j + 1), "(")
+        return matches(j, awaited)
 
     # form 4
     def find_transactions(self):
@@ -956,25 +1027,608 @@ class Detector:
         return False
 
 
-def extract_js_file(source, given_tags, jsx=False, tsx=False):
+PG_CONSTRUCTORS = ("Pool", "Client")
+
+
+class ReceiverDetector(Detector):
+    """Find the `pg` receivers of a file: the variables, member forms and class fields whose
+    `.query(...)` calls send SQL to a `pg` connection.
+
+    It reuses the binding rules of the postgres.js tag detector (`binding`, `assigned_from`)."""
+
+    def __init__(self, tokens, given_receivers):
+        super().__init__(tokens, [])
+        self.given = set(given_receivers)
+        self.objects = {}  # name -> "pg" or "native" (a `pg` module object)
+        self.constructors = set()  # names of the `Pool` and `Client` classes
+        self.receivers = {}  # receiver -> first offset
+
+    def add_receiver(self, name, offset):
+        if name not in self.receivers or offset < self.receivers[name]:
+            self.receivers[name] = offset
+
+    def run(self):
+        self.find_imports()
+        self.find_declarations()
+        for i, token in enumerate(self.tokens):
+            if token[0] == "name" and self.assigned_from(i, self.is_new_constructor):
+                bound = self.binding(i)
+                if bound is not None:
+                    self.add_receiver(*bound)
+        while self.find_derived():
+            pass
+        return sorted(self.receivers, key=lambda name: self.receivers[name])
+
+    # the import forms of `pg`
+    def find_imports(self):
+        t = self.tokens
+        for i, token in enumerate(t):
+            if not name_is(token, "import") or punct(self.at(i + 1), "(") or punct(self.at(i + 1), "."):
+                continue
+            if self.at(i + 1)[0] == "name" and punct(self.at(i + 2), "="):
+                # import pg = require('pg')
+                if self.is_require(i + 3):
+                    self.objects[t[i + 1][1]] = "pg"
+                continue
+            k = i + 1
+            # a side-effect import (`import 'x'`) has no clause: the scan ends at the next `import`
+            while k < min(len(t) - 1, i + 80) and not punct(t[k], ";") and not (k > i + 1 and name_is(t[k], "import")):
+                if name_is(t[k], "from") and t[k + 1][0] == "str":
+                    break
+                k += 1
+            else:
+                continue
+            if not (k < len(t) - 1 and name_is(t[k], "from") and t[k + 1][0] == "str"):
+                continue
+            if t[k + 1][1].strip("'\"") != "pg":
+                continue
+            self.import_clause(t[i + 1 : k])
+
+    def import_clause(self, segment):
+        if segment and name_is(segment[0], "type") and len(segment) > 1:
+            if segment[1][0] == "name":
+                return  # import type Name from 'pg': a type, never a value
+            segment = segment[1:]
+        braces = False
+        k = 0
+        while k < len(segment):
+            token = segment[k]
+            if punct(token, "{"):
+                braces = True
+            elif punct(token, "}"):
+                braces = False
+            elif punct(token, "*") and k + 2 < len(segment) and name_is(segment[k + 1], "as"):
+                self.objects[segment[k + 2][1]] = "pg"
+                k += 2
+            elif token[0] == "name" and not braces:
+                self.objects[token[1]] = "pg"
+            elif token[0] == "name" and braces:
+                local = token[1]
+                if k + 2 < len(segment) and name_is(segment[k + 1], "as") and segment[k + 2][0] == "name":
+                    local = segment[k + 2][1]
+                    k += 2
+                self.bind_member(token[1], local, "pg")
+            k += 1
+
+    def bind_member(self, member, local, owner):
+        """`local` holds the member `member` of a `pg` object of kind `owner`."""
+        if member in PG_CONSTRUCTORS:
+            self.constructors.add(local)
+        elif member == "native" and owner == "pg":
+            self.objects[local] = "native"
+
+    def is_require(self, j):
+        """`require('pg')` starts at token `j`."""
+        t = self.tokens
+        return (
+            name_is(self.at(j), "require")
+            and punct(self.at(j + 1), "(")
+            and self.at(j + 2)[0] == "str"
+            and t[j + 2][1].strip("'\"") == "pg"
+            and punct(self.at(j + 3), ")")
+        )
+
+    def resolve(self, j):
+        """The value of the expression that starts at token `j`: ("pg" | "native", end) for a
+        `pg` module object, ("constructor", end) for `Pool` or `Client`, or None."""
+        if self.is_require(j):
+            kind, k = "pg", j + 4
+        elif self.at(j)[0] == "name" and self.at(j)[1] in self.objects:
+            kind, k = self.objects[self.at(j)[1]], j + 1
+        elif self.at(j)[0] == "name" and self.at(j)[1] in self.constructors:
+            return "constructor", j + 1
+        else:
+            return None
+        while punct(self.at(k), ".") and self.at(k + 1)[0] == "name":
+            member = self.at(k + 1)[1]
+            if member == "native" and kind == "pg":
+                kind = "native"
+            elif member in PG_CONSTRUCTORS:
+                return "constructor", k + 2
+            else:
+                return None
+            k += 2
+        return kind, k
+
+    # const pg = require('pg'); const { Pool } = pg; const Pool = require('pg').Pool; ...
+    def find_declarations(self):
+        t = self.tokens
+        while True:
+            before = (len(self.objects), len(self.constructors))
+            for i, token in enumerate(t):
+                if not (token[0] == "name" and token[1] in ("const", "let", "var")):
+                    continue
+                first = self.at(i + 1)
+                if first[0] == "name" and punct(self.at(i + 2), "="):
+                    found = self.resolve(i + 3)
+                    if found is None:
+                        continue
+                    if found[0] == "constructor":
+                        self.constructors.add(first[1])
+                    else:
+                        self.objects[first[1]] = found[0]
+                elif punct(first, "{"):
+                    self.destructure(i + 2)
+            if before == (len(self.objects), len(self.constructors)):
+                return
+
+    def destructure(self, j):
+        """The object pattern whose first item is at token `j`: `{ Pool, Client: C, native } = source`."""
+        t = self.tokens
+        items = []
+        k = j
+        while k < len(t) and not punct(t[k], "}"):
+            if t[k][0] == "name":
+                member, local = t[k][1], t[k][1]
+                if punct(self.at(k + 1), ":") and self.at(k + 2)[0] == "name":
+                    local = t[k + 2][1]
+                    k += 2
+                items.append((member, local))
+            k += 1
+        if not punct(self.at(k + 1), "="):
+            return
+        found = self.resolve(k + 2)
+        if found is None or found[0] == "constructor":
+            return
+        for member, local in items:
+            self.bind_member(member, local, found[0])
+
+    # NAME = [await] new <constructor>(...), and nothing after the call: `new Pool().query(...)` gives
+    # a query result, not a pool
+    def is_new_constructor(self, j, awaited):
+        t = self.tokens
+        if not name_is(self.at(j), "new"):
+            return False
+        j += 1
+        name = self.at(j)
+        if name[0] != "name":
+            return False
+        if name[1] in self.constructors:
+            opening = j + 1
+        elif name[1] in self.objects:
+            kind, k = self.objects[name[1]], j + 1
+            if kind == "pg" and punct(self.at(k), ".") and name_is(self.at(k + 1), "native"):
+                k += 2
+            if not (punct(self.at(k), ".") and self.at(k + 1)[0] == "name" and t[k + 1][1] in PG_CONSTRUCTORS):
+                return False
+            opening = k + 2
+        else:
+            return False
+        if not punct(self.at(opening), "("):
+            return False
+        closing = match_close(t, opening)
+        return closing is not None and not any(punct(self.at(closing + 1), p) for p in (".", "?.", "[", "("))
+
+    # clients that a receiver gives: await <receiver>.connect(), .connect().then(client => ...),
+    # .connect((err, client, release) => ...)
+    def find_derived(self):
+        t = self.tokens
+        known = set(self.receivers) | self.given
+        before = len(self.receivers)
+        for i, token in enumerate(t):
+            if token[0] == "name" and self.assigned_from(i, lambda j, awaited: awaited and self.is_connect_call(j, known)):
+                bound = self.binding(i)
+                if bound is not None:
+                    self.add_receiver(*bound)
+        for i in range(1, len(t) - 2):
+            if not (punct(t[i], ".") and name_is(t[i + 1], "connect") and punct(t[i + 2], "(")):
+                continue
+            receiver = chain_ending_at(t, i - 1)
+            if receiver is None or receiver[0] not in known:
+                continue
+            if punct(self.at(i + 3), ")"):
+                if punct(self.at(i + 4), ".") and name_is(self.at(i + 5), "then") and punct(self.at(i + 6), "("):
+                    parameters, wanted = self.callback_parameters(i + 7), 0
+                else:
+                    continue
+            else:
+                parameters, wanted = self.callback_parameters(i + 3), 1
+            if parameters is not None and wanted < len(parameters) and parameters[wanted] is not None:
+                self.add_receiver(parameters[wanted][1], parameters[wanted][2])
+        return len(self.receivers) > before
+
+    def is_connect_call(self, j, known):
+        """`<receiver>.connect()` at token `j`, not followed by a member access."""
+        t = self.tokens
+        parts = []
+        while self.at(j)[0] == "name":
+            parts.append(t[j][1])
+            if punct(self.at(j + 1), "."):
+                j += 2
+            else:
+                j += 1
+                break
+        if len(parts) < 2 or parts[-1] != "connect" or ".".join(parts[:-1]) not in known:
+            return False
+        if not (punct(self.at(j), "(") and punct(self.at(j + 1), ")")):
+            return False
+        return not (punct(self.at(j + 2), ".") or punct(self.at(j + 2), "?."))
+
+    def callback_parameters(self, j):
+        """The first token of each parameter of the callback that starts at token `j` (None for a
+        destructured one), or None when no callback starts there."""
+        t = self.tokens
+        if name_is(self.at(j), "async"):
+            j += 1
+        first = self.at(j)
+        if first[0] == "name" and first[1] != "function" and punct(self.at(j + 1), "=>"):
+            return [first]
+        if name_is(first, "function"):
+            j += 1
+            if self.at(j)[0] == "name":
+                j += 1
+        if not punct(self.at(j), "("):
+            return None
+        if not name_is(first, "function") and not self.arrow_follows(j):
+            return None
+        parameters, depth, fresh = [], 0, True
+        for k in range(j, len(t)):
+            token = t[k]
+            if token[0] == "p" and token[1] in "([{<":
+                depth += 1
+                if depth > 1 and fresh:
+                    parameters.append(None)
+                    fresh = False
+            elif token[0] == "p" and token[1] in ")]}>":
+                depth -= 1
+                if depth == 0:
+                    return parameters
+            elif depth == 1 and punct(token, ","):
+                fresh = True
+            elif depth == 1 and fresh and token[0] == "name":
+                parameters.append(token)
+                fresh = False
+            elif depth == 1 and fresh and not punct(token, "..."):
+                parameters.append(None)
+                fresh = False
+        return None
+
+
+# ---------------------------------------------------------------- pg statements
+
+
+def match_close(tokens, i):
+    """Index of the token that closes the bracket token at `i`, or None."""
+    depth = 0
+    for k in range(i, len(tokens)):
+        token = tokens[k]
+        if token[0] == "ibeg" or (token[0] == "p" and token[1] in "([{"):
+            depth += 1
+        elif token[0] == "iend" or (token[0] == "p" and token[1] in ")]}"):
+            depth -= 1
+            if depth == 0:
+                return k
+    return None
+
+
+def string_is_terminated(raw):
+    """A quoted string token that holds its closing quote: two characters or more, the last one is
+    the opening quote, and an even run of backslashes stands before it."""
+    if len(raw) < 2 or raw[-1] != raw[0]:
+        return False
+    run = 0
+    while len(raw) - 2 - run > 0 and raw[len(raw) - 2 - run] == "\\":
+        run += 1
+    return run % 2 == 0
+
+
+SIMPLE_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v"}
+HEX_DIGITS = "0123456789abcdefABCDEF"
+
+
+def decode_literal(source, start, end, template):
+    """Decode the JavaScript literal body `source.text[start:end]` (between the quotes).
+
+    Returns (text, lines): the decoded value and, for each of its characters, the source line of
+    the character or of the escape that made it. A lone surrogate becomes U+FFFD; a surrogate pair
+    becomes one character."""
+    body = source.text
+    chars, lines = [], []
+    line = source.line(start)
+    i = start
+    while i < end:
+        c = body[i]
+        here = line
+        if c == "\\" and i + 1 < end:
+            n = body[i + 1]
+            i += 2
+            if n in SIMPLE_ESCAPES:
+                chars.append(SIMPLE_ESCAPES[n])
+            elif n in "01234567":
+                limit = 3 if n in "0123" else 2
+                digits = n
+                while len(digits) < limit and i < end and body[i] in "01234567":
+                    digits += body[i]
+                    i += 1
+                chars.append(chr(int(digits, 8)))
+            elif n == "x" and i + 1 < end and body[i] in HEX_DIGITS and body[i + 1] in HEX_DIGITS:
+                chars.append(chr(int(body[i : i + 2], 16)))
+                i += 2
+            elif n == "u" and i < end and body[i] == "{":
+                close = body.find("}", i, end)
+                digits = body[i + 1 : close] if close > 0 else ""
+                if digits and all(d in HEX_DIGITS for d in digits) and int(digits, 16) <= 0x10FFFF:
+                    chars.append(chr(int(digits, 16)))
+                    i = close + 1
+                else:
+                    chars.append("u")
+            elif n == "u" and i + 3 < end and all(d in HEX_DIGITS for d in body[i : i + 4]):
+                chars.append(chr(int(body[i : i + 4], 16)))
+                i += 4
+            elif n == "\r" and i < end and body[i] == "\n":
+                i += 1
+                line += 1
+                continue
+            elif n in "\r  ":
+                continue
+            elif n == "\n":
+                line += 1
+                continue
+            else:
+                chars.append(n)
+            lines.append(here)
+            continue
+        i += 1
+        if template and c == "\r":
+            if i < end and body[i] == "\n":
+                i += 1
+                line += 1
+            chars.append("\n")
+        else:
+            chars.append(c)
+            if c == "\n":
+                line += 1
+        lines.append(here)
+    return join_surrogates(chars, lines)
+
+
+def join_surrogates(chars, lines):
+    text, kept = [], []
+    k = 0
+    while k < len(chars):
+        c = chars[k]
+        if "\ud800" <= c <= "\udbff" and k + 1 < len(chars) and "\udc00" <= chars[k + 1] <= "\udfff":
+            text.append(chr(0x10000 + ((ord(c) - 0xD800) << 10) + (ord(chars[k + 1]) - 0xDC00)))
+            kept.append(lines[k])
+            k += 2
+            continue
+        text.append("�" if "\ud800" <= c <= "\udfff" else c)
+        kept.append(lines[k])
+        k += 1
+    return "".join(text), kept
+
+
+def line_starts_of(text, lines, closing_line):
+    """For each line of `text` (split at "\\n"), the source line where it starts."""
+    starts, index = [], 0
+    for part in text.split("\n"):
+        starts.append(lines[index] if index < len(text) else closing_line)
+        index += len(part) + 1
+    return starts
+
+
+def statement_count(text):
+    """The number of statements of `text`: the groups of tokens that a semicolon outside strings,
+    quoted names, dollar quotes and comments separates."""
+    tokens, _ = sql_guard.tokenize(text)
+    count, open_group = 0, False
+    for token in tokens:
+        if token.kind == "punct" and token.value == ";":
+            open_group = False
+        elif not open_group:
+            count, open_group = count + 1, True
+    return count
+
+
+def callback_starts(detector, j):
+    """True when the expression at token `j` is a function: an arrow function, a `function`
+    expression, or the same with `async`."""
+    return detector.callback_parameters(j) is not None
+
+
+def values_of(tokens, detector, e):
+    """(values_length, values_present) of the call whose first argument ends before the token `e`."""
+    if not punct(tokens[e], ","):
+        return 0, False
+    s = e + 1
+    first = detector.at(s)
+    if punct(first, ")"):
+        return 0, False
+    if callback_starts(detector, s):
+        return 0, False
+    if punct(first, "["):
+        close = match_close(tokens, s)
+        after = detector.at(close + 1) if close is not None else None
+        if close is not None and (
+            punct(after, ",") or punct(after, ")") or name_is(after, "as") or name_is(after, "satisfies")
+        ):
+            return array_length(tokens, s, close), True
+    return None, True
+
+
+def type_arguments_end(tokens, k, close):
+    """The index of the `>` that closes the type arguments opened by the `<` at `k`, or None.
+
+    A `<` is an opening only when it follows a name with no space and its `>` ends the element or
+    is followed by `(`, as in `Map<K, V>` or `f<T>(x)`; `a < b` and `a<b, c>d` are comparisons."""
+    if not (punct(tokens[k], "<") and tokens[k - 1][0] == "name" and tokens[k - 1][3] == tokens[k][2]):
+        return None
+    depth = 0
+    for m in range(k, close):
+        if punct(tokens[m], "<"):
+            depth += 1
+        elif punct(tokens[m], ">"):
+            depth -= 1
+            if depth == 0:
+                after = tokens[m + 1] if m + 1 < len(tokens) else None
+                closes = m + 1 >= close or any(punct(after, p) for p in ("(", ",", ")", "]"))
+                return m if closes else None
+    return None
+
+
+def array_length(tokens, s, close):
+    """The element count of the array literal from `[` at `s` to `]` at `close`; None with a spread."""
+    if close == s + 1:
+        return 0
+    depth, commas, spread, fresh = 0, 0, False, True
+    skip_to = s
+    for k in range(s + 1, close):
+        if k <= skip_to:
+            continue
+        token = tokens[k]
+        end = type_arguments_end(tokens, k, close)
+        if end is not None:
+            skip_to = end
+            fresh = False
+            continue
+        if token[0] == "ibeg" or (token[0] == "p" and token[1] in "([{"):
+            depth += 1
+        elif token[0] == "iend" or (token[0] == "p" and token[1] in ")]}"):
+            depth -= 1
+        elif depth == 0 and punct(token, ","):
+            commas += 1
+            fresh = True
+            continue
+        elif depth == 0 and fresh and punct(token, "..."):
+            spread = True
+        fresh = False
+    if spread:
+        return None
+    trailing = punct(tokens[close - 1], ",")
+    return commas + 1 - (1 if trailing else 0)
+
+
+def find_pg_statements(source, tokens, templates, detector, receivers):
+    """The (offset, statement) pairs of the `<receiver>.query(...)` calls whose first argument is
+    a string literal or an untagged template literal without `${`."""
+    by_index = {template.token_index: template for template in templates}
+    by_start = {token[2]: k for k, token in enumerate(tokens)}
+    found = []
+    for i, token in enumerate(tokens):
+        if not (name_is(token, "query") and (punct(detector.at(i - 1), ".") or punct(detector.at(i - 1), "?."))):
+            continue
+        receiver = chain_ending_at(tokens, i - 2)
+        if receiver is None or receiver[0] not in receivers:
+            continue
+        p = i + 1
+        if punct(detector.at(p), "<"):
+            depth, count = 0, 0
+            while p < len(tokens) and count < MAX_TYPE_ARGUMENT_TOKENS:
+                if punct(tokens[p], "<"):
+                    depth += 1
+                elif punct(tokens[p], ">"):
+                    depth -= 1
+                    if depth == 0:
+                        break
+                p += 1
+                count += 1
+            if depth != 0 or p >= len(tokens):
+                continue
+            p += 1
+        if not punct(detector.at(p), "("):
+            continue
+        argument = detector.at(p + 1)
+        if argument[0] == "str" and string_is_terminated(argument[1]):
+            e = p + 2
+            start, end, template = argument[2] + 1, argument[3] - 1, False
+            first, last = argument[2], argument[3] - 1
+        elif argument[0] == "tpl" and (p + 1) in by_index and not by_index[p + 1].interpolations:
+            record = by_index[p + 1]
+            e = by_start[record.end] + 1
+            start, end, template = record.start + 1, record.end, True
+            first, last = record.start, record.end
+        else:
+            continue
+        if not (punct(detector.at(e), ",") or punct(detector.at(e), ")")):
+            continue
+        text, lines = decode_literal(source, start, end, template)
+        length, present = values_of(tokens, detector, e)
+        found.append(
+            (
+                first,
+                {
+                    "source": "pg",
+                    "tag": None,
+                    "start_line": source.line(first),
+                    "end_line": source.line(last),
+                    "text": text,
+                    "parent": None,
+                    "interpolations": [],
+                    # const_name, dynamic, name, rows and query_mode hold the values that the spec
+                    # gives a direct, non-dynamic call; the const, chain and dynamic forms set them later.
+                    "pg": {
+                        "kind": "template" if template else "literal",
+                        "const_name": None,
+                        "line_starts": line_starts_of(text, lines, source.line(last)),
+                        "dynamic": False,
+                        "statement_count": statement_count(text),
+                        "calls": [
+                            {
+                                "line": source.line(token[2]),
+                                "call": "direct",
+                                "values_length": length,
+                                "values_present": present,
+                                "name": None,
+                                "rows": None,
+                                "query_mode": None,
+                            }
+                        ],
+                    },
+                },
+            )
+        )
+    return found
+
+
+def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=None):
     tokens, templates = tokenize_js(source, jsx, tsx)
     detector = Detector(tokens, given_tags if given_tags is not None else [])
     detected, factory_names = detector.run()
     tags = given_tags if given_tags is not None else detected
+    given_receivers = given_receivers if given_receivers is not None else []
+    receiver_detector = ReceiverDetector(tokens, given_receivers)
+    detected_receivers = receiver_detector.run()
+    receivers = detected_receivers + [name for name in given_receivers if name not in detected_receivers]
     reported = []
     for template in templates:
         found = tag_chain(tokens, template.token_index)
         if found is not None and found[0] in tags:
             template.tag = found[0]
             reported.append(template)
-    index_of = {id(template): k for k, template in enumerate(reported)}
+    entries = [(template.start, template) for template in reported]
+    entries += find_pg_statements(source, tokens, templates, receiver_detector, set(receivers))
+    entries.sort(key=lambda entry: entry[0])
+    index_of = {id(item): k for k, (_, item) in enumerate(entries) if isinstance(item, Template)}
     statements = []
-    for template in reported:
-        parent = template.enclosing
+    for _, item in entries:
+        if not isinstance(item, Template):
+            statements.append(item)
+            continue
+        parent = item.enclosing
         while parent is not None and id(parent) not in index_of:
             parent = parent.enclosing
-        statements.append(template_statement(source, template, None if parent is None else index_of[id(parent)]))
-    return detected, factory_names, tags, statements
+        statements.append(template_statement(source, item, None if parent is None else index_of[id(parent)]))
+    return detected, factory_names, tags, statements, detected_receivers, receivers
 
 
 def template_statement(source, template, parent):
@@ -989,6 +1643,7 @@ def template_statement(source, template, parent):
         for item in template.interpolations
     ]
     return {
+        "source": "template",
         "tag": template.tag,
         "start_line": source.line(template.start),
         "end_line": source.line(template.end),
@@ -1001,15 +1656,30 @@ def template_statement(source, template, parent):
 # ------------------------------------------------------------------- main
 
 
+def name_list(option, value, what):
+    """The names of a comma-separated option value (each a name or a dotted member form), no repeats."""
+    if value is None:
+        return None
+    names = []
+    for element in value.split(","):
+        element = element.strip(" ")
+        if not is_tag_chain(element):
+            raise UsageError("%s needs %s joined by commas, got: %s" % (option, what, value))
+        if element not in names:
+            names.append(element)
+    return names
+
+
 def parse_arguments(argv):
-    file_argument, tags_value = None, None
+    file_argument = None
+    values = {"--tags": None, "--receivers": None}
     i = 0
     while i < len(argv):
         argument = argv[i]
-        if argument == "--tags":
-            if tags_value is not None or i + 1 >= len(argv):
-                raise UsageError("--tags needs exactly one value")
-            tags_value = argv[i + 1]
+        if argument in values:
+            if values[argument] is not None or i + 1 >= len(argv):
+                raise UsageError(argument + " needs exactly one value")
+            values[argument] = argv[i + 1]
             i += 2
             continue
         if argument.startswith("-") and argument != "-":
@@ -1019,16 +1689,9 @@ def parse_arguments(argv):
         file_argument = argument
         i += 1
     if file_argument is None:
-        raise UsageError("usage: extract.py <file> [--tags <t1,t2,...>]")
-    tags = None
-    if tags_value is not None:
-        tags = []
-        for element in tags_value.split(","):
-            element = element.strip(" ")
-            if not is_tag_chain(element):
-                raise UsageError("--tags needs tag names joined by commas, got: " + tags_value)
-            if element not in tags:
-                tags.append(element)
+        raise UsageError("usage: extract.py <file> [--tags <t1,t2,...>] [--receivers <r1,r2,...>]")
+    tags = name_list("--tags", values["--tags"], "tag names")
+    receivers = name_list("--receivers", values["--receivers"], "receiver names")
     extension = os.path.splitext(file_argument)[1].lower()
     if extension == SQL_EXTENSION:
         form = "sql"
@@ -1036,16 +1699,21 @@ def parse_arguments(argv):
         form = "js"
     else:
         raise UsageError("unsupported file form: " + (extension or file_argument))
-    return file_argument, tags, form, extension in JSX_EXTENSIONS, extension == ".tsx"
+    return file_argument, tags, receivers, form, extension in JSX_EXTENSIONS, extension == ".tsx"
 
 
-def result(file_argument, form, error=None, detected=(), factory_names=(), tags=(), statements=()):
+def result(
+    file_argument, form, error=None, detected=(), factory_names=(), tags=(), statements=(),
+    detected_receivers=(), receivers=(),
+):
     return {
         "file": file_argument,
         "form": form,
         "detected_tags": list(detected),
         "factory_names": list(factory_names),
         "tags": list(tags),
+        "detected_receivers": list(detected_receivers),
+        "receivers": list(receivers),
         "statements": list(statements),
         "error": error,
     }
@@ -1053,7 +1721,7 @@ def result(file_argument, form, error=None, detected=(), factory_names=(), tags=
 
 def main(argv):
     try:
-        file_argument, tags, form, jsx, tsx = parse_arguments(argv)
+        file_argument, tags, receivers, form, jsx, tsx = parse_arguments(argv)
     except UsageError as error:
         sys.stderr.write(str(error).replace("\n", " ") + "\n")
         return 2
@@ -1070,8 +1738,13 @@ def main(argv):
         if form == "sql":
             output = result(file_argument, form, statements=extract_sql_file(source))
         else:
-            detected, factory_names, matched, statements = extract_js_file(source, tags, jsx, tsx)
-            output = result(file_argument, form, None, detected, factory_names, matched, statements)
+            detected, factory_names, matched, statements, detected_receivers, matched_receivers = extract_js_file(
+                source, tags, jsx, tsx, receivers
+            )
+            output = result(
+                file_argument, form, None, detected, factory_names, matched, statements,
+                detected_receivers, matched_receivers,
+            )
     except ExtractError as error:
         output = result(file_argument, form, {"message": error.message, "line": error.line})
         return emit(output, 1)

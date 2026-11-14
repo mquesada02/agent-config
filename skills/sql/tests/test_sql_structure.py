@@ -121,7 +121,9 @@ class StubTest(unittest.TestCase):
 
 
 class SourceModuleTest(unittest.TestCase):
-    COMMON = ("scripts/extract.py", "--tags", "position", "start_line", "error")
+    COMMON = (
+        "scripts/extract.py", "--tags", "position", "start_line", "error", "`source`", "detected_receivers", "receivers",
+    )
     EXTRA = {
         "sources/postgres-js.md": (
             "detected_tags", "[sources]", "value", "fragment", "keyword", "this.sql",
