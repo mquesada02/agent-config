@@ -1046,8 +1046,6 @@ class ReceiverDetector(Detector):
     def add_receiver(self, name, offset):
         if name not in self.receivers or offset < self.receivers[name]:
             self.receivers[name] = offset
-            return True
-        return False
 
     def run(self):
         self.find_imports()
@@ -1576,6 +1574,8 @@ def find_pg_statements(source, tokens, templates, detector, receivers):
                     "text": text,
                     "parent": None,
                     "interpolations": [],
+                    # const_name, dynamic, name, rows and query_mode hold the values that the spec
+                    # gives a direct, non-dynamic call; the const, chain and dynamic forms set them later.
                     "pg": {
                         "kind": "template" if template else "literal",
                         "const_name": None,
