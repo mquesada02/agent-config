@@ -1731,9 +1731,17 @@ def _is_ancestor_of_head(worktree, sha):
     return _is_ancestor(worktree, sha, "HEAD")
 
 
+def _base_ref(worktree, base_branch):
+    """The remote ref of the PR base branch. Raises Unavailable when it does not exist."""
+    base_ref = f"refs/remotes/origin/{base_branch}"
+    if not _is_known_commit(worktree, base_ref):
+        raise Unavailable(f"no such ref origin/{base_branch}")
+    return base_ref
+
+
 def _branch_patch_id(worktree, base_ref, sha):
     """The `git patch-id --stable` of the whole branch diff of the commit `sha`: the merge base with `base_ref` to `sha`. None for a branch
-    without a patch (no merge base, or an empty diff). S5 and S6 both prove a rebase with it."""
+    without a patch (no merge base, or an empty diff)."""
     import subprocess  # imported here: the hook's common path never runs git
 
     base = _base_of(worktree, sha, base_ref)
@@ -1778,9 +1786,7 @@ def _is_rebase_of(worktree, base_ref, before, sha, last):
 def _rebase_exempt_rounds(worktree, base_branch, ledger):
     """{round number: phase-commit sha} of the section 6 final rounds that S5 does not count against the cap: for each phase-commit after the
     first, the first final round after it, when `_is_rebase_of` holds for it and the phase-commit before it. Raises Unavailable when git cannot answer."""
-    base_ref = f"refs/remotes/origin/{base_branch}"
-    if not _is_known_commit(worktree, base_ref):
-        raise Unavailable(f"no such ref origin/{base_branch}")
+    base_ref = _base_ref(worktree, base_branch)
     exempt = {}
     last_commit = ledger.commits[-1][1]
     for (position, event), (_, before) in zip(ledger.commits[1:], ledger.commits):
@@ -1817,9 +1823,7 @@ def check_s6(worktree, ledger, base_branch):
         return False, f"unknown commit {rebased[:7]}"
     if not _is_ancestor_of_head(worktree, rebased):
         return False, f"rebased phase-commit {rebased[:7]} is not an ancestor of HEAD"
-    base_ref = f"refs/remotes/origin/{base_branch}"
-    if not _is_known_commit(worktree, base_ref):
-        raise Unavailable(f"no such ref origin/{base_branch}")
+    base_ref = _base_ref(worktree, base_branch)
     reviewed_id = _branch_patch_id(worktree, base_ref, sha) if known else None
     if reviewed_id is not None and reviewed_id == _branch_patch_id(worktree, base_ref, rebased):
         return True, f"rebased phase-commit {rebased[:7]} has the patch-id of phase-commit {sha[:7]} and is an ancestor of HEAD"

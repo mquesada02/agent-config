@@ -224,7 +224,7 @@ class S6Test(LedgerChecksCase):
     def test_no_phase_commit_fails(self):
         self.check(self.items(self.events()), "S6", "fail", "no phase-commit before the last final round")
 
-    def test_a_phase_commit_after_the_first_final_round_fails(self):
+    def test_a_phase_commit_after_the_last_final_round_fails(self):
         events = [round_event(), round_event(1, **FINAL), phase_commit_event(self.tip)]
         self.check(self.items(events), "S6", "fail", "no phase-commit before")
 
@@ -338,6 +338,13 @@ class S6LastReviewedTest(LedgerChecksCase):
         self.push_tip()
         items = self.items(self.events(self.tip))
         self.check(items, "S6", "pass", f"rebased phase-commit {self.tip[:7]} has the patch-id of phase-commit {self.second[:7]}")
+
+    def test_a_rebase_without_the_base_branch_ref_is_evidence_unavailable(self):
+        self.git("rebase", "-q", "main")
+        self.push_tip()
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        items = self.items(self.events(self.tip))
+        self.check(items, "S6", "fail", "evidence unavailable: no such ref origin/main")
 
     def test_a_rebase_that_changes_an_earlier_commit_but_keeps_the_last_commit_diff_fails(self):
         self.git("reset", "-q", "--hard", "main")

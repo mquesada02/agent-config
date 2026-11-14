@@ -22,7 +22,7 @@ exec "$REAL_GIT" "$@"
 REV_PARSE_OF_THE_BASE = '*" rev-parse --verify -q refs/remotes/origin/main"*'  # not origin/feature: the audit reads that one itself
 REV_PARSE_OF_A_SHA = '*" rev-parse --verify -q "[0-9a-f]*'
 MERGE_BASE_OF_A_COMMIT = '*" merge-base "*"refs/remotes/origin/"*'
-DIFF = '*" diff --no-color "*'
+DIFF_OF_A_BRANCH = '*" diff --no-color "*'
 
 
 def _load_audit():
@@ -135,7 +135,7 @@ class S6Test(RebasedCase):
         self.assertNotIn("unknown commit", item["evidence"])
 
     def test_status_128_from_diff_fails_with_the_git_message(self):
-        self.shim(DIFF, 128)
+        self.shim(DIFF_OF_A_BRANCH, 128)
         item = self.s6()
         self.assert_shim_fired()
         self.assertEqual(item["result"], "fail", item["evidence"])
