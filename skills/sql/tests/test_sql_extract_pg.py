@@ -166,6 +166,99 @@ class ReceiverFormsTest(PgCase):
         self.assertEqual(data["detected_receivers"], ["this.pool", "this.client"])
         self.assertEqual(len(data["statements"]), 1)
 
+    def test_a_name_bound_to_a_member_call_on_a_new_pool_is_not_a_receiver(self):
+        head = "import { Pool } from 'pg';\n"
+        content = (
+            head + "const q = new Pool().query('SELECT 9');\nq.query('SELECT 99');\n"
+            "async function f() {\n  const r = await new Pool().query('SELECT 8');\n  r.query('SELECT 88');\n}\n"
+            "const o = new Pool()?.options;\no.query('SELECT 7');\n"
+        )
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], [])
+        self.assertEqual(data["statements"], [])
+
+    def test_a_side_effect_import_does_not_bind_the_next_pg_import_wrongly(self):
+        content = (
+            "import 'dotenv/config'\nimport pg from 'pg'\nconst lazy = import('./db')\n"
+            "const c = new lazy.Client()\nc.query('FALSE1')\nconst pool = new pg.Pool()\npool.query('SELECT 1')\n"
+        )
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], ["pool"])
+        self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 1"])
+
+    def test_a_typed_name_before_a_comma_is_not_bound_to_the_next_value(self):
+        content = (
+            "import { Pool } from 'pg';\nfunction f(label: string, pool = new Pool()) {\n  label.query('NOT 1');\n}\n"
+            "let a: number, b = new Pool();\na.query('NOT 2');\nb.query('SELECT 3');\n"
+            "const m: Map<string, number> = new Pool();\nm.query('SELECT 4');\n"
+        )
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], ["pool", "b", "m"])
+        self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 3", "SELECT 4"])
+
+    def test_the_same_comma_rule_holds_for_a_postgres_js_tag(self):
+        content = "let a: number, b = postgres();\nconst x = a`SELECT 1`;\nconst y = b`SELECT 2`;\n"
+        data = self.pg(content)
+        self.assertEqual(data["detected_tags"], ["b"])
+
+    def test_a_case_or_statement_label_is_not_a_type_annotation(self):
+        head = "import { Pool } from 'pg';\n"
+        content = head + "switch (x) {\n  case FOO:\n    pool = new Pool();\n    pool.query('SELECT 1');\n}\n"
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], ["pool"])
+        self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 1"])
+        content = head + "lbl: pool = new Pool();\npool.query('SELECT 2');\n"
+        self.assertEqual(self.pg(content)["detected_receivers"], ["pool"])
+
+    def test_a_typed_class_field_and_a_typed_parameter_are_still_bound(self):
+        head = "import { Pool } from 'pg';\n"
+        content = head + "class K {\n  private pool: Pool = new Pool();\n  m(p2: Pool = new Pool()) {}\n}\n"
+        self.assertEqual(self.pg(content)["detected_receivers"], ["this.pool", "p2"])
+
+    def test_a_method_parameter_default_is_not_a_class_field(self):
+        head = "import { Pool } from 'pg';\n"
+        content = head + "class K {\n  constructor(db = new Pool()) {\n    db.query('SELECT 1');\n  }\n}\n"
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], ["db"])
+        self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 1"])
+        content = head + "class K {\n  pool = new Pool();\n  m(x = 1) {}\n  q = new Pool();\n}\n"
+        self.assertEqual(self.pg(content)["detected_receivers"], ["this.pool", "this.q"])
+
+    def test_an_object_key_after_a_comma_is_not_a_typed_name(self):
+        content = "import { Pool } from 'pg';\nconst o = { a: 1, b: x = new Pool() };\nb.query('S1');\n"
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], [])
+        self.assertEqual(data["statements"], [])
+        content = "import { Pool } from 'pg';\nlet a: Map<K, V>, b: Pool = new Pool();\nb.query('S2');\n"
+        self.assertEqual(self.pg(content)["detected_receivers"], ["b"])
+
+    def test_a_ternary_field_value_does_not_swallow_the_next_field(self):
+        content = (
+            "import { Pool } from 'pg';\nclass A {\n  x = flag ? b : c\n  pool = new Pool()\n"
+            "  run() { this.b.query('X'); this.pool.query('Y'); }\n}\n"
+        )
+        data = self.pg(content)
+        self.assertEqual(data["detected_receivers"], ["this.pool"])
+        self.assertEqual([s["text"] for s in data["statements"]], ["Y"])
+
+    def test_a_nested_paren_in_a_parameter_list_keeps_the_parameters_local(self):
+        head = "import { Pool } from 'pg';\n"
+        for params in ("a = (1), b: Pool = new Pool()", "a = f(), b = new Pool()", "a = f(g(1)), b = new Pool()"):
+            with self.subTest(params):
+                content = head + "class A {\n  m(" + params + ") {\n    b.query('SELECT 1');\n  }\n}\n"
+                data = self.pg(content)
+                self.assertEqual(data["detected_receivers"], ["b"])
+                self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 1"])
+
+    def test_a_method_parameter_default_is_not_a_class_field_for_a_tag(self):
+        content = "import postgres from 'postgres';\nclass K {\n  constructor(sql = postgres()) {}\n}\n"
+        self.assertEqual(self.pg(content)["detected_tags"], ["sql"])
+
+    def test_a_new_pool_with_arguments_is_still_a_receiver(self):
+        head = "import pg from 'pg';\n"
+        content = head + "const pool = new pg.Pool({ max: f(1, 2) });\npool.query('SELECT 1');\n"
+        self.assertEqual(self.pg(content)["detected_receivers"], ["pool"])
+
     def test_detected_receivers_are_in_the_order_of_their_binding(self):
         content = "import { Pool, Client } from 'pg';\nconst b = new Pool();\nconst a = new Client();\nconst b2 = new Pool();\n"
         self.assertEqual(self.pg(content)["detected_receivers"], ["b", "a", "b2"])
@@ -332,6 +425,13 @@ class DirectStringShapeTest(PgCase):
             ("pool.query('SELECT 1', function (err, res) {});", 0, False),
             ("pool.query('SELECT 1', cb => cb());", 0, False),
             ("pool.query('SELECT 1', [1] as const);", 1, True),
+            ("pool.query('SELECT 1', [a as Map<string, number>, b]);", 2, True),
+            ("pool.query('SELECT 1', [f<string, number>(x)]);", 1, True),
+            ("pool.query('SELECT 1', [a as Array<Map<string, number>>, b]);", 2, True),
+            ("pool.query('SELECT 1', [a < b, c > d]);", 2, True),
+            ("pool.query('SELECT 1', [a<b, c>d]);", 2, True),
+            ("pool.query('SELECT 1', [age<18, score>90]);", 2, True),
+            ("pool.query('SELECT 1', [a as Map<string, number>]);", 1, True),
             ("pool.query('SELECT 1', [1], (err, res) => {});", 1, True),
         ]
         for source, length, present in cases:

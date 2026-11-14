@@ -776,6 +776,11 @@ class Detector:
                 stack.append("class" if is_body else "block")
                 if is_body:
                     pending = False
+            # A method parameter list or a call in the class body is not the class body.
+            elif punct(token, "(") and stack and stack[-1] in ("class", "parens"):
+                stack.append("parens")
+            elif punct(token, ")") and stack and stack[-1] == "parens":
+                stack.pop()
             elif punct(token, "}") and stack:
                 stack.pop()
         return flags
@@ -866,7 +871,7 @@ class Detector:
         t = self.tokens
         token = t[i]
         previous = self.at(i - 1)
-        if punct(previous, ":"):
+        if punct(previous, ":") and not self.is_clause_colon(i - 1):
             return None
         if previous[0] == "name" and previous[1] in ("const", "let", "var"):
             return token[1], token[2]
@@ -876,6 +881,33 @@ class Detector:
         if self.in_class[i]:
             return None if self.is_static(i) else ("this." + token[1], token[2])
         return token[1], token[2]
+
+    def declares_after_comma(self, i):
+        """True when the comma before the name token `i` separates the declarators of a `const`, `let`
+        or `var` or the parameters of a parameter list; false for an object literal or an array."""
+        depth = 0
+        for k in range(i - 1, -1, -1):
+            token = self.tokens[k]
+            if token[0] == "p" and token[1] in ")]}":
+                depth += 1
+            elif token[0] == "p" and token[1] in "([{":
+                if depth == 0:
+                    return token[1] == "("
+                depth -= 1
+            elif depth == 0 and token[0] == "name" and token[1] in ("const", "let", "var"):
+                return True
+            elif depth == 0 and punct(token, ";"):
+                return False
+        return False
+
+    def is_clause_colon(self, c):
+        """True when the colon at `c` ends a `case X:` or `default:` clause or a statement label,
+        so that the name after it starts a statement; false for an object value or a type annotation."""
+        label = self.at(c - 1)
+        if name_is(label, "default") or name_is(self.at(c - 2), "case"):
+            return True
+        starts_statement = punct(self.at(c - 2), ";") or punct(self.at(c - 2), "}") or self.at(c - 2)[0] == "eof"
+        return label[0] == "name" and starts_statement and not self.in_class[c - 1]
 
     def is_static(self, i):
         j = i - 1
@@ -901,6 +933,17 @@ class Detector:
         t = self.tokens
         j = i + 1
         if punct(self.at(j), ":"):
+            # Only a declaration, a parameter or a class field has a type annotation: a case
+            # clause, a statement label and the like have a colon but no annotation.
+            before = self.at(i - 1)
+            declared = (
+                (self.in_class[i] and not punct(before, "?"))
+                or punct(before, "(")
+                or (punct(before, ",") and self.declares_after_comma(i))
+                or (before[0] == "name" and before[1] in ("const", "let", "var") + tuple(CLASS_MODIFIERS))
+            )
+            if not declared:
+                return False
             depth, count = 0, 0
             j += 1
             while j < len(t) and count < MAX_TYPE_ANNOTATION_TOKENS:
@@ -912,7 +955,7 @@ class Detector:
                         depth -= 1
                         if depth < 0:
                             return False
-                    elif token[1] == ";":
+                    elif token[1] == ";" or (token[1] == "," and depth <= 0):
                         return False
                     elif token[1] == "=" and depth <= 0:
                         break
@@ -1030,7 +1073,8 @@ class ReceiverDetector(Detector):
                     self.objects[t[i + 1][1]] = "pg"
                 continue
             k = i + 1
-            while k < min(len(t) - 1, i + 80) and not punct(t[k], ";"):
+            # a side-effect import (`import 'x'`) has no clause: the scan ends at the next `import`
+            while k < min(len(t) - 1, i + 80) and not punct(t[k], ";") and not (k > i + 1 and name_is(t[k], "import")):
                 if name_is(t[k], "from") and t[k + 1][0] == "str":
                     break
                 k += 1
@@ -1151,7 +1195,8 @@ class ReceiverDetector(Detector):
         for member, local in items:
             self.bind_member(member, local, found[0])
 
-    # NAME = [await] new <constructor>(
+    # NAME = [await] new <constructor>(...), and nothing after the call: `new Pool().query(...)` gives
+    # a query result, not a pool
     def is_new_constructor(self, j, awaited):
         t = self.tokens
         if not name_is(self.at(j), "new"):
@@ -1161,18 +1206,20 @@ class ReceiverDetector(Detector):
         if name[0] != "name":
             return False
         if name[1] in self.constructors:
-            return punct(self.at(j + 1), "(")
-        if name[1] not in self.objects:
+            opening = j + 1
+        elif name[1] in self.objects:
+            kind, k = self.objects[name[1]], j + 1
+            if kind == "pg" and punct(self.at(k), ".") and name_is(self.at(k + 1), "native"):
+                k += 2
+            if not (punct(self.at(k), ".") and self.at(k + 1)[0] == "name" and t[k + 1][1] in PG_CONSTRUCTORS):
+                return False
+            opening = k + 2
+        else:
             return False
-        kind, k = self.objects[name[1]], j + 1
-        if kind == "pg" and punct(self.at(k), ".") and name_is(self.at(k + 1), "native"):
-            k += 2
-        return (
-            punct(self.at(k), ".")
-            and self.at(k + 1)[0] == "name"
-            and t[k + 1][1] in PG_CONSTRUCTORS
-            and punct(self.at(k + 2), "(")
-        )
+        if not punct(self.at(opening), "("):
+            return False
+        closing = match_close(t, opening)
+        return closing is not None and not any(punct(self.at(closing + 1), p) for p in (".", "?.", "[", "("))
 
     # clients that a receiver gives: await <receiver>.connect(), .connect().then(client => ...),
     # .connect((err, client, release) => ...)
@@ -1421,13 +1468,41 @@ def values_of(tokens, detector, e):
     return None, True
 
 
+def type_arguments_end(tokens, k, close):
+    """The index of the `>` that closes the type arguments opened by the `<` at `k`, or None.
+
+    A `<` is an opening only when it follows a name with no space and its `>` ends the element or
+    is followed by `(`, as in `Map<K, V>` or `f<T>(x)`; `a < b` and `a<b, c>d` are comparisons."""
+    if not (punct(tokens[k], "<") and tokens[k - 1][0] == "name" and tokens[k - 1][3] == tokens[k][2]):
+        return None
+    depth = 0
+    for m in range(k, close):
+        if punct(tokens[m], "<"):
+            depth += 1
+        elif punct(tokens[m], ">"):
+            depth -= 1
+            if depth == 0:
+                after = tokens[m + 1] if m + 1 < len(tokens) else None
+                closes = m + 1 >= close or any(punct(after, p) for p in ("(", ",", ")", "]"))
+                return m if closes else None
+    return None
+
+
 def array_length(tokens, s, close):
     """The element count of the array literal from `[` at `s` to `]` at `close`; None with a spread."""
     if close == s + 1:
         return 0
     depth, commas, spread, fresh = 0, 0, False, True
+    skip_to = s
     for k in range(s + 1, close):
+        if k <= skip_to:
+            continue
         token = tokens[k]
+        end = type_arguments_end(tokens, k, close)
+        if end is not None:
+            skip_to = end
+            fresh = False
+            continue
         if token[0] == "ibeg" or (token[0] == "p" and token[1] in "([{"):
             depth += 1
         elif token[0] == "iend" or (token[0] == "p" and token[1] in ")]}"):
