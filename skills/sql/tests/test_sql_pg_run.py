@@ -87,7 +87,9 @@ else:
     if out is None and kind == "describe":
         out = "server_version_num\n" + os.environ.get("FAKE_VERSION", "180000") + "\n" + os.environ.get("FAKE_HEADERS", "id\nid\n")
     if out is None and kind == "types":
-        out = json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True, "leaf": 23}}})
+        out = json.dumps({"a": [23], "b": [23], "types": {"23": {
+            "name": "integer", "float": False, "equality": True, "lt": True, "gt": True, "leaf": 23,
+        }}})
     if out is None and kind == "proof":
         out = json.dumps({"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []})
     if out is None:
@@ -1448,7 +1450,7 @@ class WriteRunTest(PgRunTestCase):
                         self.assertNotIn(canary, text)
 
 
-INT_TYPES = {"23": {"name": "integer", "float": False, "equality": True, "leaf": 23}}
+INT_TYPES = {"23": {"name": "integer", "float": False, "equality": True, "lt": True, "gt": True, "leaf": 23}}
 
 
 def types_json(a, b, **entries):
@@ -1457,8 +1459,11 @@ def types_json(a, b, **entries):
     return json.dumps({"a": a, "b": b, "types": types})
 
 
-def entry(name, equality=True, float_=False, leaf=None, oid=None):
-    return {"name": name, "float": float_, "equality": equality, "leaf": leaf if leaf is not None else oid}
+def entry(name, equality=True, float_=False, leaf=None, oid=None, lt=True, gt=True):
+    return {
+        "name": name, "float": float_, "equality": equality, "lt": lt, "gt": gt,
+        "leaf": leaf if leaf is not None else oid,
+    }
 
 
 class DiffTestCase(PgRunTestCase):
@@ -1892,6 +1897,100 @@ class DiffOrderTest(DiffTestCase):
         self.assertEqual((data["order"], data["equal"]), ("checked", False))
         self.assertIn("GROUP BY c1 HAVING count(*) > 1", self.proof_text())
 
+    def test_a_qualified_key_that_is_one_select_item_is_checked_on_that_position(self):
+        a = "SELECT u.name AS n, u.id FROM u ORDER BY u.id"
+        data = self.order(a, a, "n,id\nn,id\n")
+        self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+        self.assertIn("GROUP BY c2 HAVING count(*) > 1", self.proof_text())
+
+    def test_a_qualified_key_that_is_not_exactly_one_select_item_is_partial_sort_keys(self):
+        for a, headers in (
+            ("SELECT u.id, u.id AS id2 FROM u ORDER BY u.id", "id,id2\nid,id2\n"),
+            ("SELECT id FROM u ORDER BY u.id", "id\nid\n"),
+            ("SELECT name FROM u ORDER BY u.id", "name\nname\n"),
+            ("SELECT * FROM u ORDER BY u.id", "id\nid\n"),
+            ("SELECT u.id FROM u UNION SELECT v.id FROM v ORDER BY u.id", "id\nid\n"),
+            ("SELECT u.name ISNULL FROM u ORDER BY u.name COLLATE \"C\"", "?column?\n?column?\n"),
+            ("SELECT lower(name) AS name FROM t ORDER BY name COLLATE \"C\"", "name\nname\n"),
+            ("SELECT a, b AS order, c FROM t ORDER BY b COLLATE \"C\"", "a,order,c\na,order,c\n"),
+        ):
+            with self.subTest(a=a):
+                columns = headers.split("\n")[0].count(",") + 1
+                data = self.order(a, a, headers, extra_env={"FAKE_STDOUT_TYPES": types_json([23] * columns, [23] * columns)})
+                self.assertEqual((data["order"], data["reason"]), ("partial", "sort_keys"), data)
+
+    def test_the_select_list_is_read_with_brackets_and_is_distinct_from(self):
+        a = 'SELECT ARRAY[a, b], c, d IS DISTINCT FROM e AS c FROM t ORDER BY c COLLATE "C"'
+        data = self.order(a, a, "array,c,c\narray,c,c\n", extra_env={"FAKE_STDOUT_TYPES": types_json([23] * 3, [23] * 3)})
+        self.assertEqual(data["order"], "checked", data)
+        self.assertIn('GROUP BY c2 COLLATE "C" HAVING count(*) > 1', self.proof_text())
+
+    def test_a_bare_name_with_collate_that_is_a_select_item_is_checked_and_the_tie_group_has_the_collation(self):
+        a = 'SELECT id, name FROM t ORDER BY name COLLATE "C" DESC NULLS LAST'
+        data = self.order(a, a, "id,name\nid,name\n")
+        self.assertEqual(data["order"], "checked", data)
+        self.assertIn('GROUP BY c2 COLLATE "C" HAVING count(*) > 1', self.proof_text())
+
+    def test_the_collation_is_quoted_from_the_name_that_the_guard_read(self):
+        a = 'SELECT id, name FROM t ORDER BY name COLLATE "a ""b"" c"'
+        self.order(a, a, "id,name\nid,name\n")
+        self.assertIn('GROUP BY c2 COLLATE "a ""b"" c" HAVING', self.proof_text())
+        a = "SELECT id, name FROM t ORDER BY name COLLATE Und"
+        self.order(a, a, "id,name\nid,name\n")
+        self.assertIn('GROUP BY c2 COLLATE "und" HAVING', self.proof_text())
+
+    def test_using_is_accepted_when_the_type_has_the_operator_and_refused_when_it_has_not(self):
+        a = "SELECT id FROM t ORDER BY id USING >"
+        data = self.order(a, a)
+        self.assertEqual(data["order"], "checked", data)
+        self.assertIn("GROUP BY c1 HAVING", self.proof_text())
+        for flag in ("gt", "lt"):
+            op = ">" if flag == "gt" else "<"
+            with self.subTest(flag=flag):
+                a = f"SELECT id FROM t ORDER BY id USING {op}"
+                data = self.order(a, a, extra_env={"FAKE_STDOUT_TYPES": types_json([23], [23], **{"23": entry("integer", oid=23, **{flag: False})})})
+                self.assertEqual((data["order"], data["reason"]), ("partial", "sort_keys"), data)
+        a = "SELECT id FROM t ORDER BY id USING <"
+        data = self.order(a, a, extra_env={"FAKE_STDOUT_TYPES": types_json([23], [23], **{"23": entry("integer", oid=23, gt=False)})})
+        self.assertEqual(data["order"], "checked", data)
+
+    def test_b_must_match_a_on_the_collation_the_operator_and_the_qualified_position(self):
+        headers = "id,name\nid,name\n"
+        for a, b in (
+            ('SELECT id, name FROM t ORDER BY name COLLATE "C"', "SELECT id, name FROM t ORDER BY name"),
+            ('SELECT id, name FROM t ORDER BY name', 'SELECT id, name FROM t ORDER BY name COLLATE "C"'),
+            ('SELECT id, name FROM t ORDER BY name COLLATE "C"', 'SELECT id, name FROM t ORDER BY name COLLATE "POSIX"'),
+            ('SELECT id, name FROM t ORDER BY name COLLATE "C"', 'SELECT id, name FROM t ORDER BY name COLLATE "c"'),
+            ("SELECT id, name FROM t ORDER BY id USING <", "SELECT id, name FROM t ORDER BY id"),
+            ("SELECT id, name FROM t ORDER BY id", "SELECT id, name FROM t ORDER BY id USING <"),
+            ("SELECT id, name FROM t ORDER BY id DESC", "SELECT id, name FROM t ORDER BY id USING >"),
+            ("SELECT u.id, u.name FROM u ORDER BY u.id", "SELECT v.name AS id, v.id AS name FROM v ORDER BY v.id"),
+        ):
+            with self.subTest(a=a, b=b):
+                data = self.order(a, b, headers)
+                self.assertEqual((data["order"], data["reason"]), ("partial", "b_order"), data)
+
+    def test_equal_forms_in_a_and_b_are_checked(self):
+        headers = "id,name\nid,name\n"
+        for a, b in (
+            ("SELECT u.id, u.name FROM u ORDER BY u.id", "SELECT id, name FROM u ORDER BY id"),
+            ("SELECT u.id, u.name FROM u ORDER BY u.id", "SELECT v.id, v.name FROM v ORDER BY v.id"),
+            ('SELECT id, name FROM t ORDER BY name COLLATE "C"', 'SELECT id, name FROM t ORDER BY name COLLATE "C" ASC NULLS LAST'),
+            ("SELECT id, name FROM t ORDER BY id USING >", "SELECT id, name FROM t ORDER BY id USING > NULLS FIRST"),
+        ):
+            with self.subTest(a=a, b=b):
+                data = self.order(a, b, headers)
+                self.assertEqual((data["order"], data["equal"]), ("checked", True), data)
+
+    def test_the_type_session_sql_formats_and_reads_the_default_btree_operators(self):
+        text = pg_run.TYPES_SQL.format(a="(SELECT 1)", b="(SELECT 2)")
+        self.assertNotIn("@", text)
+        for part in ("'lt', EXISTS", "'gt', EXISTS", "amopstrategy = 1", "amopstrategy = 5", "format('<(%s,%s)'",
+                     "format('>(%s,%s)'", "oc.opcdefault", "amoppurpose = 's'", "ao.amopfamily = oc.opcfamily",
+                     "castmethod = 'b' AND pc.castcontext = 'i'"):
+            with self.subTest(part=part):
+                self.assertIn(part, text)
+
     def test_a_proof_without_the_tie_count_is_bad_output_when_the_keys_resolved(self):
         proof = json.dumps({"ra": 0, "rb": 0, "oa_count": 0, "ob_count": 0, "oa": [], "ob": []})
         code, data = self.diff(self.ORDERED, self.ORDERED, env={"FAKE_STDOUT_PROOF": proof})
@@ -1925,9 +2024,20 @@ class DiffFailureTest(DiffTestCase):
             json.dumps({"a": [23, 23], "b": [23], "types": INT_TYPES}),
             json.dumps({"a": [23], "b": [99], "types": INT_TYPES}),
             json.dumps({"a": ["23"], "b": [23], "types": INT_TYPES}),
-            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True}}}),
-            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": 0, "equality": True, "leaf": 23}}}),
-            json.dumps({"a": [23], "b": [23], "types": {"23": {"name": "integer", "float": False, "equality": True, "leaf": 77}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "lt": True, "gt": True}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": 0, "equality": True, "lt": True, "gt": True, "leaf": 23}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "lt": True, "gt": True, "leaf": 77}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "gt": True, "leaf": 23}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "lt": True, "leaf": 23}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "lt": 1, "gt": True, "leaf": 23}}}),
+            json.dumps({"a": [23], "b": [23], "types": {"23": {
+                "name": "integer", "float": False, "equality": True, "lt": True, "gt": "yes", "leaf": 23}}}),
         ]
         for out in bad:
             with self.subTest(out=out):

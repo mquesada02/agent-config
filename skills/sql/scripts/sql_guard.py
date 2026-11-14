@@ -382,8 +382,13 @@ def _write_static_review_only(tokens):
     return True
 
 
+def quote_identifier(name):
+    """The identifier `name` (as the guard read it) quoted for SQL: `"` doubled, never built from other text."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _name_text(token):
-    return token.value if token.kind == "word" else '"' + token.value.replace('"', '""') + '"'
+    return token.value if token.kind == "word" else quote_identifier(token.value)
 
 
 def _write_targets(tokens):
@@ -538,30 +543,147 @@ def _balanced(tokens):
     return depth == 0
 
 
+NAME_KINDS = ("word", "qident")
+MAX_REFERENCE_PARTS = 3
+SELECT_LIST_END_WORDS = frozenset("FROM WHERE GROUP HAVING WINDOW ORDER LIMIT OFFSET FETCH FOR".split())
+SET_OPERATION_WORDS = frozenset("UNION INTERSECT EXCEPT".split())
+
+
+def _name_value(token):
+    """A word is ASCII-folded and a quoted identifier is exact, as the server reads an identifier."""
+    return _ascii_lower(token.value) if token.kind == "word" else token.value
+
+
+def _reference(tokens):
+    """`(parts, count)`: the names of the reference (`a`, `t.a`, ...) that starts `tokens`, and the tokens that it uses; or None."""
+    if not tokens or tokens[0].kind not in NAME_KINDS:
+        return None
+    parts, used = [_name_value(tokens[0])], 1
+    while used + 1 < len(tokens) and _is_punct(tokens[used], ".") and tokens[used + 1].kind in NAME_KINDS:
+        parts.append(_name_value(tokens[used + 1]))
+        used += 2
+    return parts, used
+
+
 def _sort_key(tokens):
-    """The key dict of one `ORDER BY` key (one operand, then ASC or DESC, then NULLS FIRST or LAST), or None."""
+    """The key dict of one `ORDER BY` key, or None. The key is an operand (a position, or a reference of one to three
+    parts), then an optional `COLLATE <name>` (one name; not on a position), then `ASC`, `DESC` or `USING <` or `USING >`,
+    then an optional `NULLS FIRST` or `NULLS LAST`. `operand` is `position`, `name` (one part, no `COLLATE`: an output
+    column name) or `ref` (the parts: an expression over input columns, so it must match a select-list item)."""
     if not tokens:
         return None
-    operand, rest = tokens[0], tokens[1:]
-    if operand.kind == "number" and DIGITS.fullmatch(operand.value):
-        found = ("position", int(operand.value))
-    elif operand.kind == "word":
-        found = ("name", _ascii_lower(operand.value))
-    elif operand.kind == "qident":
-        found = ("name", operand.value)
+    if tokens[0].kind == "number" and DIGITS.fullmatch(tokens[0].value):
+        operand, value, rest = "position", int(tokens[0].value), tokens[1:]
     else:
-        return None
-    descending = False
+        reference = _reference(tokens)
+        if reference is None or len(reference[0]) > MAX_REFERENCE_PARTS:
+            return None
+        operand, value, rest = "ref", reference[0], tokens[reference[1]:]
+    collation = None
+    if rest and _is_word(rest[0], "COLLATE"):
+        if operand == "position" or len(rest) < 2 or rest[1].kind not in NAME_KINDS:
+            return None
+        collation, rest = _name_value(rest[1]), rest[2:]
+    if operand == "ref" and len(value) == 1 and collation is None:
+        operand, value = "name", value[0]
+    descending, using = False, None
     if rest and (_is_word(rest[0], "ASC") or _is_word(rest[0], "DESC")):
         descending = _is_word(rest[0], "DESC")
         rest = rest[1:]
+    elif rest and _is_word(rest[0], "USING"):
+        if len(rest) < 2 or not (_is_punct(rest[1], "<") or _is_punct(rest[1], ">")):
+            return None
+        using = rest[1].value
+        descending = using == ">"
+        rest = rest[2:]
     nulls = None
     if len(rest) == 2 and _is_word(rest[0], "NULLS") and (_is_word(rest[1], "FIRST") or _is_word(rest[1], "LAST")):
         nulls = _ascii_lower(rest[1].value)
         rest = []
     if rest:
         return None
-    return {"operand": found[0], "value": found[1], "descending": descending, "nulls": nulls}
+    return {
+        "operand": operand, "value": value, "descending": descending, "nulls": nulls, "collation": collation, "using": using,
+    }
+
+
+def _opens(token):
+    return _is_punct(token, "(") or _is_punct(token, "[")
+
+
+def _closes(token):
+    return _is_punct(token, ")") or _is_punct(token, "]")
+
+
+def _select_item(tokens):
+    """`{"ref": parts, "name": output name}` for an item that is one reference of one to three parts, then nothing, `AS <name>`
+    or one bare name (the alias); `{"ref": None, "name": None}` for any other item."""
+    unknown = {"ref": None, "name": None}
+    reference = _reference(tokens)
+    if reference is None or len(reference[0]) > MAX_REFERENCE_PARTS:
+        return unknown
+    parts, rest = reference[0], tokens[reference[1]:]
+    if not rest:
+        return {"ref": parts, "name": parts[-1]}
+    if len(rest) == 2 and _is_word(rest[0], "AS") and rest[1].kind in NAME_KINDS:
+        return {"ref": parts, "name": _name_value(rest[1])}
+    if len(rest) == 1 and rest[0].kind in NAME_KINDS and not _is_word(rest[0], "AS"):
+        return {"ref": parts, "name": _name_value(rest[0])}
+    return unknown
+
+
+def _select_items(body):
+    """The select list of a statement with exactly one `SELECT` at depth 0 and no set operation at depth 0, as a list of
+    `_select_item` values, or None (also for an item `*` or `... .*`: the positions are then unknown). The depth counts
+    parentheses and square brackets. The list starts after `SELECT`, `ALL`, `DISTINCT` and `DISTINCT ON (...)`. It ends at
+    the first depth-0 word of `SELECT_LIST_END_WORDS`, except a `FROM` right after `DISTINCT` and a `GROUP` right after
+    `WITHIN`. A label that is an end word only drops or corrupts the tail of the list."""
+    depth, selects = 0, []
+    for index, token in enumerate(body):
+        if _opens(token):
+            depth += 1
+        elif _closes(token):
+            depth -= 1
+        elif depth == 0 and token.kind == "word":
+            word = _ascii_upper(token.value)
+            if word == "SELECT":
+                selects.append(index)
+            elif word in SET_OPERATION_WORDS:
+                return None
+    if len(selects) != 1:
+        return None
+    start = selects[0] + 1
+    if start < len(body) and _is_word(body[start], "ALL"):
+        start += 1
+    elif start < len(body) and _is_word(body[start], "DISTINCT"):
+        start += 1
+        if start < len(body) and _is_word(body[start], "ON"):
+            start = _after_parentheses(body, start + 1)
+            if start == -1:
+                return None
+    items, current, depth = [], [], 0
+    for index in range(start, len(body)):
+        token = body[index]
+        if _opens(token):
+            depth += 1
+        elif _closes(token):
+            depth -= 1
+        elif depth == 0 and token.kind == "word" and _ascii_upper(token.value) in SELECT_LIST_END_WORDS:
+            previous = body[index - 1] if index > start else None
+            if not (previous and ((_is_word(token, "FROM") and _is_word(previous, "DISTINCT"))
+                                  or (_is_word(token, "GROUP") and _is_word(previous, "WITHIN")))):
+                break
+        elif depth == 0 and _is_punct(token, ","):
+            items.append(current)
+            current = []
+            continue
+        current.append(token)
+    items.append(current)
+    if items == [[]]:
+        return []
+    if any(item and _is_punct(item[-1], "*") and (len(item) == 1 or _is_punct(item[-2], ".")) for item in items):
+        return None
+    return [_select_item(item) for item in items]
 
 
 def _order_keys(body):
@@ -595,15 +717,16 @@ def _order_keys(body):
     parts.append(current)
     keys = [_sort_key(part) for part in parts]
     if None in keys:
-        return {"unextractable": "a sort key is not an output column name or a position"}
+        return {"unextractable": "a sort key is not a position, a name or a reference with an optional COLLATE and USING < or >"}
     return {"keys": keys}
 
 
 def check_diff(text):
-    """The guard of one statement of `pg_run diff`: `(result, None)` with `sql` and `order`, or `(None, refusal)`.
+    """The guard of one statement of `pg_run diff`: `(result, None)` with `sql`, `order` and `items`, or `(None, refusal)`.
     It runs `check_select` (its reasons pass through with the `diff` messages), refuses the string-SQL functions
     of the write-mode scan lists and unbalanced parentheses, and extracts the sort keys of a top-level `ORDER BY`.
-    `order` is None (no such `ORDER BY`), `{"keys": [...]}` or `{"unextractable": why}`."""
+    `order` is None (no such `ORDER BY`), `{"keys": [...]}` or `{"unextractable": why}`. `items` is the select list
+    (see `_select_items`) when `order` has keys, else None."""
     sql, refusal = check_select(text)
     if refusal:
         return _diff_refuse(refusal["reason"], refusal["static_review_only"])
@@ -617,4 +740,6 @@ def check_diff(text):
                 return _diff_refuse("forbidden_function")
     if not _balanced(body):
         return _diff_refuse("unbalanced_parentheses")
-    return {"sql": sql, "order": _order_keys(body)}, None
+    order = _order_keys(body)
+    items = _select_items(body) if order is not None and "keys" in order else None
+    return {"sql": sql, "order": order, "items": items}, None
