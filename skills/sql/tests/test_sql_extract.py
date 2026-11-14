@@ -9,8 +9,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(HERE)
 SCRIPT = os.path.join(SKILL_DIR, "scripts", "extract.py")
 
-KEYS = ["file", "form", "detected_tags", "factory_names", "tags", "statements", "error"]
-STATEMENT_KEYS = ["tag", "start_line", "end_line", "text", "parent", "interpolations"]
+KEYS = [
+    "file", "form", "detected_tags", "factory_names", "tags", "detected_receivers", "receivers", "statements", "error",
+]
+STATEMENT_KEYS = ["source", "tag", "start_line", "end_line", "text", "parent", "interpolations"]
 
 
 class ExtractTestCase(unittest.TestCase):
