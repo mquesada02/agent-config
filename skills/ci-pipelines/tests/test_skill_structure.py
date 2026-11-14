@@ -306,16 +306,22 @@ class SecurityRules(unittest.TestCase):
         self.assertIn("A gate check that already accepts a skipped `audit` is no finding", rule)
         self.assertIn("when the gate check fails a skipped `audit`, change it to", self.sec["SEC-10"]["Fix"])
 
-    def test_sec_10_fix_gives_the_changes_job_line_of_the_create_templates(self):
-        fix = self.sec["SEC-10"]["Fix"]
-        lines = re.findall(r"`(uses: dorny/paths-filter@[^`]+)`", fix)
-        self.assertEqual(len(lines), 1, fix)
-        self.assertRegex(lines[0], r"^uses: dorny/paths-filter@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
+    def test_every_rule_line_of_a_pinned_action_equals_the_create_template_line(self):
+        pinned = {}
         for name in ("single-package.yml", "monorepo.yml"):
             template = read(os.path.join(SKILL, "templates", name))
-            self.assertIn(f"        {lines[0]}\n", template, name)
-        self.assertNotIn("pinned to a full commit SHA", fix)
-        self.assertIn("never a SHA that you wrote yourself", fix)
+            for match in re.finditer(r"uses: ([\w.-]+/[\w.-]+)@[0-9a-f]{40} # \S+", template):
+                self.assertEqual(pinned.setdefault(match.group(1), match.group(0)), match.group(0), name)
+        line = pinned["dorny/paths-filter"]
+        for name, path in rule_files().items():
+            for match in re.finditer(r"uses: ([\w.-]+/[\w.-]+)@[^\s`]+(?: # [^\s`]+)?", read(path)):
+                if match.group(1) in pinned:
+                    self.assertEqual(match.group(0), pinned[match.group(1)], f"rules/{name}.md")
+        cost = dict(rule_entries(rule_files()["cost"]))
+        for rule_id, fix in (("COST-03", cost["COST-03"]["Fix"]), ("SEC-10", self.sec["SEC-10"]["Fix"])):
+            self.assertEqual(re.findall(r"`(uses: dorny/paths-filter@[^`]+)`", fix), [line], rule_id)
+            self.assertNotIn("pinned to a full commit SHA", fix, rule_id)
+            self.assertIn("never a SHA that you wrote yourself", fix, rule_id)
 
     def test_sec_10_fix_adds_a_changes_job_and_removes_the_old_audit_step(self):
         fix = self.sec["SEC-10"]["Fix"]
