@@ -38,3 +38,5 @@ __pycache__/
 !CONTEXT.md
 !docs/adr/
 !docs/adr/*.md
+!docs/research/
+!docs/research/*.md
