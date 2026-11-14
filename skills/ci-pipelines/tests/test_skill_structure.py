@@ -191,6 +191,9 @@ class CostAndMonorepoRules(unittest.TestCase):
             self.assertIn(text, rule)
         self.assertIn("`monorepo`", self.mono["MONO-01"]["Check"])
 
+    def test_cost_08_rule_names_mono_02_as_a_history_need(self):
+        self.assertIn("(MONO-01, MONO-02, or a `changes` script that uses git)", self.cost["COST-08"]["Rule"])
+
     def test_cost_08_skips_a_checkout_that_mono_01_covers(self):
         fields = self.cost["COST-08"]
         self.assertIn("MONO-01", fields["Check"])
