@@ -222,7 +222,7 @@ class S6Test(LedgerChecksCase):
         self.check(self.items(self.events(phase_commit_event(self.tip))), "S6", "pass")
 
     def test_no_phase_commit_fails(self):
-        self.check(self.items(self.events()), "S6", "fail", "no phase-commit before the first final round")
+        self.check(self.items(self.events()), "S6", "fail", "no phase-commit before the last final round")
 
     def test_a_phase_commit_after_the_first_final_round_fails(self):
         events = [round_event(), round_event(1, **FINAL), phase_commit_event(self.tip)]
@@ -259,6 +259,7 @@ class S6RebaseTest(LedgerChecksCase):
         self.original = self.commit("feat: phase", name="phase.txt")
         self.git("checkout", "-q", "main")
         self.commit("chore: main moves", name="main.txt")
+        self.git("push", "-q", "origin", "main")
         self.git("checkout", "-q", "feature")
         self.git("rebase", "-q", "main")
         self.rebased = self.git("rev-parse", "HEAD")
@@ -285,7 +286,7 @@ class S6RebaseTest(LedgerChecksCase):
     def test_a_changed_patch_with_a_final_round_after_the_new_phase_commit_passes(self):
         self.change_the_patch()
         items = self.items(self.events(phase_commit_event(self.tip), round_event(2, **FINAL)))
-        self.check(items, "S6", "pass", "a final round follows it")
+        self.check(items, "S6", "pass", f"phase-commit {self.tip[:7]} is an ancestor of HEAD")
 
     def test_a_changed_patch_without_a_final_round_after_the_new_phase_commit_fails(self):
         self.change_the_patch()
@@ -309,6 +310,45 @@ class S6RebaseTest(LedgerChecksCase):
 
     def test_an_unknown_later_phase_commit_fails(self):
         self.check(self.items(self.events(phase_commit_event("b" * 40))), "S6", "fail", "unknown commit bbbbbbb")
+
+
+class S6LastReviewedTest(LedgerChecksCase):
+    """S6 compares the newest phase commit with the newest phase commit that a final round follows, by the patch-id of the whole branch diff."""
+
+    def setUp(self):
+        super().setUp()
+        self.original = self.commit("feat: phase", name="phase.txt")
+        self.second = self.commit("feat: more", name="more.txt")
+        self.git("checkout", "-q", "main")
+        self.commit("chore: main moves", name="main.txt")
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "feature")
+
+    def push_tip(self):
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.tip = self.git("rev-parse", "HEAD")
+
+    def events(self, rebased):
+        """The shape of issue 559: the review loop is redone, a final round follows the last content change, then a rebase."""
+        return [round_event(), phase_commit_event(self.original), round_event(1, **FINAL), phase_commit_event(self.second),
+                round_event(2, **FINAL), phase_commit_event(rebased)]
+
+    def test_a_rebase_with_the_whole_branch_patch_id_of_the_last_reviewed_commit_passes(self):
+        self.git("rebase", "-q", "main")
+        self.push_tip()
+        items = self.items(self.events(self.tip))
+        self.check(items, "S6", "pass", f"rebased phase-commit {self.tip[:7]} has the patch-id of phase-commit {self.second[:7]}")
+
+    def test_a_rebase_that_changes_an_earlier_commit_but_keeps_the_last_commit_diff_fails(self):
+        self.git("reset", "-q", "--hard", "main")
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write("resolved differently")
+        self.git("add", "phase.txt")
+        self.git("commit", "-q", "-m", "feat: phase")
+        self.git("cherry-pick", self.second)
+        self.push_tip()
+        items = self.items(self.events(self.tip))
+        self.check(items, "S6", "fail", f"rebased phase-commit {self.tip[:7]} has a different patch-id than phase-commit {self.second[:7]}")
 
 
 class LinkIsolationTest(LedgerChecksCase):

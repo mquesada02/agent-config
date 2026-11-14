@@ -1731,14 +1731,18 @@ def _is_ancestor_of_head(worktree, sha):
     return _is_ancestor(worktree, sha, "HEAD")
 
 
-def _patch_id(worktree, sha):
-    """The `git patch-id --stable` of one commit, or None for a commit without a patch (an empty commit, a merge commit)."""
+def _branch_patch_id(worktree, base_ref, sha):
+    """The `git patch-id --stable` of the whole branch diff of the commit `sha`: the merge base with `base_ref` to `sha`. None for a branch
+    without a patch (no merge base, or an empty diff). S5 and S6 both prove a rebase with it."""
     import subprocess  # imported here: the hook's common path never runs git
 
-    with _unavailable_if_git_fails("diff-tree"):
-        shown = _git(worktree, "diff-tree", "-p", "--no-color", "--root", sha)
+    base = _base_of(worktree, sha, base_ref)
+    if base is None:
+        return None
+    with _unavailable_if_git_fails("diff"):
+        shown = _git(worktree, "diff", "--no-color", "--no-ext-diff", base, sha)
     if shown.returncode != 0:
-        raise Unavailable(f"git diff-tree exited with status {shown.returncode}: {shown.stderr.strip()}")
+        raise Unavailable(f"git diff exited with status {shown.returncode}: {shown.stderr.strip()}")
     with _unavailable_if_git_fails("patch-id"):
         result = subprocess.run(["git", "-C", worktree, "patch-id", "--stable"], input=shown.stdout, capture_output=True, text=True,
                                 errors="replace", timeout=GIT_TIMEOUT_SECONDS)
@@ -1754,7 +1758,7 @@ def _base_of(worktree, sha, base_ref):
 
 
 def _is_rebase_of(worktree, base_ref, before, sha, last):
-    """True when the phase commit `sha` proves a rebase of the phase commit `before`: both exist, its patch-id differs (section 6 step 3
+    """True when the phase commit `sha` proves a rebase of the phase commit `before`: both exist, its whole-branch patch-id differs (section 6 step 3
     requires a new final round only then), its base (the merge base with `base_ref`) is an ancestor of HEAD and a strict descendant of the base
     of `before` (the base branch moved forward). The `last` phase commit must also be an ancestor of HEAD; an earlier one may have been rewritten
     by a later rebase. False when any of this cannot be shown."""
@@ -1765,7 +1769,7 @@ def _is_rebase_of(worktree, base_ref, before, sha, last):
     new_base, old_base = _base_of(worktree, sha, base_ref), _base_of(worktree, before, base_ref)
     if new_base is None or old_base is None or new_base == old_base:
         return False
-    new_id, old_id = _patch_id(worktree, sha), _patch_id(worktree, before)
+    new_id, old_id = _branch_patch_id(worktree, base_ref, sha), _branch_patch_id(worktree, base_ref, before)
     if new_id is None or old_id is None or new_id == old_id:
         return False
     return _is_ancestor_of_head(worktree, new_base) and _is_ancestor(worktree, old_base, new_base)
@@ -1788,34 +1792,37 @@ def _rebase_exempt_rounds(worktree, base_branch, ledger):
     return exempt
 
 
-def check_s6(worktree, ledger):
-    """Returns (passed, evidence). After a rebase, the last later phase-commit must be an ancestor of HEAD with the original patch-id or a final round after it."""
-    final = next((position for position, event in ledger.round_events if event["loop"] == CODE_REVIEW and event["phase"] == "final"), None)
+def check_s6(worktree, ledger, base_branch):
+    """Returns (passed, evidence). The reviewed phase-commit is the last one before the last final round of the section 6 loop: the content that
+    a final round followed. It must be an ancestor of HEAD. After a rebase, the newest later phase-commit must be an ancestor of HEAD with the
+    whole-branch patch-id of the reviewed one. A phase-commit after the last final round has no final round after it."""
+    final = max((position for position, event in ledger.round_events if event["loop"] == CODE_REVIEW and event["phase"] == "final"), default=None)
     if final is None:
         return True, "no section 6 final round"
-    before = [event for position, event in ledger.commits if position < final]
+    before = [(position, event) for position, event in ledger.commits if position < final]
     if not before:
-        return False, "no phase-commit before the first final round of the section 6 loop"
-    sha = before[-1]["sha"]
+        return False, "no phase-commit before the last final round of the section 6 loop"
+    reviewed_position, reviewed_event = before[-1]
+    sha = reviewed_event["sha"]
     known = _is_known_commit(worktree, sha)
     if known and _is_ancestor_of_head(worktree, sha):
         return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
-    later = [(position, event["sha"]) for position, event in ledger.commits if position > final]
+    later = [event["sha"] for position, event in ledger.commits if position > reviewed_position]
     if not later:
         if not known:
             return False, f"unknown commit {sha[:7]}"
         return False, f"phase-commit {sha[:7]} is not an ancestor of HEAD"
-    rebased_position, rebased = later[-1]
+    rebased = later[-1]
     if not _is_known_commit(worktree, rebased):
         return False, f"unknown commit {rebased[:7]}"
     if not _is_ancestor_of_head(worktree, rebased):
         return False, f"rebased phase-commit {rebased[:7]} is not an ancestor of HEAD"
-    original_id = _patch_id(worktree, sha) if known else None
-    if original_id is not None and original_id == _patch_id(worktree, rebased):
+    base_ref = f"refs/remotes/origin/{base_branch}"
+    if not _is_known_commit(worktree, base_ref):
+        raise Unavailable(f"no such ref origin/{base_branch}")
+    reviewed_id = _branch_patch_id(worktree, base_ref, sha) if known else None
+    if reviewed_id is not None and reviewed_id == _branch_patch_id(worktree, base_ref, rebased):
         return True, f"rebased phase-commit {rebased[:7]} has the patch-id of phase-commit {sha[:7]} and is an ancestor of HEAD"
-    if any(position > rebased_position and event["loop"] == CODE_REVIEW and event["phase"] == "final"
-           for position, event in ledger.round_events):
-        return True, f"rebased phase-commit {rebased[:7]} is an ancestor of HEAD and a final round follows it"
     return False, f"rebased phase-commit {rebased[:7]} has a different patch-id than phase-commit {sha[:7]} and no final round follows it"
 
 
@@ -1918,7 +1925,7 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem, base_b
     agents = None if audited is None else _agents(audited)
     text = str(problem)
     return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text, worktree, base_branch),
-            _check_item("S6", check_s6, worktree, ledger), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
+            _check_item("S6", check_s6, worktree, ledger, base_branch), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
 
 
 # ---- S7 and S9: models and safety, from the transcripts ----

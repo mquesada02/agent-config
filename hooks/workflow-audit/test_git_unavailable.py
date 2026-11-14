@@ -22,7 +22,7 @@ exec "$REAL_GIT" "$@"
 REV_PARSE_OF_THE_BASE = '*" rev-parse --verify -q refs/remotes/origin/main"*'  # not origin/feature: the audit reads that one itself
 REV_PARSE_OF_A_SHA = '*" rev-parse --verify -q "[0-9a-f]*'
 MERGE_BASE_OF_A_COMMIT = '*" merge-base "*"refs/remotes/origin/"*'
-DIFF_TREE = '*" diff-tree "*'
+DIFF = '*" diff --no-color "*'
 
 
 def _load_audit():
@@ -117,12 +117,14 @@ class S5Test(RebasedCase):
 
 class S6Test(RebasedCase):
     def s6(self):
-        """The first final round follows the original phase commit, which the rebase removed from HEAD's history."""
-        return self.items([round_event(), phase_commit_event(self.original), round_event(1, **FINAL), phase_commit_event(self.tip), round_event(2, **FINAL)])["S6"]
+        """The final round follows the original phase commit, which the rebase removed from HEAD history; the new phase commit has no final round after it, so S6 compares their patch-ids."""
+        return self.items([round_event(), phase_commit_event(self.original), round_event(1, **FINAL), phase_commit_event(self.tip)])["S6"]
 
-    def test_the_rebased_commit_passes_without_a_git_problem(self):
+    def test_the_changed_patch_fails_on_its_own_without_a_git_problem(self):
         item = self.s6()
-        self.assertEqual(item["result"], "pass", item["evidence"])
+        self.assertEqual(item["result"], "fail", item["evidence"])
+        self.assertIn("has a different patch-id", item["evidence"])
+        self.assertNotIn("unavailable", item["evidence"])
 
     def test_status_128_from_rev_parse_fails_with_the_git_message(self):
         self.shim(REV_PARSE_OF_A_SHA, 128)
@@ -132,12 +134,12 @@ class S6Test(RebasedCase):
         self.assertIn("evidence unavailable: git rev-parse exited with status 128: fatal: simulated failure", item["evidence"])
         self.assertNotIn("unknown commit", item["evidence"])
 
-    def test_status_128_from_diff_tree_fails_with_the_git_message(self):
-        self.shim(DIFF_TREE, 128)
+    def test_status_128_from_diff_fails_with_the_git_message(self):
+        self.shim(DIFF, 128)
         item = self.s6()
         self.assert_shim_fired()
         self.assertEqual(item["result"], "fail", item["evidence"])
-        self.assertIn("evidence unavailable: git diff-tree exited with status 128: fatal: simulated failure", item["evidence"])
+        self.assertIn("evidence unavailable: git diff exited with status 128: fatal: simulated failure", item["evidence"])
 
     def test_a_missing_commit_still_reads_as_unknown(self):
         item = self.items([round_event(), phase_commit_event("b" * 40), round_event(1, **FINAL)])["S6"]
@@ -162,7 +164,7 @@ class TimeoutThroughTheChecksTest(unittest.TestCase):
 
     def test_s6_fails_with_the_timeout_message(self):
         with mock.patch.object(audit, "_git", side_effect=subprocess.TimeoutExpired(["git"], audit.GIT_TIMEOUT_SECONDS)):
-            item = audit._check_item("S6", audit.check_s6, "/w", self.LEDGER)
+            item = audit._check_item("S6", audit.check_s6, "/w", self.LEDGER, "main")
         self.assertEqual(item["result"], "fail")
         self.assertIn("evidence unavailable: git rev-parse timed out", item["evidence"])
 
@@ -176,7 +178,7 @@ class HelperTest(unittest.TestCase):
         return {
             "_is_known_commit": ("rev-parse", lambda: audit._is_known_commit("/w", "abc")),
             "_is_ancestor": ("merge-base", lambda: audit._is_ancestor("/w", "a", "b")),
-            "_patch_id": ("diff-tree", lambda: audit._patch_id("/w", "abc")),
+            "_branch_patch_id": ("merge-base", lambda: audit._branch_patch_id("/w", "refs/remotes/origin/main", "abc")),
             "_base_of": ("merge-base", lambda: audit._base_of("/w", "abc", "refs/remotes/origin/main")),
         }
 
@@ -196,13 +198,13 @@ class HelperTest(unittest.TestCase):
         shown = subprocess.CompletedProcess(["git"], 0, stdout="diff", stderr="")
         with mock.patch.object(audit, "_git", return_value=shown), mock.patch("subprocess.run", side_effect=self.TIMEOUT):
             with self.assertRaisesRegex(audit.Unavailable, "git patch-id timed out"):
-                audit._patch_id("/w", "abc")
+                audit._branch_patch_id("/w", "refs/remotes/origin/main", "abc")
 
     def test_a_patch_id_os_error_in_git_patch_id_is_unavailable(self):
         shown = subprocess.CompletedProcess(["git"], 0, stdout="diff", stderr="")
         with mock.patch.object(audit, "_git", return_value=shown), mock.patch("subprocess.run", side_effect=OSError("gone")):
             with self.assertRaisesRegex(audit.Unavailable, "git patch-id failed: gone"):
-                audit._patch_id("/w", "abc")
+                audit._branch_patch_id("/w", "refs/remotes/origin/main", "abc")
 
 
 if __name__ == "__main__":
