@@ -9,11 +9,9 @@ The path depends on the Query fields: no `values` (or an empty array), no `name`
 `query()` exists on `Client`, `Pool`, a pool client, and `pg.native` clients. `pool.query` delegates to `client.query`.
 The ESM build (`import { Pool } from 'pg'`) has named exports since `pg@8.15.0`.
 
-Link base used below: `https://github.com/brianc/node-postgres/blob/pg@8.23.1/` (written as `GH/`).
-
 ## 1. `client.query(text)`, `(text, values)`, `(config)`
 
-Entry point: `Client.query(config, values, callback)` in [GH/packages/pg/lib/client.js#L668-L785](https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/client.js#L668-L785). A `null` or `undefined` first argument throws a `TypeError` (L673-L675).
+Entry point: `Client.query(config, values, callback)` in [packages/pg/lib/client.js#L668-L785](https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/client.js#L668-L785). A `null` or `undefined` first argument throws a `TypeError` (L673-L675).
 
 Normalization is in `normalizeQueryConfig` ([packages/pg/lib/utils.js#L154-L169](https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/utils.js#L154-L169)):
 - A string becomes `{ text: string }`. A config object is cloned.
@@ -149,28 +147,14 @@ Which libpq call each maps to lives in `pg-native` and libpq. Not confirmed here
 - `pg-format`: a separate npm package, not part of `pg`. The docs recommend it for dynamic identifiers: "use pg-format package for handling escaping these values" ([queries.mdx](https://github.com/brianc/node-postgres/blob/pg@8.23.1/docs/pages/features/queries.mdx), warning box). Its own API (`format('%I', ...)`) is not covered by a primary source here. Not confirmed.
 - A tool should not treat `pool.query` text built by string concatenation as parameterized. The docs warn against it ([queries.mdx](https://github.com/brianc/node-postgres/blob/pg@8.23.1/docs/pages/features/queries.mdx), "avoid string concatenating parameters into the query text directly").
 - The SQL text can sit in `text` (config) or be the first argument. For `pg-cursor` and `pg-query-stream` it is the first constructor argument. For `new Query(...)` it is the first argument or `config.text`.
-- Empty or missing `text`: allowed when `name` is a string (name-only reuse). Otherwise an error (query.js L152-L155).
 - `types` in the config is the result-parser set (docs "Types") and also the parameter type list for `parse` ([query.js#L216-L220](https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/query.js#L216-L220)). The docs only describe the result-parser meaning. Mismatch noted. Not confirmed which role `types` plays in `Parse` for an object with `getTypeParser`.
-- Result `rows`/`fields` and `rowMode` do not change the SQL text.
 - Placeholders are only `$1`, `$2`, ... (PostgreSQL). `pg` does not support `?` or `:name`. Not stated in one doc line; follows from "passing your query text unaltered" (queries.mdx) and the absence of any rewriting in `query.js`.
-- `client.query` may hold a `query_timeout` (config or connection param). Does not change the text.
 - Pipelining (`pipeline: true` client or pool option) changes timing only. The protocol choice stays as in point 5 ([pipelining.mdx](https://github.com/brianc/node-postgres/blob/pg@8.23.1/docs/pages/features/pipelining.mdx)).
 
 ## Sources
 
 - node-postgres docs site: https://node-postgres.com (pages: `/features/queries`, `/apis/client`, `/apis/pool`, `/features/callbacks`, `/features/esm`, `/features/native`, `/features/pipelining`, `/apis/utilities`)
 - Docs source at the tag: https://github.com/brianc/node-postgres/tree/pg@8.23.1/docs/pages
-- `packages/pg/lib/client.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/client.js
-- `packages/pg/lib/query.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/query.js
-- `packages/pg/lib/utils.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/utils.js
-- `packages/pg/lib/index.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/index.js
-- `packages/pg/lib/connection.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/lib/connection.js
-- `packages/pg/lib/native/client.js` and `native/query.js`: https://github.com/brianc/node-postgres/tree/pg@8.23.1/packages/pg/lib/native
-- `packages/pg/esm/index.mjs`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/esm/index.mjs
-- `packages/pg/package.json`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg/package.json
-- `packages/pg-pool/index.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg-pool/index.js
-- `packages/pg-cursor/index.js`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg-cursor/index.js
-- `packages/pg-query-stream/src/index.ts`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/packages/pg-query-stream/src/index.ts
-- `CHANGELOG.md`: https://github.com/brianc/node-postgres/blob/pg@8.23.1/CHANGELOG.md
+- Source at the tag: https://github.com/brianc/node-postgres/tree/pg@8.23.1 (the files `packages/pg/lib/{client,query,utils,index,connection}.js`, `packages/pg/lib/native/`, `packages/pg/esm/index.mjs`, `packages/pg/package.json`, `packages/pg-pool/index.js`, `packages/pg-cursor/index.js`, `packages/pg-query-stream/src/index.ts` and `CHANGELOG.md`, each linked inline above)
 - PostgreSQL protocol flow: https://www.postgresql.org/docs/current/protocol-flow.html (sections 54.2.2.1 "Multiple Statements in a Simple Query", "Extended Query" with the Parse note)
 - Version check: npm registry `dist-tags.latest` for `pg` was `8.23.1`; the git tag `pg@8.23.1` was cloned and read.
