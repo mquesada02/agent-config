@@ -67,7 +67,7 @@ class OutputTest(ScanCase):
         out = self.scan()
         self.assertTrue(out["ok"])
         self.assertEqual(out["files_with_sql"], ["db/q.sql", "src/repo.ts"])
-        self.assertEqual(out["forms"], {"template": 3, "sql": 1})
+        self.assertEqual(out["forms"], {"template": 3, "sql": 1, "pg": 0})
         self.assertEqual(out["statements"], 4)
         self.assertEqual(out["detected_tags"], ["sql", "this.sql", "tx"])
         self.assertEqual(out["errors"], [])
@@ -79,7 +79,7 @@ class OutputTest(ScanCase):
         out = self.scan()
         self.assertEqual(out["files_with_sql"], [])
         self.assertEqual(out["statements"], 0)
-        self.assertEqual(out["forms"], {"template": 0, "sql": 0})
+        self.assertEqual(out["forms"], {"template": 0, "sql": 0, "pg": 0})
         self.assertEqual(out["detected_tags"], [])
         self.assertEqual(out["candidates"], [])
 
@@ -210,6 +210,57 @@ class CandidateTest(ScanCase):
 
     def test_a_clean_statement_has_no_candidate(self):
         self.assertEqual(self.template("select id, name from t where id = ${1}")["candidates"], [])
+
+
+PG_HEAD = "import { Pool } from 'pg';\nconst pool = new Pool();\n"
+
+
+class PgScanTest(ScanCase):
+    def test_pg_statements_count_in_forms_pg_and_not_in_forms_template(self):
+        self.write("a.ts", PG_HEAD + "pool.query('select id from t');\npool.query(`select 2`);\n")
+        out = self.scan()
+        self.assertEqual(out["forms"], {"template": 0, "sql": 0, "pg": 2})
+        self.assertEqual(out["statements"], 2)
+        self.assertEqual(out["files_with_sql"], ["a.ts"])
+
+    def test_every_form_is_counted_by_its_source(self):
+        self.write("a.ts", PG_HEAD + "const sql = postgres();\npool.query('select 1');\nconst q = sql`select 2`;\n")
+        self.write("q.sql", "select 3;\nselect 4;\n")
+        out = self.scan()
+        self.assertEqual(out["forms"], {"template": 1, "sql": 2, "pg": 1})
+        self.assertEqual(out["statements"], 4)
+
+    def test_pg_hits_for_the_pg_rules_take_their_line_from_line_starts(self):
+        self.write(
+            "a.ts",
+            PG_HEAD + "pool.query(`\n  select *\n  from t\n  where n like '%a'\n  offset 2000\n`);\n",
+        )
+        out = self.scan()
+        self.assertEqual(self.candidate(out, "PG-08")["evidence"], [{"file": "a.ts", "line": 4}])
+        self.assertEqual(self.candidate(out, "PG-06")["evidence"], [{"file": "a.ts", "line": 6}])
+        self.assertEqual(self.candidate(out, "PG-10")["evidence"], [{"file": "a.ts", "line": 7}])
+
+    def test_an_escape_does_not_shift_the_hit_line(self):
+        self.write("a.ts", PG_HEAD + "pool.query('select 1\\n  from t\\n where n like \\'%a\\'');\n")
+        self.assertEqual(self.candidate(self.scan(), "PG-06")["evidence"], [{"file": "a.ts", "line": 3}])
+
+    def test_pgjs_01_never_reads_a_pg_statement(self):
+        self.write(
+            "a.ts",
+            PG_HEAD + "const sql = postgres();\npool.query(`select id from t where id in \\${ids}`);\n",
+        )
+        self.assertIsNone(self.candidate(self.scan(), "PGJS-01"))
+
+    def test_pgjs_04_still_reads_the_raw_text_of_a_pg_only_file(self):
+        self.write("a.ts", PG_HEAD + "export const f = (db, q) => db.unsafe(q);\npool.query('select 1');\n")
+        out = self.scan()
+        self.assertEqual(self.candidate(out, "PGJS-04")["evidence"], [{"file": "a.ts", "line": 3}])
+
+    def test_a_pg_file_has_no_template_form_to_pick_a_formatter(self):
+        self.write("a.ts", PG_HEAD + "pool.query('select 1');\n")
+        out = self.scan()
+        self.assertEqual(out["forms"]["template"], 0)
+        self.assertGreater(out["forms"]["pg"], 0)
 
 
 class UnsafeTest(ScanCase):

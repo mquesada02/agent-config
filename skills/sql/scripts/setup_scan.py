@@ -71,21 +71,27 @@ def statement_hits(statement, form, tags):
     text = statement["text"]
     start = statement["start_line"]
     hits = []
-    if form == "js":
+
+    def line(offset):
+        if statement["source"] == "pg":  # the decoded text: the source line comes from `line_starts`
+            return statement["pg"]["line_starts"][text.count("\n", 0, offset)]
+        return line_of(start, text, offset)
+
+    if form == "js" and statement["source"] == "template":
         names = tag_pattern(tags) if tags else r"(?!)"
         for pattern in (IN_PAREN % names, IN_BARE % names):
             for match in re.finditer(pattern, text, re.I):
-                hits.append(("PGJS-01", line_of(start, text, match.start())))
+                hits.append(("PGJS-01", line(match.start())))
     for match in LIKE.finditer(text):
-        hits.append(("PG-06", line_of(start, text, match.start())))
+        hits.append(("PG-06", line(match.start())))
     if form == "js":
         for match in SELECT_STAR.finditer(text):
             if not EXISTS_BEFORE.search(text[: match.start()]):
-                hits.append(("PG-08", line_of(start, text, match.start())))
+                hits.append(("PG-08", line(match.start())))
     for match in OFFSET.finditer(text):
         digits = match.group(1).lstrip("0")
         if len(digits) > len(str(MAX_OFFSET)) or (digits and int(digits) > MAX_OFFSET):  # no int() of a huge run
-            hits.append(("PG-10", line_of(start, text, match.start())))
+            hits.append(("PG-10", line(match.start())))
     return hits
 
 
@@ -122,7 +128,7 @@ def unsafe_hits(source):
 
 def scan(repo, tags):
     os.chdir(repo)
-    files_with_sql, errors, forms = [], [], {"template": 0, "sql": 0}
+    files_with_sql, errors, forms = [], [], {"template": 0, "sql": 0, "pg": 0}
     statements, detected, truncated = 0, [], False
     hits = {rule_id: [] for rule_id in ORDER}
     for path in find_files("."):
@@ -137,8 +143,8 @@ def scan(repo, tags):
                 continue
             files_with_sql.append(path)
         statements += len(data["statements"])
-        form = "template" if data["form"] == "js" else "sql"
-        forms[form] += len(data["statements"])
+        for statement in data["statements"]:
+            forms[statement["source"]] += 1
         for tag in data.get("detected_tags", []):
             if tag not in detected:
                 detected.append(tag)

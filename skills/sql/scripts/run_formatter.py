@@ -139,7 +139,10 @@ def run_pass(command, source, root):
 
 
 def top_level(data):
-    return [statement for statement in data["statements"] if statement["parent"] is None]
+    """The statements that the runner formats: top-level `template` and `sql` statements, never `pg` ones."""
+    return [
+        statement for statement in data["statements"] if statement["parent"] is None and statement["source"] != "pg"
+    ]
 
 
 def overlaps(first, second):

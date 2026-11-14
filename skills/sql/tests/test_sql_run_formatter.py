@@ -300,6 +300,49 @@ class FailedCheckTest(RunnerTestCase):
         self.assertFalse(os.path.exists(self.out))
 
 
+PG_TS_FILE = """import postgres from "postgres";
+import { Pool } from "pg";
+const sql = postgres();
+const pool = new Pool();
+
+export const one = () => sql`select 1`;
+export const two = () => pool.query('select 2');
+"""
+
+
+class PgStatementsTest(RunnerTestCase):
+    def test_a_pg_statement_is_never_a_target_and_stays_byte_for_byte(self):
+        self.write("store.ts", PG_TS_FILE)
+        self.fake("prettier", local=True, replace=[["select", "SELECT"]])
+        out = self.run_ok("store.ts", "prettier-plugin-embed", "6-7")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.read(self.out), PG_TS_FILE.replace("sql`select 1`", "sql`SELECT 1`"))
+        self.assertEqual(out["ranges"], [{"start": 6, "end": 6, "new_start": 6, "new_end": 6}])
+
+    def test_a_range_that_holds_only_a_pg_statement_runs_no_tool(self):
+        self.write("store.ts", PG_TS_FILE)
+        tool = self.fake("prettier", local=True, replace=[])
+        result = self.run_runner("store.ts", "prettier-plugin-embed", "7-7")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(len(result.stderr.strip().splitlines()), 1)
+        self.assertEqual(self.calls(tool), [])
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_a_pg_statement_is_not_counted_in_the_statement_count_check(self):
+        self.write("store.ts", PG_TS_FILE)
+        self.fake("prettier", local=True, replace=[["pool.query('select 2');", "pool.query('select 3');\npool.query('select 4');"]])
+        out = self.run_ok("store.ts", "prettier-plugin-embed", "6-6")
+        self.assertTrue(out["ok"], out)
+
+    def test_a_sql_file_is_still_formatted(self):
+        self.write("q.sql", SQL_FILE)
+        self.fake("pg_format", replace=[["select 1;", "SELECT 1;"]])
+        out = self.run_ok("q.sql", "pgFormatter", "1-1")
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["changed"])
+
+
 class UnwritableOutputTest(RunnerTestCase):
     def test_an_output_that_cannot_be_written_is_a_failed_run_with_json(self):
         self.write("store.ts", TS_FILE)
