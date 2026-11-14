@@ -9,6 +9,8 @@ it reads the final message from the kept trace (`tracePath`, so the eval must ha
 and asks a judge one question for each table row of that report. The question holds the row, the exact text
 of the fixture workflow files (DIR/<case>/repo/.github) and, for a row marked with the flag, the flag section.
 The judge answers on one line: PASS or FAIL, a colon and a short reason.
+The NAME-09 rules and the flag-row rule of the question are read from DIR/<case>/graders/fix-quality.md, so they
+are the same text as in the in-run grader. A grader without them is an error (exit 2).
 COMMAND is the judge command (default: claude -p with haiku and no tools). It reads the question on stdin.
 Output: one line "<case>#<n> row <k> <RULE>: PASS|FAIL <reason>" for each row, one line
 "<case>#<n>: PASS|FAIL|no rows" for each run, one line "FAIL <label> <check>: <message>" for each error, then
@@ -41,18 +43,40 @@ DEFAULT_JUDGE = ["claude", "-p", "--model", "haiku", "--tools", "", "--disable-s
                  "--no-session-persistence"]
 TIMEOUT_SECONDS = 300
 REPLY = re.compile(r"^(PASS|FAIL)\b[\s:.\-]*(.*)$")
-CRITERION = (
+GRADER_FILE = os.path.join("graders", f"{JUDGE}.md")
+# The rules that the in-run grader and this script share. The script reads each one from the grader file by the
+# start of its line, so the two judges cannot drift. The other rules differ: the grader judge sees the report
+# only, this judge also sees the workflow files.
+FLAG_RULE, NAME_09_ROW, NAME_09_FIX = f"A row marked with {FLAG}", "A NAME-09 row", "A NAME-09 Fix"
+CRITERION_HEAD = (
     "Judge one finding row of a CI review report. The row passes when its Fix cell names a concrete edit "
     "(what to add, change, remove or rename, with the key or value when the edit needs one) and that edit, "
     "applied to the workflow files below, removes the problem in its Problem cell. A vague Fix cell, such as "
-    "\"improve the name\", fails.\n"
-    "A row marked with the flag passes when its Fix cell names the workflow edit and the admin steps for "
-    "branch protection are in the flag section below. The skill does not change branch protection itself.\n"
-    "A NAME-09 row (the required checks cannot be read) passes when the flag section below names the exact "
-    "old and new check names. Its Fix cell may point to that section or repeat its steps.\n"
-    "A NAME-09 Fix never needs a workflow edit, because the rename or split comes from another finding, so a NAME-09 row is exempt from the workflow edit rule for flag rows below.\n"
-    "Answer on one line: PASS or FAIL, a colon, and one short reason (at most 25 words)."
+    "\"improve the name\", fails."
 )
+CRITERION_TAIL = "Answer on one line: PASS or FAIL, a colon, and one short reason (at most 25 words)."
+
+
+def criterion(grader_path):
+    """The judge criterion: the head, the shared rules read from the grader file, the tail.
+
+    Raises OSError when the grader cannot be read and ValueError when a shared rule is missing or malformed."""
+    with open(grader_path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    rules = {}
+    for start in (FLAG_RULE, NAME_09_ROW, NAME_09_FIX):
+        found = [line.strip() for line in lines if line.startswith(start)]
+        if len(found) != 1:
+            raise ValueError(f"{len(found)} lines start with {start!r}, not 1")
+        rules[start] = found[0]
+    # The flag line goes on with the verdict sentences of the grader judge. Keep its first sentence.
+    if ". " not in rules[FLAG_RULE]:
+        raise ValueError(f"the line that starts with {FLAG_RULE!r} has no sentence end")
+    rules[FLAG_RULE] = rules[FLAG_RULE].split(". ")[0] + "."
+    for start, rule in rules.items():
+        if rule == start or not rule.endswith("."):
+            raise ValueError(f"the line that starts with {start!r} is not a full sentence")
+    return "\n".join([CRITERION_HEAD, *rules.values(), CRITERION_TAIL])
 
 
 def judged_runs(result_path, pattern):
@@ -118,9 +142,9 @@ def workflow_text(evals, case):
     return "\n".join(parts)
 
 
-def question(files, section, cells):
+def question(text, files, section, cells):
     _, rule, where, problem, fix = cells
-    lines = [CRITERION, "", "Workflow files:", files, ""]
+    lines = [text, "", "Workflow files:", files, ""]
     if FLAG in rule or rule.startswith("NAME-09"):
         lines += ["Flag section:", section or "(the report has no flag section)", ""]
     lines += [f"Row: rule {rule} | where {where} | problem {problem} | fix {fix}"]
@@ -144,7 +168,7 @@ def ask_judge(command, text):
     return match.group(1), match.group(2).strip()
 
 
-def judge_run(label, trace_path, files, command, out):
+def judge_run(label, trace_path, files, text, command, out):
     """Judge one run. Appends the output lines to `out`. Returns (rows passed, rows judged, run passed, errors)."""
     message = final_message(trace_path)
     if message is None:
@@ -162,7 +186,7 @@ def judge_run(label, trace_path, files, command, out):
             errors += 1
             continue
         try:
-            verdict, reason = ask_judge(command, question(files, section, cells))
+            verdict, reason = ask_judge(command, question(text, files, section, cells))
         except ValueError as error:
             out.append(f"FAIL {label} row {number} judge: {error}")
             errors += 1
@@ -199,8 +223,13 @@ def main(argv):
         except OSError as error:
             print(f"cannot read the fixture of {name}: {error}", file=sys.stderr)
             return 2
+        try:
+            text = criterion(os.path.join(args.evals, name, GRADER_FILE))
+        except (OSError, ValueError) as error:
+            print(f"cannot read the grader of {name}: {error}", file=sys.stderr)
+            return 2
         for number, trace in enumerate(traces, start=1):
-            passed, judged, ok, failed = judge_run(f"{name}#{number}", trace, files, command, out)
+            passed, judged, ok, failed = judge_run(f"{name}#{number}", trace, files, text, command, out)
             rows_passed, rows_judged, errors = rows_passed + passed, rows_judged + judged, errors + failed
             if ok is not None:
                 runs_passed, runs_total = runs_passed + ok, runs_total + 1

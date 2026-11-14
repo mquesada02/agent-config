@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import subprocess
@@ -6,9 +7,11 @@ import tempfile
 import unittest
 
 from report_fixtures import HEADER, SEPARATOR, SCRIPTS, make_report
-from skill_files import read
+from skill_files import EVALS, read
 
 SCRIPT = os.path.join(SCRIPTS, "judge_fix_quality.py")
+GRADER = read(sorted(glob.glob(os.path.join(EVALS, "*", "graders", "fix-quality.md")))[0])
+SHARED_STARTS = ("A row marked with ⚑", "A NAME-09 row", "A NAME-09 Fix")
 WORKFLOW = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
 FAKE_JUDGE = (
     "import os, sys\n"
@@ -46,9 +49,12 @@ class JudgeFixQuality(unittest.TestCase):
             handle.write(FAKE_JUDGE)
         self.cases = []
 
-    def add_case(self, name, messages, judged=True, workflow=WORKFLOW):
+    def add_case(self, name, messages, judged=True, workflow=WORKFLOW, grader=None):
         workflows = os.path.join(self.evals, name, "repo", ".github", "workflows")
         os.makedirs(workflows)
+        os.makedirs(os.path.join(self.evals, name, "graders"))
+        with open(os.path.join(self.evals, name, "graders", "fix-quality.md"), "w", encoding="utf-8") as handle:
+            handle.write(GRADER if grader is None else grader)
         with open(os.path.join(workflows, "ci.yml"), "w", encoding="utf-8") as handle:
             handle.write(workflow)
         runs = []
@@ -123,7 +129,7 @@ class JudgeFixQuality(unittest.TestCase):
         self.run_script()
         prompt = self.prompts()[0]
         self.assertIn("A NAME-09 row", prompt)
-        self.assertIn("the flag section below names the exact old and new check names", prompt)
+        self.assertIn("the ⚑ section names the exact old and new check names", prompt)
 
     def test_the_criterion_says_a_name_09_fix_never_needs_a_workflow_edit(self):
         self.add_case("name-09-x", [report("Tell the user.")])
@@ -132,6 +138,76 @@ class JudgeFixQuality(unittest.TestCase):
         self.assertIn("A NAME-09 Fix never needs a workflow edit, because the rename or split comes from "
                       "another finding, so a NAME-09 row is exempt from the workflow edit rule for flag rows "
                       "below.", prompt)
+
+    def shared_lines(self, grader):
+        """The grader lines that the script must send: the line of each start, the flag row cut at its first sentence."""
+        lines = [next(l for l in grader.splitlines() if l.startswith(start)) for start in SHARED_STARTS]
+        lines[0] = lines[0].split(". ")[0] + "."
+        return lines
+
+    def prompt_for_grader(self, grader):
+        self.add_case("name-09-x", [report("Tell the user.")], grader=grader)
+        code, out, err = self.run_script()
+        self.assertEqual(code, 0, out + err)
+        return self.prompts()[0]
+
+    def test_the_prompt_holds_the_shared_grader_lines_word_for_word(self):
+        prompt = self.prompt_for_grader(GRADER)
+        for line in self.shared_lines(GRADER):
+            self.assertIn(line, prompt)
+        self.assertNotIn("PASS if every row passes", prompt)
+
+    def test_a_change_of_a_shared_line_in_the_grader_changes_the_prompt(self):
+        for start in SHARED_STARTS:
+            with self.subTest(start=start):
+                line = next(l for l in GRADER.splitlines() if l.startswith(start))
+                word = "never needs" if start == SHARED_STARTS[2] else "passes"
+                self.assertIn(word, line)
+                changed = GRADER.replace(line, line.replace(word, "CHANGED-WORD", 1), 1)
+                self.tmp.cleanup()
+                self.setUp()
+                prompt = self.prompt_for_grader(changed)
+                self.assertEqual(prompt.count("CHANGED-WORD"), 1)
+                for shared in self.shared_lines(changed):
+                    self.assertIn(shared, prompt)
+
+    def test_a_grader_without_a_shared_line_is_exit_2_and_judges_nothing(self):
+        for start in SHARED_STARTS:
+            with self.subTest(start=start):
+                self.tmp.cleanup()
+                self.setUp()
+                broken = "\n".join(l for l in GRADER.splitlines() if not l.startswith(start))
+                self.add_case("name-09-x", [report("Tell the user.")], grader=broken)
+                code, out, err = self.run_script()
+                self.assertEqual(code, 2)
+                self.assertIn("cannot read the grader of name-09-x", err)
+                self.assertIn(start, err)
+                self.assertFalse(os.path.exists(self.log))
+
+    def test_a_malformed_shared_line_is_exit_2_and_judges_nothing(self):
+        flag = next(l for l in GRADER.splitlines() if l.startswith(SHARED_STARTS[0]))
+        malformed = {
+            "a line with no text after its start": (flag, SHARED_STARTS[0]),
+            "a flag line with no sentence end": (flag, flag.split(". ")[0]),
+            "a shared line twice": (flag, flag + "\n" + flag),
+        }
+        for label, (old, new) in malformed.items():
+            with self.subTest(label):
+                self.tmp.cleanup()
+                self.setUp()
+                self.add_case("name-09-x", [report("Tell the user.")], grader=GRADER.replace(old, new, 1))
+                code, out, err = self.run_script()
+                self.assertEqual(code, 2, out)
+                self.assertIn("cannot read the grader of name-09-x", err)
+                self.assertFalse(os.path.exists(self.log))
+
+    def test_a_judged_case_without_a_grader_file_is_exit_2(self):
+        self.add_case("name-09-x", [report("Tell the user.")])
+        os.remove(os.path.join(self.evals, "name-09-x", "graders", "fix-quality.md"))
+        code, out, err = self.run_script()
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read the grader of name-09-x", err)
+        self.assertFalse(os.path.exists(self.log))
 
     def test_an_escaped_pipe_stays_inside_its_cell(self):
         self.add_case("name-01-x", [report("Set `if: a \\|\\| b`.")])
