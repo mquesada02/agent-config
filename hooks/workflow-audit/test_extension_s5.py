@@ -416,6 +416,22 @@ class RebaseRoundTest(RebaseCase):
     def test_the_same_patch_id_gives_no_exemption(self):
         self.not_exempt(self.original, self.rebased)
 
+    def test_a_changed_earlier_commit_with_the_same_last_commit_diff_is_a_new_whole_branch_patch_id(self):
+        first = self.commit("feat: more", name="more.txt")
+        self.git("checkout", "-q", "main")
+        self.commit("chore: main moves again", name="main2.txt")
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "feature")
+        self.git("reset", "-q", "--hard", "main")
+        with open(os.path.join(self.repo, "phase.txt"), "w") as handle:
+            handle.write("resolved differently")
+        self.git("add", "phase.txt")
+        self.git("commit", "-q", "-m", "feat: phase")
+        self.git("cherry-pick", first)
+        self.tip = self.git("rev-parse", "HEAD")
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.assertIn(f"round 8 after phase-commit {self.tip[:7]}", self.exempt(first, self.tip))
+
     def test_the_same_parent_gives_no_exemption(self):
         self.change_the_patch()
         self.not_exempt(self.rebased, self.tip)
