@@ -7,7 +7,7 @@ Plugin eval throws the reply of an llm judge away and shows the judge only one i
 diagnostic of the `fix-quality` judge. For each with-arm run of each case that has the `fix-quality` grader,
 it reads the final message from the kept trace (`tracePath`, so the eval must have run with --keep-temp),
 and asks a judge one question for each table row of that report. The question holds the row, the exact text
-of the fixture workflow files (DIR/<case>/repo/.github) and, for a row marked with the flag, the flag section.
+of the fixture workflow files (DIR/<case>/repo/.github) and, for a row marked with the flag, the ⚑ section.
 The judge answers on one line: PASS or FAIL, a colon and a short reason.
 The NAME-09 rules and the flag-row rule of the question are read from DIR/<case>/graders/fix-quality.md, so they
 are the same text as in the in-run grader. A grader without them is an error (exit 2).
@@ -48,6 +48,8 @@ GRADER_FILE = os.path.join("graders", f"{JUDGE}.md")
 # start of its line, so the two judges cannot drift. The other rules differ: the grader judge sees the report
 # only, this judge also sees the workflow files.
 FLAG_RULE, NAME_09_ROW, NAME_09_FIX = f"A row marked with {FLAG}", "A NAME-09 row", "A NAME-09 Fix"
+# The text that ends the flag rule in the grader line and starts the verdict of the grader judge.
+VERDICT_TEXT = "PASS if every row passes"
 CRITERION_HEAD = (
     "Judge one finding row of a CI review report. The row passes when its Fix cell names a concrete edit "
     "(what to add, change, remove or rename, with the key or value when the edit needs one) and that edit, "
@@ -64,19 +66,23 @@ def criterion(grader_path):
     with open(grader_path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
     rules = {}
-    for start in (FLAG_RULE, NAME_09_ROW, NAME_09_FIX):
-        found = [line.strip() for line in lines if line.startswith(start)]
+    for start in (NAME_09_ROW, NAME_09_FIX, FLAG_RULE):
+        found = [(number, line.strip()) for number, line in enumerate(lines) if line.startswith(start)]
         if len(found) != 1:
             raise ValueError(f"{len(found)} lines start with {start!r}, not 1")
         rules[start] = found[0]
-    # The flag line goes on with the verdict sentences of the grader judge. Keep its first sentence.
-    if ". " not in rules[FLAG_RULE]:
-        raise ValueError(f"the line that starts with {FLAG_RULE!r} has no sentence end")
-    rules[FLAG_RULE] = rules[FLAG_RULE].split(". ")[0] + "."
-    for start, rule in rules.items():
+    # The flag line goes on with the verdict text of the grader judge. Keep the text before it.
+    number, flag_line = rules[FLAG_RULE]
+    kept, verdict, _ = flag_line.partition(VERDICT_TEXT)
+    if not verdict:
+        raise ValueError(f"the line that starts with {FLAG_RULE!r} does not hold {VERDICT_TEXT!r}")
+    rules[FLAG_RULE] = number, kept.rstrip()
+    for start, (_, rule) in rules.items():
         if rule == start or not rule.endswith("."):
             raise ValueError(f"the line that starts with {start!r} is not a full sentence")
-    return "\n".join([CRITERION_HEAD, *rules.values(), CRITERION_TAIL])
+    # The prompt keeps the order of the grader file, because a rule can point to another one ("below").
+    ordered = [rule for _, rule in sorted(rules.values())]
+    return "\n".join([CRITERION_HEAD, *ordered, CRITERION_TAIL])
 
 
 def judged_runs(result_path, pattern):
@@ -146,7 +152,7 @@ def question(text, files, section, cells):
     _, rule, where, problem, fix = cells
     lines = [text, "", "Workflow files:", files, ""]
     if FLAG in rule or rule.startswith("NAME-09"):
-        lines += ["Flag section:", section or "(the report has no flag section)", ""]
+        lines += [f"{FLAG} section:", section or f"(the report has no {FLAG} section)", ""]
     lines += [f"Row: rule {rule} | where {where} | problem {problem} | fix {fix}"]
     return "\n".join(lines)
 
