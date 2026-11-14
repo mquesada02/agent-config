@@ -11,7 +11,10 @@ from skill_files import EVALS, read
 
 SCRIPT = os.path.join(SCRIPTS, "judge_fix_quality.py")
 GRADER = read(sorted(glob.glob(os.path.join(EVALS, "*", "graders", "fix-quality.md")))[0])
-SHARED_STARTS = ("A row marked with ⚑", "A NAME-09 row", "A NAME-09 Fix")
+FLAG_START = "A row marked with ⚑"
+NAME_09_ROW_START, NAME_09_FIX_START = "A NAME-09 row", "A NAME-09 Fix"
+SHARED_STARTS = (NAME_09_ROW_START, NAME_09_FIX_START, FLAG_START)
+VERDICT_TEXT = "PASS if every row passes"
 WORKFLOW = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
 FAKE_JUDGE = (
     "import os, sys\n"
@@ -21,6 +24,11 @@ FAKE_JUDGE = (
     "row = prompt.split('Row:')[-1]\n"
     "print('FAIL: the fix is vague' if 'VAGUE' in row else 'PASS: the edit is concrete')\n"
 )
+
+
+def grader_line(grader, start):
+    """The line of the grader text that starts with `start`."""
+    return next(l for l in grader.splitlines() if l.startswith(start))
 
 
 def report(*fixes, flag_rows=()):
@@ -140,9 +148,10 @@ class JudgeFixQuality(unittest.TestCase):
                       "below.", prompt)
 
     def shared_lines(self, grader):
-        """The grader lines that the script must send: the line of each start, the flag row cut at its first sentence."""
-        lines = [next(l for l in grader.splitlines() if l.startswith(start)) for start in SHARED_STARTS]
-        lines[0] = lines[0].split(". ")[0] + "."
+        """The grader lines that the script must send: the line of each start, the flag row cut before the verdict text."""
+        lines = [grader_line(grader, start) for start in SHARED_STARTS]
+        flag = SHARED_STARTS.index(FLAG_START)
+        lines[flag] = lines[flag].partition(VERDICT_TEXT)[0].rstrip()
         return lines
 
     def prompt_for_grader(self, grader):
@@ -155,13 +164,48 @@ class JudgeFixQuality(unittest.TestCase):
         prompt = self.prompt_for_grader(GRADER)
         for line in self.shared_lines(GRADER):
             self.assertIn(line, prompt)
-        self.assertNotIn("PASS if every row passes", prompt)
+        self.assertNotIn(VERDICT_TEXT, prompt)
+
+    def test_the_prompt_keeps_the_shared_lines_in_the_order_of_the_grader_file(self):
+        prompt = self.prompt_for_grader(GRADER)
+        positions = [prompt.index(line) for line in self.shared_lines(GRADER)]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_prompt_follows_the_order_of_a_reordered_grader(self):
+        lines = GRADER.splitlines()
+        flag = next(l for l in lines if l.startswith(FLAG_START))
+        reordered = "\n".join([flag] + [l for l in lines if l != flag])
+        prompt = self.prompt_for_grader(reordered)
+        self.assertLess(prompt.index(FLAG_START), prompt.index(NAME_09_ROW_START))
+
+    def test_the_flag_rule_keeps_a_sentence_with_an_abbreviation(self):
+        flag = grader_line(GRADER, FLAG_START)
+        changed = flag.replace("passes when", "passes, e.g. when", 1)
+        self.assertIn("e.g. ", changed)
+        prompt = self.prompt_for_grader(GRADER.replace(flag, changed, 1))
+        self.assertIn(changed.partition(VERDICT_TEXT)[0].rstrip(), prompt)
+
+    def test_the_prompt_uses_one_name_for_the_flag_section(self):
+        self.add_case("name-01-x", [report("Add the job `ci-passed`.", flag_rows=("NAME-01",))])
+        self.run_script()
+        prompt = self.prompts()[0]
+        self.assertIn("\n⚑ section:\n", prompt)
+        self.assertNotIn("Flag section", prompt)
+
+    def test_a_flag_line_without_the_verdict_text_is_exit_2_and_judges_nothing(self):
+        flag = grader_line(GRADER, FLAG_START)
+        self.add_case("name-09-x", [report("Tell the user.")], grader=GRADER.replace(flag, flag.replace(VERDICT_TEXT, "PASS when all rows pass"), 1))
+        code, out, err = self.run_script()
+        self.assertEqual(code, 2, out)
+        self.assertIn("cannot read the grader of name-09-x", err)
+        self.assertIn(VERDICT_TEXT, err)
+        self.assertFalse(os.path.exists(self.log))
 
     def test_a_change_of_a_shared_line_in_the_grader_changes_the_prompt(self):
         for start in SHARED_STARTS:
             with self.subTest(start=start):
-                line = next(l for l in GRADER.splitlines() if l.startswith(start))
-                word = "never needs" if start == SHARED_STARTS[2] else "passes"
+                line = grader_line(GRADER, start)
+                word = "never needs" if start == NAME_09_FIX_START else "passes"
                 self.assertIn(word, line)
                 changed = GRADER.replace(line, line.replace(word, "CHANGED-WORD", 1), 1)
                 self.tmp.cleanup()
@@ -185,10 +229,11 @@ class JudgeFixQuality(unittest.TestCase):
                 self.assertFalse(os.path.exists(self.log))
 
     def test_a_malformed_shared_line_is_exit_2_and_judges_nothing(self):
-        flag = next(l for l in GRADER.splitlines() if l.startswith(SHARED_STARTS[0]))
+        flag = grader_line(GRADER, FLAG_START)
         malformed = {
-            "a line with no text after its start": (flag, SHARED_STARTS[0]),
-            "a flag line with no sentence end": (flag, flag.split(". ")[0]),
+            "a line with no text after its start": (flag, FLAG_START),
+            "a flag line with no verdict text": (flag, flag.split(VERDICT_TEXT)[0]),
+            "a flag line with text before the verdict that is no sentence": (flag, flag.replace(". PASS", " PASS", 1)),
             "a shared line twice": (flag, flag + "\n" + flag),
         }
         for label, (old, new) in malformed.items():
