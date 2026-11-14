@@ -2,6 +2,7 @@
 
 Date: 2026-11-14. Research was read-only: no worktree, branch, terminal or Orca state was changed.
 Counts of other repos are given as numbers only. Paths `~/.claude/...` are the main checkout of this repo.
+Numbering: the brief's question 5 (recommendation and its cost) is answered in the summary and in Q7. Q5 here holds the worked examples and Q6 the constraints.
 
 ## Summary and recommendation
 
@@ -11,14 +12,14 @@ Counts of other repos are given as numbers only. Paths `~/.claude/...` are the m
 - The repo already closes that gap: the launcher writes `lineage.jsonl` (successor handle to predecessor handle) and `~/.claude/hooks/worktree-cleanup/cleanup` already uses it in its Ownership check. So "which worktrees are mine, my workers' or my predecessors'" can be derived with no new registry.
 - Recommendation: design (c), a read-only list command that reuses the cleanup ownership logic. It lists the worktrees of the current repo that this session, its predecessor chain or its Run workers created, with their state (clean, pushed, merged, live terminal). It is run at handoff takeover, after each `worker_done`, and before the done report. It also lists "orphans" (creator terminal gone, no proof) for the owner to decide. It never removes anything; `cleanup` stays the only removal path.
 - Cost compared with the simplest option (a CLAUDE.md rule "run `orca worktree list` and look"): about 150 lines of script and about 250 lines of tests, plus 3 to 4 changed sentences in CLAUDE.md and the handoff successor steps. The simplest option needs no code but depends on the model remembering and on reading 90+ rows.
-- No hook can run at real session end (Q3). So "session end" must be a step the model runs, backed by the existing audit gate.
+- No hook can make the model act at real session end (Q3). So "session end" must be a step the model runs, backed by the existing audit gate.
 - The owner must decide the points in Q7.
 
 ## Q1. What Orca already tracks
 
-Commands run: `orca --help`, `orca worktree --help`, `orca worktree list --json` (92 worktrees, 32 repos, 59 linked), `orca terminal list --json` (35 live terminals, 0 orphaned), `orca worktree show --json`, `orca orchestration run-list --json`.
+Commands run: `orca --help`, `orca worktree --help`, `orca worktree list --json` (92 worktrees, 32 repos, 59 linked; the brief counted 104 on 2026-11-13 and the total moves as sessions add and remove worktrees: 91 to 92 during this run), `orca terminal list --json` (35 live terminals, 0 orphaned), `orca worktree show --json`, `orca orchestration run-list --json`.
 
-Fields of a worktree record (from `orca worktree list --json`, keys of one row): `id`, `path`, `head`, `branch`, `isMainWorktree`, `linkedIssue`, `linkedPR`, `workspaceStatus`, `lastActivityAt`, `isArchived`, `parentWorktreeId`, `childWorktreeIds`, `lineage`, `createdAt`, `createdWithAgent`, `baseRef`, `creatorProvenance`, `cliProvenance`.
+Fields of a worktree record (from `orca worktree list --json`; the rows hold more keys, such as `identity`, `hostId` and `isPinned`, that this research did not use): `id`, `path`, `head`, `branch`, `isMainWorktree`, `linkedIssue`, `linkedPR`, `workspaceStatus`, `lastActivityAt`, `isArchived`, `parentWorktreeId`, `childWorktreeIds`, `lineage`, `createdAt`, `createdWithAgent`, `baseRef`, `creatorProvenance`, `cliProvenance`.
 
 | Field | What it holds | Usable for tracking? |
 |---|---|---|
@@ -58,9 +59,9 @@ The missing link is in `/tmp/claude-context-handoff/lineage.jsonl` (59 lines whe
 ### (a) Registry file with the owning session
 
 - Data: a file (for example `/tmp/claude-context-handoff/worktrees.jsonl` or under `~/.claude`), one line per worktree: path, branch, owner session id, owner terminal handle, time.
-- Writing: a PostToolUse hook on Bash that parses `orca worktree create ... --json` output (the hook gets `tool_input.command` and `tool_response`; see `hook.py:328-337` for how the context hook reads the same fields). Alternatively the model writes it by hand (unreliable).
+- Writing: a PostToolUse hook on Bash that parses `orca worktree create ... --json` output (the hook gets `tool_input.command` and `tool_response`; see `hook.py:328-337` and `352-373` for how the context hook reads `tool_input.command` and `tool_response`). Alternatively the model writes it by hand (unreliable).
 - Reading: shown in the handoff State section and at session end; `cleanup` removes the line on success.
-- Code touched: new PostToolUse hook (about 80 lines), `cleanup` (about 20 lines to remove a line), `hook.py` STATE_CORE (one field) and successor steps, CLAUDE.md sections 7, 10, 11, `settings.json` (hook entry; a settings edit needs the owner's `!` command).
+- Code touched: new PostToolUse hook (about 80 lines), `cleanup` (about 20 lines to remove a line), `hook.py` STATE_CORE (one field) and successor steps, CLAUDE.md sections 7, 10, 11, `settings.json` (hook entry; a settings edit may need the owner's `!` command: known for permission settings, unverified for hook entries).
 - Size: about 200 lines code, about 350 lines tests, 3 sections of CLAUDE.md.
 - Failure modes: worktrees made outside Bash (Orca UI) or by a failing parse are missed. Two sources of truth: Orca already holds the creator, so the registry can disagree with Orca (hidden coupling). If kept in `/tmp`, a reboot erases it. A crash between create and write loses the line. A stale line for a worktree removed by hand.
 - Races: concurrent sessions appending (solved with `runtime_dir.append_line` locking). `cleanup` removing a line while another session reads.
@@ -87,7 +88,7 @@ The missing link is in `/tmp/claude-context-handoff/lineage.jsonl` (59 lines whe
   3. its creator is the `agentTerminalHandle` of a worker of my bound Run (workers that made sub-worktrees; `cleanup:218` reads that field).
   Everything else of the same repo with a gone creator and no chain is an "orphan": listed separately, never claimed.
 - Output per row: path, branch, why it is mine, clean or not, branch pushed or not, PR state, live terminal count. State is information; it is not the ownership test, so a new empty worktree is not mis-flagged.
-- Code touched: a new script `hooks/worktree-cleanup/mine` (about 150 lines) that imports the checks of `cleanup` (it has no `.py` suffix, so either load it with `importlib` or move the shared functions to a module; moving them touches `cleanup` and its 8 test files), one successor step in `hook.py` (the SUCCESSOR_* constants, lines 85-108), CLAUDE.md section 7 (after `worker_done`) and section 6 step 5 / section 8 (before done).
+- Code touched: a new script `hooks/worktree-cleanup/mine` (about 150 lines) that imports the checks of `cleanup` (it has no `.py` suffix, so either load it with `importlib` or move the shared functions to a module; moving them touches `cleanup` and up to its 8 test files), one successor step in `hook.py` (the SUCCESSOR_* constants, lines 85-108), CLAUDE.md section 7 (after `worker_done`) and section 6 step 5 / section 8 (before done).
 - Size: about 150 lines of script, about 250 lines of tests (reuse the stub in `cleanup_support.py`), if shared functions are moved add about 30 changed lines in `cleanup`.
 - Failure modes: `lineage.jsonl` lost at reboot (predecessor worktrees fall to "orphan", visible, not lost); creator handle reused (not observed; unverified); a worktree made from the Orca UI has no `cliProvenance` (the 2 such rows had `lineage`); `worker-list` unreadable (then rule 3 is skipped and the output says so).
 - Races: read-only, so none that can destroy data. A snapshot may be stale by seconds.
@@ -124,7 +125,7 @@ Owner gone (crash, reboot, closed terminal):
 - (c) If the creator handle is not live and not in `lineage.jsonl`, the worktree is an orphan. It is listed with creator handle, age (`lastActivityAt`), PR and push state. A crash has no handoff line, so the new session cannot prove ownership; the owner decides, and removal for an unproven worktree needs `! cleanup --skip-ownership <path>` (the command printed at `cleanup:20, 490`).
 - Terminal handles after a reboot: unverified (not tested; not stated in the Orca CLI help read). `launch.py:346` mentions error code `terminal_handle_stale`, which shows Orca can return a stale handle.
 
-Other repos: `orca worktree list --json` returns all 92 worktrees of 32 repos; each row has `repoId`. A session's own repo id is the part before `::` in `ORCA_WORKTREE_ID`. Counts for this run: 7 rows for this repo (main plus 6 linked, one of them removed during the research). A list command filters `repoId` first, then applies the ownership rule. Other repos are never inspected. `launch.py:134-157` (`managed_worktree`) already maps a cwd to a listed worktree.
+Other repos: `orca worktree list --json` returns all 92 worktrees of 32 repos; each row has `repoId`. A session's own repo id is the part before `::` in `ORCA_WORKTREE_ID`. Counts for this run: 6 rows for this repo now (main plus 5 linked; 7 earlier in the run, before another session removed one). A list command filters `repoId` first, then applies the ownership rule. Other repos are never inspected. `launch.py:134-157` (`managed_worktree`) already maps a cwd to a listed worktree.
 Several sessions of the same repo at the same time: ownership by creator handle separates them. (b) cannot separate them.
 
 ## Q5. Worked examples
@@ -154,14 +155,14 @@ Data (commands in Sources). Today is 2026-11-14.
 
 ### Fresh worktree (this one)
 
-`research/worktree-tracking`: tip 47c451d is on `origin/main` (no commits yet) and no PR. A merged-branch rule alone (design b) reads this as merged. (c) lists it as owned by term_62e7e519 (its `callerTerminalHandle`, live) and shows 1 live terminal.
+`research/worktree-tracking`: tip 47c451d is on `origin/main` (no commits yet) and no PR. This is the false-positive case of Q2 (b). (c) lists it as owned by term_62e7e519 (its `callerTerminalHandle`, live) and shows 1 live terminal.
 
 ## Q6. Constraints
 
 - Only removal path stays `~/.claude/hooks/worktree-cleanup/cleanup` (CLAUDE.md lines 180, 236-241). (a), (b), (c) as written only read; none calls `orca worktree rm` or `git worktree remove`. The `Bash` pre-hook already denies other forms (seen: a "run worktree rm as a plain command, or use ~/.claude/hooks/worktree-cleanup/cleanup" denial when a command string contained those words).
 - No recursive delete (CLAUDE.md section 13): none needed.
 - Docker (CLAUDE.md section 14; `~/.claude/docs/agents/docker.md` line "Before you remove any worktree, run `docker compose ls -a` ..."): the list command should show a "compose stack has config in this worktree" flag, using `docker compose ls -a --format json` as `check_docker` does (`cleanup:362-379`). `cleanup` already refuses while a stack has config files in the target (line 500). The list command must not remove stacks.
-- Settings edits (hook entries) need the owner's `!` command in this setup. (c) needs none; (a) needs one.
+- Settings edits: (c) needs none; (a) needs one (caveat in Q2 (a)).
 - Section 10 (every task in a worktree; every ticket worker gets its own child worktree with the coordinator as parent): (c) relies on that for rule 2.
 
 ## Q7. Recommendation and owner decisions
@@ -181,7 +182,7 @@ Known limit of (c): after a reboot `lineage.jsonl` is gone and predecessors' wor
 
 What the owner must decide:
 1. Which design: (c) as recommended, or (b), or the CLAUDE.md-only rule.
-2. Where the check runs: handoff successor step, coordinator after `worker_done`, before done (audit item or model step). A hook cannot do "session end" (Q3).
+2. Where the check runs: handoff successor step, coordinator after `worker_done`, before done (audit item or model step). A hook cannot make the model act at "session end" (Q3).
 3. Orphans: list only, or also an owner `!` hint with the exact `cleanup --skip-ownership` command (as `cleanup` already prints).
 4. Whether the shared checks move out of `cleanup` into a module (cleaner, touches 8 test files) or the new script loads `cleanup` with `importlib` (smaller, more fragile).
 5. Whether the audit gets an item for "no unlisted owned worktree" (larger change to `hooks/workflow-audit`).
