@@ -184,7 +184,7 @@ What the owner must decide:
 1. Which design: (c) as recommended, or (b), or the CLAUDE.md-only rule.
 2. Where the check runs: handoff successor step, coordinator after `worker_done`, before done (audit item or model step). A hook cannot make the model act at "session end" (Q3).
 3. Orphans: list only, or also an owner `!` hint with the exact `cleanup --skip-ownership` command (as `cleanup` already prints).
-4. Whether the shared checks move out of `cleanup` into a module (cleaner, touches 8 test files) or the new script loads `cleanup` with `importlib` (smaller, more fragile).
+4. Whether the shared checks move out of `cleanup` into a module (cleaner, touches up to 8 test files) or the new script loads `cleanup` with `importlib` (smaller, more fragile).
 5. Whether the audit gets an item for "no unlisted owned worktree" (larger change to `hooks/workflow-audit`).
 6. Whether the lineage file should leave `/tmp` so reboots keep it (a change to `runtime_dir.py`; outside this question).
 
