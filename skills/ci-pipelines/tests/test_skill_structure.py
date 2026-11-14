@@ -306,10 +306,20 @@ class SecurityRules(unittest.TestCase):
         self.assertIn("A gate check that already accepts a skipped `audit` is no finding", rule)
         self.assertIn("when the gate check fails a skipped `audit`, change it to", self.sec["SEC-10"]["Fix"])
 
-    def test_sec_10_fix_adds_a_sha_pinned_changes_job_and_removes_the_old_audit_step(self):
+    def test_sec_10_fix_gives_the_changes_job_line_of_the_create_templates(self):
+        fix = self.sec["SEC-10"]["Fix"]
+        lines = re.findall(r"`(uses: dorny/paths-filter@[^`]+)`", fix)
+        self.assertEqual(len(lines), 1, fix)
+        self.assertRegex(lines[0], r"^uses: dorny/paths-filter@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
+        for name in ("single-package.yml", "monorepo.yml"):
+            template = read(os.path.join(SKILL, "templates", name))
+            self.assertIn(f"        {lines[0]}\n", template, name)
+        self.assertNotIn("pinned to a full commit SHA", fix)
+        self.assertIn("never a SHA that you wrote yourself", fix)
+
+    def test_sec_10_fix_adds_a_changes_job_and_removes_the_old_audit_step(self):
         fix = self.sec["SEC-10"]["Fix"]
         self.assertIn("`changes` job", fix)
-        self.assertIn("`dorny/paths-filter` pinned to a full commit SHA (SEC-01)", fix)
         self.assertIn("`lockfile` output", fix)
         self.assertIn("when the workflow has none", fix)
         self.assertIn("remove the old audit step from the other job", fix)
