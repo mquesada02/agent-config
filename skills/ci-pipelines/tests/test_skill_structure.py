@@ -2,6 +2,8 @@ import glob
 import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 from skill_files import LEVELS, PREFIXES, SKILL, all_rules, frontmatter, level, read, rule_entries, rule_files
@@ -264,6 +266,46 @@ class SecurityRules(unittest.TestCase):
         cron = re.search(r"cron: '(\d+) \d+ \* \* \d'", fix)
         self.assertIsNotNone(cron, fix)
         self.assertEqual(int(cron.group(1)) % 2, 1)
+
+    def test_sec_10_fix_names_the_gate_edit_that_accepts_a_skipped_audit_only(self):
+        fix = self.sec["SEC-10"]["Fix"]
+        check = ("echo \"$RESULTS\" | jq -e 'all(to_entries[]; .value.result == \"success\" or "
+                 "(.key == \"audit\" and .value.result == \"skipped\"))'")
+        self.assertIn(check, fix)
+        self.assertIn("RESULTS: ${{ toJSON(needs) }}", read(os.path.join(SKILL, "templates", "single-package.yml")))
+        self.assertIn("only `audit` may be `skipped`", fix)
+        self.assertIn("every other job must be `success`", fix)
+        self.assertIn("COST-03", fix)
+        self.assertIn('.key == "<job id>"', fix)
+        self.assertIn("never a general skip", fix)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_sec_10_gate_check_passes_a_skipped_audit_and_fails_any_other_skip(self):
+        fix = self.sec["SEC-10"]["Fix"]
+        expr = re.search(r"jq -e '([^']+)'", fix).group(1)
+
+        def gate(results):
+            return subprocess.run(["jq", "-e", expr], input=json.dumps(results), text=True,
+                                  capture_output=True).returncode
+
+        self.assertEqual(gate({"lint": {"result": "success"}, "audit": {"result": "skipped"}}), 0)
+        self.assertEqual(gate({"lint": {"result": "success"}, "audit": {"result": "success"}}), 0)
+        self.assertNotEqual(gate({"lint": {"result": "skipped"}, "audit": {"result": "success"}}), 0)
+        self.assertNotEqual(gate({"lint": {"result": "success"}, "audit": {"result": "failure"}}), 0)
+
+    def test_sec_10_flags_a_gate_that_fails_a_skipped_audit_and_not_one_that_accepts_it(self):
+        rule = self.sec["SEC-10"]["Rule"]
+        self.assertIn("A gate check that fails when `audit` is `skipped` is also a finding.", rule)
+        self.assertIn("A gate check that already accepts a skipped `audit` is no finding", rule)
+        self.assertIn("when the gate check fails a skipped `audit`, change it to", self.sec["SEC-10"]["Fix"])
+
+    def test_sec_10_fix_adds_a_sha_pinned_changes_job_and_removes_the_old_audit_step(self):
+        fix = self.sec["SEC-10"]["Fix"]
+        self.assertIn("`changes` job", fix)
+        self.assertIn("`dorny/paths-filter` pinned to a full commit SHA (SEC-01)", fix)
+        self.assertIn("`lockfile` output", fix)
+        self.assertIn("when the workflow has none", fix)
+        self.assertIn("remove the old audit step from the other job", fix)
 
     def test_every_check_is_mechanical(self):
         for rule_id, fields in self.sec.items():
