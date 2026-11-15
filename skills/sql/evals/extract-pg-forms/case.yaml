@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: extract-pg-forms
+description: Seam 4 extractor case for the pg source form. Claude reviews the SQL of a file that sends strings to pg connections in every receiver form and every argument form, and names each statement with its line range and form and each call whose SQL was not followed.
+tags: [extractor, source-module]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    I want to review and tidy the PostgreSQL in the file `order-reports.ts` (it is in the current folder). List every SQL statement that the file sends to the database through `query()` calls, one per line, as `<first line>-<last line> <form>`, where the form is `literal`, `template` or `chain`, followed by `dynamic` when the SQL has a part that is not a literal. Then list, one per line, as `not followed <line>`, each `query()` call whose SQL could not be followed. Do not change any file.
