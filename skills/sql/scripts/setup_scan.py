@@ -68,6 +68,8 @@ def tag_pattern(tags):
 
 def statement_hits(statement, form, tags):
     """(id, line) for each pitfall in the text of one top-level statement."""
+    if statement["source"] == "pg" and statement["pg"]["dynamic"]:
+        return []  # the text of a dynamic statement is raw source, not SQL
     text = statement["text"]
     start = statement["start_line"]
     hits = []
