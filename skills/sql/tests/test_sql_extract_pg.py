@@ -528,20 +528,17 @@ class DirectStringShapeTest(PgCase):
 
     def test_arguments_that_give_no_statement(self):
         cases = [
-            "pool.query(sql);",
-            "pool.query('SELECT ' + id);",
-            "pool.query('SELECT ' + 'a');",
-            "pool.query(`SELECT ${id}`);",
-            "pool.query({ text: 'SELECT 1' });",
-            "pool.query(build());",
-            "pool.query(queries.users);",
-            "pool.query(sql`SELECT 1`);",
-            "pool.query(...args);",
+            ("pool.query(sql);", [{"line": 3}]),
+            ("pool.query(build());", [{"line": 3}]),
+            ("pool.query(queries.users);", [{"line": 3}]),
+            ("pool.query(sql`SELECT 1`);", []),
+            ("pool.query(...args);", [{"line": 3}]),
         ]
-        for source in cases:
+        for source, not_followed in cases:
             with self.subTest(source):
                 data = self.pg(self.HEAD + source + "\n", tags="sql")
                 self.assertEqual([s for s in data["statements"] if s["source"] == "pg"], [])
+                self.assertEqual(data["not_followed"], not_followed)
 
     def test_an_unterminated_string_gives_no_statement(self):
         for source in ("pool.query('\n);\n", "pool.query('a\\'\n);\n"):

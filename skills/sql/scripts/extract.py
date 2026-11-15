@@ -7,12 +7,17 @@ The file form comes from the extension: `.sql` (statements) or a JavaScript or
 TypeScript extension (postgres.js tagged templates and `pg` statements). For
 each template or statement the output has its source (`sql`, `template` or
 `pg`), its line range, its tag, its text and its interpolations, each with a
-position (`value`, `fragment` or `keyword`). A `pg` statement is the SQL that a
-string literal or an untagged template literal without `${` gives to the
-`query()` call of a `pg` receiver; it also has a `pg` object (see the spec of
-the `pg` source form). The output also lists the tags that the file shows (tag
-detection) and the `pg` receivers that it shows (receiver detection). The given
-receivers are added to the detected ones; they never replace them.
+position (`value`, `fragment` or `keyword`). A `pg` statement is the SQL that
+the first argument of the `query()` call of a `pg` receiver gives: a string, a
+template, a `+` chain, the `text` of a config object, the first argument of
+`new Query`, `new Cursor` or `new QueryStream`, or a name that is followed to a
+same-file `const`. The SQL may have a part that is not a literal: the statement
+is then `dynamic`. A `pg` statement also has a `pg` object (see the spec of the
+`pg` source form). The output lists the tags that the file shows (tag
+detection), the `pg` receivers that it shows (receiver detection) and
+`not_followed`, the calls whose first argument gives no statement, each with its
+line. The given receivers are added to the detected ones; they never replace
+them.
 
 Exit code: 0 when the file was read, 1 when "error" is set (the JSON is still
 printed), 2 for a usage error (one line on stderr, nothing on stdout).
@@ -1028,6 +1033,7 @@ class Detector:
 
 
 PG_CONSTRUCTORS = ("Pool", "Client")
+SUBMITTABLE_MODULES = {"pg-cursor": "Cursor", "pg-query-stream": "QueryStream"}
 
 
 class ReceiverDetector(Detector):
@@ -1041,6 +1047,7 @@ class ReceiverDetector(Detector):
         self.given = set(given_receivers)
         self.objects = {}  # name -> "pg" or "native" (a `pg` module object)
         self.constructors = set()  # names of the `Pool` and `Client` classes
+        self.submittables = {}  # local name -> "Query", "Cursor" or "QueryStream" (never a receiver)
         self.receivers = {}  # receiver -> first offset
 
     def add_receiver(self, name, offset):
@@ -1049,6 +1056,7 @@ class ReceiverDetector(Detector):
 
     def run(self):
         self.find_imports()
+        self.find_submittable_modules()
         self.find_declarations()
         for i, token in enumerate(self.tokens):
             if token[0] == "name" and self.assigned_from(i, self.is_new_constructor):
@@ -1070,26 +1078,34 @@ class ReceiverDetector(Detector):
                 if self.is_require(i + 3):
                     self.objects[t[i + 1][1]] = "pg"
                 continue
-            k = i + 1
-            # a side-effect import (`import 'x'`) has no clause: the scan ends at the next `import`
-            while k < min(len(t) - 1, i + 80) and not punct(t[k], ";") and not (k > i + 1 and name_is(t[k], "import")):
-                if name_is(t[k], "from") and t[k + 1][0] == "str":
-                    break
-                k += 1
-            else:
-                continue
-            if not (k < len(t) - 1 and name_is(t[k], "from") and t[k + 1][0] == "str"):
-                continue
-            if t[k + 1][1].strip("'\"") != "pg":
-                continue
-            self.import_clause(t[i + 1 : k])
+            found = self.import_from(i)
+            if found is not None and found[0] == "pg":
+                self.import_clause(found[1])
+
+    def import_from(self, i):
+        """(module, clause tokens) of the `import` at token `i`, or None when it has no `from` clause."""
+        t = self.tokens
+        k = i + 1
+        # a side-effect import (`import 'x'`) has no clause: the scan ends at the next `import`
+        while k < min(len(t) - 1, i + 80) and not punct(t[k], ";") and not (k > i + 1 and name_is(t[k], "import")):
+            if name_is(t[k], "from") and t[k + 1][0] == "str":
+                break
+            k += 1
+        else:
+            return None
+        if not (k < len(t) - 1 and name_is(t[k], "from") and t[k + 1][0] == "str"):
+            return None
+        return t[k + 1][1].strip("'\""), t[i + 1 : k]
 
     def import_clause(self, segment):
+        type_only = False
         if segment and name_is(segment[0], "type") and len(segment) > 1:
             if segment[1][0] == "name":
                 return  # import type Name from 'pg': a type, never a value
             segment = segment[1:]
+            type_only = True
         braces = False
+        item_type = False
         k = 0
         while k < len(segment):
             token = segment[k]
@@ -1103,30 +1119,94 @@ class ReceiverDetector(Detector):
             elif token[0] == "name" and not braces:
                 self.objects[token[1]] = "pg"
             elif token[0] == "name" and braces:
+                if name_is(token, "type") and k + 1 < len(segment) and segment[k + 1][0] == "name" and not name_is(segment[k + 1], "as"):
+                    item_type = True  # `type Name`: a type-only item
+                    k += 1
+                    continue
                 local = token[1]
                 if k + 2 < len(segment) and name_is(segment[k + 1], "as") and segment[k + 2][0] == "name":
                     local = segment[k + 2][1]
                     k += 2
-                self.bind_member(token[1], local, "pg")
+                self.bind_member(token[1], local, "pg", type_only or item_type)
+                item_type = False
             k += 1
 
-    def bind_member(self, member, local, owner):
+    def bind_member(self, member, local, owner, type_only=False):
         """`local` holds the member `member` of a `pg` object of kind `owner`."""
         if member in PG_CONSTRUCTORS:
             self.constructors.add(local)
         elif member == "native" and owner == "pg":
             self.objects[local] = "native"
+        elif member == "Query" and not type_only:
+            self.submittables[local] = "Query"
 
-    def is_require(self, j):
-        """`require('pg')` starts at token `j`."""
+    def is_require(self, j, module="pg"):
+        """`require('<module>')` starts at token `j`."""
         t = self.tokens
         return (
             name_is(self.at(j), "require")
             and punct(self.at(j + 1), "(")
             and self.at(j + 2)[0] == "str"
-            and t[j + 2][1].strip("'\"") == "pg"
+            and t[j + 2][1].strip("'\"") == module
             and punct(self.at(j + 3), ")")
         )
+
+    # `pg-cursor` and `pg-query-stream`: the local name of the default export is a submittable class
+    def find_submittable_modules(self):
+        t = self.tokens
+        for i, token in enumerate(t):
+            if name_is(token, "import") and not (punct(self.at(i + 1), "(") or punct(self.at(i + 1), ".")):
+                if self.at(i + 1)[0] == "name" and punct(self.at(i + 2), "="):
+                    # import Cursor = require('pg-cursor')
+                    for module, class_name in SUBMITTABLE_MODULES.items():
+                        if self.is_require(i + 3, module):
+                            self.submittables[t[i + 1][1]] = class_name
+                    continue
+                found = self.import_from(i)
+                if found is None or found[0] not in SUBMITTABLE_MODULES:
+                    continue
+                segment = found[1]
+                if segment and name_is(segment[0], "type"):
+                    continue  # a type-only import
+                local = None
+                if len(segment) >= 3 and punct(segment[0], "*") and name_is(segment[1], "as"):
+                    local = segment[2][1]
+                elif segment and segment[0][0] == "name":
+                    local = segment[0][1]
+                if local is not None:
+                    self.submittables[local] = SUBMITTABLE_MODULES[found[0]]
+            elif token[0] == "name" and token[1] in ("const", "let", "var") and self.at(i + 1)[0] == "name":
+                if punct(self.at(i + 2), "="):
+                    for module, class_name in SUBMITTABLE_MODULES.items():
+                        if self.is_require(i + 3, module):
+                            self.submittables[t[i + 1][1]] = class_name
+
+    def submittable_at(self, j):
+        """(class, index of its `(`) of the `new X(...)` or `new X<...>(...)` that starts at token `j`
+        when `X` is a submittable class, else None."""
+        if not name_is(self.at(j), "new"):
+            return None
+        j += 1
+        name = self.at(j)
+        if name[0] != "name":
+            return None
+        if name[1] in self.submittables:
+            class_name, k = self.submittables[name[1]], j + 1
+        elif name[1] in self.objects:
+            kind, k = self.objects[name[1]], j + 1
+            if kind == "pg" and punct(self.at(k), ".") and name_is(self.at(k + 1), "native"):
+                k += 2
+            if not (punct(self.at(k), ".") and name_is(self.at(k + 1), "Query")):
+                return None
+            class_name, k = "Query", k + 2
+        else:
+            return None
+        closing = type_arguments_close(self.tokens, k)
+        if closing is not None:
+            k = closing + 1
+        if not punct(self.at(k), "("):
+            return None
+        return class_name, k
 
     def resolve(self, j):
         """The value of the expression that starts at token `j`: ("pg" | "native", end) for a
@@ -1145,6 +1225,8 @@ class ReceiverDetector(Detector):
                 kind = "native"
             elif member in PG_CONSTRUCTORS:
                 return "constructor", k + 2
+            elif member == "Query":
+                return "query", k + 2
             else:
                 return None
             k += 2
@@ -1165,6 +1247,8 @@ class ReceiverDetector(Detector):
                         continue
                     if found[0] == "constructor":
                         self.constructors.add(first[1])
+                    elif found[0] == "query":
+                        self.submittables[first[1]] = "Query"
                     else:
                         self.objects[first[1]] = found[0]
                 elif punct(first, "{"):
@@ -1188,7 +1272,7 @@ class ReceiverDetector(Detector):
         if not punct(self.at(k + 1), "="):
             return
         found = self.resolve(k + 2)
-        if found is None or found[0] == "constructor":
+        if found is None or found[0] in ("constructor", "query"):
             return
         for member, local in items:
             self.bind_member(member, local, found[0])
@@ -1518,86 +1602,998 @@ def array_length(tokens, s, close):
     return commas + 1 - (1 if trailing else 0)
 
 
-def find_pg_statements(source, tokens, templates, detector, receivers):
-    """The (offset, statement) pairs of the `<receiver>.query(...)` calls whose first argument is
-    a string literal or an untagged template literal without `${`."""
-    by_index = {template.token_index: template for template in templates}
-    by_start = {token[2]: k for k, token in enumerate(tokens)}
-    found = []
-    for i, token in enumerate(tokens):
-        if not (name_is(token, "query") and (punct(detector.at(i - 1), ".") or punct(detector.at(i - 1), "?."))):
-            continue
-        receiver = chain_ending_at(tokens, i - 2)
-        if receiver is None or receiver[0] not in receivers:
-            continue
-        p = i + 1
-        if punct(detector.at(p), "<"):
-            depth, count = 0, 0
-            while p < len(tokens) and count < MAX_TYPE_ARGUMENT_TOKENS:
-                if punct(tokens[p], "<"):
+def type_arguments_close(tokens, k):
+    """The index of the `>` that closes the type arguments opened by the `<` at `k`, or None.
+
+    A `<` opens type arguments when it follows a name with no space and its matching `>` (nested
+    pairs counted) comes within MAX_TYPE_ARGUMENT_TOKENS tokens."""
+    if not (k > 0 and punct(tokens[k], "<") and tokens[k - 1][0] == "name" and tokens[k - 1][3] == tokens[k][2]):
+        return None
+    depth = 0
+    for m in range(k, min(len(tokens), k + MAX_TYPE_ARGUMENT_TOKENS)):
+        if punct(tokens[m], "<"):
+            depth += 1
+        elif punct(tokens[m], ">"):
+            depth -= 1
+            if depth == 0:
+                return m
+    return None
+
+
+NOTHING = object()  # the call gives no statement and is not listed
+NOT_FOLLOWED = object()  # the call is listed in `not_followed`
+OBJECT_BEFORE = frozenset(["(", ",", "=", "?", "[", "+", "-", "*", "/", "%", "!", "&", "|", "^", "~", "<", "..."])
+OBJECT_AFTER_NAMES = frozenset(
+    "return typeof await yield in of const let var import export default throw void delete case new".split()
+)
+NOT_PARAMETER_NAMES = frozenset("if for while switch case catch with return typeof await new in of else do".split())
+PARAMETER_MODIFIERS = frozenset("public private protected readonly override accessor declare".split())
+NOT_OPERAND_NAMES = frozenset(
+    "typeof await new in of instanceof void delete yield return throw extends as satisfies".split()
+)
+EXPRESSION_BEFORE = frozenset(
+    ["=", "(", ",", ":", "?", "[", "&", "|", "+", "-", "*", "/", "%", "!", "<", ">", "^", "~", "=>", "..."]
+)
+EXPRESSION_BEFORE_NAMES = frozenset("return typeof await yield in of new case throw void delete".split())
+DECIMAL_INTEGER = re.compile(r"[0-9]+\Z")
+
+
+class Value:
+    """The SQL text that some calls give: one statement."""
+
+    def __init__(self, key, kind, first, text, start_line, end_line, line_starts, dynamic, interpolations=()):
+        self.key = key
+        self.kind = kind
+        self.first = first
+        self.text = text
+        self.start_line = start_line
+        self.end_line = end_line
+        self.line_starts = line_starts
+        self.dynamic = dynamic
+        self.interpolations = list(interpolations)
+        self.const_name = None
+
+    def statement(self):
+        return {
+            "source": "pg",
+            "tag": None,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "text": self.text,
+            "parent": None,
+            "interpolations": self.interpolations,
+            "pg": {
+                "kind": self.kind,
+                "const_name": self.const_name,
+                "line_starts": self.line_starts,
+                "dynamic": self.dynamic,
+                "statement_count": None if self.dynamic else statement_count(self.text),
+                "calls": [],
+            },
+        }
+
+
+class Use:
+    """What one call gives to a statement: its `calls` entry without the line."""
+
+    def __init__(self, value, call, length=0, present=False, name=None, rows=None, query_mode=None):
+        self.value = value
+        self.call = call
+        self.length = length
+        self.present = present
+        self.name = name
+        self.rows = rows
+        self.query_mode = query_mode
+
+
+class Declaration:
+    def __init__(self, name, lo, hi, index, value_start=None):
+        self.name = name
+        self.lo, self.hi = lo, hi  # the tokens that hold the scope of the name
+        self.index = index  # the token of the declaration
+        self.value_start = value_start  # the first token of the value of `const NAME = <value>`
+
+
+class PgCalls:
+    """The `<receiver>.query(...)` calls of a file and the statements that their first arguments give.
+
+    The first argument is a config object, a submittable (`new Query`, `new Cursor`, `new QueryStream`),
+    a string, a template, a `+` chain, or a name that is followed to a same-file `const`. A call that
+    gives no statement is listed in `not_followed`."""
+
+    def __init__(self, source, tokens, spans, detector, receivers, tags):
+        self.source = source
+        self.tokens = tokens
+        self.spans = spans  # the token index of a template token -> its Template
+        self.detector = detector
+        self.receivers = receivers
+        self.tags = set(tags)
+        self.starts = {token[2]: k for k, token in enumerate(tokens)}
+        self.span_starts = {self.starts[record.end]: k for k, record in spans.items() if record.end in self.starts}
+        self.statements = {}  # key -> [first offset, statement]
+        self.not_followed = []
+        self.constants = {}  # declaration token index -> result of `const_result`
+        self.declarations = None  # name -> [Declaration], built when a call has a name argument
+
+    def at(self, i):
+        return self.detector.at(i)
+
+    def span_end(self, k):
+        """The index of the closing token of the template whose first token is `k`."""
+        return self.starts[self.spans[k].end]
+
+    # ------------------------------------------------------------------ calls
+
+    def run(self):
+        """(the (offset, statement) pairs, the `not_followed` list) of the file."""
+        t = self.tokens
+        for i, token in enumerate(t):
+            if not (name_is(token, "query") and (punct(self.at(i - 1), ".") or punct(self.at(i - 1), "?."))):
+                continue
+            receiver = chain_ending_at(t, i - 2)
+            if receiver is None or receiver[0] not in self.receivers:
+                continue
+            p = i + 1
+            if punct(self.at(p), "<"):
+                closing = None
+                depth, count = 0, 0
+                while p < len(t) and count < MAX_TYPE_ARGUMENT_TOKENS:
+                    if punct(t[p], "<"):
+                        depth += 1
+                    elif punct(t[p], ">"):
+                        depth -= 1
+                        if depth == 0:
+                            closing = p
+                            break
+                    p += 1
+                    count += 1
+                if closing is None:
+                    continue
+                p = closing + 1
+            if not punct(self.at(p), "("):
+                continue
+            outcome = self.call(i, p)
+            line = self.source.line(token[2])
+            if outcome is NOT_FOLLOWED:
+                self.not_followed.append({"line": line})
+            elif isinstance(outcome, Use):
+                self.add_use(outcome, line)
+        return [tuple(entry) for entry in self.statements.values()], self.not_followed
+
+    def add_use(self, use, line):
+        value = use.value
+        if value.key not in self.statements:
+            self.statements[value.key] = [value.first, value.statement()]
+        self.statements[value.key][1]["pg"]["calls"].append(
+            {
+                "line": line,
+                "call": use.call,
+                "values_length": use.length,
+                "values_present": use.present,
+                "name": use.name,
+                "rows": use.rows,
+                "query_mode": use.query_mode,
+            }
+        )
+
+    def call(self, i, p):
+        """NOTHING, NOT_FOLLOWED or the Use of the call whose query name is at `i` and `(` at `p`."""
+        t = self.tokens
+        s = p + 1
+        if punct(self.at(s), ")"):
+            return NOTHING
+        e = self.item_end(s)
+        if e >= len(t) or not (punct(t[e], ",") or punct(t[e], ")")):
+            return NOT_FOLLOWED
+        tag = self.tagged(s, e)
+        if tag is not None:
+            return NOTHING if tag in self.tags else NOT_FOLLOWED
+        if punct(t[s], "{"):
+            close = match_close(t, s)
+            if close is not None and self.config_ends(close, e):
+                return self.config(s, close, "config")
+        if name_is(t[s], "new"):
+            found = self.detector.submittable_at(s)
+            if found is not None:
+                close = match_close(t, found[1])
+                if close is not None and close + 1 == e:
+                    return self.submittable(found[0], found[1], close)
+        result = self.text_expression(s, e)
+        if isinstance(result, Value):
+            length, present = values_of(t, self.detector, e)
+            return Use(result, "direct", length, present)
+        return result if result is NOTHING or isinstance(result, Use) else NOT_FOLLOWED
+
+    def config_ends(self, close, e):
+        """True when nothing but a type clause (`as T`, `satisfies T`) stands between the `}` at
+        `close` and the end `e` of the argument."""
+        return close + 1 == e or (close + 1 < e and (name_is(self.at(close + 1), "as") or name_is(self.at(close + 1), "satisfies")))
+
+    # ------------------------------------------------------- argument scanning
+
+    def item_end(self, k, semicolon=False):
+        """The index of the first `,` (or `;` when asked) at depth 0 from token `k`, or of the first
+        closing bracket that has no opening one; the length of the tokens when none comes."""
+        t = self.tokens
+        n = len(t)
+        while k < n:
+            token = t[k]
+            if token[0] == "tpl":
+                k = self.span_end(k) + 1
+                continue
+            if token[0] == "p":
+                c = token[1]
+                if c in ("(", "[", "{"):
+                    close = match_close(t, k)
+                    if close is None:
+                        return n
+                    k = close + 1
+                    continue
+                if c in (")", "]", "}") or c == "," or (semicolon and c == ";"):
+                    return k
+                if c == "<":
+                    closing = type_arguments_close(t, k)
+                    if closing is not None:
+                        k = closing + 1
+                        continue
+            k += 1
+        return n
+
+    def value_end(self, k):
+        """The index after the expression that starts at token `k` (a `const` value): it ends at a `,`,
+        a `;`, an unmatched closing bracket, the end of the file, or a name that starts a statement on a
+        later line (the line break after an operand ends the expression)."""
+        t = self.tokens
+        n = len(t)
+        start = k
+        while k < n:
+            token = t[k]
+            if token[0] == "tpl":
+                k = self.span_end(k) + 1
+                continue
+            if token[0] == "p":
+                c = token[1]
+                if c in ("(", "[", "{"):
+                    close = match_close(t, k)
+                    if close is None:
+                        return n
+                    k = close + 1
+                    continue
+                if c in (")", "]", "}", ",", ";"):
+                    return k
+                if c == "<":
+                    closing = type_arguments_close(t, k)
+                    if closing is not None:
+                        k = closing + 1
+                        continue
+            elif token[0] == "name" and k > start and token[1] not in ("as", "satisfies") and self.ends_operand(k - 1):
+                if self.source.line(token[2]) > self.source.line(t[k - 1][3] - 1):
+                    return k
+            k += 1
+        return n
+
+    def ends_operand(self, k):
+        token = self.tokens[k]
+        if token[0] in ("str", "num", "tpl_end", "regex"):
+            return True
+        if token[0] == "name":
+            if token[1] == "void" and k > 0 and self.tokens[k - 1][0] == "p" and self.tokens[k - 1][1] in ("=>", ":"):
+                return True  # the type `void` after `=>` or `:`, not the operator
+            return token[1] not in NOT_OPERAND_NAMES
+        return token[0] == "p" and token[1] in (")", "]", "}")
+
+    def tagged(self, s, e):
+        """The tag of the tagged template that the tokens [s, e) are, or None."""
+        t = self.tokens
+        if e - 1 <= s or t[e - 1][0] != "tpl_end" or (e - 1) not in self.span_starts:
+            return None
+        found = tag_chain(t, self.span_starts[e - 1])
+        return found[0] if found is not None and found[1] == s else None
+
+    # --------------------------------------------------------------- the text
+
+    def literal_piece(self, a, b):
+        """"str" for one terminated string token, "tpl" for one template, else None, for [a, b)."""
+        t = self.tokens
+        if b - a == 1 and t[a][0] == "str":
+            return "str" if string_is_terminated(t[a][1]) else None
+        if t[a][0] == "tpl" and self.span_end(a) == b - 1:
+            return "tpl"
+        return None
+
+    def chain_pieces(self, s, e):
+        """The operands [a, b) of the chain that the tokens [s, e) are, or None when they are not one."""
+        t = self.tokens
+        pieces, start, k, plus = [], s, s, False
+        while k < e:
+            token = t[k]
+            if token[0] == "tpl":
+                k = self.span_end(k) + 1
+                continue
+            if token[0] == "str":
+                if not string_is_terminated(token[1]):
+                    return None
+            elif token[0] in ("name", "num"):
+                pass
+            elif token[0] == "p" and token[1] in (".", "?."):
+                pass
+            elif token[0] == "p" and token[1] in ("(", "[", "{"):
+                close = match_close(t, k)
+                if close is None or close >= e:
+                    return None
+                k = close + 1
+                continue
+            elif token[0] == "p" and token[1] == "<" and type_arguments_close(t, k) is not None:
+                k = type_arguments_close(t, k) + 1
+                continue
+            elif token[0] == "p" and token[1] == "+":
+                if k == start:
+                    return None
+                pieces.append((start, k))
+                start, plus = k + 1, True
+            else:
+                return None
+            k += 1
+        if start >= e:
+            return None
+        pieces.append((start, e))
+        return pieces if plus else None
+
+    def read_value(self, s, e, strict=False):
+        """The Value that the tokens [s, e) are (a string, a template or a chain with a string or a
+        template operand), or None. With `strict`, a chain must be all-literal."""
+        t = self.tokens
+        kind = self.literal_piece(s, e)
+        if kind == "str":
+            return self.string_value(s)
+        if kind == "tpl":
+            return self.template_value(s)
+        pieces = self.chain_pieces(s, e)
+        if pieces is None:
+            return None
+        kinds = [self.literal_piece(a, b) for a, b in pieces]
+        if not any(kinds):
+            return None
+        dynamic = any(k is None or (k == "tpl" and self.spans[a].interpolations) for (a, _), k in zip(pieces, kinds))
+        if strict and dynamic:
+            return None
+        first, last = t[s][2], t[e - 1][3] - 1
+        if dynamic:
+            text = self.source.text[first : last + 1]
+            line = self.source.line(first)
+            line_starts = [line + index for index in range(text.count("\n") + 1)]
+            return Value(("lit", s), "chain", first, text, line, self.source.line(last), line_starts, True)
+        texts, lines = [], []
+        for (a, _), k in zip(pieces, kinds):
+            if k == "str":
+                piece, piece_lines = decode_literal(self.source, t[a][2] + 1, t[a][3] - 1, False)
+            else:
+                piece, piece_lines = decode_literal(self.source, self.spans[a].start + 1, self.spans[a].end, True)
+            texts.append(piece)
+            lines += piece_lines
+        text = "".join(texts)
+        line_starts = line_starts_of(text, lines, self.source.line(last))
+        return Value(("lit", s), "chain", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+
+    def string_value(self, k):
+        token = self.tokens[k]
+        first, last = token[2], token[3] - 1
+        text, lines = decode_literal(self.source, first + 1, last, False)
+        line_starts = line_starts_of(text, lines, self.source.line(last))
+        return Value(("lit", k), "literal", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+
+    def template_value(self, k):
+        record = self.spans[k]
+        first, last = record.start, record.end
+        if not record.interpolations:
+            text, lines = decode_literal(self.source, first + 1, last, True)
+            line_starts = line_starts_of(text, lines, self.source.line(last))
+            return Value(("lit", k), "template", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+        text, interpolations = template_interpolations(self.source, record)
+        for found, item in zip(interpolations, record.interpolations):
+            found["start"] = item["start"] - first - 1
+            found["end"] = item["end"] - first - 1
+        line = self.source.line(first)
+        line_starts = [line + index for index in range(text.count("\n") + 1)]
+        return Value(("lit", k), "template", first, text, line, self.source.line(last), line_starts, True, interpolations)
+
+    def text_expression(self, s, e):
+        """The Value of the text expression [s, e) (a string, a template, a chain or a name that is
+        followed to a `const`), a Use (a name that holds a submittable), NOTHING (a tagged template of
+        the tag list) or NOT_FOLLOWED."""
+        tag = self.tagged(s, e)
+        if tag is not None:
+            return NOTHING if tag in self.tags else NOT_FOLLOWED
+        value = self.read_value(s, e)
+        if value is not None:
+            return value
+        if e == s + 1 and self.tokens[s][0] == "name":
+            return self.name_result(s)
+        return NOT_FOLLOWED
+
+    # ------------------------------------------------------------ config object
+
+    def properties(self, s, close):
+        """{key: (value start, value end, property start)} of the config object [s, close], or None
+        when it has a spread or a computed key (a method has no value: (None, None, start))."""
+        t = self.tokens
+        found = {}
+        k = s + 1
+        while k < close:
+            end = self.item_end(k)
+            if end > close:
+                return None
+            if k < end:
+                prop = self.property(k, end)
+                if prop is None:
+                    return None
+                found[prop[0]] = prop[1:]
+            k = end + 1
+        return found
+
+    def property(self, k, end):
+        t = self.tokens
+        if punct(t[k], "...") or punct(t[k], "["):
+            return None
+        first = k
+        if t[k][0] == "name" and t[k][1] in ("async", "get", "set") and k + 1 < end and t[k + 1][0] in ("name", "str"):
+            k += 1
+        token = t[k]
+        if token[0] == "name" or token[0] == "num":
+            key = token[1]
+        elif token[0] == "str" and string_is_terminated(token[1]):
+            key = decode_literal(self.source, token[2] + 1, token[3] - 1, False)[0]
+        else:
+            return None
+        if k + 1 == end:
+            return (key, k, end, first) if token[0] == "name" and first == k else None
+        if punct(t[k + 1], ":") and k + 2 < end:
+            return key, k + 2, end, first
+        if punct(t[k + 1], "(") or punct(t[k + 1], "<"):
+            return key, None, None, first
+        return None
+
+    def property_text(self, prop, integer=False):
+        """The value of a `name`, `rows` or `queryMode` property: its literal, or {"expression": source}."""
+        if prop is None:
+            return None
+        t = self.tokens
+        vs, ve, first = prop
+        if vs is None:
+            return {"expression": self.expression_text(first, self.item_end(first))}
+        if ve - vs == 1 and t[vs][0] == "str" and string_is_terminated(t[vs][1]):
+            return decode_literal(self.source, t[vs][2] + 1, t[vs][3] - 1, False)[0]
+        if ve - vs == 1 and integer and t[vs][0] == "num" and DECIMAL_INTEGER.match(t[vs][1]):
+            return int(t[vs][1])
+        if t[vs][0] == "tpl" and self.span_end(vs) == ve - 1 and not self.spans[vs].interpolations:
+            return decode_literal(self.source, self.spans[vs].start + 1, self.spans[vs].end, True)[0]
+        return {"expression": self.expression_text(vs, ve)}
+
+    def expression_text(self, a, b):
+        t = self.tokens
+        return self.source.text[t[a][2] : t[b - 1][3]].strip()
+
+    def config(self, s, close, call):
+        """The Use of the config object [s, close]: `call` is "config" or "submittable"."""
+        t = self.tokens
+        found = self.properties(s, close)
+        if found is None or "text" not in found or found["text"][0] is None:
+            return NOT_FOLLOWED
+        vs, ve, _ = found["text"]
+        result = self.text_expression(vs, ve)
+        if result is NOTHING:
+            return NOTHING
+        if not isinstance(result, Value):
+            return NOT_FOLLOWED
+        length, present = 0, False
+        if "values" in found:
+            length, present = None, True
+            vs, ve, _ = found["values"]
+            if vs is not None and punct(t[vs], "["):
+                close_array = match_close(t, vs)
+                if close_array is not None and (
+                    close_array + 1 == ve or name_is(self.at(close_array + 1), "as") or name_is(self.at(close_array + 1), "satisfies")
+                ):
+                    length = array_length(t, vs, close_array)
+        return Use(
+            result,
+            call,
+            length,
+            present,
+            self.property_text(found.get("name")),
+            self.property_text(found.get("rows"), integer=True),
+            self.property_text(found.get("queryMode")),
+        )
+
+    # ------------------------------------------------------------ submittables
+
+    def submittable(self, class_name, opening, close):
+        """The Use of `new <class>(...)` with its `(` at `opening` and `)` at `close`."""
+        t = self.tokens
+        s = opening + 1
+        if s == close:
+            return NOT_FOLLOWED
+        e = self.item_end(s)
+        if e > close:
+            return NOT_FOLLOWED
+        if punct(t[s], "{"):
+            end_config = match_close(t, s)
+            if class_name != "Query" or end_config is None or not self.config_ends(end_config, e):
+                return NOT_FOLLOWED
+            return self.config(s, end_config, "submittable")
+        result = self.text_expression(s, e)
+        if result is NOTHING:
+            return NOTHING
+        if not isinstance(result, Value):
+            return NOT_FOLLOWED
+        length, present = values_of(t, self.detector, e)
+        return Use(result, "submittable", length, present)
+
+    # -------------------------------------------------------------- names, const
+
+    def name_result(self, k):
+        """The result of the name token `k` used as SQL: a Value, a Use (a name that holds a
+        submittable), NOTHING or NOT_FOLLOWED."""
+        declaration = self.resolve(self.tokens[k][1], k)
+        if declaration is None or declaration.value_start is None or declaration.index > k:
+            return NOT_FOLLOWED
+        if declaration.index not in self.constants:
+            self.constants[declaration.index] = self.const_result(declaration)
+        return self.constants[declaration.index]
+
+    def const_result(self, declaration):
+        t = self.tokens
+        vs = declaration.value_start
+        ve = self.value_end(vs)
+        if vs >= ve:
+            return NOT_FOLLOWED
+        if name_is(t[vs], "new"):
+            found = self.detector.submittable_at(vs)
+            if found is not None:
+                close = match_close(t, found[1])
+                if close is not None and close + 1 == ve:
+                    return self.submittable(found[0], found[1], close)
+            return NOT_FOLLOWED
+        tag = self.tagged(vs, ve)
+        if tag is not None:
+            return NOTHING if tag in self.tags else NOT_FOLLOWED
+        value = self.read_value(vs, ve, strict=True)
+        if value is None:
+            return NOT_FOLLOWED
+        value.key = ("const", declaration.index)
+        value.const_name = declaration.name
+        return value
+
+    def resolve(self, name, k):
+        """The innermost declaration of `name` whose scope holds the token `k`, or None when there is
+        none or two equally inner ones."""
+        if self.declarations is None:
+            self.declarations = {}
+            for declaration in self.scan_declarations():
+                self.declarations.setdefault(declaration.name, []).append(declaration)
+        best, tied = None, False
+        for declaration in self.declarations.get(name, ()):
+            if not declaration.lo <= k <= declaration.hi:
+                continue
+            if best is None or declaration.hi - declaration.lo < best.hi - best.lo:
+                best, tied = declaration, False
+            elif declaration.hi - declaration.lo == best.hi - best.lo:
+                tied = True
+        return None if tied else best
+
+    # ----------------------------------------------------------------- scopes
+
+    def is_block(self, k):
+        """True when the `{` at token `k` opens a block (a function or class body, a control
+        statement, a bare block) and not an object literal or a pattern."""
+        previous = self.at(k - 1)
+        if previous[0] == "p":
+            if previous[1] in OBJECT_BEFORE:
+                return False
+            if previous[1] == ":":
+                return self.detector.is_clause_colon(k - 1)
+            return True
+        if previous[0] == "ibeg":
+            return False
+        if previous[0] == "name":
+            if previous[1] == "void" and punct(self.at(k - 2), ":"):
+                return True  # the return type `void`, so the `{` opens the body
+            return previous[1] not in OBJECT_AFTER_NAMES
+        return True
+
+    def scan_blocks(self):
+        """(the end of each block by its `{`, the innermost enclosing block (lo, hi) of each token)."""
+        t = self.tokens
+        n = len(t)
+        closes, stack = {}, []
+        for k, token in enumerate(t):
+            if punct(token, "{"):
+                stack.append(k)
+            elif punct(token, "}") and stack:
+                opening = stack.pop()
+                if self.is_block(opening):
+                    closes[opening] = k
+        for opening in stack:
+            if self.is_block(opening):
+                closes[opening] = n - 1
+        scope_of, open_blocks = [], []
+        for k in range(n):
+            if open_blocks and open_blocks[-1][1] == k:
+                scope_of.append(open_blocks.pop())
+            else:
+                scope_of.append(open_blocks[-1] if open_blocks else (0, n - 1))
+            if k in closes:
+                open_blocks.append((k, closes[k]))
+        return closes, scope_of
+
+    def scan_declarations(self):
+        t = self.tokens
+        n = len(t)
+        self.closes, self.scope_of = self.scan_blocks()
+        found = []
+        file_scope = (0, n - 1)
+        for k, token in enumerate(t):
+            previous = self.at(k - 1)
+            if punct(previous, ".") or punct(previous, "?."):
+                continue
+            if token[0] == "name":
+                word = token[1]
+                if word in ("const", "let", "var"):
+                    self.declare_variables(k, found)
+                elif word == "import" and not (punct(self.at(k + 1), "(") or punct(self.at(k + 1), ".")):
+                    for name, index in self.import_names(k):
+                        found.append(Declaration(name, file_scope[0], file_scope[1], index))
+                elif word in ("function", "class") or (word in ("enum", "namespace", "module") and self.at(k + 1)[0] == "name"):
+                    self.declare_named(k, found)
+                elif word == "catch" and punct(self.at(k + 1), "("):
+                    self.declare_catch(k, found)
+                elif punct(self.at(k + 1), "=>") and word not in ("function",):
+                    body = self.body_range(k)
+                    if body is not None:
+                        found.append(Declaration(word, body[0], body[1], k))
+            elif punct(token, "(") and self.is_parameter_list(k):
+                close = match_close(t, k)
+                body = self.body_range(close)
+                scope = body if body is not None else (k, self.item_end(close, semicolon=True))
+                if body is None and self.item_end(close, semicolon=True) >= n:
+                    scope = (k, n - 1)
+                for name, index in self.parameter_names(k, close):
+                    found.append(Declaration(name, scope[0], scope[1], index))
+        return found
+
+    def block_end(self, opening):
+        return self.closes.get(opening, len(self.tokens) - 1)
+
+    def declare_variables(self, k, found):
+        t = self.tokens
+        kind = t[k][1]
+        if not (self.at(k + 1)[0] == "name" or punct(self.at(k + 1), "{") or punct(self.at(k + 1), "[")):
+            return
+        header = punct(self.at(k - 1), "(") and (
+            name_is(self.at(k - 2), "for") or (name_is(self.at(k - 2), "await") and name_is(self.at(k - 3), "for"))
+        )
+        if header:
+            close = match_close(t, k - 1)
+            after = (close if close is not None else k) + 1
+            hi = self.block_end(after) if punct(self.at(after), "{") else self.value_end(after)
+            scope = (k - 1, min(hi, len(t) - 1))
+        else:
+            scope = self.scope_of[k]
+        j = k + 1
+        while j < len(t):
+            names, plain = [], False
+            if t[j][0] == "name":
+                names, plain = [(t[j][1], j)], True
+                j += 1
+            elif punct(t[j], "{") or punct(t[j], "["):
+                names = self.pattern_names(j)
+                close = match_close(t, j)
+                if close is None:
+                    break
+                j = close + 1
+            else:
+                break
+            vs = None
+            if punct(self.at(j), ":"):
+                m, depth, count = j + 1, 0, 0
+                while m < len(t) and count < MAX_TYPE_ANNOTATION_TOKENS:
+                    token = t[m]
+                    if token[0] == "p":
+                        if token[1] in ("(", "[", "{"):
+                            depth += 1
+                        elif token[1] in (")", "]", "}"):
+                            depth -= 1
+                            if depth < 0:
+                                break
+                        elif token[1] == ";" or (token[1] == "," and depth == 0):
+                            break
+                        elif token[1] == "=" and depth == 0 and not punct(self.at(m + 1), "="):
+                            vs = m + 1
+                            break
+                        elif token[1] == "<":
+                            closing = type_arguments_close(t, m)
+                            if closing is not None:
+                                count += closing - m
+                                m = closing
+                    m += 1
+                    count += 1
+                j = vs - 1 if vs is not None else m
+            elif punct(self.at(j), "=") and not punct(self.at(j + 1), "="):
+                vs = j + 1
+            for name, index in names:
+                value = vs if (kind == "const" and plain and vs is not None) else None
+                found.append(Declaration(name, scope[0], scope[1], index, value))
+            if vs is not None:
+                j = self.value_end(vs)
+            if punct(self.at(j), ",") and (
+                self.at(j + 1)[0] == "name" or punct(self.at(j + 1), "{") or punct(self.at(j + 1), "[")
+            ):
+                j += 1
+                continue
+            break
+
+    def declare_named(self, k, found):
+        """A `function`, `class`, `enum`, `namespace` or `module` name."""
+        t = self.tokens
+        word = t[k][1]
+        j = k + 1
+        if word == "function" and punct(self.at(j), "*"):
+            j += 1
+        if self.at(j)[0] != "name" or t[j][1] in ("extends", "implements"):
+            return
+        if word in ("namespace", "module") and not (punct(self.at(j + 1), "{") or punct(self.at(j + 1), ".")):
+            return
+        if word == "enum" and not punct(self.at(j + 1), "{"):
+            return
+        previous = self.at(k - 1)
+        expression = word in ("function", "class") and (
+            (previous[0] == "p" and previous[1] in EXPRESSION_BEFORE)
+            or (previous[0] == "name" and previous[1] in EXPRESSION_BEFORE_NAMES)
+        )
+        if not expression:
+            scope = self.scope_of[k]
+        elif word == "function":
+            parameters = j + 1
+            closing = type_arguments_close(t, parameters)
+            if closing is not None:
+                parameters = closing + 1
+            close = match_close(t, parameters) if punct(self.at(parameters), "(") else None
+            body = self.body_range(close) if close is not None else None
+            if body is None:
+                return
+            scope = body
+        else:
+            opening = j + 1
+            while opening < len(t) and not punct(t[opening], "{"):
+                opening += 1
+            if opening >= len(t):
+                return
+            scope = (opening, self.block_end(opening))
+        found.append(Declaration(t[j][1], scope[0], scope[1], j))
+
+    def declare_catch(self, k, found):
+        t = self.tokens
+        close = match_close(t, k + 1)
+        if close is None or not punct(self.at(close + 1), "{"):
+            return
+        scope = (close + 1, self.block_end(close + 1))
+        j = k + 2
+        if t[j][0] == "name":
+            names = [(t[j][1], j)]
+        elif punct(t[j], "{") or punct(t[j], "["):
+            names = self.pattern_names(j)
+        else:
+            names = []
+        for name, index in names:
+            found.append(Declaration(name, scope[0], scope[1], index))
+
+    def import_names(self, k):
+        """(name, token) of each binding of the `import` at token `k`."""
+        t = self.tokens
+        if self.at(k + 1)[0] == "name" and punct(self.at(k + 2), "=") and not name_is(self.at(k + 1), "type"):
+            return [(t[k + 1][1], k + 1)]
+        found = self.detector.import_from(k)
+        if found is None:
+            return []
+        segment = found[1]
+        names = []
+        if segment and name_is(segment[0], "type") and len(segment) > 1:
+            return names  # a type-only import binds no value
+        base = k + 1
+        braces = False
+        j = 0
+        while j < len(segment):
+            token = segment[j]
+            if punct(token, "{"):
+                braces = True
+            elif punct(token, "}"):
+                braces = False
+            elif punct(token, "*") and j + 2 < len(segment) and name_is(segment[j + 1], "as"):
+                names.append((segment[j + 2][1], base + j + 2))
+                j += 2
+            elif token[0] == "name" and braces:
+                if name_is(token, "type") and j + 1 < len(segment) and segment[j + 1][0] == "name" and not name_is(segment[j + 1], "as"):
+                    j += 2
+                    continue
+                if j + 2 < len(segment) and name_is(segment[j + 1], "as") and segment[j + 2][0] == "name":
+                    names.append((segment[j + 2][1], base + j + 2))
+                    j += 2
+                else:
+                    names.append((token[1], base + j))
+            elif token[0] == "name":
+                names.append((token[1], base + j))
+            j += 1
+        return names
+
+    def pattern_names(self, j):
+        """(name, token) of each name that the object or array pattern at token `j` binds."""
+        t = self.tokens
+        close = match_close(t, j)
+        names = []
+        if close is None:
+            return names
+        is_object = punct(t[j], "{")
+        k = j + 1
+        while k < close:
+            end = min(self.item_end(k), close)
+            a = k
+            if a < end and punct(t[a], "..."):
+                a += 1
+            if is_object:
+                m = a
+                while m < end:
+                    if punct(t[m], ":"):
+                        a = m + 1
+                        break
+                    if t[m][0] == "p" and t[m][1] in ("(", "[", "{"):
+                        closing = match_close(t, m)
+                        m = (closing if closing is not None else end) + 1
+                        continue
+                    m += 1
+            if a < end:
+                if t[a][0] == "name":
+                    names.append((t[a][1], a))
+                elif punct(t[a], "{") or punct(t[a], "["):
+                    names += self.pattern_names(a)
+            k = end + 1
+        return names
+
+    def scan_return_type(self, j):
+        """Scan from token `j` after a `)` and a `:`: (kind, index) with kind "arrow" or "brace" and the
+        index of the `=>` or the `{` when one comes first, "stop" for a `;`, `}` or `)` at depth 0,
+        "long" when none comes in 60 tokens. A `{` after `:`, `|`, `&`, `<`, `,` or `?` is an object
+        type and is skipped."""
+        t = self.tokens
+        depth = 0
+        k = j
+        while k < min(len(t), j + MAX_TYPE_ANNOTATION_TOKENS):
+            token = t[k]
+            if token[0] == "p":
+                if token[1] in ("(", "["):
                     depth += 1
-                elif punct(tokens[p], ">"):
+                elif token[1] in (")", "]"):
+                    if depth == 0:
+                        return "stop", k
+                    depth -= 1
+                elif depth == 0 and token[1] == "=>":
+                    return "arrow", k
+                elif depth == 0 and token[1] == "{":
+                    if k > 0 and (
+                        (t[k - 1][0] == "p" and t[k - 1][1] in (":", "|", "&", "<", ",", "?"))
+                        or (t[k - 1][0] == "name" and t[k - 1][1] in ("is", "keyof", "extends"))
+                    ):
+                        closing = match_close(t, k)
+                        if closing is None:
+                            return "stop", k
+                        k = closing
+                    else:
+                        return "brace", k
+                elif depth == 0 and token[1] in (";", "}"):
+                    return "stop", k
+            k += 1
+        return ("long" if j + MAX_TYPE_ANNOTATION_TOKENS <= len(t) else "stop"), k
+
+    def is_parameter_list(self, k):
+        """True when the `(` group at token `k` is the parameter list of a function or a method."""
+        t = self.tokens
+        close = match_close(t, k)
+        if close is None:
+            return False
+        q = k - 1
+        closing = None
+        if punct(self.at(q), ">"):
+            depth = 0
+            for m in range(q, max(-1, q - MAX_TYPE_ARGUMENT_TOKENS), -1):
+                if punct(t[m], ">"):
+                    depth += 1
+                elif punct(t[m], "<"):
                     depth -= 1
                     if depth == 0:
+                        closing = m
                         break
-                p += 1
-                count += 1
-            if depth != 0 or p >= len(tokens):
-                continue
-            p += 1
-        if not punct(detector.at(p), "("):
-            continue
-        argument = detector.at(p + 1)
-        if argument[0] == "str" and string_is_terminated(argument[1]):
-            e = p + 2
-            start, end, template = argument[2] + 1, argument[3] - 1, False
-            first, last = argument[2], argument[3] - 1
-        elif argument[0] == "tpl" and (p + 1) in by_index and not by_index[p + 1].interpolations:
-            record = by_index[p + 1]
-            e = by_start[record.end] + 1
-            start, end, template = record.start + 1, record.end, True
-            first, last = record.start, record.end
-        else:
-            continue
-        if not (punct(detector.at(e), ",") or punct(detector.at(e), ")")):
-            continue
-        text, lines = decode_literal(source, start, end, template)
-        length, present = values_of(tokens, detector, e)
-        found.append(
-            (
-                first,
-                {
-                    "source": "pg",
-                    "tag": None,
-                    "start_line": source.line(first),
-                    "end_line": source.line(last),
-                    "text": text,
-                    "parent": None,
-                    "interpolations": [],
-                    # const_name, dynamic, name, rows and query_mode hold the values that the spec
-                    # gives a direct, non-dynamic call; the const, chain and dynamic forms set them later.
-                    "pg": {
-                        "kind": "template" if template else "literal",
-                        "const_name": None,
-                        "line_starts": line_starts_of(text, lines, source.line(last)),
-                        "dynamic": False,
-                        "statement_count": statement_count(text),
-                        "calls": [
-                            {
-                                "line": source.line(token[2]),
-                                "call": "direct",
-                                "values_length": length,
-                                "values_present": present,
-                                "name": None,
-                                "rows": None,
-                                "query_mode": None,
-                            }
-                        ],
-                    },
-                },
-            )
+            if closing is not None:
+                q = closing - 1
+        if name_is(self.at(q), "function"):
+            return True
+        if punct(self.at(q), "*") and name_is(self.at(q - 1), "function"):
+            return True
+        if self.at(q)[0] == "name" and (
+            name_is(self.at(q - 1), "function") or (punct(self.at(q - 1), "*") and name_is(self.at(q - 2), "function"))
+        ):
+            return True
+        after = self.at(close + 1)
+        if punct(after, "=>"):
+            return True
+        if punct(after, ":"):
+            return self.scan_return_type(close + 2)[0] in ("arrow", "brace", "long")
+        if punct(self.at(q), "?"):
+            q -= 1  # an optional method: `n?(q) {`
+        before = self.at(q - 1)
+        return (
+            punct(after, "{")
+            and (self.at(q)[0] in ("name", "str", "num") or punct(self.at(q), "]"))
+            and self.at(q)[1] not in NOT_PARAMETER_NAMES
+            and not (punct(before, ".") or punct(before, "?.") or name_is(before, "new"))
         )
-    return found
+
+    def parameter_names(self, k, close):
+        """(name, token) of each parameter of the parameter list [k, close]."""
+        t = self.tokens
+        names = []
+        j = k + 1
+        while j < close:
+            while j < close:
+                if punct(t[j], "@"):
+                    j += 1
+                    while j < close and (t[j][0] == "name" or punct(t[j], ".")):
+                        j += 1
+                    if j < close and punct(t[j], "("):
+                        end_call = match_close(t, j)
+                        j = (end_call if end_call is not None else close) + 1
+                    continue
+                if (
+                    t[j][0] == "name"
+                    and t[j][1] in PARAMETER_MODIFIERS
+                    and j + 1 < close
+                    and (t[j + 1][0] == "name" or punct(t[j + 1], "{") or punct(t[j + 1], "["))
+                ):
+                    j += 1
+                    continue
+                break
+            if j < close and punct(t[j], "..."):
+                j += 1
+            if j < close:
+                if t[j][0] == "name":
+                    names.append((t[j][1], j))
+                elif punct(t[j], "{") or punct(t[j], "["):
+                    names += self.pattern_names(j)
+            j = self.item_end(j) + 1
+        return names
+
+    def body_range(self, c):
+        """(lo, hi) of the body of the function whose parameter list ends at token `c` (the `)`, or the
+        name of a single arrow parameter), or None when no body is found."""
+        t = self.tokens
+        j = c + 1
+        if punct(self.at(j), ":"):
+            kind, j = self.scan_return_type(j + 1)
+            if kind not in ("arrow", "brace"):
+                return None
+        if punct(self.at(j), "=>"):
+            j += 1
+            if punct(self.at(j), "{"):
+                return j, self.block_end(j)
+            return j, max(j, min(self.value_end(j), len(t)) - 1)
+        if punct(self.at(j), "{"):
+            return j, self.block_end(j)
+        return None
+
+
+def find_pg_statements(source, tokens, templates, detector, receivers, tags):
+    """The (offset, statement) pairs of the `<receiver>.query(...)` calls whose first argument is
+    followed (see PgCalls), and the list of the calls that are not."""
+    by_index = {template.token_index: template for template in templates}
+    return PgCalls(source, tokens, by_index, detector, receivers, tags).run()
 
 
 def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=None):
@@ -1616,7 +2612,8 @@ def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=No
             template.tag = found[0]
             reported.append(template)
     entries = [(template.start, template) for template in reported]
-    entries += find_pg_statements(source, tokens, templates, receiver_detector, set(receivers))
+    pg_entries, not_followed = find_pg_statements(source, tokens, templates, receiver_detector, set(receivers), tags)
+    entries += pg_entries
     entries.sort(key=lambda entry: entry[0])
     index_of = {id(item): k for k, (_, item) in enumerate(entries) if isinstance(item, Template)}
     statements = []
@@ -1628,10 +2625,11 @@ def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=No
         while parent is not None and id(parent) not in index_of:
             parent = parent.enclosing
         statements.append(template_statement(source, item, None if parent is None else index_of[id(parent)]))
-    return detected, factory_names, tags, statements, detected_receivers, receivers
+    return detected, factory_names, tags, statements, detected_receivers, receivers, not_followed
 
 
-def template_statement(source, template, parent):
+def template_interpolations(source, template):
+    """(body, interpolation records) of a template: the text between the backticks, as written."""
     base = template.start + 1
     body = source.text[base : template.end]
     spans = {item["start"] - base: item["end"] - base for item in template.interpolations}
@@ -1642,6 +2640,11 @@ def template_statement(source, template, parent):
         interpolation_record(source, item, positions.get(item["start"] - base, "keyword"))
         for item in template.interpolations
     ]
+    return body, interpolations
+
+
+def template_statement(source, template, parent):
+    body, interpolations = template_interpolations(source, template)
     return {
         "source": "template",
         "tag": template.tag,
@@ -1704,7 +2707,7 @@ def parse_arguments(argv):
 
 def result(
     file_argument, form, error=None, detected=(), factory_names=(), tags=(), statements=(),
-    detected_receivers=(), receivers=(),
+    detected_receivers=(), receivers=(), not_followed=(),
 ):
     return {
         "file": file_argument,
@@ -1715,6 +2718,7 @@ def result(
         "detected_receivers": list(detected_receivers),
         "receivers": list(receivers),
         "statements": list(statements),
+        "not_followed": list(not_followed),
         "error": error,
     }
 
@@ -1738,12 +2742,12 @@ def main(argv):
         if form == "sql":
             output = result(file_argument, form, statements=extract_sql_file(source))
         else:
-            detected, factory_names, matched, statements, detected_receivers, matched_receivers = extract_js_file(
-                source, tags, jsx, tsx, receivers
-            )
+            (
+                detected, factory_names, matched, statements, detected_receivers, matched_receivers, not_followed
+            ) = extract_js_file(source, tags, jsx, tsx, receivers)
             output = result(
                 file_argument, form, None, detected, factory_names, matched, statements,
-                detected_receivers, matched_receivers,
+                detected_receivers, matched_receivers, not_followed,
             )
     except ExtractError as error:
         output = result(file_argument, form, {"message": error.message, "line": error.line})
