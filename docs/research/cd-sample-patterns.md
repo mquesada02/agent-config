@@ -66,7 +66,7 @@ Each line is: number, mark, repos, neutral description.
 11. bad: H, I, J: a matrix builds the same zip four times (one per environment) for the legacy flow, although the build does not depend on the environment value (the artifact name does).
 12. bad: H, I, J: the release flow builds twice (new account and legacy) with the same composite action in two jobs.
 13. good: C: stages as reusable workflow calls with `needs` and `if: !failure() && !cancelled()`, so a failed stage stops every later stage and a stage with nothing to apply is skipped. A job at the end that checks that the commit is still the tip of the main branch.
-14. bad: G: `deploy.yml` holds 5 modes (stage, deploy, prod, redeploy, dashboard) in 967 lines. Each mode copies the same steps (verify, role, update, wait, publish). It is one workflow file that is hard to read and 16 commits show frequent edits.
+14. bad: G: one deploy workflow file holds 5 modes (stage, deploy, prod, redeploy, dashboard) in close to a thousand lines. Each mode copies the same steps (verify, role, update, wait, publish). The file is hard to read, and its history shows frequent edits.
 
 ### Cost
 
@@ -161,7 +161,7 @@ The counts in this table are approximate. The patterns in section 3 are exact.
 
 Permissions: `permissions: {}` or `contents: read` at the top in all 38 files. `id-token: write` only on deploy jobs. `pull-requests: write` only in the release job that opens the back-merge PR. `actions: read` and `pull-requests: read` in the prod job that looks up the staging run.
 
-Environments: dev, staging, prod (repos D, F); org, nonprod, prod, audit (repo C); prod (repo E); one for tag creation (repo H) and one for publish (repo B). All have a custom branch policy; none shows a reviewer rule. Repo G has no environment at all.
+Environments: dev, staging, prod (repos D, F); org, nonprod, prod, audit (repo C); prod (repo E); one for tag creation (repo H) and one for publish (repo B). All have a custom branch policy; none shows a reviewer rule. Repo G has one environment, `promote`, which only its tag job uses; its deploy jobs use no environment (pattern 65).
 
 Secret and variable KINDS:
 - Secrets: a GitHub App id and a GitHub App private key (for tag creation and for reading org settings). The key is empty in the caller and supplied by the environment. No PAT, no AWS key, no npm token, no registry token in any CD workflow.
