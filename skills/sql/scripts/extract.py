@@ -1119,7 +1119,12 @@ class ReceiverDetector(Detector):
             elif token[0] == "name" and not braces:
                 self.objects[token[1]] = "pg"
             elif token[0] == "name" and braces:
-                if name_is(token, "type") and k + 1 < len(segment) and segment[k + 1][0] == "name" and not name_is(segment[k + 1], "as"):
+                if (
+                    name_is(token, "type")
+                    and k + 1 < len(segment)
+                    and segment[k + 1][0] == "name"
+                    and not name_is(segment[k + 1], "as")
+                ):
                     item_type = True  # `type Name`: a type-only item
                     k += 1
                     continue
@@ -1752,7 +1757,7 @@ class PgCalls:
                 p = closing + 1
             if not punct(self.at(p), "("):
                 continue
-            outcome = self.call(i, p)
+            outcome = self.call(p)
             line = self.source.line(token[2])
             if outcome is NOT_FOLLOWED:
                 self.not_followed.append({"line": line})
@@ -1776,8 +1781,8 @@ class PgCalls:
             }
         )
 
-    def call(self, i, p):
-        """NOTHING, NOT_FOLLOWED or the Use of the call whose query name is at `i` and `(` at `p`."""
+    def call(self, p):
+        """NOTHING, NOT_FOLLOWED or the Use of the call whose `(` is at `p`."""
         t = self.tokens
         s = p + 1
         if punct(self.at(s), ")"):
@@ -1807,7 +1812,8 @@ class PgCalls:
     def config_ends(self, close, e):
         """True when nothing but a type clause (`as T`, `satisfies T`) stands between the `}` at
         `close` and the end `e` of the argument."""
-        return close + 1 == e or (close + 1 < e and (name_is(self.at(close + 1), "as") or name_is(self.at(close + 1), "satisfies")))
+        after = self.at(close + 1)
+        return close + 1 == e or (close + 1 < e and (name_is(after, "as") or name_is(after, "satisfies")))
 
     # ------------------------------------------------------- argument scanning
 
@@ -1923,8 +1929,8 @@ class PgCalls:
                     return None
                 k = close + 1
                 continue
-            elif token[0] == "p" and token[1] == "<" and type_arguments_close(t, k) is not None:
-                k = type_arguments_close(t, k) + 1
+            elif token[0] == "p" and token[1] == "<" and (closing := type_arguments_close(t, k)) is not None:
+                k = closing + 1
                 continue
             elif token[0] == "p" and token[1] == "+":
                 if k == start:
@@ -2016,7 +2022,6 @@ class PgCalls:
     def properties(self, s, close):
         """{key: (value start, value end, property start)} of the config object [s, close], or None
         when it has a spread or a computed key (a method has no value: (None, None, start))."""
-        t = self.tokens
         found = {}
         k = s + 1
         while k < close:
@@ -2091,9 +2096,7 @@ class PgCalls:
             vs, ve, _ = found["values"]
             if vs is not None and punct(t[vs], "["):
                 close_array = match_close(t, vs)
-                if close_array is not None and (
-                    close_array + 1 == ve or name_is(self.at(close_array + 1), "as") or name_is(self.at(close_array + 1), "satisfies")
-                ):
+                if close_array is not None and self.config_ends(close_array, ve):
                     length = array_length(t, vs, close_array)
         return Use(
             result,
@@ -2247,16 +2250,14 @@ class PgCalls:
                     self.declare_named(k, found)
                 elif word == "catch" and punct(self.at(k + 1), "("):
                     self.declare_catch(k, found)
-                elif punct(self.at(k + 1), "=>") and word not in ("function",):
+                elif punct(self.at(k + 1), "=>") and word != "function":
                     body = self.body_range(k)
                     if body is not None:
                         found.append(Declaration(word, body[0], body[1], k))
             elif punct(token, "(") and self.is_parameter_list(k):
                 close = match_close(t, k)
                 body = self.body_range(close)
-                scope = body if body is not None else (k, self.item_end(close, semicolon=True))
-                if body is None and self.item_end(close, semicolon=True) >= n:
-                    scope = (k, n - 1)
+                scope = body if body is not None else (k, min(self.item_end(close, semicolon=True), n - 1))
                 for name, index in self.parameter_names(k, close):
                     found.append(Declaration(name, scope[0], scope[1], index))
         return found
@@ -2412,7 +2413,12 @@ class PgCalls:
                 names.append((segment[j + 2][1], base + j + 2))
                 j += 2
             elif token[0] == "name" and braces:
-                if name_is(token, "type") and j + 1 < len(segment) and segment[j + 1][0] == "name" and not name_is(segment[j + 1], "as"):
+                if (
+                    name_is(token, "type")
+                    and j + 1 < len(segment)
+                    and segment[j + 1][0] == "name"
+                    and not name_is(segment[j + 1], "as")
+                ):
                     j += 2
                     continue
                 if j + 2 < len(segment) and name_is(segment[j + 1], "as") and segment[j + 2][0] == "name":

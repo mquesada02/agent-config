@@ -367,8 +367,8 @@ class ExtractPgCaseTest(unittest.TestCase):
     def test_the_fixture_has_every_receiver_form_and_argument_form(self):
         text = read(os.path.join(EXTRACT_PG_CASE, "order-reports.ts"))
         for needle in (
-            "new Pool()", "new Client()", "new pg.native.Client()", "new pg.native.Pool()", "await pool.connect()", "pool.connect().then(",
-            "pool.connect((err, c)", "private db = new Pool()", "this.db.query(", "{ text:", "new Query(",
+            "new Pool()", "new Client()", "new pg.native.Client()", "new pg.native.Pool()", "await pool.connect()",
+            "pool.connect().then(", "pool.connect((err, c)", "private db = new Pool()", "this.db.query(", "{ text:", "new Query(",
             "new Cursor(", "new QueryStream(", "let mutable", "import { shared }", "${table}", "'SELECT * FROM ' + table",
         ):
             with self.subTest(needle=needle):
