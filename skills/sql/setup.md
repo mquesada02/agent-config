@@ -16,28 +16,28 @@ Every script needs Python 3.11 or newer. `<skill folder>` is the folder of this 
    - The rules file `error` is set: stop. Show the parse error message and its line, and ask the developer to fix the file. Write nothing.
    - The allowlist `reason` is `malformed_file`: stop. Show its `detail` and write nothing.
    - Keep the result. It holds the current settings, the current `services`, and the `key` of the repo.
-2. Scan the repo with no `--tags` option (this is tag detection only):
+2. Scan the repo with no `--tags` and no `--receivers` option (this is tag and receiver detection only):
 
    ```
    python3 <skill folder>/scripts/setup_scan.py <repo root>
    ```
 
-   It gives `files_with_sql`, `forms` (`template` and `sql` counts), `detected_tags`, `candidates` and `truncated`. When `truncated` is true, tell the developer that only 1000 files were read.
+   It gives `files_with_sql`, `forms` (`template`, `sql` and `pg` counts), `detected_tags`, `detected_receivers`, `hints`, `candidates` and `truncated`. When `truncated` is true, tell the developer that only 1000 files were read. Tell the developer each text of `hints` once (a hint says that `pg` is a dependency and that no file shows a `pg` receiver, so the developer lists the receivers that the files import).
 
-## Step 2: Tags
+## Step 2: Tags and receivers
 
-Show `detected_tags`. Ask the developer to confirm the list or to edit it. The confirmed list goes into `[sources] tags`.
+Show `detected_tags` and `detected_receivers`. Ask the developer to confirm or edit each list. The confirmed lists go into `[sources] tags` and `[sources] receivers`. A receiver entry is the receiver text as the call writes it, for example `pool` or `this.pool`.
 
-- An empty confirmed list is allowed only when no tag was detected. When tags were detected, the developer keeps at least one: ask again.
-- Every later step uses the confirmed list. When the developer changed it, run the scan again with `--tags <confirmed tags>`, so that the candidates and the file list follow it.
-- An empty tag list means that no `--tags` option is passed to any command (the scripts reject an empty value).
+- An empty confirmed list is allowed only when none was detected (tags for the tag list, receivers for the receiver list). When some were detected, the developer keeps at least one: ask again.
+- Every later step uses the confirmed lists. When the developer changed a list, run the scan again with `--tags <confirmed tags>` and `--receivers <confirmed receivers>` (each option only when its list is not empty), so that the candidates and the file list follow them.
+- An empty tag list means that no `--tags` option is passed to any command, and an empty receiver list means that no `--receivers` option is passed (the scripts reject an empty value).
 
 ## Step 3: Style and formatter
 
 1. Measure the style on `files_with_sql` of the scan. Skip the measurer, and use the default style (`keyword_case` `upper`, `indent` `2 spaces`, `clause_per_line` true, `comma` `trailing`, `alias_as` true), when that list is empty:
 
    ```
-   python3 <skill folder>/scripts/measure_style.py [--tags <confirmed tags>] <file>...
+   python3 <skill folder>/scripts/measure_style.py [--tags <confirmed tags>] [--receivers <confirmed receivers>] <file>...
    ```
 
    The `style` object of its output is the `[style]` proposal.
@@ -80,7 +80,7 @@ Show each name in `service_check.missing`. The developer corrects it or keeps it
 1. Write the proposal JSON with the Write tool into the system temp folder, never into the repo. Send every section, so that a re-run lists every differing key:
 
    ```
-   {"settings": {"style": {...}, "formatter": {"tool": "..."}, "sources": {"tags": [...]}, "rules": {"disabled": [...]}}, "prose_rules": ["..."], "services": ["..."]}
+   {"settings": {"style": {...}, "formatter": {"tool": "..."}, "sources": {"tags": [...], "receivers": [...]}, "rules": {"disabled": [...]}}, "prose_rules": ["..."], "services": ["..."]}
    ```
 
 2. Plan. This writes nothing:
@@ -111,5 +111,5 @@ Name, from the outputs above:
 
 - `Formatter: <the chosen tool or none>`. With no SQL in the repo no detector ran: say so.
 - `Other tools found: <the tools of found that are not chosen, or none>` (from the detector output).
-- The tags, the services, and what was written (the file paths, or "nothing written").
+- The tags, the receivers, the services, and what was written (the file paths, or "nothing written").
 - Each warning once.

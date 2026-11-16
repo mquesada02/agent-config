@@ -5,13 +5,13 @@ Load this module when the SQL is in a postgres.js tagged template of a JavaScrip
 ## Find the templates
 
 1. Get the tag list. Take it from `tags` of the `[sources]` section of the rules file (the router's rules file step). With no `[sources]` section, or an empty `tags` list, run with no `--tags`: the script then uses the tags that the file shows, for that run only (the router's rules file step names the fallback once).
-2. Run the extractor. Pass the tag list with `--tags`, as one comma-separated value. A tag can be a member form such as `this.sql`.
+2. Run the extractor. Pass the tag list with `--tags`, as one comma-separated value. A tag can be a member form such as `this.sql`. Pass the receiver list with `--receivers` in the same way (a receiver can be a member form such as `this.pool`). The receiver list is the `receivers` of the `[sources]` section of the rules file; with no `[sources]` section, or an empty `receivers` list, run with no `--receivers`: the script then matches the receivers that the file shows.
 
 ```
 python3 <skill folder>/scripts/extract.py <file> --tags sql,this.sql,tx
 ```
 
-It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements`, `not_followed` and `error`. The `detected_receivers`, `receivers` and `not_followed` keys are for the `pg` driver (`--receivers` adds receivers to the detected ones); this module does not use them.
+It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements`, `not_followed` and `error`. The `detected_receivers`, `receivers` and `not_followed` keys are for the `pg` driver (`--receivers` adds receivers to the detected ones); this module does not read them, and it passes `--receivers` so that one run reads the `pg` statements of the file too.
 
 - `detected_tags`: the tags that the file shows. It finds them in these forms: a variable that holds `postgres(...)`, a member form such as `this.sql = postgres(...)`, a class field, and the first parameter of a `.begin(tx => ...)` callback. Tell the user about a detected tag that is not in the repo tag list, because the repo list may miss it.
 - `factory_names`: the local names that the file binds to the postgres.js package (`import postgres from 'postgres'`, `require('postgres')`).

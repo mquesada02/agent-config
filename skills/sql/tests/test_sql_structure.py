@@ -142,6 +142,22 @@ class SourceModuleTest(unittest.TestCase):
                 self.assertNotRegex(text, r"(?i)\bstub\b")
                 self.assertNotIn("#390", text)
 
+    def test_the_postgres_js_module_passes_the_receivers_of_the_rules_file(self):
+        text = read(os.path.join(SKILL_DIR, "sources/postgres-js.md"))
+        self.assertIn("`receivers` of the `[sources]` section", text)
+        self.assertIn("--receivers", text)
+        self.assertNotIn("this module does not use them", text)
+
+    def test_the_router_rules_file_step_names_the_tags_and_the_receivers(self):
+        self.assertIn("`sources` (the tags and the receivers) uses detection for that run", read(ROUTER))
+
+    def test_the_format_and_style_modules_pass_the_receivers_of_the_rules_file(self):
+        for module in ("format.md", "style.md"):
+            with self.subTest(module=module):
+                text = read(os.path.join(SKILL_DIR, module))
+                self.assertIn("--receivers", text)
+                self.assertIn("`receivers`", text)
+
     def test_the_source_modules_are_not_in_the_stub_list(self):
         for module in self.EXTRA:
             self.assertIn(module, MODULES)

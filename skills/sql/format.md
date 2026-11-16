@@ -42,7 +42,7 @@ These steps apply to the statements that go to the written style.
 
 The tool path uses two scripts. The detector picks the tool. The runner runs it, checks the result and writes a copy of the file in which only the target statements changed. Never run a formatter by hand, and never run `prettier-plugin-sql-cst` or `eslint-plugin-sql --fix`: only the runner runs a tool.
 
-1. Find the target statements, as the Target section says. Take the tag list: the `tags` of the `[sources]` section of the rules file, or, when that key is missing, the `tags` of the extractor output.
+1. Find the target statements, as the Target section says. Take the tag list: the `tags` of the `[sources]` section of the rules file, or, when that key is missing, the `tags` of the extractor output. Take the receiver list: the `receivers` of the `[sources]` section of the rules file (when that key is missing or the list is empty, the extractor uses the receivers that the file shows).
 2. Run the detector once for each source form of the target (`template` for a JS or TS file, `sql` for a `.sql` file):
 
    ```
@@ -57,8 +57,10 @@ The tool path uses two scripts. The detector picks the tool. The runner runs it,
 4. Run the runner once for the tool statements of one file. Give one `--range <start_line>-<end_line>` for each statement and a new `--output` path in the system temp folder:
 
    ```
-   python3 <skill folder>/scripts/run_formatter.py <repo root> <file> --tool <chosen> --range <start>-<end> [--range ...] --output <path> [--tags <t1,t2,...>]
+   python3 <skill folder>/scripts/run_formatter.py <repo root> <file> --tool <chosen> --range <start>-<end> [--range ...] --output <path> [--tags <t1,t2,...>] [--receivers <r1,r2,...>]
    ```
+
+   Pass `--receivers` only when there is a receiver list (an empty list is an error). The detector gets `--tags` alone.
 
    - `ok` is true: copy the output file over the target file with `cp`. When the shell cannot write the target file, print the output file with `cat` and write that text to the target file with the Write tool. Do not edit the text.
    - `ok` is false: the written style takes over for every statement of that run. The report names the `check` and the `reason`.

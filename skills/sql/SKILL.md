@@ -39,7 +39,7 @@ It prints one JSON object with the keys `found`, `settings`, `missing_sections`,
 
 1. `error` is set: stop the skill. Show the parse error message and its line, and ask the user to fix the file.
 2. `found` is false: there is no rules file. Every section falls back as in step 3, and you suggest `/sql setup` once. Format and optimize then run tag detection and formatter detection for that run only.
-3. Each missing section falls back for that part only, and you name it once: `style` uses the repo majority, `formatter` uses detection, `sources` (the tags) uses detection for that run, and `rules` means no disabled rules.
+3. Each missing section falls back for that part only, and you name it once: `style` uses the repo majority, `formatter` uses detection, `sources` (the tags and the receivers) uses detection for that run, and `rules` means no disabled rules.
 4. Each id in `disabled_without_reason` stays enabled, because it has no reason line (`- PG-10: <reason>` in the prose outside the TOML block). Name it once.
 5. Each id in `unknown_ids` is ignored. Name it once.
 6. A disabled id with a reason is not checked. List the disabled rules once in the report.
