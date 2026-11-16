@@ -256,6 +256,10 @@ def scripts_fact(packages):
     return fact(entries, aggregate(entries, "unknown"), "package.json of each package")
 
 
+def is_published(data):
+    return data.get("private") is not True and any(key in data for key in PUBLISH_SIGNALS)
+
+
 def kind_fact(packages):
     entries = []
     for path, data in packages:
@@ -263,7 +267,7 @@ def kind_fact(packages):
             entries.append({"path": path, "value": "app", "status": "default",
                             "source": f"{path}/package.json is not valid JSON"})
             continue
-        published = data.get("private") is not True and any(key in data for key in PUBLISH_SIGNALS)
+        published = is_published(data)
         entries.append({"path": path, "value": "published" if published else "app", "status": "detected",
                         "source": f"{path}/package.json private and publish signals"})
     return fact(entries, aggregate(entries, "unknown"), "package.json of each package")
@@ -435,18 +439,21 @@ def to_seconds(stamp):
     return datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
-def run_history(identity, branch):
+def workflow_history(identity, workflow, branch=None):
+    """The last 10 successful runs of a workflow file (of one branch when `branch` is given), with the median of each job."""
     if not identity:
         return fact(None, "unknown", "no GitHub remote")
-    base = f"repos/{identity[0]}/{identity[1]}"
-    path = f"{base}/actions/workflows/ci.yml/runs?branch={quote(branch, safe='')}&status=success&per_page=10"
+    base = repo_base(identity)
+    branch_query = f"branch={quote(branch, safe='')}&" if branch else ""
+    path = f"{base}/actions/workflows/{workflow}/runs?{branch_query}status=success&per_page=10"
     ok, data, reason = gh_api(path)
     if not ok:
         return fact(None, "unknown", f"gh api {path}: {reason}")
     try:
         runs = data["workflow_runs"]
         if len(runs) < 10:
-            return fact(None, "unknown", "fewer than 10 successful runs of ci.yml on the default branch")
+            return fact(None, "unknown",
+                        f"fewer than 10 successful runs of {workflow}" + (" on the default branch" if branch else ""))
         durations = {}
         for workflow_run in runs:
             jobs_path = f"{base}/actions/runs/{workflow_run['id']}/jobs?per_page=100"
@@ -461,6 +468,260 @@ def run_history(identity, branch):
     except SHAPE_ERRORS:
         return fact(None, "unknown", f"gh api {path} or the jobs of a run: unexpected answer shape")
     return fact({"runs": len(runs), "jobs": jobs}, "detected", f"gh api {path} and the jobs of each run")
+
+
+def repo_base(identity):
+    return f"repos/{identity[0]}/{identity[1]}"
+
+
+def environment_entry(item):
+    rules = item.get("protection_rules") or []
+    policy = item.get("deployment_branch_policy")
+    timers = [rule["wait_timer"] for rule in rules if rule.get("type") == "wait_timer"]
+    entry = {"name": item["name"],
+             "reviewers": any(rule.get("type") == "required_reviewers" for rule in rules),
+             "wait_timer": timers[0] if timers else 0,
+             "branch_policy": ("none" if policy is None
+                               else "protected_branches" if policy.get("protected_branches") is True else "custom"),
+             "admin_bypass": item["can_admins_bypass"]}
+    if not (isinstance(entry["name"], str) and isinstance(entry["wait_timer"], int)
+            and isinstance(entry["admin_bypass"], bool)):
+        raise TypeError("an environment field has the wrong type")
+    return entry
+
+
+def environments(identity):
+    if not identity:
+        return fact([], "default", "no GitHub remote (treated as none)")
+    path = f"{repo_base(identity)}/environments"
+    ok, data, reason = gh_api(path)
+    if not ok:
+        return fact([], "default", f"gh api {path}: {reason} (treated as none)")
+    try:
+        entries = [environment_entry(item) for item in data["environments"]]
+    except SHAPE_ERRORS:
+        return fact([], "default", f"gh api {path}: unexpected answer shape (treated as none)")
+    return fact(entries, "detected", f"gh api {path}")
+
+
+PLAN_NOTE = "reviewers are proposed; a private repo may need GitHub Enterprise"
+
+
+def plan(identity, info, seen):
+    def proposed(source):
+        return fact({"visibility": "private", "plan": None, "reviewers_available": True}, "default", source)
+
+    if seen["status"] == "default":
+        return proposed(f"visibility not readable (private assumed): {PLAN_NOTE}")
+    if seen["value"] == "public":
+        return fact({"visibility": "public", "plan": None, "reviewers_available": True}, "detected",
+                    "public repo: reviewers are available on every plan")
+    owner = info.get("owner")
+    if not (isinstance(owner, dict) and owner.get("type") == "Organization"):
+        return proposed(f"private repo of a user (plan not readable): {PLAN_NOTE}")
+    path = f"orgs/{identity[0]}"
+    ok, data, reason = gh_api(path)
+    try:
+        name = data["plan"]["name"] if ok else None
+    except SHAPE_ERRORS:
+        name = None
+    if not isinstance(name, str) or not name:
+        why = reason if not ok else "no plan.name in the answer (the token is not an org owner)"
+        return proposed(f"gh api {path}: {why}: {PLAN_NOTE}")
+    return fact({"visibility": "private", "plan": name, "reviewers_available": name.lower() != "free"},
+                "detected", f"gh api {path}")
+
+
+def rulesets(identity):
+    if not identity:
+        return fact(None, "unknown", "no GitHub remote")
+    path = f"{repo_base(identity)}/rulesets"
+    ok, data, reason = gh_api(path)
+    if not ok:
+        return fact(None, "unknown", f"gh api {path}: {reason}")
+    try:
+        if not isinstance(data, list):
+            raise TypeError("the answer is not a list")
+        value = [{"name": item["name"], "target": item["target"], "enforcement": item["enforcement"]}
+                 for item in data]
+    except SHAPE_ERRORS:
+        return fact(None, "unknown", f"gh api {path}: unexpected answer shape")
+    return fact(value, "detected", f"gh api {path}")
+
+
+def classic_protection(identity, branch):
+    if not identity:
+        return fact(None, "unknown", "no GitHub remote")
+    path = f"{repo_base(identity)}/branches/{quote(branch, safe='')}/protection"
+    ok, data, reason = gh_api(path)
+    if not ok:
+        if "Branch not protected" in reason:
+            return fact({"branch": branch, "protected": False, "required_pull_request_reviews": False,
+                         "enforce_admins": False}, "detected", f"gh api {path}: {reason}")
+        return fact(None, "unknown", f"gh api {path}: {reason}")
+    try:
+        if not isinstance(data, dict):
+            raise TypeError("the answer is not an object")
+        value = {"branch": branch, "protected": True,
+                 "required_pull_request_reviews": "required_pull_request_reviews" in data,
+                 "enforce_admins": data["enforce_admins"]["enabled"]}
+        if not isinstance(value["enforce_admins"], bool):
+            raise TypeError("enforce_admins.enabled is not a boolean")
+    except SHAPE_ERRORS:
+        return fact(None, "unknown", f"gh api {path}: unexpected answer shape")
+    return fact(value, "detected", f"gh api {path}")
+
+
+# Each table maps a kind to its patterns. A pattern matches on one workflow line (comment removed), with each
+# space matching one or more spaces, and it must end at a character that is not a letter, a digit, `_` or `-`.
+DEPLOY_TARGETS = (
+    ("aws", ("uses: aws-actions/configure-aws-credentials",)),
+    ("s3", ("aws s3 sync", "aws s3 cp")),
+    ("lambda", ("aws lambda update-function-code", "uses: aws-actions/aws-lambda-deploy")),
+    ("ecs", ("aws ecs", "uses: aws-actions/amazon-ecs-deploy-task-definition")),
+    ("cloudfront", ("aws cloudfront create-invalidation",)),
+    ("github-pages", ("uses: actions/deploy-pages",)),
+    ("cloudflare", ("uses: cloudflare/wrangler-action", "wrangler deploy", "wrangler pages deploy")),
+    ("vercel", ("vercel deploy", "vercel --prod", "uses: amondnet/vercel-action")),
+    ("netlify", ("netlify deploy", "uses: nwtgck/actions-netlify")),
+    ("container-registry", ("uses: docker/build-push-action", "docker push")),
+)
+IAC_TOOLS = (
+    ("terraform", ("uses: hashicorp/setup-terraform", "terraform init", "terraform plan", "terraform apply")),
+    ("opentofu", ("uses: opentofu/setup-opentofu", "tofu init", "tofu plan", "tofu apply")),
+    ("cdk", ("cdk deploy", "cdk synth", "cdk diff")),
+    ("pulumi", ("uses: pulumi/actions", "pulumi up", "pulumi preview")),
+    ("serverless", ("serverless deploy", "sls deploy")),
+    ("sam", ("sam deploy", "uses: aws-actions/setup-sam")),
+    ("cloudformation", ("aws cloudformation deploy", "aws cloudformation create-stack",
+                        "aws cloudformation update-stack")),
+)
+END = r"(?![\w-])"
+
+
+def pattern_regex(pattern):
+    if pattern.startswith("uses: "):
+        return re.compile(r"uses:\s+['\"]?" + re.escape(pattern[len("uses: "):]) + END)
+    return re.compile(r"\s+".join(re.escape(word) for word in pattern.split(" ")) + END)
+
+
+def workflow_lines(repo, workflows):
+    return [strip_comment(line) for workflow in workflows
+            for line in (read_text(os.path.join(repo, workflow)) or "").splitlines()]
+
+
+def tools_found(table, lines):
+    compiled = [(kind, [pattern_regex(pattern) for pattern in patterns]) for kind, patterns in table]
+    return sorted(kind for kind, regexes in compiled
+                  if any(regex.search(line) for regex in regexes for line in lines))
+
+
+def deploy_targets(lines):
+    found = tools_found(DEPLOY_TARGETS, lines)
+    if found:
+        return fact(found, "detected", ".github/workflows steps")
+    return fact([], "default", "no workflow step shows a deploy target (none)")
+
+
+def iac_tools(lines):
+    found = tools_found(IAC_TOOLS, lines)
+    if found:
+        return fact(found, "detected", ".github/workflows steps")
+    return fact([], "default", "no workflow step shows an IaC tool (none)")
+
+
+def aws_variables(lines):
+    """The names of the vars.* on the role-to-assume and aws-region lines. Never a value."""
+    names = {"role": set(), "region": set()}
+    for line in lines:
+        match = re.match(r"^\s*(?:-\s+)?(role-to-assume|aws-region):(.*)$", line)
+        if not match:
+            continue
+        key = {"role-to-assume": "role", "aws-region": "region"}[match.group(1)]
+        for expression in re.findall(r"\$\{\{(.*?)\}\}", match.group(2)):
+            names[key] |= {f"vars.{name}" for name in re.findall(r"\bvars\.(\w+)", expression)}
+    placeholders = {"role": ["vars.AWS_ROLE_<ENV>"], "region": ["vars.AWS_REGION"]}
+    value = {key: sorted(names[key]) or placeholders[key] for key in names}
+    missing = [key for key in names if not names[key]]
+    if not missing:
+        return fact(value, "detected", ".github/workflows role-to-assume and aws-region lines (names only)")
+    used = ", ".join(f"{key} {placeholders[key][0]}" for key in missing)
+    return fact(value, "default", f"no vars.* name found for: {used}; these are placeholders, replace them with the "
+                                  "repo's own variable names")
+
+
+def release_tool(repo, root):
+    dependencies = set()
+    for section in ("dependencies", "devDependencies"):
+        deps = root.get(section)
+        dependencies |= set(deps) if isinstance(deps, dict) else set()
+    try:
+        entries = os.listdir(repo)
+    except OSError:
+        entries = []
+    found = set()
+    if os.path.isdir(os.path.join(repo, ".changeset")) or "@changesets/cli" in dependencies:
+        found.add("changesets")
+    if ({"release-please-config.json", ".release-please-manifest.json"} & set(entries)
+            or "release-please" in dependencies):
+        found.add("release-please")
+    if (any(entry.startswith((".releaserc", "release.config.")) for entry in entries)
+            or "semantic-release" in dependencies):
+        found.add("semantic-release")
+    if any(entry.startswith(".release-it.") for entry in entries) or "release-it" in dependencies:
+        found.add("release-it")
+    if found:
+        return fact(sorted(found), "detected", "files at the repo root and package.json dependencies")
+    return fact([], "default", "no release tool file or dependency (none, so create adds Changesets)")
+
+
+def publish_target(packages):
+    targets = set()
+    for _, data in packages:
+        if data is None or not is_published(data):
+            continue
+        config = data.get("publishConfig")
+        registry = config.get("registry") if isinstance(config, dict) else None
+        if not isinstance(registry, str) or registry.rstrip("/") in ("", "https://registry.npmjs.org"):
+            registry = "npmjs"
+        targets.add(registry)
+    if targets:
+        return fact(sorted(targets), "detected", "package.json publishConfig.registry of the published packages")
+    return fact(["npmjs"], "default", "no published package (npmjs)")
+
+
+TAG_SHAPES = (
+    ("v*", re.compile(r"^v\d+\.\d+\.\d+(?:[-+].*)?$")),
+    ("[0-9]*", re.compile(r"^\d+\.\d+\.\d+(?:[-+].*)?$")),
+    ("*@*", re.compile(r"^.+@\d+\.\d+\.\d+(?:[-+].*)?$")),
+)
+
+
+def release_tag_pattern(repo):
+    ok, out, _ = run(["git", "-C", repo, "tag", "--list"])
+    if not ok:
+        return fact("v*", "default", "git tag --list failed (v*)")
+    tags = out.split()
+    counts = {glob_: sum(1 for tag in tags if shape.match(tag)) for glob_, shape in TAG_SHAPES}
+    best = max(counts, key=counts.get)
+    if counts[best] == 0:
+        return fact("v*", "default", "no tag has a version shape (v*)")
+    return fact(best, "detected", "git tag --list")
+
+
+def is_public_package(data):
+    config = data.get("publishConfig")
+    access = config.get("access") if isinstance(config, dict) else None
+    scoped = isinstance(data.get("name"), str) and data["name"].startswith("@")
+    return is_published(data) and access != "restricted" and (not scoped or access == "public")
+
+
+def provenance(seen, packages):
+    if seen["status"] == "default":
+        return fact(False, "default", "visibility not readable (provenance not automatic)")
+    public = any(is_public_package(data) for _, data in packages if data is not None)
+    return fact(seen["value"] == "public" and public, "detected",
+                "visibility and the publish fields of package.json (automatic only for a public package of a public repo)")
 
 
 def installed_tools():
@@ -488,6 +749,7 @@ def collect(repo):
     workflows = sorted(os.path.relpath(path, repo).replace(os.sep, "/")
                        for pattern in ("*.yml", "*.yaml")
                        for path in glob.glob(os.path.join(repo, ".github", "workflows", pattern)))
+    lines = workflow_lines(repo, workflows)
     return {
         "default_branch": branch,
         "package_manager": package_manager(repo, root),
@@ -501,10 +763,22 @@ def collect(repo):
         "visibility": seen,
         "runner_labels": runner_labels(repo, workflows, seen["value"]),
         "required_checks": required_checks(identity, branch["value"]),
-        "run_history": run_history(identity, branch["value"]),
+        "run_history": workflow_history(identity, "ci.yml", branch["value"]),
         "existing_workflows": fact(workflows, "detected", ".github/workflows"),
         "installed_tools": installed_tools(),
         "supported_node_majors": node,
+        "environments": environments(identity),
+        "plan": plan(identity, info, seen),
+        "rulesets": rulesets(identity),
+        "classic_protection": classic_protection(identity, branch["value"]),
+        "deploy_targets": deploy_targets(lines),
+        "iac_tools": iac_tools(lines),
+        "aws_variables": aws_variables(lines),
+        "release_tool": release_tool(repo, root),
+        "publish_target": publish_target(packages),
+        "release_tag_pattern": release_tag_pattern(repo),
+        "provenance": provenance(seen, packages),
+        "deploy_history": workflow_history(identity, "deploy.yml"),
     }
 
 
