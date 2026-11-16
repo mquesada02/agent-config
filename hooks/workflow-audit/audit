@@ -652,8 +652,10 @@ def _subagents_folder(transcript_path):
 
 
 def _audited_transcripts(worktree, dir_fd):
-    """The transcripts of every registered session that touches the worktree, and the versions read.
-    Of a counted session: the main transcript, and only the subagent transcripts that touch the worktree themselves.
+    """(the audited transcripts, the subagent map): the transcripts of every registered session that touches the worktree, and the
+    map from agent id to transcript of every subagent transcript of those sessions, whether or not it touches the worktree.
+    Of a counted session the list holds the main transcript, and only the subagent transcripts that touch the worktree themselves.
+    The map is for XC and S4, which look up the ids that the ledger names; every other check judges the list.
     A session whose main transcript is missing (ENOENT), and a subagent file that is missing, are skipped.
     Raises Unavailable when no session touches it or another read error occurs."""
     root = os.path.realpath(worktree)
@@ -662,7 +664,7 @@ def _audited_transcripts(worktree, dir_fd):
     sessions = _registered_sessions(dir_fd)
     if not sessions:
         raise Unavailable("no registered session (empty or wiped registry)")
-    audited = []
+    audited, agents = [], {}
     for _, path in sessions:
         folder = _subagents_folder(path)
         paths = [path]
@@ -686,9 +688,13 @@ def _audited_transcripts(worktree, dir_fd):
         if any(touching):
             # the main transcript is transcripts[0] and always stays
             audited.append([transcript for number, transcript in enumerate(transcripts) if number == 0 or touching[number]])
+            for transcript in transcripts:
+                match = AGENT_TRANSCRIPT.fullmatch(transcript.name)
+                if match:
+                    agents[match.group(1)] = transcript
     if not audited:
         raise Unavailable("no registered session touches the worktree")
-    return audited
+    return audited, agents
 
 
 def _versions_warning(audited):
@@ -1514,17 +1520,6 @@ def check_s3(ledger):
     return True, f"{summary}, none open"
 
 
-def _agents(audited):
-    """agent id -> the subagent transcript, over every audited session."""
-    agents = {}
-    for transcripts in audited:
-        for transcript in transcripts:
-            match = AGENT_TRANSCRIPT.fullmatch(transcript.name)
-            if match:
-                agents[match.group(1)] = transcript
-    return agents
-
-
 def _is_sonnet(transcript):
     """Rows that Claude Code writes itself (model <synthetic>) are not model calls and do not count."""
     return _model_problem(transcript) is None
@@ -1923,13 +1918,12 @@ def _check_item(name, check, *args):
     return _s_item(name, passed, evidence)
 
 
-def _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem, base_branch):
-    """(S3 to S6 and XC, the ledger or None when it cannot be used, the S3 evidence). `audited` is None when the transcripts cannot be read,
-    with the reason in `problem`."""
+def _ledger_items(worktree, dir_fd, branch, remote_url, audited, agents, problem, base_branch):
+    """(S3 to S6 and XC, the ledger or None when it cannot be used, the S3 evidence). `audited` and `agents` (the subagent map of
+    `_audited_transcripts`) are None when the transcripts cannot be read, with the reason in `problem`."""
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
     if ledger is None:
         return [_s_item("S3", False, s3_evidence)] + [_s_item(name, False, other_evidence) for name in ("S4", "S5", "S6", "XC")], None, s3_evidence
-    agents = None if audited is None else _agents(audited)
     text = str(problem)
     return [_check_item("S3", check_s3, ledger), _check_item("S4", check_s4, ledger, agents, text), _check_item("S5", check_s5, ledger, audited, text, worktree, base_branch),
             _check_item("S6", check_s6, worktree, ledger, base_branch), _check_item("XC", check_xc, ledger, agents, text)], ledger, s3_evidence
@@ -2128,21 +2122,21 @@ def _now(timespec="seconds"):
 
 
 def _transcript_items(worktree, dir_fd):
-    """(the S1 and S2 items, the audited transcripts, the reason they cannot be read). Evidence that cannot be read fails both items
-    with "evidence unavailable"; the transcripts are then None."""
+    """(the S1 and S2 items, the audited transcripts, the subagent map, the reason they cannot be read). Evidence that cannot be read
+    fails both items with "evidence unavailable"; the transcripts and the map are then None."""
     try:
-        audited = _audited_transcripts(worktree, dir_fd)
+        audited, agents = _audited_transcripts(worktree, dir_fd)
     except Unavailable as problem:
-        return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, problem
+        return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, None, problem
     items = [_check_item(name, check, worktree, audited) for name, check in (("S1", check_s1), ("S2", check_s2))]
-    return items, audited, None
+    return items, audited, agents, None
 
 
 def _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch):
     """(the items S1 to S10 and XC in record order, the audited transcripts, the reason they cannot be read).
     The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
-    items, audited, problem = _transcript_items(worktree, dir_fd)
-    ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, problem, base_branch)
+    items, audited, agents, problem = _transcript_items(worktree, dir_fd)
+    ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, agents, problem, base_branch)
     items += ledger_items
     items.append(_check_item("S7", check_s7, audited, str(problem)))
     passed, evidence = check_s8(worktree, base_result)
@@ -2239,9 +2233,10 @@ def check_s3_pre_dispatch(view):
 def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
     """S3, S5, S7, XC and S10 in record order."""
     try:
-        audited, problem = _audited_transcripts(worktree, dir_fd), None
+        audited, agents = _audited_transcripts(worktree, dir_fd)
+        problem = None
     except Unavailable as unavailable:
-        audited, problem = None, unavailable
+        audited, agents, problem = None, None, unavailable
     text = str(problem)
     ledger, s3_evidence, other_evidence = _load_ledger(dir_fd, branch, remote_url)
     s7 = _check_item("S7", check_s7, audited, text)
@@ -2249,7 +2244,6 @@ def _pre_dispatch_items(worktree, dir_fd, branch, remote_url):
         return [_s_item("S3", False, s3_evidence), _s_item("S5", False, other_evidence), s7, _s_item("XC", False, other_evidence),
                 _s_item("S10", False, s3_evidence)]
     view = _plan_review_view(ledger)
-    agents = None if audited is None else _agents(audited)
     return [_check_item("S3", check_s3_pre_dispatch, view), _check_item("S5", check_s5, view, audited, text), s7, _check_item("XC", check_xc, view, agents, text),
             _check_item("S10", check_s10, dir_fd, view, remote_url)]
 
@@ -2450,7 +2444,7 @@ def _sessions_show(argv):
     dir_fd, _, _ = _open_ledger_dir(argv[1])
     try:
         try:
-            audited = _audited_transcripts(argv[1], dir_fd)
+            audited, _ = _audited_transcripts(argv[1], dir_fd)
         except Unavailable as problem:
             lines, status = [f"sessions unavailable: {problem}"], 2
         else:
