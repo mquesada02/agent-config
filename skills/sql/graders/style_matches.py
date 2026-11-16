@@ -9,8 +9,8 @@ second run. `--style` names a JSON file with the five `[style]` keys.
 `--target` is a 1-based inclusive line range of the first file (default: the
 whole file). The grader fails when the second file is not byte-identical to the
 first, and when a statement of the target (a statement that starts and ends
-inside it and is not a nested fragment) votes for a value other than the
-expected one. A property with no vote passes. `comma` is not checked when the
+inside it, is not a nested fragment and is not a `dynamic` `pg` statement, whose
+text is raw source and not SQL) votes for a value other than the expected one. A property with no vote passes. `comma` is not checked when the
 expected `clause_per_line` is false.
 
 Exit code: 0 pass, 1 fail, 2 usage error. Prints {"grader", "pass", "failures"}.
@@ -48,6 +48,7 @@ def check(first_path, target, tags, style):
         statement
         for statement in data["statements"]
         if statement["parent"] is None
+        and not (statement["source"] == "pg" and statement["pg"]["dynamic"])
         and (target is None or (statement["start_line"] >= target[0] and statement["end_line"] <= target[1]))
     ]
     if not inside:
