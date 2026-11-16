@@ -24,7 +24,7 @@ Read the whole branch file with the Read tool, never only a part of it with a se
 The CI rule files (naming, job graph, cost, security and maintainability) load always. They apply to the CD workflow files too. The monorepo file loads only for a monorepo. Each CD rule file loads only when its rule below holds, and only when the file exists in `rules/`:
 
 - `DEPLOY` and `ROLLBACK` ([rules/deploy.md](rules/deploy.md) and `rules/rollback.md`): when the request names a deploy or a rollback, or the repo has a deploy workflow (the `existing_workflows` fact lists `deploy.yml`, or the `deploy_targets` fact has a value).
-- `RELEASE` (`rules/release.md`): when the request names a release, or the repo has a release tool or tag-driven releases (the `release_tool` fact has a value, or the `release_tag_pattern` fact is detected).
+- `RELEASE` (`rules/release.md`): when the request names a release, or the repo has a release tool or tag-driven releases (the `release_tool` fact).
 - `PUBLISH` (`rules/publish.md`): when the intake finds a published package (the `package_kind` fact).
 - `PROTECT` (`rules/protect.md`): with any CD rule file, or when the request is about branch protection, rulesets or environments.
 

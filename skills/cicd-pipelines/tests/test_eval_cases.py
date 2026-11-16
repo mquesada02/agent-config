@@ -105,6 +105,12 @@ def run_text(workflow_text):
     return "\n".join(values)
 
 
+def job_timeouts(workflow_text):
+    """Map of job `name:` to its `timeout-minutes` for the jobs of a workflow text that set one."""
+    found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", workflow_text)
+    return {name: int(minutes) for name, minutes in found}
+
+
 def checkout_blocks(workflow_text):
     """The step blocks of a workflow text that hold a checkout action."""
     steps = re.split(r"(?m)^(?= *- (?:name|uses|run):)", workflow_text)
@@ -400,8 +406,7 @@ class RecordedIntakeCost04(RecordedHistoryChecks, unittest.TestCase):
         return read(os.path.join(case_dir(case), "repo", ".github", "workflows", "ci.yml"))
 
     def timeouts(self):
-        found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", self.workflow(self.CASE))
-        return {name: int(minutes) for name, minutes in found}
+        return job_timeouts(self.workflow(self.CASE))
 
     def test_every_history_job_has_a_timeout_more_than_2x_above_the_proposal(self):
         timeouts = self.timeouts()
@@ -633,8 +638,12 @@ class CleanWorkflow(unittest.TestCase):
 
 
 class DeployCases(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.deploy_texts = {name: workflow_text(name, "deploy.yml") for name in DEPLOY_CASES}
+
     def deploy(self, case):
-        return workflow_text(case, "deploy.yml")
+        return self.deploy_texts[case]
 
     def test_the_deploy_cases_are_exactly_these_with_their_lists(self):
         found = {n for n in review_cases() if n.startswith("deploy-")}
@@ -717,9 +726,7 @@ class RecordedIntakeDeploy09(RecordedIntakeChecks, unittest.TestCase):
     CASE = "deploy-09-timeout-too-high-with-history"
 
     def timeouts(self):
-        text = workflow_text(self.CASE, "deploy.yml")
-        found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", text)
-        return {name: int(minutes) for name, minutes in found}
+        return job_timeouts(workflow_text(self.CASE, "deploy.yml"))
 
     def test_the_deploy_history_is_detected_with_10_runs_and_the_run_history_is_unknown(self):
         history = self.intake["deploy_history"]

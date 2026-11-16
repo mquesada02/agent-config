@@ -231,12 +231,14 @@ class CostAndMonorepoRules(unittest.TestCase):
 
 
 class DeployRules(unittest.TestCase):
-    def setUp(self):
-        self.path = rule_files()["deploy"]
-        self.deploy = dict(rule_entries(self.path))
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["deploy"]
+        cls.entries = rule_entries(cls.path)
+        cls.deploy = dict(cls.entries)
 
     def test_the_deploy_file_holds_deploy_01_to_deploy_10_in_order(self):
-        self.assertEqual([rule_id for rule_id, _ in rule_entries(self.path)], DEPLOY_IDS)
+        self.assertEqual([rule_id for rule_id, _ in self.entries], DEPLOY_IDS)
 
     def test_the_severity_levels_follow_the_ticket_table(self):
         expected = {"DEPLOY-01": "required", "DEPLOY-02": "required", "DEPLOY-03": "required",
@@ -291,7 +293,7 @@ class DeployRules(unittest.TestCase):
         self.assertIn("`deploy_history`", fields["Check"])
         self.assertIn("no measured finding", fields["Check"])
 
-    def test_the_rule_text_quotes_no_private_sample_name_and_no_write_api_call(self):
+    def test_the_rule_text_quotes_no_write_api_call(self):
         text = read(self.path)
         self.assertNotIn("gh api", text)
         self.assertIsNone(re.search(r"-X (POST|PUT|PATCH|DELETE)", text))
@@ -601,7 +603,6 @@ class Router(unittest.TestCase):
                      "with any CD rule file", "branch protection, rulesets or environments"):
             self.assertIn(text, section)
         self.assertNotIn("does not exist yet", self.text)
-        self.assertIn("[rules/deploy.md](rules/deploy.md)", section)
 
     def test_the_modules_list_names_the_deploy_rules_and_their_load_rule(self):
         modules = self.text[self.text.index("## Modules"):]

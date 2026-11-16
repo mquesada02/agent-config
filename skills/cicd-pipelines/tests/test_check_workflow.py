@@ -41,9 +41,9 @@ COVERAGE = {
     ("SEC-08",): "no-text", ("SEC-10",): "audit-job", ("MAINT-01",): "short-run-blocks",
     ("MAINT-02",): "short-comments", ("COST-01",): "triggers-cd",
 }
-NOT_CLAIMED = {"SEC-06", "GRAPH-06", "GRAPH-07", "MAINT-03", "NAME-09"} | {f"DEPLOY-{n:02d}" for n in range(1, 11)}
-# The DEPLOY ids are here because no assertion claims them yet: the ticket that adds the CD assertions moves each
-# id that an assertion claims into COVERAGE.
+# No assertion claims the DEPLOY ids: a review case covers each of them.
+DEPLOY_IDS = {f"DEPLOY-{n:02d}" for n in range(1, 11)}
+NOT_CLAIMED = {"SEC-06", "GRAPH-06", "GRAPH-07", "MAINT-03", "NAME-09"} | DEPLOY_IDS
 
 
 def run(text, *asserts):
