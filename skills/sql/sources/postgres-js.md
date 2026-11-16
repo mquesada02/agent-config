@@ -43,16 +43,17 @@ If `error` is not null, stop. Show its `message` and its `line` (the line can be
 
 ## Regex or division
 
-In every JavaScript and TypeScript file the extractor decides from the last tokens whether a `/` starts a regex or is a division. Two rules apply before the usual rule (a regex starts after an operator, an opening bracket or a regex keyword such as `return`):
+In every JavaScript and TypeScript file the extractor decides from the last tokens whether a `/` starts a regex or is a division. Three rules apply before the usual rule (a regex starts after an operator, an opening bracket or a regex keyword such as `return`):
 
 - After a postfix `++` or `--`, the `/` is a division: `i++ / 2`. Two separate operators, as in `a + +/re/.source`, are not a postfix operator, so the `/` there starts a regex.
 - Right after the words `export default`, the `/` starts a regex: `export default /re/`. The name `default` in any other place is a value, so `obj.default / 2` is a division.
+- After the `)` that closes the header of `if`, `while`, `for` (also `for await`) or `with`, the `/` starts a regex: `if (ok) /re/.test(s)`. After the `)` of a call or a group, it is a division: `f(a) / 2`. A keyword after a `.` is a property name, so `obj.if(a) / 2` is a division. Known limit: the `while (c)` that ends a `do ... while` loop counts as a header, so a `/` right after it is read as a regex.
 
 ## JSX scan
 
 In `.jsx` and `.tsx` files the extractor scans each JSX element as one unit, from its opening `<` to its matching close. JSX text and attribute strings never open a JavaScript string, template, regex or comment, so an apostrophe, a double quote or a backtick in JSX text does not hide a later template. A `{...}` child or attribute value is JavaScript again, so a template inside it is found. Other extensions do not change.
 
-- An element starts at a `<` where an expression can start (not after a name, number, string, `)`, `]`, `}`, a postfix `++` or `--`, or the end of a template), when a name or `>` (a fragment) follows. A regex keyword such as `return` and the words `export default` (`export default <p/>`) before the `<` do not count as values.
+- An element starts at a `<` where an expression can start (not after a name, number, string, a `)` other than the `)` that closes a control-statement header (`if (a) <b/>`), `]`, `}`, a postfix `++` or `--`, or the end of a template), when a name or `>` (a fragment) follows. A regex keyword such as `return` and the words `export default` (`export default <p/>`) before the `<` do not count as values.
 - In `.tsx`, a generic arrow function is TypeScript, not JSX (the rule of the TypeScript parser for `.tsx`): after `<`, an optional `const` and a name, a `,`, an `=` that is not `=>`, or `extends` followed by something other than `=`, `>` or `/`. Examples: `<T,>(x: T) => x`, `<T extends U>(x: T) => x`. Type arguments in a call (`f<T>(x)`) are TypeScript too.
 - An element that is still open at the end of the file gives the error `unterminated JSX element` with the line of the innermost element that is still open.
 - Tag names are not compared, so a mismatched close such as `<a></b>` is accepted and closes `a`.
