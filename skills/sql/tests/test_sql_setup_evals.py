@@ -337,5 +337,32 @@ class FixtureProofTest(unittest.TestCase):
         self.run_case("setup-rerun", style, ["sql"], "none", ["Never build SQL with string concatenation."], ["app-dev"], drop_conflicts=("indent",), kept_conflicts=("keyword_case",))
 
 
+class ReadmeGraderDTest(unittest.TestCase):
+    """The evals README tells the reader to run grader D with --diff-in-prompt on plugin eval runs (ticket 661)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = read(os.path.join(EVALS, "README.md"))
+        cls.setup_cases = cls.text.split("## Setup cases", 1)[1].split("### Two-turn runner", 1)[0]
+        cls.two_turn = cls.text.split("### Two-turn runner", 1)[1].split("\n## ", 1)[0]
+
+    def test_the_grader_d_usage_line_names_the_flag(self):
+        lines = [line for line in self.setup_cases.splitlines() if "grade_setup.py" in line and "--diff-in-prompt" in line]
+        self.assertTrue(lines)
+
+    def test_no_sentence_says_the_plugin_eval_cases_keep_the_shown_check(self):
+        self.assertNotIn("keep the `shown` check", self.text)
+        self.assertNotIn("rests on the case prompt", self.text)
+
+    def test_the_two_turn_section_says_the_plugin_eval_cases_use_the_flag(self):
+        self.assertIn("plugin eval cases run grader D with `--diff-in-prompt`", self.two_turn)
+
+    def test_the_tags_fixture_row_says_the_diff_is_in_the_permission_prompt(self):
+        rows = [line for line in self.setup_cases.splitlines() if line.startswith("| `setup-tags-fixture`")]
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("the diff is shown before the write", rows[0])
+        self.assertIn("permission prompt", rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()
