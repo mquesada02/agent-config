@@ -16,11 +16,11 @@ class LedgerChecksCase(AuditCase):
         self.tip = self.start_branch("feature", "feat: a")
         self.sessions = 0
 
-    def agents(self, **agents):
-        """Register one more audited session whose subagents are `agents`: id -> rows."""
+    def agents(self, touching=True, **agents):
+        """Register one more audited session whose subagents are `agents`: id -> rows. They touch the worktree unless `touching` is False."""
         self.sessions += 1
         path = os.path.join(self.repo, f"b{self.sessions}.txt")
-        self.register_session(f"more-{self.sessions}", [edit_row(path, "t9", 3)], subagents=agents)
+        self.register_session(f"more-{self.sessions}", [edit_row(path, "t9", 3)], subagents=agents, touching=touching)
 
     def items(self, events=None, raw=None):
         if events is not None or raw is not None:
@@ -448,40 +448,30 @@ class CrossCheckTest(LedgerChecksCase):
 class TrackerOnlySubagentTest(LedgerChecksCase):
     """A subagent that the ledger names and that never touches the worktree (a plan-review reviewer that reads only the tracker)."""
 
-    def tracker_only(self, **agents):
-        """Register one more audited session whose subagents never touch the worktree: id -> rows."""
-        self.sessions += 1
-        path = os.path.join(self.repo, f"b{self.sessions}.txt")
-        self.register_session(f"more-{self.sessions}", [edit_row(path, "t9", 3)], subagents=agents, touching=False)
-
     def test_a_sonnet_reviewer_passes_xc(self):
-        self.tracker_only(rev2=subagent_rows())
+        self.agents(touching=False, rev2=subagent_rows())
         self.check(self.items([round_event(reviewers=["rev2"])]), "XC", "pass", "1 reviewers and verifiers checked")
 
     def test_a_sonnet_verifier_passes_s4_and_xc(self):
-        self.tracker_only(ver9=subagent_rows())
+        self.agents(touching=False, ver9=subagent_rows())
         items = self.items([round_event(), finding_event("I1"), verdict_event("I1", "ver9")])
         self.check(items, "S4", "pass")
         self.check(items, "XC", "pass")
 
-    def test_a_reviewer_that_is_not_sonnet_fails_xc(self):
-        self.tracker_only(rev2=subagent_rows(model="claude-opus-5-5"))
-        self.check(self.items([round_event(reviewers=["rev2"])]), "XC", "fail", "reviewer rev2 of code-review correctness round 1: not a Sonnet subagent")
-
-    def test_a_named_reviewer_that_is_not_sonnet_is_still_not_judged_by_s7(self):
-        self.tracker_only(rev2=subagent_rows(model="claude-opus-5-5"))
+    def test_a_reviewer_that_is_not_sonnet_fails_xc_and_is_not_judged_by_s7(self):
+        self.agents(touching=False, rev2=subagent_rows(model="claude-opus-5-5"))
         items = self.items([round_event(reviewers=["rev2"])])
-        self.check(items, "XC", "fail", "not a Sonnet subagent")
+        self.check(items, "XC", "fail", "reviewer rev2 of code-review correctness round 1: not a Sonnet subagent")
         self.check(items, "S7", "pass")
 
     def test_a_verifier_that_is_not_sonnet_fails_s4_and_xc(self):
-        self.tracker_only(ver9=subagent_rows(model="claude-opus-5-5"))
+        self.agents(touching=False, ver9=subagent_rows(model="claude-opus-5-5"))
         items = self.items([round_event(), finding_event("I1"), verdict_event("I1", "ver9")])
         self.check(items, "S4", "fail", "I1: no verdict by a Sonnet subagent")
         self.check(items, "XC", "fail", "verifier ver9 of I1: not a Sonnet subagent")
 
     def test_a_reviewer_that_started_before_the_previous_round_fails_xc(self):
-        self.tracker_only(rev2=subagent_rows(start=EARLY))
+        self.agents(touching=False, rev2=subagent_rows(start=EARLY))
         events = [round_event(), round_event(2, reviewers=["rev2"])]
         self.check(self.items(events), "XC", "fail", "reviewer rev2 of code-review correctness round 2: started before the previous round")
 
@@ -491,7 +481,7 @@ class TrackerOnlySubagentTest(LedgerChecksCase):
         self.check(self.items([round_event(reviewers=["foreign"])]), "XC", "fail", "reviewer foreign of code-review correctness round 1: not a subagent of an audited transcript")
 
     def test_an_id_in_no_transcript_fails_xc(self):
-        self.tracker_only(rev2=subagent_rows())
+        self.agents(touching=False, rev2=subagent_rows())
         self.check(self.items([round_event(reviewers=["ghost"])]), "XC", "fail", "reviewer ghost of code-review correctness round 1: not a subagent of an audited transcript")
 
 
