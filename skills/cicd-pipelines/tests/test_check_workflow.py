@@ -41,10 +41,11 @@ COVERAGE = {
     ("SEC-08",): "no-text", ("SEC-10",): "audit-job", ("MAINT-01",): "short-run-blocks",
     ("MAINT-02",): "short-comments", ("COST-01",): "triggers-cd",
 }
-# No assertion claims the DEPLOY ids yet: a review case covers each of them. The structural-assertion ticket moves
-# the ids that an assertion claims into COVERAGE.
+# No assertion claims the DEPLOY and ROLLBACK ids yet: a review case covers each of them. The structural-assertion
+# ticket moves the ids that an assertion claims into COVERAGE.
 DEPLOY_IDS = {f"DEPLOY-{n:02d}" for n in range(1, 11)}
-NOT_CLAIMED = {"SEC-06", "GRAPH-06", "GRAPH-07", "MAINT-03", "NAME-09"} | DEPLOY_IDS
+ROLLBACK_IDS = {f"ROLLBACK-{n:02d}" for n in range(1, 7)}
+NOT_CLAIMED = {"SEC-06", "GRAPH-06", "GRAPH-07", "MAINT-03", "NAME-09"} | DEPLOY_IDS | ROLLBACK_IDS
 
 
 def run(text, *asserts):

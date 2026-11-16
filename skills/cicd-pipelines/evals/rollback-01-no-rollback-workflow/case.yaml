@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: rollback-01-no-rollback-workflow
+context:
+  scaffold_script: scaffold.sh

@@ -16,6 +16,7 @@ COST_IDS = [f"COST-{n:02d}" for n in range(1, 9)]
 MONO_IDS = ["MONO-01", "MONO-02"]
 SEC_IDS = [f"SEC-{n:02d}" for n in range(1, 11)]
 DEPLOY_IDS = [f"DEPLOY-{n:02d}" for n in range(1, 11)]
+ROLLBACK_IDS = [f"ROLLBACK-{n:02d}" for n in range(1, 7)]
 ZIZMOR_MAPPING = {
     "unpinned-uses": "SEC-01", "excessive-permissions": "SEC-03", "template-injection": "SEC-04",
     "artipacked": "SEC-05", "dangerous-triggers": "SEC-07", "secrets-inherit": "SEC-08",
@@ -292,6 +293,84 @@ class DeployRules(unittest.TestCase):
         self.assertIn("A timeout of exactly 2× the proposal is no finding", fields["Check"])
         self.assertIn("`deploy_history`", fields["Check"])
         self.assertIn("no measured finding", fields["Check"])
+
+    def test_the_rule_text_quotes_no_write_api_call(self):
+        text = read(self.path)
+        self.assertNotIn("gh api", text)
+        self.assertIsNone(re.search(r"-X (POST|PUT|PATCH|DELETE)", text))
+
+
+class RollbackRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["rollback"]
+        cls.entries = rule_entries(cls.path)
+        cls.rollback = dict(cls.entries)
+
+    def test_the_rollback_file_holds_rollback_01_to_rollback_06_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in self.entries], ROLLBACK_IDS)
+
+    def test_the_severity_levels_follow_the_ticket_table(self):
+        expected = {"ROLLBACK-01": "required", "ROLLBACK-02": "required", "ROLLBACK-03": "required",
+                    "ROLLBACK-04": "suggestion", "ROLLBACK-05": "suggestion", "ROLLBACK-06": "required"}
+        self.assertEqual({rule_id: level(fields) for rule_id, fields in self.rollback.items()}, expected)
+
+    def test_the_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No rollback rule is critical", read(self.path))
+
+    def test_every_check_starts_with_its_kind(self):
+        kinds = {"ROLLBACK-04": "judgement", "ROLLBACK-05": "judgement"}
+        for rule_id, fields in self.rollback.items():
+            self.assertTrue(fields["Check"].startswith(kinds.get(rule_id, "mechanical")), rule_id)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.rollback.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_rollback_01_takes_the_version_from_the_ref_and_reports_a_missing_file_by_name(self):
+        fields = self.rollback["ROLLBACK-01"]
+        for text in ("Its only trigger is `workflow_dispatch`", "never from a free-text input", "A final tag has no pre-release suffix",
+                     "does not read which tag is older", "`type: string`", "`version`, `tag` or `ref`",
+                     "An environment choice input (`type: choice`) is allowed"):
+            self.assertIn(text, fields["Rule"])
+        self.assertIn("github.ref_type == 'tag'", fields["Check"])
+        self.assertIn("`rollback.yml` as its location", fields["Check"])
+
+    def test_rollback_02_forbids_a_build_and_keeps_the_digest_and_version_checks(self):
+        rule = self.rollback["ROLLBACK-02"]["Rule"]
+        for text in ("never builds", "reuses the stored artifact of the tag, or the previous version on the target",
+                     "the digest check of DEPLOY-03", "the version check of DEPLOY-05",
+                     "the same deploy script as the deploy jobs", "DEPLOY-01 covers `deploy.yml` only"):
+            self.assertIn(text, rule)
+
+    def test_rollback_03_names_the_storage_places_and_flags_the_run_artifact_action(self):
+        fields = self.rollback["ROLLBACK-03"]
+        for text in ("S3 with versioning", "in a registry", "as Lambda versions", "under the commit SHA",
+                     "does not check it", "`actions/upload-artifact`", "1 to 90 days"):
+            self.assertIn(text, fields["Rule"])
+        for text in ("S3", "commit SHA", "registry", "Lambda version"):
+            self.assertIn(text, fields["Fix"])
+
+    def test_rollback_04_defines_the_prod_target_and_leaves_fail_fast_to_graph_04(self):
+        rule = self.rollback["ROLLBACK-04"]["Rule"]
+        for text in ("`environment: prod`", "`options` include `prod`", "a matrix with more than one value",
+                     "`max-parallel: 1`", "chained with `needs`", "GRAPH-04 owns that key"):
+            self.assertIn(text, rule)
+        self.assertNotIn("fail-fast: false", self.rollback["ROLLBACK-04"]["Fix"])
+
+    def test_rollback_05_has_exactly_three_finding_forms_and_passes_an_unset_cloudformation_rollback(self):
+        rule = self.rollback["ROLLBACK-05"]["Rule"]
+        for text in ("these three forms, and nothing else is a finding", "`--disable-rollback` or `--no-rollback`",
+                     "a step with no flag passes", "circuit breaker rollback off", "`--auto-rollback-configuration`",
+                     "a Lambda alias or an S3 bucket) gets no finding"):
+            self.assertIn(text, rule)
+
+    def test_rollback_06_uses_the_deploy_group_with_no_cancel_and_leaves_its_form_to_cost_02(self):
+        rule = self.rollback["ROLLBACK-06"]["Rule"]
+        for text in ("`deploy-<env>`", "`deploy-${{ inputs.environment }}`", "`cancel-in-progress: false`",
+                     "COST-02 owns the deploy group form"):
+            self.assertIn(text, rule)
+        self.assertIn("job-level `concurrency.group`", self.rollback["ROLLBACK-06"]["Check"])
 
     def test_the_rule_text_quotes_no_write_api_call(self):
         text = read(self.path)
@@ -585,6 +664,7 @@ class Router(unittest.TestCase):
         self.assertIn("rules/monorepo.md", bullet)
         self.assertIn("when the intake finds a monorepo", bullet)
         self.assertIn("rules/deploy.md", bullet)
+        self.assertIn("rules/rollback.md", bullet)
         self.assertIn("when the repo has a deploy workflow", bullet)
 
     def test_loading_by_need_gives_the_load_rule_of_each_cd_family_before_the_modules_list(self):
@@ -608,6 +688,13 @@ class Router(unittest.TestCase):
         modules = self.text[self.text.index("## Modules"):]
         self.assertIn("[rules/deploy.md](rules/deploy.md): DEPLOY-01 to DEPLOY-10", modules)
         self.assertIn("\"Loading by need\"", modules)
+
+    def test_the_loading_section_links_the_rollback_file_and_the_modules_list_names_its_rules(self):
+        start = self.text.index("## Loading by need")
+        section = self.text[start:self.text.index("## Modules")]
+        self.assertIn("[rules/rollback.md](rules/rollback.md)", section)
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("[rules/rollback.md](rules/rollback.md): ROLLBACK-01 to ROLLBACK-06", modules)
 
     def test_the_modules_list_names_the_cost_and_monorepo_rules(self):
         modules = self.text[self.text.index("## Modules"):]

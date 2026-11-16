@@ -59,9 +59,17 @@ DEPLOY_CASES = {
     "deploy-09-timeout-too-high-no-history": ([], ["DEPLOY-09"]),
     "deploy-10-no-pr-dry-run": (["DEPLOY-10"], []),
 }
+ROLLBACK_CASES = {
+    "rollback-01-no-rollback-workflow": (["ROLLBACK-01"], []),
+    "rollback-02-rollback-builds": (["ROLLBACK-02"], []),
+    "rollback-03-run-artifact-only": (["ROLLBACK-03"], []),
+    "rollback-04-parallel-prod-targets": (["ROLLBACK-04"], []),
+    "rollback-05-native-rollback-disabled": (["ROLLBACK-05"], []),
+    "rollback-06-other-concurrency-group": (["ROLLBACK-06"], []),
+}
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 13
+CD_CASE_COUNT = 19
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -720,6 +728,84 @@ class DeployCases(unittest.TestCase):
         self.assertEqual(self.deploy(with_history), self.deploy(no_history))
         self.assertFalse(os.path.exists(os.path.join(case_dir(no_history), "repo", "intake.json")))
         self.assertNotIn("intake.json", read(os.path.join(case_dir(no_history), "prompt.md")))
+
+
+class RollbackCases(unittest.TestCase):
+    NO_FILE = "rollback-01-no-rollback-workflow"
+    BUILDS = "rollback-02-rollback-builds"
+    RUN_ARTIFACT = "rollback-03-run-artifact-only"
+    MATRIX = "rollback-04-parallel-prod-targets"
+    NATIVE = "rollback-05-native-rollback-disabled"
+    OTHER_GROUP = "rollback-06-other-concurrency-group"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rollbacks = {name: workflow_text(name, "rollback.yml") for name in ROLLBACK_CASES if name != cls.NO_FILE}
+        cls.deploys = {name: workflow_text(name, "deploy.yml") for name in ROLLBACK_CASES}
+
+    def job(self, case):
+        return job_text(self.rollbacks[case], "rollback")
+
+    def test_the_rollback_cases_are_exactly_these_with_their_lists(self):
+        found = {n for n in review_cases() if n.startswith("rollback-")}
+        self.assertEqual(found, set(ROLLBACK_CASES))
+        for name, lists in ROLLBACK_CASES.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_every_case_but_the_first_has_a_rollback_workflow_and_the_first_has_none(self):
+        workflows = os.path.join(case_dir(self.NO_FILE), "repo", ".github", "workflows")
+        self.assertFalse(os.path.exists(os.path.join(workflows, "rollback.yml")))
+        self.assertTrue(os.path.exists(os.path.join(workflows, "deploy.yml")))
+
+    def test_every_rollback_workflow_is_a_dispatch_on_a_tag_with_an_environment_choice(self):
+        for name, text in self.rollbacks.items():
+            self.assertIn("workflow_dispatch:", text, name)
+            self.assertNotIn("push:", text, name)
+            self.assertIn("type: choice", text, name)
+            self.assertNotIn("type: string", text, name)
+            self.assertIn("if: github.ref_type == 'tag'", self.job(name), name)
+
+    def test_the_cases_that_keep_the_deploy_script_run_it_and_have_no_install_and_no_build(self):
+        for name in self.rollbacks:
+            if name in (self.BUILDS, self.NATIVE):
+                continue
+            job = self.job(name)
+            self.assertIn('run: ./scripts/deploy-lambda.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"', job, name)
+            self.assertNotIn("pnpm install", job, name)
+            self.assertNotIn("pnpm build", job, name)
+
+    def test_the_rule_fixtures_differ_from_the_good_one_only_where_the_rule_needs(self):
+        other_group = self.job(self.OTHER_GROUP)
+        self.assertIn("group: rollback-${{ inputs.environment }}\n", other_group)
+        for name in self.rollbacks:
+            if name != self.OTHER_GROUP:
+                job = self.job(name)
+                self.assertIn("group: deploy-${{ inputs.environment }}\n", job, name)
+                self.assertIn("cancel-in-progress: false", job, name)
+        builds = self.job(self.BUILDS)
+        self.assertIn("pnpm install --frozen-lockfile", builds)
+        self.assertIn("pnpm build", builds)
+        self.assertIn("deploy-lambda.sh", builds)
+        matrix = self.job(self.MATRIX)
+        self.assertIn("matrix:", matrix)
+        self.assertNotIn("max-parallel", matrix)
+        self.assertIn("options: [staging, prod]", self.rollbacks[self.MATRIX])
+        native = self.job(self.NATIVE)
+        self.assertIn("aws cloudformation deploy", native)
+        self.assertIn("--disable-rollback", native)
+        self.assertNotIn("deploy-lambda.sh", native)
+
+    def test_the_run_artifact_case_stores_no_zip_in_s3_and_assumes_no_artifacts_role(self):
+        package = job_text(self.deploys[self.RUN_ARTIFACT], "package")
+        self.assertIn("actions/upload-artifact@", package)
+        self.assertNotIn("aws s3 cp", package)
+        self.assertNotIn("role-to-assume", package)
+
+    def test_the_deploy_side_is_the_good_deploy_workflow_in_every_case_but_the_run_artifact_case(self):
+        good = workflow_text("deploy-02-tag-run-staging-record", "deploy.yml")
+        for name, text in self.deploys.items():
+            if name != self.RUN_ARTIFACT:
+                self.assertEqual(text, good, name)
 
 
 class RecordedIntakeDeploy09(RecordedIntakeChecks, unittest.TestCase):
