@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: deploy-10-no-pr-dry-run
+context:
+  scaffold_script: scaffold.sh

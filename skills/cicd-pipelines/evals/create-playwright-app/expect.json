@@ -35,7 +35,15 @@
     "SEC-07",
     "SEC-08",
     "SEC-09",
-    "SEC-10"
+    "SEC-10",
+    "DEPLOY-01",
+    "DEPLOY-02",
+    "DEPLOY-03",
+    "DEPLOY-04",
+    "DEPLOY-05",
+    "DEPLOY-06",
+    "DEPLOY-08",
+    "DEPLOY-09"
   ],
   "asserts": {
     ".github/workflows/ci.yml": [
