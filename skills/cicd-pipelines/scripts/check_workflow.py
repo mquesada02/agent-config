@@ -5,7 +5,7 @@ Usage: check_workflow.py WORKFLOW --assert NAME[=ARGS] [NAME[=ARGS] ...]
 
 WORKFLOW is a path, or - for stdin. It is the text of a workflow, or of a Dependabot file for the `dependabot`
 assertion. The script reads the text only (no YAML parser) and runs each assertion in the order given.
-Assertions: name=<text> job=<id,...> no-job=<id,...> triggers concurrency permissions pinned-uses
+Assertions: name=<text> job=<id,...> no-job=<id,...> triggers triggers-cd concurrency permissions pinned-uses
 persist-credentials pinned-runners no-run-expr named-run-steps short-run-blocks short-comments timeouts
 timeout=<job>:<minutes> gate changes fail-fast matrix-node=<majors> matrix-only-test matrix-name no-shards
 install=<command> audit-job no-privileged-trigger no-needs-between job-names affected-run=<turbo|nx|pnpm>
@@ -180,6 +180,21 @@ def a_triggers(wf, _):
     return failures
 
 
+def a_triggers_cd(wf, _):
+    """The CD form of the ci.yml triggers: `pull_request` and `workflow_call`, no `push`, no paths filter."""
+    block = "\n".join(top_block(wf.lines, "on") or [])
+    failures = []
+    if re.search(r"(?m)^\s+push:", block):
+        failures.append("push is a trigger")
+    if "pull_request:" not in block:
+        failures.append("pull_request is missing")
+    if "workflow_call:" not in block:
+        failures.append("workflow_call is missing")
+    if re.search(r"(?m)^\s+paths(-ignore)?:", block):
+        failures.append("a paths filter exists")
+    return failures
+
+
 def a_concurrency(wf, _):
     return [f"missing `{part}`" for part in CONCURRENCY if part not in wf.text]
 
@@ -249,8 +264,9 @@ def a_short_comments(wf, _):
 
 
 def a_timeouts(wf, _):
+    # A job that calls a reusable workflow (job-level `uses:`) cannot set `timeout-minutes`.
     return [f"job {job} has no timeout-minutes" for job, lines in wf.jobs.items()
-            if field(lines, "timeout-minutes") is None]
+            if field(lines, "timeout-minutes") is None and field(lines, "uses") is None]
 
 
 def a_timeout(wf, arg):
@@ -460,6 +476,7 @@ def a_security_audit(wf, _):
 
 ASSERTIONS = {
     "name": (a_name, True), "job": (a_job, True), "no-job": (a_no_job, True), "triggers": (a_triggers, False),
+    "triggers-cd": (a_triggers_cd, False),
     "concurrency": (a_concurrency, False), "permissions": (a_permissions, False),
     "pinned-uses": (a_pinned_uses, False), "persist-credentials": (a_persist_credentials, False),
     "pinned-runners": (a_pinned_runners, False), "no-run-expr": (a_no_run_expr, False),
