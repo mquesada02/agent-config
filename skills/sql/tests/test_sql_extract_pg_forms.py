@@ -315,7 +315,6 @@ class ConstTest(FormsCase):
             "let q = 'SELECT 1';",
             "var q = 'SELECT 1';",
             "const q = 'SELECT 1'.trim();",
-            "const q = 'SELECT 1' as const;",
             "const q = 'SELECT 1' as string;",
             "const q = 'SELECT 1' satisfies string;",
             "const q = 'SELECT 1' ?? 'x';",
@@ -707,6 +706,149 @@ class StatementCountTest(FormsCase):
         self.assertIsNone(statement["pg"]["statement_count"])
         statement = self.stmts("pool.query('SELECT ' + x);")[0]
         self.assertIsNone(statement["pg"]["statement_count"])
+
+
+class GroupedArgumentTest(FormsCase):
+    @staticmethod
+    def without_columns(statements):
+        """The statements with each interpolation reduced to its expression and position: the offsets of
+        an interpolation move with the group."""
+        return [
+            dict(s, interpolations=[(i["expression"], i["position"]) for i in s["interpolations"]])
+            for s in statements
+        ]
+
+    def test_the_issue_example_gives_three_statements_and_no_not_followed(self):
+        source = (
+            "pool.query(('SELECT 1 ' + 'FROM t'));\n"
+            "const Q: string = 'SELECT 2' as const;\n"
+            "pool.query(Q);\n"
+            "pool.query('SELECT 3 ' + 'FROM t');"
+        )
+        data = self.forms(source)
+        self.assertEqual(data["not_followed"], [])
+        statements = [s for s in data["statements"] if s["source"] == "pg"]
+        self.assertEqual([s["text"] for s in statements], ["SELECT 1 FROM t", "SELECT 2", "SELECT 3 FROM t"])
+        self.assertEqual([s["start_line"] for s in statements], [3, 4, 6])
+        self.assertEqual([s["pg"]["const_name"] for s in statements], [None, "Q", None])
+        self.assertEqual([s["pg"]["calls"][0]["line"] for s in statements], [3, 5, 6])
+
+    def test_a_group_gives_the_statement_of_the_form_with_no_group(self):
+        cases = [
+            ("'SELECT 1'", "literal"),
+            ("`SELECT 1`", "template"),
+            ("'SELECT ' + '1'", "chain"),
+            ("'SELECT ' + `1`", "chain"),
+            ("`SELECT ${x}`", "template"),
+            ("'SELECT ' + x", "chain"),
+        ]
+        for argument, kind in cases:
+            for group in ("(%s)", "((%s))", "( (%s) )"):
+                with self.subTest(argument=argument, group=group):
+                    plain = self.stmts("pool.query(%s);" % argument)
+                    grouped = self.stmts("pool.query(%s);" % (group % argument))
+                    self.assertEqual(len(grouped), 1)
+                    self.assertEqual(self.without_columns(grouped), self.without_columns(plain))
+                    self.assertEqual(grouped[0]["pg"]["kind"], kind)
+                    self.assertEqual(self.not_followed("pool.query(%s);" % (group % argument)), [])
+
+    def test_a_group_keeps_its_values_argument(self):
+        statement = self.stmts("pool.query(('SELECT $1'), [1]);")[0]
+        call = statement["pg"]["calls"][0]
+        self.assertEqual((call["call"], call["values_length"], call["values_present"]), ("direct", 1, True))
+
+    def test_a_multi_line_group_gives_the_lines_of_the_inner_chain(self):
+        grouped = self.stmts("pool.query((\n  'SELECT 1 ' +\n  'FROM t'\n));")[0]
+        self.assertEqual((grouped["start_line"], grouped["end_line"]), (4, 5))
+        self.assertEqual(grouped["pg"]["line_starts"], [4])
+        self.assertEqual(grouped["text"], "SELECT 1 FROM t")
+
+    def test_a_group_around_another_expression_is_not_followed(self):
+        cases = [
+            "(foo)",
+            "(a + b)",
+            "(fn())",
+            "(a.b)",
+            "(())",
+            "(('a', 'b'))",
+            "(foo`x`)",
+            "(new Query('SELECT 1'))",
+            "({ text: 'SELECT 1' })",
+            "('a') + ('b')",
+            "(5)",
+        ]
+        for argument in cases:
+            with self.subTest(argument):
+                self.assertNotFollowed("pool.query(%s);" % argument)
+
+    def test_a_group_around_a_name_is_not_followed_even_for_a_const(self):
+        self.assertNotFollowed("const q = 'SELECT 1';\npool.query((q));", lines=(4,))
+
+    def test_a_group_around_the_start_of_a_longer_argument_keeps_its_result(self):
+        self.assertNotFollowed("pool.query(('a' + 'b') + c);")
+
+
+class AsConstTest(FormsCase):
+    def test_a_const_with_an_annotation_and_or_an_as_const_tail_is_the_same_statement(self):
+        variants = [
+            "const q = 'SELECT 1';",
+            "const q: string = 'SELECT 1';",
+            "const q = 'SELECT 1' as const;",
+            "const q: string = 'SELECT 1' as const;",
+            "const q: 'SELECT 1' = 'SELECT 1' as const;",
+        ]
+        results = [self.stmts(variant + "\npool.query(q);\npool.query(q);") for variant in variants]
+        for variant, statements in zip(variants, results):
+            with self.subTest(variant):
+                self.assertEqual(len(statements), 1)
+                self.assertEqual(self.not_followed(variant + "\npool.query(q);"), [])
+                self.assertEqual(statements, results[0])
+        pg = results[0][0]["pg"]
+        self.assertEqual((pg["kind"], pg["const_name"], len(pg["calls"])), ("literal", "q", 2))
+
+    def test_an_as_const_tail_works_for_a_template_and_a_chain(self):
+        cases = [
+            ("`SELECT 1`", "template"),
+            ("'SELECT ' + '1'", "chain"),
+            ("'SELECT ' + `1`", "chain"),
+        ]
+        for value, kind in cases:
+            with self.subTest(value):
+                plain = self.stmts("const q = %s;\npool.query(q);" % value)
+                tailed = self.stmts("const q: string = %s as const;\npool.query(q);" % value)
+                self.assertEqual(tailed, plain)
+                self.assertEqual(tailed[0]["pg"]["kind"], kind)
+
+    def test_an_as_const_tail_after_a_template_with_an_interpolation_is_the_same_dynamic_statement(self):
+        plain = self.stmts("const q = `SELECT ${x}`;\npool.query(q);")
+        tailed = self.stmts("const q = `SELECT ${x}` as const;\npool.query(q);")
+        self.assertEqual(tailed, plain)
+        self.assertTrue(tailed[0]["pg"]["dynamic"])
+
+    def test_an_as_const_tail_with_no_semicolon_ends_at_the_line_break(self):
+        statements = self.stmts("const q = 'SELECT 1' as const\nconst r = 2\npool.query(q)")
+        self.assertEqual([s["text"] for s in statements], ["SELECT 1"])
+
+    def test_the_other_tails_and_values_keep_their_result(self):
+        cases = [
+            "const q = 'SELECT 1' as string;",
+            "const q: string = 'SELECT 1' as string;",
+            "const q = 'SELECT 1' satisfies string;",
+            "const q = 'SELECT 1' as const as const;",
+            "const q = 'SELECT 1' as const as string;",
+            "const q = ('SELECT 1') as const;",
+            "const q = x as const;",
+            "const q = 'SELECT ' + x as const;",
+            "const q = { text: 'SELECT 1' } as const;",
+            "const q = 'a'.trim() as const;",
+        ]
+        for definition in cases:
+            with self.subTest(definition):
+                self.assertNotFollowed(definition + "\npool.query(q);", lines=(4,))
+
+    def test_an_as_const_config_object_keeps_the_config_tail_rule(self):
+        statement = self.stmts("pool.query({ text: 'SELECT 1' } as const);")[0]
+        self.assertEqual(statement["pg"]["calls"][0]["call"], "config")
 
 
 if __name__ == "__main__":

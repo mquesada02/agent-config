@@ -617,5 +617,79 @@ class StdoutTest(WriteBackTestCase):
         self.assertEqual(report["check"], "value_changed")
 
 
+class GroupedAndAsConstTest(WriteBackTestCase):
+    def test_a_grouped_string_template_and_chain_keep_their_parentheses(self):
+        cases = [
+            ("('select  id from t')", "(`select id from t`)", "select id from t", "literal"),
+            ("(('select  id from t'))", "((`select id from t`))", "select id from t", "literal"),
+            ("(`select  id from t`)", "(`select id from t`)", "select id from t", "template"),
+            ("('select  id ' + 'from t')", "(`select id from t`)", "select id from t", "chain"),
+            ("((('select ' + 'id')))", "(((`select id`)))", "select id", "chain"),
+        ]
+        for old, new, sql, kind in cases:
+            with self.subTest(old=old):
+                source = HEAD + "export const a = () => pool.query(%s)\n" % old
+                if kind == "literal":
+                    new = new.replace("`", "'")
+                report, text = self.assert_ok(source, 0, sql)
+                self.assertEqual(text, HEAD + "export const a = () => pool.query(%s)\n" % new)
+                self.assertEqual(report["from_kind"], kind)
+
+    def test_a_grouped_string_with_a_line_break_becomes_a_template_inside_the_group(self):
+        source = HEAD + "export const a = () => pool.query(('select id from t'), [1])\n"
+        report, text = self.assert_ok(source, 0, "\nselect id\nfrom t\n")
+        self.assertEqual(text, HEAD + "export const a = () => pool.query((`\nselect id\nfrom t\n`), [1])\n")
+        self.assertTrue(report["became_template"])
+        self.assertEqual(self.extract(self.write("o.ts", text))["statements"][0]["text"], "\nselect id\nfrom t\n")
+
+    def test_a_multi_line_group_gets_the_indent_of_the_line_of_the_inner_value(self):
+        source = HEAD + "export const a = () =>\n  pool.query((\n    'select id ' +\n    'from t'\n  ))\n"
+        _, text = self.assert_ok(source, 0, "\n      select id\n      from t\n")
+        self.assertEqual(
+            text,
+            HEAD + "export const a = () =>\n  pool.query((\n    `\n      select id\n      from t\n    `\n  ))\n",
+        )
+        self.assertEqual(
+            self.extract(self.write("o.ts", text))["statements"][0]["text"], "\n      select id\n      from t\n    "
+        )
+
+    def test_a_const_with_an_as_const_tail_is_rewritten_with_its_tail_and_annotation(self):
+        for definition, new in (
+            ("const q = 'select  id from t' as const", "const q = 'select id from t' as const"),
+            ("const q: string = 'select  id from t' as const", "const q: string = 'select id from t' as const"),
+            ("const q: string = `select  id` as const", "const q: string = `select id` as const"),
+            ("const q = 'select ' + 'id' as const", "const q = `select id` as const"),
+        ):
+            with self.subTest(definition):
+                source = HEAD + definition + "\nexport const a = () => pool.query(q)\n"
+                sql = "select id from t" if "from t" in definition else "select id"
+                report, text = self.assert_ok(source, 0, sql)
+                self.assertEqual(text, HEAD + new + "\nexport const a = () => pool.query(q)\n")
+                self.assertEqual(report["const_name"], "q")
+
+    def test_an_as_const_const_with_a_line_break_keeps_its_tail(self):
+        source = HEAD + "const q: string = 'select id from t' as const\nexport const a = () => pool.query(q)\n"
+        _, text = self.assert_ok(source, 0, "\n  select id\n  from t\n")
+        self.assertEqual(
+            text,
+            HEAD + "const q: string = `\n  select id\n  from t\n` as const\nexport const a = () => pool.query(q)\n",
+        )
+
+    def test_a_dynamic_grouped_form_is_refused_and_writes_no_file(self):
+        source = HEAD + "export const a = (x: string) => pool.query(('select ' + x))\nexport const b = (x: string) => pool.query((`select ${x}`))\n"
+        for index in (0, 1):
+            with self.subTest(index=index):
+                self.assert_refused(source, index, "select 1", "dynamic")
+
+    def test_a_value_change_in_a_grouped_form_is_refused_and_writes_no_file(self):
+        source = HEAD + "export const a = () => pool.query(('select id from t'))\nconst q = 'select 1' as const\npool.query(q)\n"
+        self.assert_refused(source, 0, "select name from t", "value_changed")
+        self.assert_refused(source, 1, "select 2", "value_changed")
+
+    def test_a_grouped_chain_with_a_comment_is_refused(self):
+        source = HEAD + "export const a = () => pool.query(('select id ' + /* c */ 'from t'))\n"
+        self.assert_refused(source, 0, "select id from t", "chain_comment")
+
+
 if __name__ == "__main__":
     unittest.main()

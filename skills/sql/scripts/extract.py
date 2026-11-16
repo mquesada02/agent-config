@@ -9,9 +9,9 @@ each template or statement the output has its source (`sql`, `template` or
 `pg`), its line range, its tag, its text and its interpolations, each with a
 position (`value`, `fragment` or `keyword`). A `pg` statement is the SQL that
 the first argument of the `query()` call of a `pg` receiver gives: a string, a
-template, a `+` chain, the `text` of a config object, the first argument of
-`new Query`, `new Cursor` or `new QueryStream`, or a name that is followed to a
-same-file `const`. The SQL may have a part that is not a literal: the statement
+template, a `+` chain (a direct argument may be in parentheses), the `text` of a config
+object, the first argument of `new Query`, `new Cursor` or `new QueryStream`, or
+a name that is followed to a same-file `const` (its value may end with `as const`). The SQL may have a part that is not a literal: the statement
 is then `dynamic`. A `pg` statement also has a `pg` object (see the spec of the
 `pg` source form). The output lists the tags that the file shows (tag
 detection), the `pg` receivers that it shows (receiver detection) and
@@ -1836,11 +1836,23 @@ class PgCalls:
                 close = match_close(t, found[1])
                 if close is not None and close + 1 == e:
                     return self.submittable(found[0], found[1], close)
-        result = self.text_expression(s, e)
+        group_start, group_end = self.ungrouped(s, e)
+        if (group_start, group_end) == (s, e):
+            result = self.text_expression(s, e)
+        else:  # a group follows only the forms that `read_value` reads: a name in a group is not followed
+            result = self.read_value(group_start, group_end) if group_start < group_end else None
         if isinstance(result, Value):
             length, present = values_of(t, self.detector, e)
             return Use(result, "direct", length, present)
         return result if result is NOTHING or isinstance(result, Use) else NOT_FOLLOWED
+
+    def ungrouped(self, s, e):
+        """The range [s, e) without the groups in parentheses that hold all of it: `(('a' + 'b'))` gives
+        the range of `'a' + 'b'`."""
+        t = self.tokens
+        while e - s >= 2 and punct(t[s], "(") and match_close(t, s) == e - 1:
+            s, e = s + 1, e - 1
+        return s, e
 
     def config_ends(self, close, e):
         """True when nothing but a type clause (`as T`, `satisfies T`) stands between the `}` at
@@ -2205,6 +2217,8 @@ class PgCalls:
         tag = self.tagged(vs, ve)
         if tag is not None:
             return NOTHING if tag in self.tags else NOT_FOLLOWED
+        if ve - vs > 2 and name_is(t[ve - 2], "as") and name_is(t[ve - 1], "const"):
+            ve -= 2  # the tail `as const` does not change the text
         value = self.read_value(vs, ve, strict=True)
         if value is None:
             return NOT_FOLLOWED

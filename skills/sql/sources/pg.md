@@ -26,7 +26,7 @@ Name a statement to the user as `<file>:<start_line>-<end_line>`. For a statemen
 
 An item with `source` `pg` has the keys of a template statement and a `pg` object:
 
-- `start_line` and `end_line`: the source lines of the SQL text (the string, the template, the whole `+` chain, or the value of the `const`).
+- `start_line` and `end_line`: the source lines of the SQL text (the string, the template, the whole `+` chain, or the value of the `const`). The span never holds the parentheses around a `query()` argument (`query(('SELECT 1'))`) or the `as const` tail of a `const`: the skill reads both forms like the form with no parentheses and no tail.
 - `text`: the decoded SQL value that `pg` sends. For a `dynamic` statement it is the template body or the raw source of the chain.
 - `interpolations`: empty, except for a dynamic template. Each of them has a `position` key as in the postgres.js module. The `pg` rules do not read it.
 - `pg.kind`: `literal`, `template` or `chain`.
