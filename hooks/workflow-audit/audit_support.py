@@ -243,23 +243,30 @@ class AuditCase(unittest.TestCase):
         with open(path) as handle:
             return [json.loads(line) for line in handle]
 
-    def register_session(self, session_id, rows, subagents=None, started_at="2026-10-15T12:00:00+00:00"):
-        """Write a transcript (and subagent transcripts, a dict of name -> rows) and register it. Returns its path."""
+    def register_session(self, session_id, rows, subagents=None, started_at="2026-10-15T12:00:00+00:00", touching=True):
+        """Write a transcript (and subagent transcripts, a dict of name -> rows) and register it. Returns its path.
+        The audit judges a subagent only when it touches the worktree, so unless `touching` is False
+        the first row of each subagent that is a dict without a cwd gets a cwd inside the worktree."""
         folder = os.path.join(self.root, "projects")
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, f"{session_id}.jsonl")
         self.write_rows(path, rows)
         for name, sub_rows in (subagents or {}).items():
-            self.add_subagent(session_id, name, sub_rows)
+            self.add_subagent(session_id, name, sub_rows, touching)
         self.register_path(session_id, path, started_at)
         return path
 
-    def add_subagent(self, session_id, name, rows=None):
-        """Write the subagent transcript `name` of an already registered session. Returns its path."""
+    def add_subagent(self, session_id, name, rows=None, touching=True):
+        """Write the subagent transcript `name` of an already registered session. Returns its path.
+        The audit judges a subagent only when it touches the worktree, so unless `touching` is False
+        the first row, when it is a dict without a cwd, gets a cwd inside the worktree."""
         sub_folder = os.path.join(self.root, "projects", session_id, "subagents")
         os.makedirs(sub_folder, exist_ok=True)
         path = os.path.join(sub_folder, f"agent-{name}.jsonl")
-        self.write_rows(path, subagent_rows() if rows is None else rows)
+        rows = subagent_rows() if rows is None else rows
+        if touching and rows and isinstance(rows[0], dict) and "cwd" not in rows[0]:
+            rows = [{**rows[0], "cwd": self.repo}, *rows[1:]]
+        self.write_rows(path, rows)
         return path
 
     def register_path(self, session_id, path, started_at="2026-10-15T12:00:00+00:00"):
