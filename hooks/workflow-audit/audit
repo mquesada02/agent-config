@@ -683,8 +683,8 @@ def _audited_transcripts(worktree, dir_fd):
             continue  # speed rule: a transcript that never holds the path cannot touch the worktree
         transcripts = [_read_transcript(file_path, text) for file_path, text in texts.items()]
         touching = [_touches(transcript, spellings, root) for transcript in transcripts]
-        if any(touching):  # the session counts when any of its transcripts touches the worktree
-            # the main transcript is transcripts[0]; a subagent that never touches the worktree is not judged
+        if any(touching):
+            # the main transcript is transcripts[0] and always stays
             audited.append([transcript for number, transcript in enumerate(transcripts) if number == 0 or touching[number]])
     if not audited:
         raise Unavailable("no registered session touches the worktree")
