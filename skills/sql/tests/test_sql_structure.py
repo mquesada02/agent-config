@@ -427,6 +427,12 @@ FORMAT_CASES = (
     "format-keyword-position",
     "format-no-rules-file",
 )
+FORMAT_PG_CASES = (
+    "format-pg-quoted-string",
+    "format-pg-chain",
+    "format-pg-const",
+    "format-pg-refused",
+)
 
 
 def constant(name):
@@ -514,7 +520,48 @@ class FormatModuleTest(unittest.TestCase):
         self.text = read(os.path.join(SKILL_DIR, "format.md"))
 
     def test_the_headings_are_in_order(self):
-        self.assertEqual(headings(self.text), ["Target", "Style", "Write", "Report", "Safe tool path"])
+        self.assertEqual(
+            headings(self.text), ["Target", "Style", "Write", "pg statements", "Report", "Safe tool path"]
+        )
+
+    def test_the_write_section_and_step_5_leave_pg_statements_to_their_section(self):
+        write = section(self.text, "Write")
+        self.assertIn("that are not `pg` statements", write.splitlines()[2])
+        path = section(self.text, "Safe tool path")
+        self.assertIn("the `source` of the statement is `pg`", path)
+        step5 = [line for line in path.splitlines() if line.startswith("5. ")][0]
+        self.assertIn("that are not `pg` statements", step5)
+
+    def test_the_pg_section_holds_its_rules(self):
+        pg = section(self.text, "pg statements")
+        for needle in (
+            "`source` is `pg`", "always uses the written style", "`dynamic`", "not formatted",
+            "never add or remove `AS`", "`alias_as`", "scripts/write_back_pg.py", "--index", "--sql-file",
+            "--output", "--tags", "--receivers", "`ok` is true", "`ok` is false", "`cp`", "`cat`",
+            "Write tool", "new-value.sql", "extractor again", "`const`", "once", "`clause_per_line`",
+            "opening backtick", "line feed", "`check`", "`reason`", "--stdout", "`text`",
+            "ends with a line feed", "adds the indent",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, pg)
+
+    def test_the_stdout_fallback_names_the_same_failure_text_as_the_script(self):
+        script = read(os.path.join(SKILL_DIR, "scripts", "write_back_pg.py"))
+        match = re.search(r'^OUTPUT_FAILURE = "(.*)"$', script, re.M)
+        self.assertIsNotNone(match)
+        pg = section(self.text, "pg statements")
+        self.assertIn("`%s`" % match.group(1), pg)
+        self.assertIn("exit code 2", pg)
+
+    def test_the_report_names_the_templates_and_the_refusals(self):
+        report = section(self.text, "Report")
+        for needle in (
+            "Became a template: <file>:<start>-<end> (<from_kind>)",
+            "Refused: <file>:<start>-<end>: <check>: <reason>",
+            "Refused: <file>:<start>-<end>: dynamic: dynamic statement, not formatted",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, report)
 
     def test_the_module_is_filled_and_holds_no_formatter_command(self):
         self.assertRegex(self.text.splitlines()[0], r"^# \S")
@@ -657,6 +704,139 @@ class FormatCasesTest(unittest.TestCase):
         for command in ("interpolations_same.py", "only_target_changes.py", "style_matches.py"):
             with self.subTest(command=command):
                 self.assertIn(command, text)
+
+
+class FormatPgCasesTest(unittest.TestCase):
+    def case(self, name, *parts):
+        return os.path.join(EVALS, name, *parts)
+
+    def test_each_case_has_its_files_and_its_exact_grader_set(self):
+        common = ["interpolations-same.md", "no-connection.md", "no-formatter.md", "only-target-changes.md",
+                  "report-names.md", "value-and-kind.md"]
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                for part in ("case.yaml", "scaffold.sh", "expected.json", os.path.join("docs", "agents", "sql.md")):
+                    self.assertTrue(os.path.isfile(self.case(name, part)), part)
+                last = "unchanged.md" if name == "format-pg-refused" else "style-matches.md"
+                self.assertEqual(sorted(os.listdir(self.case(name, "graders"))), sorted(common + [last]))
+
+    def test_the_case_file_sets_the_scaffold_the_tools_and_30_turns(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                text = read(self.case(name, "case.yaml"))
+                self.assertRegex(text, rf"(?m)^name: {name}$")
+                self.assertRegex(text, r"(?m)^  scaffold_script: scaffold\.sh$")
+                self.assertIn("allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]", text)
+                self.assertRegex(text, r"(?m)^  max_turns: 30$")
+                prompt = text.split("prompt: |", 1)[1]
+                for needle in ("/sql format", "first-run.", "new-value.sql", "second time"):
+                    self.assertIn(needle, prompt)
+
+    def test_expected_json_names_the_file_target_style_and_empty_tags(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                self.assertEqual(sorted(expected), ["file", "style", "tags", "target"])
+                self.assertTrue(os.path.isfile(self.case(name, expected["file"])))
+                self.assertEqual(expected["tags"], [])
+                start, end = map(int, expected["target"].split("-"))
+                lines = read(self.case(name, expected["file"])).splitlines()
+                self.assertTrue(1 <= start <= end <= len(lines))
+                self.assertEqual(sorted(expected["style"]), sorted(STYLE_KEYS))
+
+    def test_the_target_is_the_extractor_range_of_a_pg_statement(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                out = subprocess.run(
+                    ["python3", os.path.join(SKILL_DIR, "scripts", "extract.py"), self.case(name, expected["file"])],
+                    capture_output=True, text=True, check=True,
+                ).stdout
+                ranges = [f"{s['start_line']}-{s['end_line']}" for s in json.loads(out)["statements"] if s["source"] == "pg"]
+                self.assertIn(expected["target"], ranges)
+                self.assertGreaterEqual(len(ranges), 1 if name == "format-pg-const" else 2)
+
+    def test_the_fixtures_have_the_pg_binding_and_no_alias(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                expected = json.loads(read(self.case(name, "expected.json")))
+                text = read(self.case(name, expected["file"]))
+                self.assertIn("import pg from 'pg'", text)
+                self.assertIn("const pool = new pg.Pool()", text)
+                self.assertNotRegex(text, r"(?i)\bas\b")
+                self.assertFalse(os.path.exists(self.case(name, "package.json")))
+
+    def test_the_fixture_shapes(self):
+        quoted = read(self.case("format-pg-quoted-string", "stock-store.ts"))
+        self.assertEqual(len(re.findall(r"pool\.query\('", quoted)), 2)
+        chain = read(self.case("format-pg-chain", "order-store.ts"))
+        self.assertRegex(chain, r"' \+\n")
+        const = read(self.case("format-pg-const", "report-store.ts"))
+        self.assertEqual(const.count("pool.query(LOW_STOCK)"), 2)
+        refused = read(self.case("format-pg-refused", "audit-store.ts"))
+        self.assertRegex(refused, r"' \+\n\s+// ")
+
+    def test_the_rules_file_has_the_non_default_style_and_empty_source_lists(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                rules = read(self.case(name, "docs", "agents", "sql.md"))
+                for line in ('keyword_case = "lower"', 'indent = "4 spaces"', "clause_per_line = true",
+                             'comma = "trailing"', "alias_as = false", "tags = []", "receivers = []"):
+                    self.assertIn(line, rules)
+
+    def test_the_scaffold_copies_the_fixture_and_the_rules_file(self):
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as work:
+                expected = json.loads(read(self.case(name, "expected.json")))
+                subprocess.run(
+                    ["bash", self.case(name, "scaffold.sh")],
+                    cwd=work, check=True, env={"PATH": os.environ["PATH"]},
+                )
+                self.assertEqual(read(os.path.join(work, expected["file"])), read(self.case(name, expected["file"])))
+                self.assertEqual(
+                    read(os.path.join(work, "docs", "agents", "sql.md")),
+                    read(self.case(name, "docs", "agents", "sql.md")),
+                )
+
+    def test_the_tool_used_and_llm_graders(self):
+        for name in FORMAT_PG_CASES:
+            for grader, needle in (
+                ("no-connection.md", "psql|pg_run|PGSERVICE|service="),
+                ("no-formatter.md", "prettier|pg_format|pgFormatter|sql-formatter|sqlfluff|eslint"),
+            ):
+                with self.subTest(case=name, grader=grader):
+                    head = frontmatter(read(self.case(name, "graders", grader)))
+                    self.assertRegex(head, r"(?m)^type: tool_used$")
+                    self.assertRegex(head, r"(?m)^tool: Bash$")
+                    self.assertRegex(head, r"(?m)^min: 0$")
+                    self.assertRegex(head, r"(?m)^max: 0$")
+                    self.assertIn(needle, head)
+            for grader in os.listdir(self.case(name, "graders")):
+                if grader in ("no-connection.md", "no-formatter.md"):
+                    continue
+                with self.subTest(case=name, grader=grader):
+                    self.assertRegex(frontmatter(read(self.case(name, "graders", grader))), r"(?m)^type: llm$")
+
+    def test_the_refused_case_names_the_chain_refusal(self):
+        report = read(self.case("format-pg-refused", "graders", "report-names.md"))
+        self.assertIn("chain_comment", report)
+        self.assertIn("Refused:", report)
+        for name in ("format-pg-quoted-string", "format-pg-chain", "format-pg-const"):
+            self.assertIn("Became a template:", read(self.case(name, "graders", "report-names.md")))
+
+    def test_the_readme_names_the_cases_and_the_script(self):
+        text = read(PROCEDURE)
+        for name in FORMAT_PG_CASES:
+            with self.subTest(case=name):
+                rows = [line for line in text.splitlines() if line.startswith(f"| `{name}` |")]
+                self.assertEqual(len(rows), 1)
+        grader_section = section(text, "Format cases: the grader commands")
+        self.assertIn("format-pg-*", grader_section)
+        self.assertIn("write_back_pg.py", grader_section)
+
+    def test_format_cases_keeps_its_four_postgres_js_names(self):
+        self.assertEqual(len(FORMAT_CASES), 4)
+        self.assertFalse(set(FORMAT_CASES) & set(FORMAT_PG_CASES))
 
 
 SAFE_TOOL_CASES = {

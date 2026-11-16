@@ -1646,10 +1646,11 @@ DECIMAL_INTEGER = re.compile(r"[0-9]+\Z")
 class Value:
     """The SQL text that some calls give: one statement."""
 
-    def __init__(self, key, kind, first, text, start_line, end_line, line_starts, dynamic, interpolations=()):
+    def __init__(self, key, kind, first, text, start_line, end_line, line_starts, dynamic, interpolations=(), end=None):
         self.key = key
         self.kind = kind
         self.first = first
+        self.end = end  # the offset after the last character of the value
         self.text = text
         self.start_line = start_line
         self.end_line = end_line
@@ -1715,7 +1716,7 @@ class PgCalls:
         self.tags = set(tags)
         self.starts = {token[2]: k for k, token in enumerate(tokens)}
         self.span_starts = {self.starts[record.end]: k for k, record in spans.items() if record.end in self.starts}
-        self.statements = {}  # key -> [first offset, statement]
+        self.statements = {}  # key -> [first offset, statement, end offset]
         self.not_followed = []
         self.constants = {}  # declaration token index -> result of `const_result`
         self.declarations = None  # name -> [Declaration], built when a call has a name argument
@@ -1730,7 +1731,7 @@ class PgCalls:
     # ------------------------------------------------------------------ calls
 
     def run(self):
-        """(the (offset, statement) pairs, the `not_followed` list) of the file."""
+        """(the (offset, statement, end offset) triples, the `not_followed` list) of the file."""
         t = self.tokens
         for i, token in enumerate(t):
             if not (name_is(token, "query") and (punct(self.at(i - 1), ".") or punct(self.at(i - 1), "?."))):
@@ -1768,7 +1769,7 @@ class PgCalls:
     def add_use(self, use, line):
         value = use.value
         if value.key not in self.statements:
-            self.statements[value.key] = [value.first, value.statement()]
+            self.statements[value.key] = [value.first, value.statement(), value.end]
         self.statements[value.key][1]["pg"]["calls"].append(
             {
                 "line": line,
@@ -1968,7 +1969,7 @@ class PgCalls:
             text = self.source.text[first : last + 1]
             line = self.source.line(first)
             line_starts = [line + index for index in range(text.count("\n") + 1)]
-            return Value(("lit", s), "chain", first, text, line, self.source.line(last), line_starts, True)
+            return Value(("lit", s), "chain", first, text, line, self.source.line(last), line_starts, True, end=last + 1)
         texts, lines = [], []
         for (a, _), k in zip(pieces, kinds):
             if k == "str":
@@ -1979,14 +1980,20 @@ class PgCalls:
             lines += piece_lines
         text = "".join(texts)
         line_starts = line_starts_of(text, lines, self.source.line(last))
-        return Value(("lit", s), "chain", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+        return Value(
+            ("lit", s), "chain", first, text, self.source.line(first), self.source.line(last), line_starts, False,
+            end=last + 1,
+        )
 
     def string_value(self, k):
         token = self.tokens[k]
         first, last = token[2], token[3] - 1
         text, lines = decode_literal(self.source, first + 1, last, False)
         line_starts = line_starts_of(text, lines, self.source.line(last))
-        return Value(("lit", k), "literal", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+        return Value(
+            ("lit", k), "literal", first, text, self.source.line(first), self.source.line(last), line_starts, False,
+            end=last + 1,
+        )
 
     def template_value(self, k):
         record = self.spans[k]
@@ -1994,14 +2001,20 @@ class PgCalls:
         if not record.interpolations:
             text, lines = decode_literal(self.source, first + 1, last, True)
             line_starts = line_starts_of(text, lines, self.source.line(last))
-            return Value(("lit", k), "template", first, text, self.source.line(first), self.source.line(last), line_starts, False)
+            return Value(
+                ("lit", k), "template", first, text, self.source.line(first), self.source.line(last), line_starts,
+                False, end=last + 1,
+            )
         text, interpolations = template_interpolations(self.source, record)
         for found, item in zip(interpolations, record.interpolations):
             found["start"] = item["start"] - first - 1
             found["end"] = item["end"] - first - 1
         line = self.source.line(first)
         line_starts = [line + index for index in range(text.count("\n") + 1)]
-        return Value(("lit", k), "template", first, text, line, self.source.line(last), line_starts, True, interpolations)
+        return Value(
+            ("lit", k), "template", first, text, line, self.source.line(last), line_starts, True, interpolations,
+            end=last + 1,
+        )
 
     def text_expression(self, s, e):
         """The Value of the text expression [s, e) (a string, a template, a chain or a name that is
@@ -2596,13 +2609,15 @@ class PgCalls:
 
 
 def find_pg_statements(source, tokens, templates, detector, receivers, tags):
-    """The (offset, statement) pairs of the `<receiver>.query(...)` calls whose first argument is
+    """The (offset, statement, end offset) triples of the `<receiver>.query(...)` calls whose first argument is
     followed (see PgCalls), and the list of the calls that are not."""
     by_index = {template.token_index: template for template in templates}
     return PgCalls(source, tokens, by_index, detector, receivers, tags).run()
 
 
-def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=None):
+def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=None, spans=None):
+    """With a dict as `spans`, the call fills it with `statement index -> (start offset, end offset)`
+    of the SQL value of each `pg` statement (character offsets in `source.text`, the end exclusive)."""
     tokens, templates = tokenize_js(source, jsx, tsx)
     detector = Detector(tokens, given_tags if given_tags is not None else [])
     detected, factory_names = detector.run()
@@ -2619,12 +2634,15 @@ def extract_js_file(source, given_tags, jsx=False, tsx=False, given_receivers=No
             reported.append(template)
     entries = [(template.start, template) for template in reported]
     pg_entries, not_followed = find_pg_statements(source, tokens, templates, receiver_detector, set(receivers), tags)
-    entries += pg_entries
+    ends = {id(statement): end for _, statement, end in pg_entries}
+    entries += [(offset, statement) for offset, statement, _ in pg_entries]
     entries.sort(key=lambda entry: entry[0])
     index_of = {id(item): k for k, (_, item) in enumerate(entries) if isinstance(item, Template)}
     statements = []
-    for _, item in entries:
+    for offset, item in entries:
         if not isinstance(item, Template):
+            if spans is not None:
+                spans[len(statements)] = (offset, ends[id(item)])
             statements.append(item)
             continue
         parent = item.enclosing

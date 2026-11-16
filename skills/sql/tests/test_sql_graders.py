@@ -329,5 +329,47 @@ class StyleMatchesTest(GraderCase):
                 self.assertUsage("style_matches.py", *args)
 
 
+PG_HEAD = "import pg from 'pg'\nconst pool = new pg.Pool()\n"
+PG_IN_STYLE = PG_HEAD + "export const a = () => pool.query(`\n  SELECT\n    a,\n    b\n  FROM\n    t\n  WHERE\n    c = 1\n`)\n"
+PG_DYNAMIC = "export const d = (x: string) => pool.query(`select ${x} from t where z = 1`)\n"
+
+
+class PgStatementsTest(GraderCase):
+    def style(self):
+        return self.write("style.json", json.dumps(DEFAULT_STYLE))
+
+    def test_style_matches_votes_on_a_pg_statement(self):
+        first = self.write("first.ts", PG_IN_STYLE)
+        self.grade("style_matches.py", "C", first, first, "--style", self.style(), expect=True)
+        lower = self.write("lower.ts", PG_IN_STYLE.replace("SELECT", "select").replace("FROM", "from"))
+        report = self.grade("style_matches.py", "C", lower, lower, "--style", self.style(), expect=False)
+        self.assertIn("keyword_case", report["failures"][0])
+
+    def test_style_matches_does_not_vote_on_a_dynamic_pg_statement(self):
+        text = PG_IN_STYLE + PG_DYNAMIC
+        first = self.write("first.ts", text)
+        self.grade("style_matches.py", "C", first, first, "--style", self.style(), expect=True)
+
+    def test_a_target_that_holds_only_a_dynamic_pg_statement_has_no_statement(self):
+        text = PG_IN_STYLE + PG_DYNAMIC
+        first = self.write("first.ts", text)
+        last = len(text.splitlines())
+        report = self.grade(
+            "style_matches.py", "C", first, first, "--style", self.style(), "--target", "%d-%d" % (last, last), expect=False
+        )
+        self.assertIn("no statement", report["failures"][0])
+
+    def test_interpolations_same_compares_pg_statements(self):
+        before = self.write("before.ts", PG_HEAD + "export const a = () => pool.query('select a ' + 'from t where c = 1')\n" + PG_DYNAMIC)
+        rewritten = PG_HEAD + "export const a = () => pool.query(`\n  select a\n  from t\n  where c = 1\n`)\n" + PG_DYNAMIC
+        after = self.write("after.ts", rewritten)
+        self.grade("interpolations_same.py", "A", before, after, expect=True)
+        changed = self.write("changed.ts", rewritten.replace("${x}", "${y}"))
+        report = self.grade("interpolations_same.py", "A", before, changed, expect=False)
+        self.assertIn("interpolation 1", report["failures"][0])
+        dropped = self.write("dropped.ts", rewritten.replace(PG_DYNAMIC, ""))
+        self.grade("interpolations_same.py", "A", before, dropped, expect=False)
+
+
 if __name__ == "__main__":
     unittest.main()
