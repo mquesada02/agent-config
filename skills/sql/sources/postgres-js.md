@@ -47,7 +47,7 @@ In every JavaScript and TypeScript file the extractor decides from the last toke
 
 - After a postfix `++` or `--`, the `/` is a division: `i++ / 2`. Two separate operators, as in `a + +/re/.source`, are not a postfix operator, so the `/` there starts a regex.
 - Right after the words `export default`, the `/` starts a regex: `export default /re/`. The name `default` in any other place is a value, so `obj.default / 2` is a division.
-- After the `)` that closes the header of `if`, `while`, `for` (also `for await`) or `with`, the `/` starts a regex: `if (ok) /re/.test(s)`. After the `)` of a call or a group, it is a division: `f(a) / 2`. A keyword after a `.` is a property name, so `obj.if(a) / 2` is a division.
+- After the `)` that closes the header of `if`, `while`, `for` (also `for await`) or `with`, the `/` starts a regex: `if (ok) /re/.test(s)`. After the `)` of a call or a group, it is a division: `f(a) / 2`. A keyword after a `.` is a property name, so `obj.if(a) / 2` is a division. Known limit: the `while (c)` that ends a `do ... while` loop counts as a header, so a `/` right after it is read as a regex.
 
 ## JSX scan
 
