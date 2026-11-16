@@ -15,13 +15,13 @@ SETUP = os.path.join(SKILL_DIR, "setup.md")
 sys.path.insert(0, SCRIPTS)
 
 
-CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun")
+CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun", "setup-pg-fixture")
 KEY = "example.com/acme/shop"
 SCRIPT_NAMES = (
     "rules_file.py", "allowlist.py", "setup_scan.py", "measure_style.py", "detect_formatter.py",
     "formatter_install.py", "setup_files.py",
 )
-STEPS = ("Step 1: Detect", "Step 2: Tags", "Step 3: Style and formatter", "Step 4: Allowlist",
+STEPS = ("Step 1: Detect", "Step 2: Tags and receivers", "Step 3: Style and formatter", "Step 4: Allowlist",
          "Step 5: Interview", "Step 6: Write", "Step 7: Report")
 
 
@@ -63,10 +63,39 @@ class SetupModuleTest(unittest.TestCase):
         for phrase in (
             "own approval", "before the final confirmation", "write_failed", "stale_digest",
             "never read the pg password file", "system temp folder", "no change", "stop",
-            "confirm the list or to edit it", "no `--tags` option", "keep the current `[rules] disabled`",
+            "confirm or edit each list", "no `--tags` option", "no `--receivers` option", "keep the current `[rules] disabled`",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+    def test_the_scan_keys_the_receivers_and_the_second_scan_run(self):
+        text = read(SETUP)
+        for phrase in (
+            "`detected_receivers`", "`hints`", "[sources] receivers", "`forms` (`template`, `sql` and `pg` counts)",
+            "--tags <confirmed tags>` and `--receivers <confirmed receivers>`", "[--receivers <confirmed receivers>]",
+            "the receiver text as the call writes it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertNotIn("this is tag detection only", text)
+
+    def test_the_receivers_follow_the_rules_of_the_tags(self):
+        step = read(SETUP).split("## Step 2: Tags and receivers", 1)[1].split("## Step 3", 1)[0].lower()
+        for phrase in (
+            "only when none was detected", "keeps at least one", "`--tags`", "`--receivers`", "pool", "this.pool",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, step)
+
+    def test_the_proposal_example_has_the_receivers_beside_the_tags(self):
+        self.assertIn('"sources": {"tags": [...], "receivers": [...]}', read(SETUP))
+
+    def test_the_cases_table_has_a_row_for_every_setup_case(self):
+        rows = [line for line in read(os.path.join(EVALS, "README.md")).splitlines() if line.startswith("| `")]
+        names = [line.split("`")[1] for line in rows]
+        for case in CASES:
+            with self.subTest(case=case):
+                self.assertIn(case, names)
 
 
 class CaseFilesTest(unittest.TestCase):
