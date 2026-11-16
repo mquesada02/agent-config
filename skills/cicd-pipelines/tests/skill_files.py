@@ -9,7 +9,7 @@ RULES = os.path.join(SKILL, "rules")
 EVALS = os.path.join(SKILL, "evals")
 PREFIXES = {
     "naming": "NAME", "job-graph": "GRAPH", "cost": "COST",
-    "security": "SEC", "monorepo": "MONO", "maintainability": "MAINT",
+    "security": "SEC", "monorepo": "MONO", "maintainability": "MAINT", "deploy": "DEPLOY",
 }
 LEVELS = ("critical", "required", "suggestion")
 

@@ -44,6 +44,24 @@ SEC_EXTRA_CASES = {
     "merge-01-zizmor-unpinned": (["SEC-01"], ["unpinned-uses"]),
     "tool-01-zizmor-missing": (["SEC-01", "SEC-03"], []),
 }
+DEPLOY_CASES = {
+    "deploy-01-build-in-deploy-job": (["DEPLOY-01"], []),
+    "deploy-02-no-stage-environment": (["DEPLOY-02"], []),
+    "deploy-02-tag-run-staging-record": ([], ["DEPLOY-02"]),
+    "deploy-03-no-digest-check": (["DEPLOY-03"], []),
+    "deploy-04-long-lived-key": (["DEPLOY-04"], []),
+    "deploy-05-status-only-check": (["DEPLOY-05"], []),
+    "deploy-06-silent-skip": (["DEPLOY-06"], []),
+    "deploy-07-no-gradual-rollout": (["DEPLOY-07"], []),
+    "deploy-08-docs-only-deploys": (["DEPLOY-08"], []),
+    "deploy-09-missing-timeout": (["DEPLOY-09"], []),
+    "deploy-09-timeout-too-high-with-history": (["DEPLOY-09"], []),
+    "deploy-09-timeout-too-high-no-history": ([], ["DEPLOY-09"]),
+    "deploy-10-no-pr-dry-run": (["DEPLOY-10"], []),
+}
+# The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
+CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
+CD_CASE_COUNT = 13
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -85,6 +103,12 @@ def run_text(workflow_text):
             value = "\n".join(body)
         values.append(value)
     return "\n".join(values)
+
+
+def job_timeouts(workflow_text):
+    """Map of job `name:` to its `timeout-minutes` for the jobs of a workflow text that set one."""
+    found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", workflow_text)
+    return {name: int(minutes) for name, minutes in found}
 
 
 def checkout_blocks(workflow_text):
@@ -256,7 +280,8 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
             self.assertNotIn("cicd-pipelines", prompt)
-            self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono|sec)-\d\d", prompt), "the prompt names a rule")
+            self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono|sec|deploy|rollback|release|publish|protect)-\d\d",
+                                        prompt), "the prompt names a rule")
 
     def test_the_copied_workflow_prompt_names_two_copies(self):
         (name,) = [n for n in review_cases() if n.startswith("maint-03-")]
@@ -381,8 +406,7 @@ class RecordedIntakeCost04(RecordedHistoryChecks, unittest.TestCase):
         return read(os.path.join(case_dir(case), "repo", ".github", "workflows", "ci.yml"))
 
     def timeouts(self):
-        found = re.findall(r"(?m)^    name: (.+)\n(?:    .*\n)*?    timeout-minutes: (\d+)\n", self.workflow(self.CASE))
-        return {name: int(minutes) for name, minutes in found}
+        return job_timeouts(self.workflow(self.CASE))
 
     def test_every_history_job_has_a_timeout_more_than_2x_above_the_proposal(self):
         timeouts = self.timeouts()
@@ -611,6 +635,170 @@ class CleanWorkflow(unittest.TestCase):
         self.assertEqual(minute % 2, 1)
         self.assertIn("pnpm audit --audit-level=high", text)
         self.assertIn("contents: read", text)
+
+
+class DeployCases(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.deploy_texts = {name: workflow_text(name, "deploy.yml") for name in DEPLOY_CASES}
+
+    def deploy(self, case):
+        return self.deploy_texts[case]
+
+    def test_the_deploy_cases_are_exactly_these_with_their_lists(self):
+        found = {n for n in review_cases() if n.startswith("deploy-")}
+        self.assertEqual(found, set(DEPLOY_CASES))
+        for name, lists in DEPLOY_CASES.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_deploy_09_has_a_case_for_each_part_and_one_that_forbids_it(self):
+        expects = [n for n in DEPLOY_CASES if n.startswith("deploy-09-") and DEPLOY_CASES[n][0]]
+        forbids = [n for n in DEPLOY_CASES if n.startswith("deploy-09-") and DEPLOY_CASES[n][1]]
+        self.assertEqual(len(expects), 2)
+        self.assertEqual(len(forbids), 1)
+
+    def test_every_deploy_case_has_a_ci_workflow_with_the_cd_part_and_a_deploy_workflow(self):
+        for name in DEPLOY_CASES:
+            self.assertIn("workflow_call:", workflow_text(name), name)
+            self.assertIn("uses: ./.github/workflows/ci.yml", self.deploy(name), name)
+
+    def test_the_tag_run_case_has_a_prod_job_with_the_staging_record_check_and_no_needs(self):
+        text = self.deploy("deploy-02-tag-run-staging-record")
+        prod = job_text(text, "deploy-prod")
+        self.assertIn("environment: prod", prod)
+        self.assertIn('run: ./scripts/check-staged.sh "$SHA"', prod)
+        self.assertIn("if: github.ref_type == 'tag'", prod)
+        self.assertNotIn("needs:", prod)
+        self.assertIn("needs: [ci, deploy-dev]", job_text(text, "deploy-staging"))
+        self.assertTrue(os.path.exists(os.path.join(case_dir("deploy-02-tag-run-staging-record"), "repo",
+                                                    "scripts", "check-staged.sh")))
+
+    def test_the_no_stage_case_has_a_prod_job_with_no_environment_and_no_earlier_stage(self):
+        text = self.deploy("deploy-02-no-stage-environment")
+        prod = job_text(text, "deploy-prod")
+        self.assertNotIn("environment:", prod)
+        self.assertNotIn("deploy-staging", text)
+        self.assertNotIn("check-staged.sh", text)
+
+    def test_the_other_cases_keep_each_deploy_job_in_its_own_environment_and_group(self):
+        for name in DEPLOY_CASES:
+            if name == "deploy-02-no-stage-environment":
+                continue
+            text = self.deploy(name)
+            for job, stage in (("deploy-dev", "dev"), ("deploy-staging", "staging"), ("deploy-prod", "prod")):
+                body = job_text(text, job)
+                self.assertIn(f"environment: {stage}\n", body, name)
+                self.assertIn(f"group: deploy-{stage}\n", body, name)
+                self.assertIn("cancel-in-progress: false", body, name)
+
+    def test_the_fixtures_differ_from_the_good_workflow_only_where_the_rule_needs(self):
+        good = self.deploy("deploy-02-tag-run-staging-record")
+        self.assertNotIn("pnpm install", good)
+        self.assertNotIn("aws-access-key-id", good)
+        self.assertIn("role-to-assume: ${{ vars.AWS_ROLE_PROD }}", good)
+        self.assertIn("timeout-minutes: 30", job_text(good, "deploy-prod"))
+        self.assertIn("pnpm install", self.deploy("deploy-01-build-in-deploy-job"))
+        self.assertIn("aws-access-key-id", self.deploy("deploy-04-long-lived-key"))
+        self.assertNotIn("timeout-minutes", job_text(self.deploy("deploy-09-missing-timeout"), "deploy-dev"))
+        self.assertIn("terraform apply", self.deploy("deploy-10-no-pr-dry-run"))
+        self.assertNotIn("skip-notice", self.deploy("deploy-08-docs-only-deploys"))
+        self.assertNotIn("needs.ci.outputs.code", job_text(self.deploy("deploy-08-docs-only-deploys"), "deploy-dev"))
+
+    def test_the_script_fixtures_hold_the_check_that_their_case_removes(self):
+        def script(case):
+            return read(os.path.join(case_dir(case), "repo", "scripts", "deploy-lambda.sh"))
+        good = script("deploy-02-tag-run-staging-record")
+        self.assertIn("sha256sum", good)
+        self.assertIn('grep -q "$sha"', good)
+        self.assertNotIn("sha256sum", script("deploy-03-no-digest-check"))
+        self.assertNotIn("grep", script("deploy-05-status-only-check"))
+        self.assertIn("exit 0", script("deploy-06-silent-skip").split("aws s3 cp")[0])
+
+    def test_the_two_timeout_cases_share_one_workflow_and_only_the_history_case_records_an_intake(self):
+        with_history = "deploy-09-timeout-too-high-with-history"
+        no_history = "deploy-09-timeout-too-high-no-history"
+        self.assertEqual(self.deploy(with_history), self.deploy(no_history))
+        self.assertFalse(os.path.exists(os.path.join(case_dir(no_history), "repo", "intake.json")))
+        self.assertNotIn("intake.json", read(os.path.join(case_dir(no_history), "prompt.md")))
+
+
+class RecordedIntakeDeploy09(RecordedIntakeChecks, unittest.TestCase):
+    CASE = "deploy-09-timeout-too-high-with-history"
+
+    def timeouts(self):
+        return job_timeouts(workflow_text(self.CASE, "deploy.yml"))
+
+    def test_the_deploy_history_is_detected_with_10_runs_and_the_run_history_is_unknown(self):
+        history = self.intake["deploy_history"]
+        self.assertEqual(history["status"], "detected")
+        self.assertEqual(history["value"]["runs"], 10)
+        self.assertEqual(self.intake["run_history"]["status"], "unknown")
+        self.assertIsNone(self.intake["run_history"]["value"])
+
+    def test_each_median_is_at_most_270_seconds_so_the_session_cap_does_not_bind(self):
+        for name, job in self.intake["deploy_history"]["value"]["jobs"].items():
+            self.assertLessEqual(job["median_seconds"], 270, name)
+
+    def test_every_history_job_has_a_timeout_more_than_2x_the_proposal_and_not_above_60(self):
+        timeouts = self.timeouts()
+        jobs = self.intake["deploy_history"]["value"]["jobs"]
+        self.assertTrue(jobs)
+        for name, job in jobs.items():
+            proposal = min(60, max(5, math.ceil(3 * job["median_seconds"] / 60)))
+            self.assertIn(name, timeouts, name)
+            self.assertGreater(timeouts[name], 2 * proposal, name)
+            self.assertLessEqual(timeouts[name], 60, name)
+
+    def test_every_deploy_job_but_the_called_workflow_has_a_timeout(self):
+        text = workflow_text(self.CASE, "deploy.yml")
+        self.assertEqual(len(self.timeouts()), len(job_ids(text)) - 1)
+        self.assertIn("uses: ./.github/workflows/ci.yml", job_text(text, "ci"))
+        self.assertNotIn("timeout-minutes", job_text(text, "ci"))
+
+
+class CdFixtures(unittest.TestCase):
+    """Fixtures of every CD case that has a fixture keep private names out (the CD part of NewFixtures)."""
+    OWNERS = ("actions", "pnpm", "dorny", "aws-actions", "changesets", "hashicorp")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cases = [n for n in case_names() if n.startswith(CD_PREFIXES) or n == "clean-cd"]
+        cls.texts = {}
+        for name in cls.cases:
+            base = os.path.join(case_dir(name), "repo")
+            for path in glob.glob(os.path.join(base, "**", "*"), recursive=True):
+                if os.path.isfile(path):
+                    cls.texts[path] = read(path)
+
+    def test_the_cd_cases_exist(self):
+        self.assertEqual(len(self.cases), CD_CASE_COUNT)
+
+    def test_no_cd_fixture_holds_a_url_but_the_two_git_url_forms(self):
+        for path, text in self.texts.items():
+            for form in GIT_URLS:
+                text = re.sub(form, "", text)
+            self.assertNotRegex(text, r"https?://", path)
+
+    def test_every_uses_owner_is_on_the_allowlist_and_a_local_reference_is_skipped(self):
+        for path, text in self.texts.items():
+            for owner in re.findall(r"uses:\s*([A-Za-z][^/\s@]*)/", text):
+                self.assertIn(owner, self.OWNERS, path)
+
+    def test_every_external_uses_has_a_full_sha_and_a_version_comment(self):
+        for path, text in self.texts.items():
+            for line in re.findall(r"uses:\s*(?!\./)(\S.*)", text):
+                self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d", path)
+
+    def test_every_package_name_starts_with_example(self):
+        for path, text in self.texts.items():
+            if os.path.basename(path) == "package.json":
+                self.assertTrue(json.loads(text)["name"].startswith("example-"), path)
+
+    def test_the_version_endpoint_is_a_variable_and_never_a_url(self):
+        for path, text in self.texts.items():
+            if path.endswith(".yml"):
+                self.assertNotIn("version_url=http", text, path)
+                self.assertNotRegex(text, r"VERSION_URL:\s*(?!\$\{\{)\S", path)
 
 
 class TriggerCase(unittest.TestCase):

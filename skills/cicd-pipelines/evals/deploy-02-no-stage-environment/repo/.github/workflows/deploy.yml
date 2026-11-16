@@ -1,0 +1,115 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+permissions:
+  contents: read
+jobs:
+  ci:
+    name: CI
+    if: github.ref_type == 'branch'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+  package:
+    name: Package
+    needs: ci
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: artifacts
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the build output
+        uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Zip the build output
+        run: |
+          (cd dist && zip -qr ../app.zip .)
+          sha256sum app.zip | cut -d' ' -f1 > app.zip.sha256
+      - name: Assume the artifacts role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARTIFACTS }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Upload the zip and its digest
+        env:
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          SHA: ${{ github.sha }}
+        run: |
+          aws s3 cp app.zip "s3://$BUCKET/$SHA/app.zip"
+          aws s3 cp app.zip.sha256 "s3://$BUCKET/$SHA/app.zip.sha256"
+  skip-notice:
+    name: Skip notice
+    needs: ci
+    if: needs.ci.outputs.code != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write the skip notice
+        run: echo "::notice::This push changed only docs, so the deploy is skipped."
+  deploy-dev:
+    name: Deploy dev
+    needs: [ci, package]
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assume the dev role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_DEV }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy the stored artifact
+        env:
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          SHA: ${{ github.sha }}
+          FUNCTION: ${{ vars.FUNCTION_NAME }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+        run: ./scripts/deploy-lambda.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"
+  deploy-prod:
+    name: Deploy prod
+    needs: [ci, package]
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assume the prod role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_PROD }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy the stored artifact
+        env:
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          SHA: ${{ github.sha }}
+          FUNCTION: ${{ vars.FUNCTION_NAME }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+        run: ./scripts/deploy-lambda.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"

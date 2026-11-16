@@ -77,6 +77,16 @@ The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `va
 
 `deploy_history` reads `deploy.yml` only. `run_history` still reads `ci.yml` on the default branch only, and `required_checks` is unchanged.
 
+## CD review cases
+
+The CD cases are review cases. Each one holds a synthetic `ci.yml` (with the `workflow_call` trigger and a `code` output), a `deploy.yml` and the repo scripts that it calls (`scripts/deploy-lambda.sh` and `scripts/check-staged.sh`). Every action is pinned to a placeholder full SHA with a version comment, and the version endpoint is a variable, never a URL. A case name starts with the rule family in lower case, so the CD cases are found by prefix (`deploy-`, `rollback-`, `release-`, `publish-`, `protect-`, `fx-cd-`, `create-cd-` and `clean-cd`).
+
+DEPLOY cases: `deploy-01-...` to `deploy-10-...` (one bad fixture for each DEPLOY rule). A fixture differs from the good workflow only where its rule needs it.
+
+- `deploy-02-tag-run-staging-record` is the good workflow: prod runs in a tag run, has no `needs`, and checks the staging record with `scripts/check-staged.sh`. It forbids DEPLOY-02.
+- DEPLOY-09 is a measured rule, so it has one case for each part, as COST-04 does. `deploy-09-missing-timeout` is the required part, with no history. `deploy-09-timeout-too-high-with-history` is the measured part: its recorded `repo/intake.json` has `deploy_history` detected (every median at most 270 seconds, so the proposal is at most 14 minutes) and every job but the called workflow has `timeout-minutes: 30`. Its prompt tells the review not to run the intake script. `deploy-09-timeout-too-high-no-history` is the same workflow with the sandbox's unknown history, and it forbids DEPLOY-09.
+- The `clean` case and the CI create cases that write files forbid the required DEPLOY ids (01 to 06, 08 and 09).
+
 ## Approval cases
 
 `approve-1-3`, `approve-2-4`, `approve-all` and `approve-none` test the fix flow. Each case gives a recorded review report and a reply (`1,3`, `2-4`, `all`, `none`). The four cases share one synthetic fixture: the `clean` workflow with five defects, one finding each, in the order of the recorded report: 1 SEC-03, 2 SEC-05, 3 COST-04, 4 COST-07, 5 COST-08.

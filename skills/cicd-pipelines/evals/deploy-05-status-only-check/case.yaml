@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: deploy-05-status-only-check
+context:
+  scaffold_script: scaffold.sh

@@ -15,6 +15,7 @@ MAINT_IDS = [f"MAINT-{n:02d}" for n in range(1, 4)]
 COST_IDS = [f"COST-{n:02d}" for n in range(1, 9)]
 MONO_IDS = ["MONO-01", "MONO-02"]
 SEC_IDS = [f"SEC-{n:02d}" for n in range(1, 11)]
+DEPLOY_IDS = [f"DEPLOY-{n:02d}" for n in range(1, 11)]
 ZIZMOR_MAPPING = {
     "unpinned-uses": "SEC-01", "excessive-permissions": "SEC-03", "template-injection": "SEC-04",
     "artipacked": "SEC-05", "dangerous-triggers": "SEC-07", "secrets-inherit": "SEC-08",
@@ -227,6 +228,75 @@ class CostAndMonorepoRules(unittest.TestCase):
         text = read(rule_files()["monorepo"])
         self.assertIn("only when", text)
         self.assertIn("`monorepo`", text)
+
+
+class DeployRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["deploy"]
+        cls.entries = rule_entries(cls.path)
+        cls.deploy = dict(cls.entries)
+
+    def test_the_deploy_file_holds_deploy_01_to_deploy_10_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in self.entries], DEPLOY_IDS)
+
+    def test_the_severity_levels_follow_the_ticket_table(self):
+        expected = {"DEPLOY-01": "required", "DEPLOY-02": "required", "DEPLOY-03": "required",
+                    "DEPLOY-04": "required", "DEPLOY-05": "required", "DEPLOY-06": "required",
+                    "DEPLOY-07": "suggestion", "DEPLOY-08": "required", "DEPLOY-09": "required",
+                    "DEPLOY-10": "suggestion"}
+        self.assertEqual({rule_id: level(fields) for rule_id, fields in self.deploy.items()}, expected)
+
+    def test_the_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No deploy rule is critical", read(self.path))
+
+    def test_every_check_starts_with_its_kind(self):
+        kinds = {"DEPLOY-07": "judgement", "DEPLOY-10": "judgement", "DEPLOY-09": "mechanical + measured"}
+        for rule_id, fields in self.deploy.items():
+            self.assertTrue(fields["Check"].startswith(kinds.get(rule_id, "mechanical")), rule_id)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.deploy.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_deploy_02_accepts_the_staging_record_check_in_place_of_needs(self):
+        rule = self.deploy["DEPLOY-02"]["Rule"]
+        self.assertIn("replaces `needs`", rule)
+        self.assertIn("scripts/check-staged.sh", rule)
+        self.assertIn("A prod job with the staging-record check and no `needs` is no finding.",
+                      self.deploy["DEPLOY-02"]["Check"])
+
+    def test_deploy_04_has_a_required_key_part_and_a_suggestion_role_arn_part(self):
+        severity = self.deploy["DEPLOY-04"]["Severity"]
+        self.assertIn("required (a long-lived AWS key)", severity)
+        self.assertIn("suggestion (a role ARN typed into the YAML)", severity)
+        rule = self.deploy["DEPLOY-04"]["Rule"]
+        for name in ("the `package` job", "the `artifacts` role", "the deploy jobs", "the rollback jobs"):
+            self.assertIn(name, rule)
+        self.assertNotIn("after install and build", rule)
+
+    def test_deploy_08_is_an_intended_skip_and_not_a_deploy_06_finding(self):
+        rule = self.deploy["DEPLOY-08"]["Rule"]
+        self.assertIn("The skip is intended, so it is never a DEPLOY-06 finding.", rule)
+        self.assertIn("skip with a notice", rule)
+
+    def test_deploy_09_holds_the_create_values_the_cap_and_the_measured_formula(self):
+        fields = self.deploy["DEPLOY-09"]
+        self.assertIn("measured", fields["Severity"])
+        rule = fields["Rule"]
+        for text in ("30 minutes for a deploy job", "10 for a separate verification job", "15 for a release job",
+                     "30 for a rollback job", "10 for the `package` job", "5 for the `skip-notice` job",
+                     "never above the OIDC role session (60 minutes by default)",
+                     "`min(session, max(5, ceil(3 × m)))`", "`m = median_seconds / 60`", "`uses:` at job level"):
+            self.assertIn(text, rule)
+        self.assertIn("A timeout of exactly 2× the proposal is no finding", fields["Check"])
+        self.assertIn("`deploy_history`", fields["Check"])
+        self.assertIn("no measured finding", fields["Check"])
+
+    def test_the_rule_text_quotes_no_write_api_call(self):
+        text = read(self.path)
+        self.assertNotIn("gh api", text)
+        self.assertIsNone(re.search(r"-X (POST|PUT|PATCH|DELETE)", text))
 
 
 class SecurityRules(unittest.TestCase):
@@ -514,6 +584,30 @@ class Router(unittest.TestCase):
             self.assertIn(rule_file, bullet)
         self.assertIn("rules/monorepo.md", bullet)
         self.assertIn("when the intake finds a monorepo", bullet)
+        self.assertIn("rules/deploy.md", bullet)
+        self.assertIn("when the repo has a deploy workflow", bullet)
+
+    def test_loading_by_need_gives_the_load_rule_of_each_cd_family_before_the_modules_list(self):
+        start = self.text.index("## Loading by need")
+        section = self.text[start:self.text.index("## Modules")]
+        self.assertGreater(start, self.text.index("## Pick the branch"))
+        self.assertIn("load always", section)
+        self.assertIn("only for a monorepo", section)
+        for family, rule_file in (("DEPLOY", "rules/deploy.md"), ("ROLLBACK", "rules/rollback.md"),
+                                  ("RELEASE", "rules/release.md"), ("PUBLISH", "rules/publish.md"),
+                                  ("PROTECT", "rules/protect.md")):
+            self.assertIn(f"`{family}`", section)
+            self.assertIn(rule_file, section)
+        for text in ("the request names a deploy or a rollback", "the repo has a deploy workflow",
+                     "the request names a release", "a published package",
+                     "with any CD rule file", "branch protection, rulesets or environments"):
+            self.assertIn(text, section)
+        self.assertNotIn("does not exist yet", self.text)
+
+    def test_the_modules_list_names_the_deploy_rules_and_their_load_rule(self):
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("[rules/deploy.md](rules/deploy.md): DEPLOY-01 to DEPLOY-10", modules)
+        self.assertIn("\"Loading by need\"", modules)
 
     def test_the_modules_list_names_the_cost_and_monorepo_rules(self):
         modules = self.text[self.text.index("## Modules"):]
@@ -531,7 +625,12 @@ class ReviewSteps(unittest.TestCase):
         self.text = read(os.path.join(SKILL, "review.md")).lower()
 
     def test_it_loads_the_rule_files(self):
-        self.assertIn("load every rule file", self.text)
+        self.assertIn("load the rule files by need", self.text)
+        self.assertNotIn("load every rule file", self.text)
+        step = self.text[self.text.index("1. load the rule files by need"):self.text.index("2. read the intake json")]
+        self.assertIn("load the ci rule files always", step)
+        self.assertIn("each cd rule file that exists in `rules/` only when its load rule", step)
+        self.assertIn("\"loading by need\" in [skill.md](skill.md)", step)
 
     def test_it_writes_the_report_as_the_final_message(self):
         self.assertIn("final message", self.text)
@@ -616,7 +715,7 @@ class ReviewSteps(unittest.TestCase):
     def test_it_loads_the_cost_file_always_and_the_monorepo_file_only_for_a_monorepo(self):
         self.assertIn("rules/cost.md", self.text)
         self.assertIn("rules/monorepo.md", self.text)
-        step = self.text[self.text.index("1. load every rule file"):self.text.index("2. read the intake json")]
+        step = self.text[self.text.index("1. load the rule files by need"):self.text.index("2. read the intake json")]
         self.assertIn("only when", step)
         self.assertIn("`monorepo`", step)
         self.assertNotIn("does not exist yet", self.text)

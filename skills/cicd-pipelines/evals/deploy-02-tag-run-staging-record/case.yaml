@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: deploy-02-tag-run-staging-record
+context:
+  scaffold_script: scaffold.sh
