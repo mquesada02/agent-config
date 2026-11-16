@@ -323,5 +323,37 @@ class BacktickReasonTest(unittest.TestCase):
                     self.fail(f"{text!r} raised {error!r}")
 
 
+class ReaderCharacterizationTest(unittest.TestCase):
+    """Behavior of the substitution reader that no test above pins. It must be the same before and after the reader code moved
+    into a shared module."""
+
+    def test_a_quoted_dollar_paren_inside_a_body_is_denied_as_unreadable(self):
+        for command in ("echo $(echo '$(')", "echo $(git push; echo '$(')", "echo $(echo '$(' ; echo $(git push))"):
+            with self.subTest(command=command):
+                reason = RULES.command_reason(command)
+                self.assertEqual(reason, "the command cannot be read (ValueError)")
+                self.assertFalse(hook.names_gated_command(reason))
+
+    def test_a_gated_write_inside_a_nested_body_is_denied_and_named(self):
+        reason = RULES.command_reason("echo $(echo $(git push))")
+        self.assertEqual(reason, "git push changes the remote")
+        self.assertTrue(hook.names_gated_command(reason))
+
+    def test_a_gated_write_inside_a_backtick_form_is_denied_and_named(self):
+        reason = RULES.command_reason("echo `git push`")
+        self.assertEqual(reason, "git push changes the remote, inside a backtick form")
+        self.assertTrue(reason.endswith("inside a backtick form"))
+
+    def test_the_legacy_substitution_reader_raises_on_a_closed_backtick_form(self):
+        with self.assertRaises(ValueError):
+            RULES.substitution_bodies("x`ls`y")
+        self.assertEqual(RULES.substitution_bodies("$(a)-$(b)"), ["a", "b"])
+
+    def test_the_audit_helpers_keep_their_arguments_and_results(self):
+        self.assertEqual(RULES.audit._paren_end("abc) d", 0), 4)
+        self.assertEqual(RULES.audit._paren_end("a (b) c) d", 0), 8)
+        self.assertEqual(RULES.audit._join_as_bash("ls \\\n  -l"), "ls   -l")
+
+
 if __name__ == "__main__":
     unittest.main()
