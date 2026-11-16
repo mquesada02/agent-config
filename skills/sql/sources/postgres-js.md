@@ -11,7 +11,7 @@ Load this module when the SQL is in a postgres.js tagged template of a JavaScrip
 python3 <skill folder>/scripts/extract.py <file> --tags sql,this.sql,tx
 ```
 
-It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements` and `error`. The `detected_receivers` and `receivers` keys are for the `pg` driver (`--receivers` adds receivers to the detected ones); this module does not use them.
+It prints one JSON object with the keys `file`, `form` (`js`), `detected_tags`, `factory_names`, `tags`, `detected_receivers`, `receivers`, `statements`, `not_followed` and `error`. The `detected_receivers`, `receivers` and `not_followed` keys are for the `pg` driver (`--receivers` adds receivers to the detected ones); this module does not use them.
 
 - `detected_tags`: the tags that the file shows. It finds them in these forms: a variable that holds `postgres(...)`, a member form such as `this.sql = postgres(...)`, a class field, and the first parameter of a `.begin(tx => ...)` callback. Tell the user about a detected tag that is not in the repo tag list, because the repo list may miss it.
 - `factory_names`: the local names that the file binds to the postgres.js package (`import postgres from 'postgres'`, `require('postgres')`).

@@ -256,6 +256,21 @@ class PgScanTest(ScanCase):
         out = self.scan()
         self.assertEqual(self.candidate(out, "PGJS-04")["evidence"], [{"file": "a.ts", "line": 3}])
 
+    def test_a_dynamic_pg_statement_gives_no_hit_but_is_counted_in_forms_pg(self):
+        self.write(
+            "a.ts",
+            PG_HEAD + "pool.query(`select * from t where n like '%a' offset 2000 ${x}`);\n"
+            + "pool.query('select * from t where n like ' + pattern);\n",
+        )
+        out = self.scan()
+        self.assertEqual(out["forms"]["pg"], 2)
+        for rule in ("PG-06", "PG-08", "PG-10"):
+            self.assertIsNone(self.candidate(out, rule), rule)
+
+    def test_a_non_dynamic_const_statement_still_gives_its_hit(self):
+        self.write("a.ts", PG_HEAD + "const q = 'select * from t';\npool.query(q);\n")
+        self.assertEqual(self.candidate(self.scan(), "PG-08")["evidence"], [{"file": "a.ts", "line": 3}])
+
     def test_a_pg_file_has_no_template_form_to_pick_a_formatter(self):
         self.write("a.ts", PG_HEAD + "pool.query('select 1');\n")
         out = self.scan()

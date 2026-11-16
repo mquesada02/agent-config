@@ -10,7 +10,8 @@ SKILL_DIR = os.path.dirname(HERE)
 SCRIPT = os.path.join(SKILL_DIR, "scripts", "extract.py")
 
 KEYS = [
-    "file", "form", "detected_tags", "factory_names", "tags", "detected_receivers", "receivers", "statements", "error",
+    "file", "form", "detected_tags", "factory_names", "tags", "detected_receivers", "receivers", "statements",
+    "not_followed", "error",
 ]
 STATEMENT_KEYS = ["source", "tag", "start_line", "end_line", "text", "parent", "interpolations"]
 

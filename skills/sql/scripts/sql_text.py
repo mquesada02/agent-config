@@ -315,10 +315,13 @@ def votes(statement, form):
 def counted_votes(statement, form):
     """The votes of a counted statement, or None when it is not counted.
 
-    A statement counts when it is not a nested fragment and its masked text
-    holds a command word.
+    A statement counts when it is not a nested fragment, it is not a dynamic
+    `pg` statement (its text is raw source, not SQL), and its masked text holds
+    a command word.
     """
     if statement["parent"] is not None:
+        return None
+    if statement["source"] == "pg" and statement["pg"]["dynamic"]:
         return None
     masked, _ = mask(statement)
     found = words(masked)

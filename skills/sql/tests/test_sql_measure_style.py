@@ -288,6 +288,15 @@ class PgStatementTest(MeasureCase):
         path = self.write("a.ts", self.HEAD + "pool.query('SELECT a\\n  b,\\n    c\\n  FROM t')\n")
         self.assertEqual(self.props(path)["indent"]["counts"], {"2 spaces": 1})
 
+    def test_a_dynamic_pg_statement_gives_no_vote(self):
+        path = self.write(
+            "a.ts",
+            self.HEAD + "pool.query(`SELECT a FROM ${t}`)\npool.query('SELECT a FROM ' + t)\npool.query('select b from t')\n",
+        )
+        out = measure(path)
+        self.assertEqual(out["statements"], 1)
+        self.assertEqual(out["properties"]["keyword_case"]["counts"], {"upper": 0, "lower": 1})
+
     def test_a_pg_statement_counts_toward_the_minimum_of_three(self):
         path = self.write(
             "a.ts",

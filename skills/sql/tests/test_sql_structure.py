@@ -310,6 +310,97 @@ class ExtractCaseTest(unittest.TestCase):
         self.assertIn("`extract-tag-not-sql`", read(PROCEDURE))
 
 
+EXTRACT_PG_CASE = os.path.join(EVALS, "extract-pg-forms")
+
+
+class ExtractPgCaseTest(unittest.TestCase):
+    GRADERS = (
+        "skill-fired.md", "extractor-ran.md", "names-each-statement.md",
+        "no-connection.md", "no-formatter.md",
+    )
+
+    def grader(self, name):
+        return read(os.path.join(EXTRACT_PG_CASE, "graders", name))
+
+    def test_the_case_folder_has_a_case_file_a_scaffold_and_the_five_graders(self):
+        self.assertTrue(os.path.isfile(os.path.join(EXTRACT_PG_CASE, "case.yaml")))
+        self.assertTrue(os.path.isfile(os.path.join(EXTRACT_PG_CASE, "scaffold.sh")))
+        found = sorted(os.listdir(os.path.join(EXTRACT_PG_CASE, "graders")))
+        self.assertEqual(found, sorted(self.GRADERS))
+
+    def test_the_case_file_does_not_name_the_skill_and_sets_the_scaffold(self):
+        case = read(os.path.join(EXTRACT_PG_CASE, "case.yaml"))
+        self.assertRegex(case, r"(?m)^  scaffold_script: scaffold\.sh$")
+        self.assertIn("allowed_tools: [Skill, Read, Glob, Grep, Bash]", case)
+        self.assertRegex(case, r"(?m)^  max_turns: 8$")
+        prompt = case.split("prompt: |", 1)[1]
+        self.assertNotRegex(prompt, r"(?i)/sql|sql skill|extract\.py")
+
+    def test_the_scaffold_copies_the_fixture_into_the_working_folder(self):
+        with tempfile.TemporaryDirectory() as work:
+            subprocess.run(
+                ["bash", os.path.join(EXTRACT_PG_CASE, "scaffold.sh")],
+                cwd=work, check=True, env={"PATH": os.environ["PATH"]},
+            )
+            copied = read(os.path.join(work, "order-reports.ts"))
+        self.assertEqual(copied, read(os.path.join(EXTRACT_PG_CASE, "order-reports.ts")))
+
+    def test_the_tool_used_graders(self):
+        skill = frontmatter(self.grader("skill-fired.md"))
+        self.assertRegex(skill, r"(?m)^type: tool_used$")
+        self.assertRegex(skill, r"(?m)^tool: Skill$")
+        ran = frontmatter(self.grader("extractor-ran.md"))
+        self.assertRegex(ran, r"(?m)^type: tool_used$")
+        self.assertRegex(ran, r"(?m)^min: 1$")
+        self.assertIn(r"extract\.py", ran)
+        for name, needle in (
+            ("no-connection.md", "psql|pg_run|PGSERVICE|service="),
+            ("no-formatter.md", "prettier|pg_format|pgFormatter|sql-formatter|sqlfluff|eslint"),
+        ):
+            with self.subTest(name=name):
+                head = frontmatter(self.grader(name))
+                self.assertRegex(head, r"(?m)^type: tool_used$")
+                self.assertRegex(head, r"(?m)^min: 0$")
+                self.assertRegex(head, r"(?m)^max: 0$")
+                self.assertIn(needle, head)
+
+    def test_the_fixture_has_every_receiver_form_and_argument_form(self):
+        text = read(os.path.join(EXTRACT_PG_CASE, "order-reports.ts"))
+        for needle in (
+            "new Pool()", "new Client()", "new pg.native.Client()", "new pg.native.Pool()", "await pool.connect()",
+            "pool.connect().then(", "pool.connect((err, c)", "private db = new Pool()", "this.db.query(", "{ text:", "new Query(",
+            "new Cursor(", "new QueryStream(", "let mutable", "import { shared }", "${table}", "'SELECT * FROM ' + table",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text)
+
+    def test_the_rubric_matches_the_extractor_output_for_the_fixture(self):
+        script = os.path.join(SKILL_DIR, "scripts", "extract.py")
+        fixture = os.path.join(EXTRACT_PG_CASE, "order-reports.ts")
+        data = json.loads(subprocess.run(
+            [sys.executable, "-I", script, fixture], capture_output=True, text=True, check=True,
+        ).stdout)
+        found = [
+            "%s-%s %s%s" % (
+                s["start_line"], s["end_line"], s["pg"]["kind"], " dynamic" if s["pg"]["dynamic"] else ""
+            )
+            for s in data["statements"]
+        ]
+        rubric = self.grader("names-each-statement.md")
+        self.assertEqual(len(found), 17)
+        for entry in found:
+            lines, kind = entry.split(" ", 1)
+            row = "| %s | `%s`" % (lines, kind.split(" ")[0])
+            with self.subTest(entry=entry):
+                self.assertIn(row, rubric)
+                self.assertEqual("dynamic" in kind, ("`dynamic`" in rubric.split(row, 1)[1].split("\n", 1)[0]))
+        self.assertEqual([c["line"] for c in data["not_followed"]], [30, 31, 32, 44, 45])
+        self.assertIn("30, 31, 32, 44 and 45", rubric)
+
+    def test_the_cases_table_names_the_case(self):
+        self.assertIn("`extract-pg-forms`", read(PROCEDURE))
+
+
 SQL_TEXT = os.path.join(SKILL_DIR, "scripts", "sql_text.py")
 STYLE_KEYS = ("keyword_case", "indent", "clause_per_line", "comma", "alias_as")
 FORMAT_CASES = (
