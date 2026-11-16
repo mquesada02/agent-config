@@ -4,10 +4,10 @@
 Usage: python3 measure_style.py [--tags <t1,t2,...>] [--receivers <r1,r2,...>] <file>...
 
 Each file goes through `extract.py` (next to this script), with the same
-`--tags` and `--receivers` values. The output has the
-counts, the majority and the value to use for each of the five `[style]`
-properties. A tie, a property with no vote, or fewer than 3 counted statements
-gives the default style's value.
+`--tags` and `--receivers` values. The output has the counts, the majority
+and the value to use for each of the five `[style]` properties. A tie, a
+property with no vote, or fewer than 3 counted statements gives the default
+style's value.
 
 Exit code: 0 when the command ran (files that cannot be read are in "errors"),
 2 for a usage error (one line on stderr, nothing on stdout).

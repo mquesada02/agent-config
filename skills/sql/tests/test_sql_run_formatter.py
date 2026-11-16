@@ -375,29 +375,7 @@ class ReceiversOptionTest(RunnerTestCase):
         self.assertEqual(self.read(self.out), plain_output)
         self.assertIn('db.query("select 2")', plain_output)
 
-    def test_the_receivers_option_reaches_the_extractor_in_both_of_its_calls(self):
-        copy = os.path.join(self._tmp.name, "scripts-copy")
-        shutil.copytree(os.path.join(SKILL_DIR, "scripts"), copy, ignore=shutil.ignore_patterns("__pycache__"))
-        real = os.path.join(SKILL_DIR, "scripts", "extract.py")
-        with open(os.path.join(copy, "extract.py"), "w", encoding="utf-8") as handle:
-            handle.write(EXTRACT_WRAPPER.format(real=real))
-        self.write("store.ts", RECEIVER_TS_FILE)
-        self.fake("prettier", local=True, replace=[["select", "SELECT"]])
-        command = [
-            sys.executable, os.path.join(copy, "run_formatter.py"), self.repo, "store.ts", "--tool", "prettier-plugin-embed",
-            "--range", "4-4", "--output", self.out, "--tags", "sql", "--receivers", "db",
-        ]
-        env = dict(os.environ)
-        env["PATH"] = self.bin + os.pathsep + env["PATH"]
-        result = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        with open(os.path.join(copy, "extract.py.log"), encoding="utf-8") as handle:
-            calls = [json.loads(line) for line in handle]
-        self.assertEqual(len(calls), 2)
-        for argv in calls:
-            self.assertEqual(argv[1:], ["--tags", "sql", "--receivers", "db"])
-
-    def test_no_receivers_option_passes_none_to_the_extractor(self):
+    def logged_extractor_calls(self, extra):
         copy = os.path.join(self._tmp.name, "scripts-copy")
         shutil.copytree(os.path.join(SKILL_DIR, "scripts"), copy, ignore=shutil.ignore_patterns("__pycache__"))
         real = os.path.join(SKILL_DIR, "scripts", "extract.py")
@@ -408,13 +386,22 @@ class ReceiversOptionTest(RunnerTestCase):
         command = [
             sys.executable, os.path.join(copy, "run_formatter.py"), self.repo, "store.ts", "--tool", "prettier-plugin-embed",
             "--range", "4-4", "--output", self.out,
-        ]
+        ] + extra
         env = dict(os.environ)
         env["PATH"] = self.bin + os.pathsep + env["PATH"]
         result = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with open(os.path.join(copy, "extract.py.log"), encoding="utf-8") as handle:
-            calls = [json.loads(line) for line in handle]
+            return [json.loads(line) for line in handle]
+
+    def test_the_receivers_option_reaches_the_extractor_in_both_of_its_calls(self):
+        calls = self.logged_extractor_calls(["--tags", "sql", "--receivers", "db"])
+        self.assertEqual(len(calls), 2)
+        for argv in calls:
+            self.assertEqual(argv[1:], ["--tags", "sql", "--receivers", "db"])
+
+    def test_no_receivers_option_passes_none_to_the_extractor(self):
+        calls = self.logged_extractor_calls([])
         self.assertEqual([argv[1:] for argv in calls], [[], []])
 
 
