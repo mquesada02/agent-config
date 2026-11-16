@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structural assertion script for a ci-pipelines create run.
+"""Structural assertion script for a cicd-pipelines create run.
 
 Usage: check_workflow.py WORKFLOW --assert NAME[=ARGS] [NAME[=ARGS] ...]
 

@@ -49,7 +49,7 @@ class GradeReport(unittest.TestCase):
 
     # ----- sections
     def test_a_missing_title_fails(self):
-        self.assertFailsCheck(self.full().replace("# ci-pipelines review: all workflows\n", ""), "sections")
+        self.assertFailsCheck(self.full().replace("# cicd-pipelines review: all workflows\n", ""), "sections")
 
     def test_a_missing_intake_fails(self):
         self.assertFailsCheck(self.full(intake=False), "sections")

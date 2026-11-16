@@ -1,4 +1,4 @@
-# ci-pipelines evals
+# cicd-pipelines evals
 
 Model evals for the skill. You run them by hand. They cost tokens and their results vary, so they are not in the repo test command (the deterministic tests are in `../tests/`).
 
@@ -7,7 +7,7 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/cicd-pipelines --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
@@ -18,12 +18,12 @@ claude plugin eval skills/ci-pipelines --no-publish -j 2 --runs 3 --threshold 1.
 - `--allow-tools` grants the shell calls of the review steps: the intake script and the pin check script (with no GitHub credentials the pin check reports `unverified`; the `sec-01-wrong-sha` case gives a recorded `pins.json` instead). The pattern matches the path of the script in the skill folder that the run uses. In the review cases the workspace is a temporary folder that is not inside a git repo (a parent repo with an `origin` would be read), and it has a temporary home and no GitHub credentials. The intake finds no GitHub remote, so `required_checks` is `unknown` and the review says "unreadable" (the `name-09-...` case expects this).
 - `--keep-temp` keeps the trace of each run (`tracePath` in the result). The result JSON holds scores and grader verdicts but not the final message, so `grade_eval_results.py` reads the final message from the trace. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Remove them by hand when you are done.
 - Add `--case <glob>` to run one case. Later tickets add cases to this same run.
-- Plugin eval exits 1 when a case scores below the threshold. A bare skill folder is a valid target (it resolves as the plugin `ci-pipelines`), so no wrapper manifest is needed.
+- Plugin eval exits 1 when a case scores below the threshold. A bare skill folder is a valid target (it resolves as the plugin `cicd-pipelines`), so no wrapper manifest is needed.
 
 Then score the report contract and the rule ids with the two Python graders:
 
 ```
-python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json
+python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json
 ```
 
 ## Cases
@@ -67,12 +67,12 @@ Every fixture is synthetic. No text comes from a private repo.
 - **Graders.** The final message of an editing case holds the applied list, the diff and a post-fix report (title ends with `(after fixes)`). The `expect-<ID>.md` graders (the findings that the reply did not approve) and the `forbid-<ID>.md` graders (the approved ones) read that report. `approve-none` has the three no-edit graders, `no-actionlint.md` and no report graders. Every case has `gh-api-no-write.md`: a `tool_used` grader (`max: 0`) that matches a `gh api` call on a branch protection or ruleset path with a method other than GET, or with a body flag. A call that mixes a read of such a path with a body flag for another path also matches. Run it by hand:
 
 ```
-claude plugin eval skills/ci-pipelines --case 'approve-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Edit "Bash(actionlint*)" "Bash(git diff*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/cicd-pipelines --case 'approve-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Edit "Bash(actionlint*)" "Bash(git diff*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 `Edit` is a gated tool: without `--allow-tools Edit` the run withholds it from the model, and the `actionlint-after-edit.md` grader cannot pass. The allow pattern of the actionlint call is `Bash(actionlint*)`.
 
-Then run `python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. It grades the three editing cases from their `expect.json` and skips `approve-none`. The full run of these cases (3 runs each) belongs to the eval ticket, not to the ticket that added them.
+Then run `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. It grades the three editing cases from their `expect.json` and skips `approve-none`. The full run of these cases (3 runs each) belongs to the eval ticket, not to the ticket that added them.
 
 ## Create cases
 
@@ -91,14 +91,14 @@ In-run graders of a writing case: `wrote-ci.md` (one `Write` of `.github/workflo
 Run the create cases by hand. `Write` and `Edit` are gated tools, so `--allow-tools` grants them, with the actionlint call:
 
 ```
-claude plugin eval skills/ci-pipelines --case 'create-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Write Edit "Bash(actionlint*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/cicd-pipelines --case 'create-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Write Edit "Bash(actionlint*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 Then run both Python graders on the result:
 
 ```
-python3 skills/ci-pipelines/scripts/grade_eval_results.py <results folder>/result.json
-python3 skills/ci-pipelines/scripts/grade_create_results.py <results folder>/result.json
+python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json
+python3 skills/cicd-pipelines/scripts/grade_create_results.py <results folder>/result.json
 ```
 
 `grade_eval_results.py` scores the report structure and the rule ids of every case that has the `section-summary` grader, so it scores the four writing cases and skips `create-no-lockfile`. `grade_create_results.py` reads the final message of each with-arm run of each case that has the `wrote-ci` grader. It takes each fenced `yaml` block under a `### <path>` heading of the `## Created` section, runs `check_workflow.py` on it with the assertions of that path in `expect.json`, and fails the run when a path that the case asserts is not shown.
@@ -112,7 +112,7 @@ python3 skills/ci-pipelines/scripts/grade_create_results.py <results folder>/res
 Plugin eval tells an `llm` judge to answer with one word, keeps only the votes, and shows the judge one input (the last message). So a result file holds no reason for a `fix-quality` fail, and the judge cannot see the workflow. `scripts/judge_fix_quality.py` reads the same result and the kept traces (`--keep-temp`), and asks a haiku judge one question for each table row, with the exact text of the fixture workflow files (`repo/.github`) and the flag section for a row marked with ⚑. It reads the NAME-09 rules and the ⚑ row rule from the case's `graders/fix-quality.md`, so the script and the grader cannot drift. It prints `PASS` or `FAIL` and a reason for each row, then the row and run pass rates. It costs one judge call for each row, so use `--case <glob>` to limit it:
 
 ```
-python3 skills/ci-pipelines/scripts/judge_fix_quality.py <results folder>/result.json --case 'name-*'
+python3 skills/cicd-pipelines/scripts/judge_fix_quality.py <results folder>/result.json --case 'name-*'
 ```
 
 ## Graders

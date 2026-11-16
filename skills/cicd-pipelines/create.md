@@ -20,7 +20,7 @@ Read only the intake JSON (see [SKILL.md](SKILL.md)) for the repo facts. The one
 7. Self-review the files that you wrote against the same rules, as [review.md](review.md) does. The final message has this order:
    - `## Created`. One line for each file that the run wrote or left unchanged: the path and the word `written` or `unchanged`. A file that the run edited (a Dependabot file with an added entry) is `written`. A line for each removed job, and for a missing test runner. The actionlint output of step 6 when it has errors.
    - For each written file, a heading `### <path>` and the file text in a fenced `yaml` block. The block holds the whole file, line by line, exactly as written: never a summary, an outline, a list of jobs, comments in place of the steps, or a note that the file is on disk. If actionlint is listed as installed but the call fails (for example `command not found`), say so in `## Created`, and the `Tools:` bullet still follows the `installed_tools` fact.
-   - The report of the review report contract in [review.md](review.md), starting with the title line `# ci-pipelines review: .github/workflows/ci.yml (created)` and the `**Result:` line right after it. Its section 2 names the defaults that the run used. Its job graph section sketches the created jobs. Write no text after the approval line.
+   - The report of the review report contract in [review.md](review.md), starting with the title line `# cicd-pipelines review: .github/workflows/ci.yml (created)` and the `**Result:` line right after it. Its section 2 names the defaults that the run used. Its job graph section sketches the created jobs. Write no text after the approval line.
 
 ## Fill table
 

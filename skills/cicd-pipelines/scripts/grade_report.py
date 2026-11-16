@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report-structure grader for a ci-pipelines review report (the report contract of review.md).
+"""Report-structure grader for a cicd-pipelines review report (the report contract of review.md).
 
 Usage: grade_report.py REPORT
 
@@ -12,7 +12,7 @@ import argparse
 import re
 import sys
 
-TITLE = re.compile(r"^# ci-pipelines review: \S")
+TITLE = re.compile(r"^# cicd-pipelines review: \S")
 SUMMARY = re.compile(r"^\*\*Result: ([0-9]{1,9}) critical, ([0-9]{1,9}) required, ([0-9]{1,9}) suggestions?\.\*\*$")
 COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 HEADINGS = {"critical": "## Critical", "required": "## Required", "suggestion": "## Suggestions"}

@@ -431,12 +431,12 @@ class Router(unittest.TestCase):
         self.text = read(os.path.join(SKILL, "SKILL.md"))
         self.meta = frontmatter(os.path.join(SKILL, "SKILL.md"))
 
-    def test_the_name_is_ci_pipelines(self):
-        self.assertEqual(self.meta["name"], "ci-pipelines")
+    def test_the_name_is_cicd_pipelines(self):
+        self.assertEqual(self.meta["name"], "cicd-pipelines")
 
     def test_the_description_leads_with_the_skill_name_and_stays_short(self):
         description = self.meta["description"]
-        self.assertTrue(description.startswith("ci-pipelines"), description)
+        self.assertTrue(description.startswith("cicd-pipelines"), description)
         self.assertLessEqual(len(description), 400)
 
     def test_the_description_triggers_on_workflow_files_and_names_both_branches(self):

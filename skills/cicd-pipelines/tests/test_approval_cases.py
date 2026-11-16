@@ -59,7 +59,7 @@ def expect_lists(name):
 def final_message(rows_after):
     """A final message of a fix run: the three sections, then a post-fix report with the given rows."""
     report = make_report(required=[row(rule) for rule in rows_after]).replace(
-        "# ci-pipelines review: all workflows", "# ci-pipelines review: all workflows (after fixes)")
+        "# cicd-pipelines review: all workflows", "# cicd-pipelines review: all workflows (after fixes)")
     return "\n".join(["## Applied", "", "- 1 SEC-03: added the permissions block", "",
                       "## Diff", "", "```diff", "--- a/ci.yml", "+++ b/ci.yml", "@@ -1,3 +1,5 @@", "+permissions:",
                       "```", "", report])
@@ -99,7 +99,7 @@ class Layout(unittest.TestCase):
     def test_the_prompt_does_not_name_the_skill_or_a_rule(self):
         for name in CASES:
             prompt = read(case_path(name, "prompt.md")).lower()
-            self.assertNotIn("ci-pipelines", prompt)
+            self.assertNotIn("cicd-pipelines", prompt)
             self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono|sec)-\d\d", prompt), name)
 
     def test_the_repo_holds_the_fixture_files_and_no_git_folder(self):
@@ -263,7 +263,7 @@ class RecordedIntake(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = os.path.join(tmp, "repo")
             shutil.copytree(case_path("approve-1-3", "repo"), repo)
-            env = dict(os.environ, CI_PIPELINES_OFFLINE="1")
+            env = dict(os.environ, CICD_PIPELINES_OFFLINE="1")
             proc = subprocess.run(["python3", "-I", os.path.join(SKILL, "scripts", "intake.py"), repo],
                                   capture_output=True, text=True, env=env)
             self.assertEqual(proc.returncode, 0, proc.stderr)

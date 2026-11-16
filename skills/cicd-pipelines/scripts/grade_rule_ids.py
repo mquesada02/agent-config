@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rule-id grader for a ci-pipelines review report.
+"""Rule-id grader for a cicd-pipelines review report.
 
 Usage: grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]
 

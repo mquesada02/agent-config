@@ -38,7 +38,7 @@ def make_report(critical=(), required=(), suggestion=(), summary=None, tools=Non
     groups = {"critical": list(critical), "required": list(required), "suggestion": list(suggestion)}
     total = sum(len(rows) for rows in groups.values())
     any_flag = any(r[4] for rows in groups.values() for r in rows)
-    lines = ["# ci-pipelines review: all workflows", ""]
+    lines = ["# cicd-pipelines review: all workflows", ""]
     lines.append(summary or (
         f"**Result: {len(groups['critical'])} critical, {len(groups['required'])} required, "
         f"{len(groups['suggestion'])} suggestions.**"))

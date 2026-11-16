@@ -30,7 +30,7 @@ def created(*blocks):
         lines += [f"- `{path}` written"]
     for path, text in blocks:
         lines += ["", f"### {path}", "", "```yaml", text.rstrip("\n"), "```"]
-    lines += ["", "# ci-pipelines review: .github/workflows/ci.yml (created)", "", "**Result: clean**"]
+    lines += ["", "# cicd-pipelines review: .github/workflows/ci.yml (created)", "", "**Result: clean**"]
     return "\n".join(lines) + "\n"
 
 
@@ -119,7 +119,7 @@ class GradeCreateResults(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
     def test_a_message_with_no_created_section_fails(self):
-        self.add_case("create-x", {CI: ["name=CI"]}, ["# ci-pipelines review: x\n"])
+        self.add_case("create-x", {CI: ["name=CI"]}, ["# cicd-pipelines review: x\n"])
         code, out, _ = self.grade()
         self.assertEqual(code, 1)
         self.assertIn(f"FAIL create-x#1 written: {CI}", out)

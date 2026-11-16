@@ -65,7 +65,7 @@ class Files(unittest.TestCase):
             tools = frontmatter(os.path.join(case_dir(name), "prompt.md"))["allowed_tools"]
             for tool in ("Read", "Glob", "Grep", "Skill", "Bash", "Write", "Edit"):
                 self.assertIn(tool, tools, name)
-            self.assertNotIn("ci-pipelines", text.lower(), name)
+            self.assertNotIn("cicd-pipelines", text.lower(), name)
 
     def test_the_scaffold_only_copies_the_fixture(self):
         for name in CASES:

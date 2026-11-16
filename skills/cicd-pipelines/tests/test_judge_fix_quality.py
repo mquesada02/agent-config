@@ -38,7 +38,7 @@ def report(*fixes, flag_rows=()):
         rule = f"NAME-0{index}"
         cell = f"{rule} ⚑" if rule in flag_rows else rule
         rows.append(f"| {index} | {cell} | ci.yml:{index} | Problem {index}. | {fix} |")
-    lines = ["# ci-pipelines review: all workflows", "", "## Required", "", HEADER, SEPARATOR] + rows + [""]
+    lines = ["# cicd-pipelines review: all workflows", "", "## Required", "", HEADER, SEPARATOR] + rows + [""]
     if flag_rows:
         lines += ["## ⚑ Branch protection change needed", "", "Admin step: add the required check `CI passed`.", ""]
     return "\n".join(lines + ["## Approve", "", "Reply with `all`.", ""])

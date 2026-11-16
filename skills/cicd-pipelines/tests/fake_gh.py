@@ -113,9 +113,9 @@ class Sandbox:
     def env(self, offline=True, schedule=None):
         env = {"PATH": self.bin, "HOME": self.home, "FAKE_GH_SCENARIO": self.scenario, "FAKE_GH_LOG": self.log}
         if offline:
-            env["CI_PIPELINES_OFFLINE"] = "1"
+            env["CICD_PIPELINES_OFFLINE"] = "1"
         if schedule:
-            env["CI_PIPELINES_NODE_SCHEDULE"] = schedule
+            env["CICD_PIPELINES_NODE_SCHEDULE"] = schedule
         return env
 
     def run(self, *args, offline=True, schedule=None):

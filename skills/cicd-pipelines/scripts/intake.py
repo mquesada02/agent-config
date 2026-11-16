@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the repo facts of the ci-pipelines skill as one JSON object.
+"""Print the repo facts of the cicd-pipelines skill as one JSON object.
 
 Usage: intake.py REPO_PATH
 
@@ -7,8 +7,8 @@ Standard library only, plus `gh` and `git` as subprocesses. Every `gh` call is a
 `gh api <path>` call. Each fact is {"value", "status", "source"}; status is "detected",
 "default" or "unknown". The script exits 0 when facts are unknown, and 2 on a usage error.
 
-Environment: CI_PIPELINES_NODE_SCHEDULE=<path> reads a local copy of the Node release schedule;
-CI_PIPELINES_OFFLINE=1 uses the dated offline list (the json block of tools.md) with no network.
+Environment: CICD_PIPELINES_NODE_SCHEDULE=<path> reads a local copy of the Node release schedule;
+CICD_PIPELINES_OFFLINE=1 uses the dated offline list (the json block of tools.md) with no network.
 """
 import datetime
 import glob
@@ -120,11 +120,11 @@ def from_schedule(schedule, source):
 
 
 def node_schedule():
-    path = os.environ.get("CI_PIPELINES_NODE_SCHEDULE")
+    path = os.environ.get("CICD_PIPELINES_NODE_SCHEDULE")
     schedule, source = None, None
     if path:
         schedule, source = read_json(path), path
-    elif os.environ.get("CI_PIPELINES_OFFLINE") != "1":
+    elif os.environ.get("CICD_PIPELINES_OFFLINE") != "1":
         try:
             with urllib.request.urlopen(SCHEDULE_URL, timeout=10) as response:
                 schedule, source = json.load(response), SCHEDULE_URL

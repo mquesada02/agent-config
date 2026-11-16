@@ -255,7 +255,7 @@ class ReviewCases(unittest.TestCase):
     def test_the_review_prompt_does_not_name_the_skill_or_a_rule(self):
         for name in review_cases():
             prompt = read(os.path.join(case_dir(name), "prompt.md")).lower()
-            self.assertNotIn("ci-pipelines", prompt)
+            self.assertNotIn("cicd-pipelines", prompt)
             self.assertIsNone(re.search(r"\b(name|graph|maint|cost|mono|sec)-\d\d", prompt), "the prompt names a rule")
 
     def test_the_copied_workflow_prompt_names_two_copies(self):
@@ -614,13 +614,13 @@ class TriggerCase(unittest.TestCase):
     def test_the_trigger_case_asks_for_a_workflow_edit_without_naming_the_skill(self):
         prompt = read(os.path.join(case_dir("trigger-edit-workflow"), "prompt.md"))
         self.assertIn(".github/workflows", prompt)
-        self.assertNotIn("ci-pipelines", prompt)
+        self.assertNotIn("cicd-pipelines", prompt)
 
     def test_the_skill_fired_grader_checks_the_skill_tool(self):
         meta = frontmatter(os.path.join(case_dir("trigger-edit-workflow"), "graders", "skill-fired.md"))
         self.assertEqual((meta["type"], meta["tool"], meta["arm"]), ("tool_used", "Skill", "with-only"))
-        self.assertTrue(re.search(meta["input_match"], '{"skill": "ci-pipelines"}'))
-        self.assertTrue(re.search(meta["input_match"], '{"skill": "plugin:ci-pipelines"}'))
+        self.assertTrue(re.search(meta["input_match"], '{"skill": "cicd-pipelines"}'))
+        self.assertTrue(re.search(meta["input_match"], '{"skill": "plugin:cicd-pipelines"}'))
         self.assertFalse(re.search(meta["input_match"], '{"skill": "other-skill"}'))
 
 

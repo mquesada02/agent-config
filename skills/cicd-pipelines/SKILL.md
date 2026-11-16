@@ -1,9 +1,9 @@
 ---
-name: ci-pipelines
-description: ci-pipelines creates or reviews GitHub Actions CI for Node/TypeScript repos. Use it when asked to create or review CI, and before you write or edit any file in .github/workflows.
+name: cicd-pipelines
+description: cicd-pipelines creates or reviews GitHub Actions CI for Node/TypeScript repos. Use it when asked to create or review CI, and before you write or edit any file in .github/workflows.
 ---
 
-# ci-pipelines
+# cicd-pipelines
 
 Rules and steps for GitHub Actions CI workflows of Node/TypeScript repos.
 

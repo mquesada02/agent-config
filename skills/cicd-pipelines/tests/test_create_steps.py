@@ -123,10 +123,10 @@ class CreateSteps(unittest.TestCase):
     def test_the_self_review_sets_the_message_order(self):
         step = section(self.text, "## Steps").split("\n7. ")[1]
         for needle in ("`## Created`", "`### <path>`", "fenced `yaml` block",
-                       "`# ci-pipelines review: .github/workflows/ci.yml (created)`", "`**Result:`"):
+                       "`# cicd-pipelines review: .github/workflows/ci.yml (created)`", "`**Result:`"):
             self.assertIn(needle, step)
         self.assertLess(step.index("`## Created`"), step.index("`### <path>`"))
-        self.assertLess(step.index("`### <path>`"), step.index("`# ci-pipelines review"))
+        self.assertLess(step.index("`### <path>`"), step.index("`# cicd-pipelines review"))
 
     def test_both_templates_use_npm_as_the_default_manager(self):
         for path in (SINGLE, MONO):
