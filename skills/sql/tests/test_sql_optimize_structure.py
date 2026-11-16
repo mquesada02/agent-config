@@ -522,6 +522,17 @@ class CaseFilesTest(unittest.TestCase):
                 self.assertEqual(key(head, "flags"), "m")
                 self.assertIn(f"PGN-{number:02d}", unquote(key(head, "pattern")))
 
+    def test_the_pgn_05_grader_needs_both_shared_name_lines_and_not_the_other_name(self):
+        head = frontmatter(read(os.path.join(EVALS, "opt-pgn-05", "graders", "fires-at-bad-call.md")))
+        pattern = re.compile(unquote(key(head, "pattern")), re.M)
+        row = "| 1 | PGN-05 | {} | One name, two texts. | Use one name per text. |"
+        self.assertTrue(pattern.search(row.format("src/queries.ts:6, src/queries.ts:10")))
+        self.assertTrue(pattern.search(row.format("src/queries.ts:10, src/queries.ts:6")))
+        for where in ("src/queries.ts:6", "src/queries.ts:10", "src/queries.ts:6, src/queries.ts:14",
+                      "src/queries.ts:6, src/queries.ts:10, src/queries.ts:14"):
+            with self.subTest(where=where):
+                self.assertIsNone(pattern.search(row.format(where)))
+
     def test_the_clean_case_forbids_every_critical_and_required_id(self):
         data = json.loads(read(os.path.join(EVALS, "opt-clean", "expect.json")))
         self.assertEqual(sorted(data["forbid"]), sorted(NO_ID_CRITICAL_REQUIRED))
