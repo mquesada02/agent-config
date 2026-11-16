@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: format-pg-quoted-string
+description: Seam 4 format case for a pg quoted string. Claude formats one quoted string of a file with the written style of the rules file, the string becomes an untagged template, the other string stays as it is, and the second run changes nothing.
+tags: [format, written-style, pg]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    In the file `stock-store.ts` (it is in the current folder, and the current folder is the repo root), run `/sql format` on line 6 only. Change no other line. Write the new SQL value to `new-value.sql` in the current folder (for the second run, to `new-value-2.sql`). When the first run is done, copy the file to `first-run.ts` with the Write tool (Read the file, then Write the same text to the new path). Then run `/sql format` a second time on the same statement (its line range may have moved). In your final message, show the whole file as it was after the first run, in a code block, name each string that became a template and each refused rewrite, and say whether the second run changed the file.
