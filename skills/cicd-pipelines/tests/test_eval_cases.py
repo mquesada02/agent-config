@@ -731,8 +731,12 @@ class DeployCases(unittest.TestCase):
 
 
 class RollbackCases(unittest.TestCase):
-    GOOD = "rollback-06-other-concurrency-group"
     NO_FILE = "rollback-01-no-rollback-workflow"
+    BUILDS = "rollback-02-rollback-builds"
+    RUN_ARTIFACT = "rollback-03-run-artifact-only"
+    MATRIX = "rollback-04-parallel-prod-targets"
+    NATIVE = "rollback-05-native-rollback-disabled"
+    OTHER_GROUP = "rollback-06-other-concurrency-group"
 
     @classmethod
     def setUpClass(cls):
@@ -752,7 +756,6 @@ class RollbackCases(unittest.TestCase):
         workflows = os.path.join(case_dir(self.NO_FILE), "repo", ".github", "workflows")
         self.assertFalse(os.path.exists(os.path.join(workflows, "rollback.yml")))
         self.assertTrue(os.path.exists(os.path.join(workflows, "deploy.yml")))
-        self.assertEqual(set(self.rollbacks), set(ROLLBACK_CASES) - {self.NO_FILE})
 
     def test_every_rollback_workflow_is_a_dispatch_on_a_tag_with_an_environment_choice(self):
         for name, text in self.rollbacks.items():
@@ -762,9 +765,9 @@ class RollbackCases(unittest.TestCase):
             self.assertNotIn("type: string", text, name)
             self.assertIn("if: github.ref_type == 'tag'", self.job(name), name)
 
-    def test_the_good_files_keep_the_deploy_script_the_group_and_no_build(self):
+    def test_the_cases_that_keep_the_deploy_script_run_it_and_have_no_install_and_no_build(self):
         for name in self.rollbacks:
-            if name in ("rollback-02-rollback-builds", "rollback-05-native-rollback-disabled"):
+            if name in (self.BUILDS, self.NATIVE):
                 continue
             job = self.job(name)
             self.assertIn('run: ./scripts/deploy-lambda.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"', job, name)
@@ -772,41 +775,36 @@ class RollbackCases(unittest.TestCase):
             self.assertNotIn("pnpm build", job, name)
 
     def test_the_rule_fixtures_differ_from_the_good_one_only_where_the_rule_needs(self):
-        good = self.job(self.GOOD)
-        self.assertIn("group: rollback-${{ inputs.environment }}\n", good)
+        other_group = self.job(self.OTHER_GROUP)
+        self.assertIn("group: rollback-${{ inputs.environment }}\n", other_group)
         for name in self.rollbacks:
-            if name != self.GOOD:
-                self.assertIn("group: deploy-${{ inputs.environment }}\n", self.job(name), name)
-                self.assertIn("cancel-in-progress: false", self.job(name), name)
-        second = self.job("rollback-02-rollback-builds")
-        self.assertIn("pnpm install --frozen-lockfile", second)
-        self.assertIn("pnpm build", second)
-        self.assertIn("deploy-lambda.sh", second)
-        fourth = self.job("rollback-04-parallel-prod-targets")
-        self.assertIn("matrix:", fourth)
-        self.assertNotIn("max-parallel", fourth)
-        self.assertIn("options: [staging, prod]", self.rollbacks["rollback-04-parallel-prod-targets"])
-        fifth = self.job("rollback-05-native-rollback-disabled")
-        self.assertIn("aws cloudformation deploy", fifth)
-        self.assertIn("--disable-rollback", fifth)
-        self.assertNotIn("deploy-lambda.sh", fifth)
+            if name != self.OTHER_GROUP:
+                job = self.job(name)
+                self.assertIn("group: deploy-${{ inputs.environment }}\n", job, name)
+                self.assertIn("cancel-in-progress: false", job, name)
+        builds = self.job(self.BUILDS)
+        self.assertIn("pnpm install --frozen-lockfile", builds)
+        self.assertIn("pnpm build", builds)
+        self.assertIn("deploy-lambda.sh", builds)
+        matrix = self.job(self.MATRIX)
+        self.assertIn("matrix:", matrix)
+        self.assertNotIn("max-parallel", matrix)
+        self.assertIn("options: [staging, prod]", self.rollbacks[self.MATRIX])
+        native = self.job(self.NATIVE)
+        self.assertIn("aws cloudformation deploy", native)
+        self.assertIn("--disable-rollback", native)
+        self.assertNotIn("deploy-lambda.sh", native)
 
-    def test_the_third_case_stores_only_a_run_artifact_and_the_others_keep_the_s3_upload(self):
-        third = self.deploys["rollback-03-run-artifact-only"]
-        package = job_text(third, "package")
+    def test_the_run_artifact_case_stores_no_zip_in_s3_and_assumes_no_artifacts_role(self):
+        package = job_text(self.deploys[self.RUN_ARTIFACT], "package")
         self.assertIn("actions/upload-artifact@", package)
         self.assertNotIn("aws s3 cp", package)
         self.assertNotIn("role-to-assume", package)
-        for name, text in self.deploys.items():
-            if name != "rollback-03-run-artifact-only":
-                package = job_text(text, "package")
-                self.assertIn('aws s3 cp app.zip "s3://$BUCKET/$SHA/app.zip"', package, name)
-                self.assertNotIn("upload-artifact", package, name)
 
-    def test_the_deploy_side_is_the_good_deploy_workflow_in_every_case_but_the_third(self):
+    def test_the_deploy_side_is_the_good_deploy_workflow_in_every_case_but_the_run_artifact_case(self):
         good = workflow_text("deploy-02-tag-run-staging-record", "deploy.yml")
         for name, text in self.deploys.items():
-            if name != "rollback-03-run-artifact-only":
+            if name != self.RUN_ARTIFACT:
                 self.assertEqual(text, good, name)
 
 

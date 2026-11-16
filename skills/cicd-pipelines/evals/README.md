@@ -79,7 +79,7 @@ The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `va
 
 ## CD review cases
 
-The CD cases are review cases. Each one holds a synthetic `ci.yml` (with the `workflow_call` trigger and a `code` output), a `deploy.yml`, a `rollback.yml` in the rollback cases except `rollback-01-no-rollback-workflow` and the repo scripts that it calls (`scripts/deploy-lambda.sh` and `scripts/check-staged.sh`). Every action is pinned to a placeholder full SHA with a version comment, and the version endpoint is a variable, never a URL. A case name starts with the rule family in lower case, so the CD cases are found by prefix (`deploy-`, `rollback-`, `release-`, `publish-`, `protect-`, `fx-cd-`, `create-cd-` and `clean-cd`).
+The CD cases are review cases. Each one holds a synthetic `ci.yml` (with the `workflow_call` trigger and a `code` output), a `deploy.yml`, a `rollback.yml` (not in `rollback-01-no-rollback-workflow`) and the repo scripts that it calls (`scripts/deploy-lambda.sh` and `scripts/check-staged.sh`). Every action is pinned to a placeholder full SHA with a version comment, and the version endpoint is a variable, never a URL. A case name starts with the rule family in lower case, so the CD cases are found by prefix (`deploy-`, `rollback-`, `release-`, `publish-`, `protect-`, `fx-cd-`, `create-cd-` and `clean-cd`).
 
 DEPLOY cases: `deploy-01-...` to `deploy-10-...` (one bad fixture for each DEPLOY rule). A fixture differs from the good workflow only where its rule needs it.
 
