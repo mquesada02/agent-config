@@ -252,20 +252,20 @@ class AuditCase(unittest.TestCase):
         path = os.path.join(folder, f"{session_id}.jsonl")
         self.write_rows(path, rows)
         for name, sub_rows in (subagents or {}).items():
-            if touching and sub_rows and isinstance(sub_rows[0], dict) and "cwd" not in sub_rows[0]:
-                sub_rows = [{**sub_rows[0], "cwd": self.repo}, *sub_rows[1:]]
-            self.add_subagent(session_id, name, sub_rows)
+            self.add_subagent(session_id, name, sub_rows, touching)
         self.register_path(session_id, path, started_at)
         return path
 
-    def add_subagent(self, session_id, name, rows=None):
-        """Write the subagent transcript `name` of an already registered session. Returns its path."""
+    def add_subagent(self, session_id, name, rows=None, touching=True):
+        """Write the subagent transcript `name` of an already registered session. Returns its path.
+        The audit judges a subagent only when it touches the worktree, so unless `touching` is False
+        the first row, when it is a dict without a cwd, gets a cwd inside the worktree."""
         sub_folder = os.path.join(self.root, "projects", session_id, "subagents")
         os.makedirs(sub_folder, exist_ok=True)
         path = os.path.join(sub_folder, f"agent-{name}.jsonl")
-        if rows is None:  # the audit judges a subagent only when it touches the worktree
-            first, *rest = subagent_rows()
-            rows = [{**first, "cwd": self.repo}, *rest]
+        rows = subagent_rows() if rows is None else rows
+        if touching and rows and isinstance(rows[0], dict) and "cwd" not in rows[0]:
+            rows = [{**rows[0], "cwd": self.repo}, *rows[1:]]
         self.write_rows(path, rows)
         return path
 
