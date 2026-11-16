@@ -443,7 +443,7 @@ def workflow_history(identity, workflow, branch=None):
     """The last 10 successful runs of a workflow file (of one branch when `branch` is given), with the median of each job."""
     if not identity:
         return fact(None, "unknown", "no GitHub remote")
-    base = f"repos/{identity[0]}/{identity[1]}"
+    base = repo_base(identity)
     branch_query = f"branch={quote(branch, safe='')}&" if branch else ""
     path = f"{base}/actions/workflows/{workflow}/runs?{branch_query}status=success&per_page=10"
     ok, data, reason = gh_api(path)
@@ -508,16 +508,17 @@ PLAN_NOTE = "reviewers are proposed; a private repo may need GitHub Enterprise"
 
 
 def plan(identity, info, seen):
+    def proposed(source):
+        return fact({"visibility": "private", "plan": None, "reviewers_available": True}, "default", source)
+
     if seen["status"] == "default":
-        return fact({"visibility": "private", "plan": None, "reviewers_available": True}, "default",
-                    f"visibility not readable (private assumed): {PLAN_NOTE}")
+        return proposed(f"visibility not readable (private assumed): {PLAN_NOTE}")
     if seen["value"] == "public":
         return fact({"visibility": "public", "plan": None, "reviewers_available": True}, "detected",
                     "public repo: reviewers are available on every plan")
     owner = info.get("owner")
     if not (isinstance(owner, dict) and owner.get("type") == "Organization"):
-        return fact({"visibility": "private", "plan": None, "reviewers_available": True}, "default",
-                    f"private repo of a user (plan not readable): {PLAN_NOTE}")
+        return proposed(f"private repo of a user (plan not readable): {PLAN_NOTE}")
     path = f"orgs/{identity[0]}"
     ok, data, reason = gh_api(path)
     try:
@@ -526,8 +527,7 @@ def plan(identity, info, seen):
         name = None
     if not isinstance(name, str) or not name:
         why = reason if not ok else "no plan.name in the answer (the token is not an org owner)"
-        return fact({"visibility": "private", "plan": None, "reviewers_available": True}, "default",
-                    f"gh api {path}: {why}: {PLAN_NOTE}")
+        return proposed(f"gh api {path}: {why}: {PLAN_NOTE}")
     return fact({"visibility": "private", "plan": name, "reviewers_available": name.lower() != "free"},
                 "detected", f"gh api {path}")
 
@@ -560,11 +560,13 @@ def classic_protection(identity, branch):
                          "enforce_admins": False}, "detected", f"gh api {path}: {reason}")
         return fact(None, "unknown", f"gh api {path}: {reason}")
     try:
+        if not isinstance(data, dict):
+            raise TypeError("the answer is not an object")
         value = {"branch": branch, "protected": True,
                  "required_pull_request_reviews": "required_pull_request_reviews" in data,
                  "enforce_admins": data["enforce_admins"]["enabled"]}
-        if not isinstance(data, dict) or not isinstance(value["enforce_admins"], bool):
-            raise TypeError("the answer has the wrong shape")
+        if not isinstance(value["enforce_admins"], bool):
+            raise TypeError("enforce_admins.enabled is not a boolean")
     except SHAPE_ERRORS:
         return fact(None, "unknown", f"gh api {path}: unexpected answer shape")
     return fact(value, "detected", f"gh api {path}")
@@ -609,8 +611,9 @@ def workflow_lines(repo, workflows):
 
 
 def tools_found(table, lines):
-    return sorted(kind for kind, patterns in table
-                  if any(pattern_regex(pattern).search(line) for pattern in patterns for line in lines))
+    compiled = [(kind, [pattern_regex(pattern) for pattern in patterns]) for kind, patterns in table]
+    return sorted(kind for kind, regexes in compiled
+                  if any(regex.search(line) for regex in regexes for line in lines))
 
 
 def deploy_targets(lines):
@@ -634,7 +637,7 @@ def aws_variables(lines):
         match = re.match(r"^\s*(?:-\s+)?(role-to-assume|aws-region):(.*)$", line)
         if not match:
             continue
-        key = "role" if match.group(1) == "role-to-assume" else "region"
+        key = {"role-to-assume": "role", "aws-region": "region"}[match.group(1)]
         for expression in re.findall(r"\$\{\{(.*?)\}\}", match.group(2)):
             names[key] |= {f"vars.{name}" for name in re.findall(r"\bvars\.(\w+)", expression)}
     placeholders = {"role": ["vars.AWS_ROLE_<ENV>"], "region": ["vars.AWS_REGION"]}
