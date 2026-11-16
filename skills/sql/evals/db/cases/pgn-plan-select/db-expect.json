@@ -1,0 +1,10 @@
+{
+  "expect": ["plan:app-pg13", "plan:app-pg18"],
+  "sequences_may_differ": false,
+  "final": {
+    "contains": [
+      "src/lookup.ts:6 plan call: yes",
+      "src/lookup.ts:10 plan call: no (placeholder)"
+    ]
+  }
+}

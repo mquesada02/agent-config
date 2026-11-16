@@ -164,7 +164,7 @@ class DriverCasesTest(unittest.TestCase):
     def test_each_case_has_a_prompt_an_expectation_and_a_repo_and_nothing_that_plugin_eval_finds(self):
         names = sorted(os.listdir(DRIVER_CASES))
         self.assertEqual(names, [
-            "bad-password", "facts-pg-02", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
+            "bad-password", "facts-pg-02", "pgn-06-facts", "pgn-dynamic", "pgn-plan-select", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
             "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "rewrite-no-tests",
             "rewrite-proven", "rewrite-write-unproven", "select-query-to-xml", "write-analyze", "write-dblink-trigger",
             "write-sequence", "wrong-host"])
@@ -251,11 +251,11 @@ class CaseRepoTest(unittest.TestCase):
                     self.assertTrue(os.path.isfile(os.path.join(DB, data["judge"])), data["judge"])
                 if "disabled" in data:
                     self.assertTrue(data["report"])
-                    self.assertTrue(all(re.fullmatch(r"(PGJS|PG|PLAN)-\d\d", item) for item in data["disabled"]))
+                    self.assertTrue(all(re.fullmatch(r"(PGJS|PGN|PG|PLAN)-\d\d", item) for item in data["disabled"]))
                 if "rules" in data:
                     self.assertEqual(set(data["rules"]), {"expect", "forbid"})
                     for ids in data["rules"].values():
-                        self.assertTrue(all(re.fullmatch(r"(PGJS|PG|PLAN)-\d\d", item) for item in ids))
+                        self.assertTrue(all(re.fullmatch(r"(PGJS|PGN|PG|PLAN)-\d\d", item) for item in ids))
 
     def test_no_fixture_is_a_python_test_file(self):
         for path in files_under(EVALS):
@@ -271,7 +271,8 @@ class ReadmeTest(unittest.TestCase):
                        "facts-pg-02", "facts[:SERVICE]", "`rules`", "plan-01-estimate", "plan-02-seq-scan",
                        "plan-03-spill", "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled",
                        "plan_findings.py", "`report`", "`judge`", "`disabled`", "rubric-plan.md", "shop.events",
-                       "canaries.json", "db-expect.json", "grader G and the leak scan", "select-query-to-xml"):
+                       "canaries.json", "db-expect.json", "grader G and the leak scan", "select-query-to-xml",
+                       "pgn-dynamic", "pgn-06-facts", "pgn-plan-select"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
 

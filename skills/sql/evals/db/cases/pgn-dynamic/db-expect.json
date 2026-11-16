@@ -1,0 +1,11 @@
+{
+  "expect": ["no_connection:app-pg13", "no_connection:app-pg18"],
+  "sequences_may_differ": false,
+  "rules": {
+    "expect": ["PGN-01"],
+    "forbid": [
+      "PG-01", "PG-02", "PG-03", "PG-04", "PG-05", "PG-06", "PG-07", "PG-08", "PG-09", "PG-10",
+      "PGN-02", "PGN-03", "PGN-04", "PGN-05", "PGN-06"
+    ]
+  }
+}
