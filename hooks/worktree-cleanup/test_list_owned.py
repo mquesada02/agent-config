@@ -144,6 +144,27 @@ class StateTest(ListCase):
         self.stub_rows()
         self.assertIn("; clean; not pushed; no PR;", self.owned_state(self.list_owned()))
 
+    def test_an_unreadable_base_prints_a_hint_and_does_not_claim_the_tip_is_off_the_base(self):
+        self.stub("gh repo view", rc=1, stderr="no network")
+        self.rows = [self.fresh_row()]
+        self.stub_rows()
+        result = self.list_owned()
+        self.assertIn("List: the base branch could not be read or fetched, so the base check did not run", result.stdout)
+        self.assertIn("; clean; not pushed (base not checked); no PR;", self.owned_state(result))
+
+    def test_a_failed_base_fetch_prints_a_hint_and_the_new_state(self):
+        self.git_out(self.remote, "config", "uploadpack.hideRefs", "refs/heads/main")
+        self.rows = [self.fresh_row()]
+        self.stub_rows()
+        result = self.list_owned()
+        self.assertIn("List: the base branch could not be read or fetched, so the base check did not run", result.stdout)
+        self.assertIn("; clean; not pushed (base not checked); no PR;", self.owned_state(result))
+
+    def test_a_readable_base_prints_no_hint(self):
+        self.rows = [self.fresh_row()]
+        self.stub_rows()
+        self.assertNotIn("base check did not run", self.list_owned().stdout)
+
     def test_docker_compose_ls_runs_once_for_several_rows(self):
         self.rows = [self.row(cliProvenance={"callerTerminalHandle": HANDLE}), self.fresh_row("fresh"), self.fresh_row("other")]
         self.stub_rows()

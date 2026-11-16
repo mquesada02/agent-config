@@ -60,7 +60,9 @@ def pushed_text(path, branch, tip, base):
         return "pushed"
     if sha:
         return "remote branch differs from the tip"
-    return f"tip on {REMOTE}/{base}" if base and ancestor_problem(path, tip, base) is None else "not pushed"
+    if not base:
+        return "not pushed (base not checked)"
+    return f"tip on {REMOTE}/{base}" if ancestor_problem(path, tip, base) is None else "not pushed"
 
 
 def pr_text(path, branch, tip):
@@ -115,6 +117,8 @@ def main():
     if truncated:
         say("List: Orca cut the list short, some worktrees are missing")
     base, stacks = base_to_compare(), compose_stacks()
+    if not base:
+        say("List: the base branch could not be read or fetched, so the base check did not run")
     say(f"Owned worktrees ({len(owned)}):")
     for row, reason in owned:
         say_row(row)
