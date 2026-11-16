@@ -1,0 +1,46 @@
+name: Rollback
+run-name: Rollback ${{ inputs.environment }} to ${{ github.ref_name }}
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to roll back
+        type: choice
+        options: [staging, prod]
+permissions: {}
+jobs:
+  rollback:
+    name: Roll back
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    strategy:
+      matrix:
+        function: [example-api, example-worker]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check that the tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Assume the environment role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy the stored artifact of the tag
+        env:
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          SHA: ${{ github.sha }}
+          FUNCTION: ${{ matrix.function }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+        run: ./scripts/deploy-lambda.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"

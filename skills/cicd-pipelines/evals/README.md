@@ -79,13 +79,22 @@ The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `va
 
 ## CD review cases
 
-The CD cases are review cases. Each one holds a synthetic `ci.yml` (with the `workflow_call` trigger and a `code` output), a `deploy.yml` and the repo scripts that it calls (`scripts/deploy-lambda.sh` and `scripts/check-staged.sh`). Every action is pinned to a placeholder full SHA with a version comment, and the version endpoint is a variable, never a URL. A case name starts with the rule family in lower case, so the CD cases are found by prefix (`deploy-`, `rollback-`, `release-`, `publish-`, `protect-`, `fx-cd-`, `create-cd-` and `clean-cd`).
+The CD cases are review cases. Each one holds a synthetic `ci.yml` (with the `workflow_call` trigger and a `code` output), a `deploy.yml`, a `rollback.yml` in the rollback cases except `rollback-01-no-rollback-workflow` and the repo scripts that it calls (`scripts/deploy-lambda.sh` and `scripts/check-staged.sh`). Every action is pinned to a placeholder full SHA with a version comment, and the version endpoint is a variable, never a URL. A case name starts with the rule family in lower case, so the CD cases are found by prefix (`deploy-`, `rollback-`, `release-`, `publish-`, `protect-`, `fx-cd-`, `create-cd-` and `clean-cd`).
 
 DEPLOY cases: `deploy-01-...` to `deploy-10-...` (one bad fixture for each DEPLOY rule). A fixture differs from the good workflow only where its rule needs it.
 
 - `deploy-02-tag-run-staging-record` is the good workflow: prod runs in a tag run, has no `needs`, and checks the staging record with `scripts/check-staged.sh`. It forbids DEPLOY-02.
 - DEPLOY-09 is a measured rule, so it has one case for each part, as COST-04 does. `deploy-09-missing-timeout` is the required part, with no history. `deploy-09-timeout-too-high-with-history` is the measured part: its recorded `repo/intake.json` has `deploy_history` detected (every median at most 270 seconds, so the proposal is at most 14 minutes) and every job but the called workflow has `timeout-minutes: 30`. Its prompt tells the review not to run the intake script. `deploy-09-timeout-too-high-no-history` is the same workflow with the sandbox's unknown history, and it forbids DEPLOY-09.
-- The `clean` case and the CI create cases that write files forbid the required DEPLOY ids (01 to 06, 08 and 09).
+- The `clean` case and the CI create cases that write files forbid the required DEPLOY ids (01 to 06, 08 and 09) and the required ROLLBACK ids (01, 02, 03 and 06).
+
+ROLLBACK cases: `rollback-01-...` to `rollback-06-...` (one bad fixture for each ROLLBACK rule). Each one is a copy of the good DEPLOY workflow fixture (`deploy-02-tag-run-staging-record`) plus a good `rollback.yml`: a `workflow_dispatch` with an environment choice, a job that runs only for a tag, the same deploy script as the deploy jobs and the group `deploy-${{ inputs.environment }}`. A fixture differs from the good files only where its rule needs it, and the cases check only their own expect list, so a fixture may also earn a finding of another rule.
+
+- `rollback-01-no-rollback-workflow` has no `rollback.yml`. ROLLBACK-01 is tested with a missing file only: its trigger, tag-ref and free-text version parts are covered by the rule text.
+- `rollback-02-rollback-builds`: the rollback job installs and builds.
+- `rollback-03-run-artifact-only`: the `package` job of `deploy.yml` stores the zip only with `actions/upload-artifact`. The deploy and rollback scripts stay as they are.
+- `rollback-04-parallel-prod-targets`: a matrix of two functions with no `max-parallel`.
+- `rollback-05-native-rollback-disabled`: the rollback step is `aws cloudformation deploy` with `--disable-rollback`.
+- `rollback-06-other-concurrency-group`: the rollback group is `rollback-${{ inputs.environment }}`.
 
 ## Approval cases
 

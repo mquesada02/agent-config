@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: rollback-06-other-concurrency-group
+context:
+  scaffold_script: scaffold.sh

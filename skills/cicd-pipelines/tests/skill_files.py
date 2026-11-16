@@ -10,6 +10,7 @@ EVALS = os.path.join(SKILL, "evals")
 PREFIXES = {
     "naming": "NAME", "job-graph": "GRAPH", "cost": "COST",
     "security": "SEC", "monorepo": "MONO", "maintainability": "MAINT", "deploy": "DEPLOY",
+    "rollback": "ROLLBACK",
 }
 LEVELS = ("critical", "required", "suggestion")
 
