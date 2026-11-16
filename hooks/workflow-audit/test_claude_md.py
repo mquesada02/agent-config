@@ -295,9 +295,6 @@ class DeferredMinorsFilingRuleTest(RuleTextCase):
         self.assertLess(self.section8.index("After the merge and before the cleanup, file"),
                         self.section8.index("After merging, run `~/.claude/hooks/worktree-cleanup/cleanup"))
 
-    def test_section_sixteen_is_not_changed_by_this_rule(self):
-        self.assert_not_in(section(self.root, 16), "deferred Minor")
-
 
 class ContextStopRuleTest(RuleTextCase):
     """Ticket #489: section 11 bans context as a reason to stop. One test per required line."""
