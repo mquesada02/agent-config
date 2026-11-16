@@ -502,8 +502,8 @@ class IssueFilingAllowRuleTest(RuleTextCase):
 
     def setUp(self):
         with open(os.path.join(REPO, "settings.json"), encoding="utf-8") as handle:
-            settings = json.load(handle)
-        entries = [entry for entry in settings["autoMode"]["allow"] if entry.startswith("Issue Filing:")]
+            self.auto_mode = json.load(handle)["autoMode"]
+        entries = [entry for entry in self.auto_mode["allow"] if entry.startswith("Issue Filing:")]
         self.assertEqual(len(entries), 1)
         self.entry = entries[0]
 
@@ -522,11 +522,9 @@ class IssueFilingAllowRuleTest(RuleTextCase):
         self.assert_in(self.entry, "Create only: an edit, close, comment, reopen or label change of an existing issue")
 
     def test_the_other_entries_and_the_subagent_soft_deny_stay(self):
-        with open(os.path.join(REPO, "settings.json"), encoding="utf-8") as handle:
-            auto_mode = json.load(handle)["autoMode"]
-        self.assertEqual([entry.split(":")[0] for entry in auto_mode["allow"]],
+        self.assertEqual([entry.split(":")[0] for entry in self.auto_mode["allow"]],
                          ["$defaults", "Orca Worker Handover", "Orca Successor Takeover", "Issue Filing"])
-        self.assertTrue(auto_mode["soft_deny"][1].startswith("Subagent Remote Writes:"))
+        self.assertTrue(any(entry.startswith("Subagent Remote Writes:") for entry in self.auto_mode["soft_deny"]))
 
 
 class AuditReadsTheDeclarationTest(AuditCase):
