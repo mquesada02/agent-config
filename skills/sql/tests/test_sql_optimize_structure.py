@@ -417,9 +417,10 @@ class OptimizeModuleTest(unittest.TestCase):
 class PgModuleTest(unittest.TestCase):
     """The pg source module, the router text and the pg lines of optimize.md (ticket 615)."""
 
-    def setUp(self):
-        self.text = read(PG_SOURCE)
-        self.rules = {rule_id: dict(fields) for rule_id, fields in entries(PG_SOURCE)[0].items()}
+    @classmethod
+    def setUpClass(cls):
+        cls.text = read(PG_SOURCE)
+        cls.rules = {rule_id: dict(fields) for rule_id, fields in entries(PG_SOURCE)[0].items()}
 
     def test_the_module_has_the_sections_and_names_the_extractor_run_and_keys(self):
         for heading in ("Find the statements", "Read a statement", "The dynamic rule", "Errors", "Rules"):

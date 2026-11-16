@@ -54,7 +54,7 @@ If `error` is not null, stop. Show its `message` and its `line` (the line can be
 
 ## Rules
 
-These rules check how a `pg` statement is composed and sent. They work with no database (`PGN-06` can also read a column type from the catalog when the database is allowlisted). A fix of a `PGN-*` finding repairs the call or the statement. It is not a rewrite of the SQL text. Where cell of a finding: the SQL text lines of the statement; for a statement that is a followed `const`, also the call line of each `calls` entry that fires the finding (`PGN-02` to `PGN-06`), or every call line for a finding on the SQL text alone (`PGN-01`).
+These rules check how a `pg` statement is composed and sent. They work with no database (`PGN-06` can also read a column type from the catalog when the database is allowlisted). A fix of a `PGN-*` finding repairs the call or the statement. It is not a rewrite of the SQL text. The Where cell of a finding: the SQL text lines of the statement; for a statement that is a followed `const`, also the call line of each `calls` entry that fires the finding (`PGN-02` to `PGN-06`), or every call line for a finding on the SQL text alone (`PGN-01` or a `PG-*` rule).
 
 `PGN-04` and `PGN-06` read the bound value only from a `values` array literal, and `PGN-04` reads a name only in the same file. A value that the file does not show is not judged.
 
@@ -170,7 +170,7 @@ These rules check how a `pg` statement is composed and sent. They work with no d
 
 - **Title:** JS `Date` passed to a `date` parameter
 - **Severity:** required
-- **Detects:** The facts of `PGJS-02` ([postgres-js.md](postgres-js.md)): a JS `Date` value bound to a parameter that is a `date`. The bound value is the item of a `values` array literal at the `$n` position, read from the call source at `calls[].line`. The `date` fact comes from the repo (a `::date` cast, or a migration or schema column of type `date`) or, with an allowlisted database, from the catalog (the `facts` action says that the column has the type `date`). Otherwise the rule does not fire.
+- **Detects:** The facts of `PGJS-02` ([postgres-js.md](postgres-js.md)): a JS `Date` value bound to a parameter that is a `date`. The bound value is the item of a `values` array literal at the `$n` position, read from the call source at `calls[].line`; a name that the file shows with the type `Date` (`day: Date`) counts as a `Date` value, as in `PGJS-02`. The `date` fact comes from the repo (a `::date` cast, or a migration or schema column of type `date`) or, with an allowlisted database, from the catalog (the `facts` action says that the column has the type `date`). Otherwise the rule does not fire.
 - **Why it matters:** `pg` converts a `Date` to a string with the local offset of the process (UTC only when `parseInputDatesAsUTC` is set). The server then casts that instant to `date` in the session time zone, so the day can differ from the local calendar day of the caller and shift.
 - **Fix:** As `PGJS-02`: pass the day as text (`'2026-11-09'`), or format the `Date` to its day before the call.
 - **Example:** The bad form, then the good form.

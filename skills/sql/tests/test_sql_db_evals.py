@@ -164,8 +164,8 @@ class DriverCasesTest(unittest.TestCase):
     def test_each_case_has_a_prompt_an_expectation_and_a_repo_and_nothing_that_plugin_eval_finds(self):
         names = sorted(os.listdir(DRIVER_CASES))
         self.assertEqual(names, [
-            "bad-password", "facts-pg-02", "pgn-06-facts", "pgn-dynamic", "pgn-plan-select", "plan-01-estimate", "plan-02-seq-scan", "plan-03-spill",
-            "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "rewrite-no-tests",
+            "bad-password", "facts-pg-02", "pgn-06-facts", "pgn-dynamic", "pgn-plan-select", "plan-01-estimate",
+            "plan-02-seq-scan", "plan-03-spill", "plan-04-nested-loop", "plan-05-cache", "plan-clean", "plan-disabled", "plan-select", "rewrite-no-tests",
             "rewrite-proven", "rewrite-write-unproven", "select-query-to-xml", "write-analyze", "write-dblink-trigger",
             "write-sequence", "wrong-host"])
         for name in names:
