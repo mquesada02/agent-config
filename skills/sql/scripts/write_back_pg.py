@@ -319,17 +319,17 @@ def read_text(path):
     return bom, text[1:] if bom else text
 
 
-def read_in_process(context, text, spans=None):
+def read_in_process(context, source, spans=None):
     try:
         return extract.extract_js_file(
-            extract.Source(text), context.tag_list, context.jsx, context.tsx, context.receiver_list, spans
+            source, context.tag_list, context.jsx, context.tsx, context.receiver_list, spans
         )[3]
     except extract.ExtractError as error:
         raise Refused("extract", "the extractor cannot read the file: %s" % error.message)
 
 
 def rewrite(context, report):
-    """Fill `report` and return the new file text. Raises Refused."""
+    """Fill `report` and return the new file text, with the BOM of the file. Raises Refused."""
     data, message = sql_text.run_extractor(context.path, context.tags, context.receivers)
     if data is None:
         raise Refused("extract", "the extractor cannot read the file: %s" % message)
@@ -344,11 +344,11 @@ def rewrite(context, report):
 
     bom, text = read_text(context.path)
     spans = {}
-    found = read_in_process(context, text, spans)
+    source = extract.Source(text)
+    found = read_in_process(context, source, spans)
     if len(found) != len(statements) or found[context.index]["source"] != "pg" or found[context.index]["text"] != statement["text"]:
         raise Refused("extract", "the in-process read of the file does not agree with the extractor output")
     first, end = spans[context.index]
-    source = extract.Source(text)
     kind = statement["pg"]["kind"]
     report.update(
         from_kind=kind, start_line=source.line(first), end_line=source.line(end - 1),
@@ -377,7 +377,7 @@ def rewrite(context, report):
     new_text = text[:first] + literal + text[end:]
 
     try:
-        again = read_in_process(context, new_text)
+        again = read_in_process(context, extract.Source(new_text))
     except Refused as refusal:
         raise Refused("round_trip", refusal.reason)
     result = again[context.index] if len(again) == len(found) else None
@@ -386,8 +386,10 @@ def rewrite(context, report):
         or result["pg"]["dynamic"] or result["text"] != value
     ):
         raise Refused("round_trip", "the extractor does not read the new text back as the new value")
-    report.update(to_kind=to_kind, became_template=kind != "template" and to_kind == "template")
-    return ("\ufeff" if bom else "") + new_text, ("\ufeff" if bom else "") + text
+    report.update(
+        to_kind=to_kind, became_template=kind != "template" and to_kind == "template", changed=new_text != text
+    )
+    return ("\ufeff" if bom else "") + new_text
 
 
 def main(argv):
@@ -401,7 +403,7 @@ def main(argv):
         "text": None, "start_line": None, "end_line": None, "const_name": None,
     }
     try:
-        new_text, old_text = rewrite(context, report)
+        new_text = rewrite(context, report)
         if context.stdout:
             report.update(text=new_text)
         else:
@@ -420,7 +422,6 @@ def main(argv):
                         pass
                 return sql_text.usage_failure("%s %s" % (OUTPUT_FAILURE, error))
             report.update(output=context.output)
-        report.update(changed=new_text != old_text)
     except Refused as refusal:
         report.update(ok=False, check=refusal.check, reason=refusal.reason)
     sys.stdout.buffer.write((json.dumps(report, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))

@@ -1716,7 +1716,7 @@ class PgCalls:
         self.tags = set(tags)
         self.starts = {token[2]: k for k, token in enumerate(tokens)}
         self.span_starts = {self.starts[record.end]: k for k, record in spans.items() if record.end in self.starts}
-        self.statements = {}  # key -> [first offset, statement]
+        self.statements = {}  # key -> [first offset, statement, end offset]
         self.not_followed = []
         self.constants = {}  # declaration token index -> result of `const_result`
         self.declarations = None  # name -> [Declaration], built when a call has a name argument
