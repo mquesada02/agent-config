@@ -26,7 +26,7 @@ Page text came through the WebFetch tool, which returns model-made summaries. Qu
 4. GitHub keeps a deployment record per job that uses an environment (unless `deployment: false`). Deployment status states are `error`, `failure`, `inactive`, `in_progress`, `queued`, `pending`, `success`. A separate artifact metadata API takes deployment records per artifact digest, environment, cluster and deployment name. [S18, S20, S21, S22]
 5. Attestations alone give SLSA Build Level 2 (L2). Level 3 (L3) needs the build in a reusable workflow. GitHub says attestations give "no benefit unless they are verified" and are "not a guarantee that an artifact is secure". GitHub's own enforcement page covers Kubernetes admission only, not pre-deploy checks on AWS targets. [S23, S26]
 6. AWS Well-Architected (WA) practice is automation with defined rollback criteria. It lists these anti-patterns: manual emergency workflows that skip steps, and "rapid follow-on deployments without allowing for bake time". [S16, S17]
-7. Amazon's published pipeline numbers: a one-box stage serves "at most ten percent" of requests, at least one hour of bake time after each one-box stage, two to four hours after later regional waves, and "at most 33 percent" of boxes replaced at once. The pipeline is blocked while an alarm is in the alarm state. [S39]
+7. Amazon's published pipeline numbers: a one-box stage serves "at most ten percent" of requests, at least one hour of bake time after each one-box stage, "at least 12 hours" after the first regional wave, two to four hours after other regional waves, and "at most 33 percent" of boxes replaced at once. The pipeline is blocked while an alarm is in the alarm state. [S39]
 8. Sources conflict on release flow. Google SRE (Site Reliability Engineering) cuts release branches from mainline and cherry-picks fixes onto them. DORA (DevOps Research and Assessment) data links high performance to "three or fewer active branches", daily merges, and no code freezes, and says release branches are not needed at multiple releases a day. [S31, S36]
 9. Sources conflict on deploy windows. Amazon avoids "Fridays and late-afternoon deployments". AWS Change Calendar blocks changes in defined ranges. DORA treats code freezes as a symptom of long-lived branches and lists "nobody has to work outside business hours to deploy" as a goal. [S33, S35, S36, S39]
 10. Rollback safety is a design property, not only a pipeline step. Amazon splits a data-format change into two deployments (read the new format first, write it later) and tests rollback explicitly. Expand, migrate, contract (parallel change) does the same for interfaces and schemas. [S13, S38]
@@ -215,14 +215,14 @@ Published guidance (first-party and well-known):
 - Amazon Builders' Library: safe hands-off deployments, rollback safety, health checks. [S38, S39, S40]
 - Google SRE: release engineering (four principles: self-service, high velocity, hermetic builds, enforcement of policies and procedures) and canarying releases. [S31, S32]
 - DORA: metrics, continuous delivery capability, trunk-based development. [S34, S35, S36]
-- SLSA and GitHub attestation docs. [S23 to S30]
+- SLSA and GitHub attestation docs. [S23, S24, S25, S26, S27, S28, S29, S30]
 - GitHub "well-architected" and GitHub "recommended practices" pages: not read (unverified).
 
 Open-source workflows read raw (read-only `gh api` GETs):
 
 - vercel/next.js `.github/workflows/build_and_deploy.yml`: computes a deploy target (`production`, `staging`, `force-preview`, `automated-preview`, `skipped`); builds once; uploads artifacts; `publishRelease` uses `environment: ${{ needs.deploy-target.outputs.release_environment }}`; separate `bot-autonomous` environment for un-drafting the GitHub release; the file names environments per release channel. Also files for `create_release_branch`, `trigger_release`, `sync_backport_canary_release`, `test_e2e_deploy_release`. [S49]
 - cli/cli `.github/workflows/deployment.yml`: manual dispatch with `dry_run` default true; `environment` input; code signing and GPG signing only in production; attestation only in production and not in dry run; `release` job gated by an input. It is the only release workflow file in that repo's `.github/workflows` that matched `deploy|release|publish`. [S50]
-- aws/aws-cdk: the only workflow names matching deploy or release words are `integration-test-approval-deployment.yml` and `integration-test-deployment.yml`; I did not open them (unverified). [no tag]
+- aws/aws-cdk: the only workflow names matching deploy or release words are `integration-test-approval-deployment.yml` and `integration-test-deployment.yml`; I saw only the file names in a `gh api` listing of the workflows folder and did not open them (unverified).
 
 Agent skills and rule packs for CD (as section 7 of research 335 did for CI):
 

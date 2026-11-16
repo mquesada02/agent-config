@@ -1,6 +1,6 @@
-## Resolution: catalog of real CD patterns in the sample repos
+# Catalog of real CD patterns in the sample repos
 
-Source: the workflow files and the file history of the sample repos, read with read-only calls. Repos are anonymous. No workflow text is copied.
+Collected 2026-11-15. Source: the workflow files and the file history of the sample repos, read with read-only calls. Repos are anonymous. No workflow text is copied.
 
 ## 1. Coverage
 
@@ -112,7 +112,7 @@ Each line is: number, mark, repos, neutral description.
 44. good: F, G: tags drive the flow. A candidate tag `vX.Y.Z-rc.N` is made on each merge to the main branch (G, by a GitHub App). A final tag `vX.Y.Z` is made by a manual promote and triggers the prod deploy. Annotated tags only, and the prod workflow checks that the tag is annotated.
 45. good: G: the candidate number is computed by a tested Python module with a retry on a tag collision (3 tries). The module has unit tests in CI.
 46. good: D, F: the tag must be on the develop branch. The check is `merge-base --is-ancestor` after a checkout with full history.
-47. bad: all repos: no GitHub Release, no changelog and no release notes are made in any workflow (0 releases). The tag message is the only record of what a version holds.
+47. bad: all CD repos: no workflow makes a GitHub Release, a changelog or release notes (the 6 repos counted have 0 releases). The tag message is the only record of what a version holds.
 48. good: G: a back-merge PR from the main branch into the develop branch is opened by the flow when the main branch has commits that develop lacks.
 49. good: G: the plan step fails when a run has no target, and the tag gate refuses a tag when any target failed. A red legacy deploy does not stop the new-account staging deploy, but it blocks the tag.
 
