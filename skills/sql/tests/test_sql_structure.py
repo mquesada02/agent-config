@@ -27,6 +27,7 @@ MODULES = {
     "dialects/postgres.md": ["#393", "#395"],
     "sources/sql-files.md": ["#390"],
     "sources/postgres-js.md": ["#390"],
+    "sources/pg.md": ["#615"],
 }
 
 
@@ -129,6 +130,7 @@ class SourceModuleTest(unittest.TestCase):
             "detected_tags", "[sources]", "value", "fragment", "keyword", "this.sql",
         ),
         "sources/sql-files.md": ("statement",),
+        "sources/pg.md": ("PGN-01", "dynamic", "not_followed", "line_starts"),
     }
 
     def test_the_source_modules_are_filled(self):
@@ -169,7 +171,7 @@ class SourceModuleRouterTest(unittest.TestCase):
         self.body = section(read(ROUTER), "Source module")
 
     def test_the_section_names_both_modules_the_script_and_the_extensions(self):
-        for needle in ("sources/sql-files.md", "sources/postgres-js.md", "scripts/extract.py", ".sql", ".ts"):
+        for needle in ("sources/sql-files.md", "sources/postgres-js.md", "sources/pg.md", "scripts/extract.py", ".sql", ".ts"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, self.body)
 
