@@ -10,8 +10,8 @@ import os
 import sys
 import time
 
-from ownership import (REMOTE, SKIP_COMMAND, anchor_worktree, bound_run, check_clean, check_docker, check_ownership, failure_text,
-                       git, read_json, remote_ref_sha, row_worktree, run, run_proof)
+from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, anchor_worktree, bound_run, check_clean, check_docker, check_ownership,
+                       default_branch, failure_text, git, read_json, remote_ref_sha, row_worktree, run, run_proof, tip_off_base)
 
 USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 PROTECTED = ("develop", "main")
@@ -132,11 +132,7 @@ def check_merged(target, branch, tip, named_base):
     bases = {pr.get("baseRefName") for pr in matching}
     if len(bases) > 1:
         return ["Merged: matching PRs have different base branches, the base cannot be chosen"], None, None, None
-    repo = read_json(run("gh", "repo", "view", "--json", "defaultBranchRef", cwd=target))
-    try:
-        default = repo["defaultBranchRef"]["name"]
-    except (KeyError, TypeError):
-        default = None
+    default = default_branch(target)
     if not default:
         return ["Merged: could not read the default branch from GitHub"], None, None, None
     if bases:
@@ -148,23 +144,9 @@ def check_merged(target, branch, tip, named_base):
     return [], base, default, []
 
 
-def tip_off_base(target, tip, base):
-    """None when the tip is on origin/<base> after a fetch, so the branch holds nothing the base lacks (#300); else why not."""
-    # an explicit refspec, so the tracking ref is updated whatever fetch refspec the clone has
-    fetch = git(target, "fetch", REMOTE, f"+refs/heads/{base}:refs/remotes/{REMOTE}/{base}")
-    if fetch.returncode != 0:
-        return f"{REMOTE}/{base} could not be fetched: {failure_text(fetch)}"
-    ancestor = git(target, "merge-base", "--is-ancestor", tip, f"refs/remotes/{REMOTE}/{base}")
-    if ancestor.returncode == 1:
-        return f"it is not on {REMOTE}/{base}"
-    if ancestor.returncode != 0:
-        return f"git merge-base failed: {failure_text(ancestor)}"
-    return None
-
-
 def check_pushed(target, branch, tip, numbers):
     """Return (reasons, branch_ref_absent)."""
-    sha, error = remote_ref_sha(target, f"refs/heads/{branch}")
+    sha, error = remote_ref_sha(target, f"{BRANCH_PREFIX}{branch}")
     if error:
         return [f"Pushed: could not read {REMOTE}: {error}"], False
     if sha == tip:
@@ -204,7 +186,7 @@ def check_main_checkout(checkout):
 
 
 def remote_ref_present(target, branch):
-    sha, error = remote_ref_sha(target, f"refs/heads/{branch}")
+    sha, error = remote_ref_sha(target, f"{BRANCH_PREFIX}{branch}")
     if error:
         raise ActionFailed(f"Remote branch: could not read {REMOTE}: {error}")
     return bool(sha)
@@ -246,7 +228,7 @@ def wait_for_removal(checkout, target, interval, limit):
 
 
 def delete_local_branch(checkout, branch):
-    if git(checkout, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode != 0:
+    if git(checkout, "show-ref", "--verify", "--quiet", f"{BRANCH_PREFIX}{branch}").returncode != 0:
         return "already gone"
     result = git(checkout, "branch", "-D", branch)
     if result.returncode != 0:

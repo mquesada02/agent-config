@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 import runtime_dir  # noqa: E402  (the shared runtime folder of the context-handoff scripts)
 
 REMOTE = "origin"
+BRANCH_PREFIX = "refs/heads/"
 SKIP_COMMAND = "! ~/.claude/hooks/worktree-cleanup/cleanup --skip-ownership {path}"
 LINEAGE_MAX_STEPS = 20
 
@@ -78,10 +79,15 @@ def in_predecessor_chain(creator, handle):
     return False
 
 
+def caller_handle(record):
+    """The terminal handle that created the worktree, or None."""
+    provenance = record.get("cliProvenance")
+    return provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
+
+
 def ownership_reason(record, anchor, handle):
     """Why this session owns the worktree, as a short text, or None when no proof holds."""
-    provenance = record.get("cliProvenance")
-    caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
+    caller = caller_handle(record)
     if anchor and anchor == record.get("id"):
         return "own worktree"
     if anchor and anchor == record.get("parentWorktreeId"):
@@ -151,13 +157,56 @@ def run_proof(worktree_id, handle, rows):
     return any(row_worktree(row) == worktree_id for row in rows)
 
 
-def check_clean(target):
+def list_reason(record, anchor, handle, dispatches):
+    """The reason that `list-owned` gives: an ownership proof, or the Run proof as "Run worker". None when no proof holds."""
+    return ownership_reason(record, anchor, handle) or ("Run worker" if run_proof(record.get("id"), handle, dispatches) else None)
+
+
+def clean_reasons(target):
+    """The reasons of check 3, without the `Clean: ` prefix."""
     status = git(target, "status", "--porcelain")
     if status.returncode != 0:
-        return [f"Clean: git status failed: {failure_text(status)}"]
+        return [f"git status failed: {failure_text(status)}"]
     if status.stdout.strip():
-        return ["Clean: the worktree has uncommitted or untracked changes"]
+        return ["the worktree has uncommitted or untracked changes"]
     return []
+
+
+def check_clean(target):
+    return [f"Clean: {reason}" for reason in clean_reasons(target)]
+
+
+def default_branch(target):
+    """The default branch of the repo on GitHub, or None when it cannot be read."""
+    repo = read_json(run("gh", "repo", "view", "--json", "defaultBranchRef", cwd=target))
+    try:
+        return repo["defaultBranchRef"]["name"] or None
+    except (KeyError, TypeError):
+        return None
+
+
+def fetch_base(target, base):
+    """None when origin/<base> is fetched; else why not."""
+    # an explicit refspec, so the tracking ref is updated whatever fetch refspec the clone has
+    fetch = git(target, "fetch", REMOTE, f"+{BRANCH_PREFIX}{base}:refs/remotes/{REMOTE}/{base}")
+    if fetch.returncode != 0:
+        return f"{REMOTE}/{base} could not be fetched: {failure_text(fetch)}"
+    return None
+
+
+def ancestor_problem(target, tip, base):
+    """None when the tip is on the fetched origin/<base>; else why not."""
+    ancestor = git(target, "merge-base", "--is-ancestor", tip, f"refs/remotes/{REMOTE}/{base}")
+    if ancestor.returncode == 1:
+        return f"it is not on {REMOTE}/{base}"
+    if ancestor.returncode != 0:
+        return f"git merge-base failed: {failure_text(ancestor)}"
+    return None
+
+
+def tip_off_base(target, tip, base):
+    """None when the tip is on origin/<base> after a fetch, so the branch holds nothing the base lacks (#300); else why not."""
+    return fetch_base(target, base) or ancestor_problem(target, tip, base)
 
 
 def remote_ref_sha(target, ref):
@@ -172,14 +221,22 @@ def remote_ref_sha(target, ref):
     return None, None
 
 
-def check_docker(target):
-    """Check 8: no compose stack has a config file inside the target. No `docker` on PATH passes."""
+def compose_stacks():
+    """(stacks, problem) of `docker compose ls -a`. No `docker` on PATH gives no stacks and no problem."""
     if shutil.which("docker") is None:
-        return []
+        return [], None
     result = run("docker", "compose", "ls", "-a", "--format", "json")
     stacks = read_json(result)
     if not isinstance(stacks, list):
-        return [f"Docker: docker compose ls -a did not give a list of stacks: {failure_text(result)}"]
+        return [], f"docker compose ls -a did not give a list of stacks: {failure_text(result)}"
+    return stacks, None
+
+
+def docker_reasons(target, listing):
+    """The reasons of check 8, without the `Docker: ` prefix. The listing is the result of `compose_stacks`."""
+    stacks, problem = listing
+    if problem:
+        return [problem]
     reasons = []
     for stack in stacks:
         files = stack.get("ConfigFiles") if isinstance(stack, dict) else None
@@ -188,5 +245,10 @@ def check_docker(target):
         # ConfigFiles is comma-separated, so a path that holds a comma is not recognised (a limit of that field).
         paths = [os.path.realpath(path) for path in files.split(",") if os.path.isabs(path)]
         if any(path == target or path.startswith(target + os.sep) for path in paths):
-            reasons.append(f"Docker: stack {stack.get('Name') or '(unnamed)'} has a config file in the worktree")
+            reasons.append(f"stack {stack.get('Name') or '(unnamed)'} has a config file in the worktree")
     return reasons
+
+
+def check_docker(target):
+    """Check 8: no compose stack has a config file inside the target. No `docker` on PATH passes."""
+    return [f"Docker: {reason}" for reason in docker_reasons(target, compose_stacks())]
