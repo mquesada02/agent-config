@@ -9,12 +9,13 @@ each template or statement the output has its source (`sql`, `template` or
 `pg`), its line range, its tag, its text and its interpolations, each with a
 position (`value`, `fragment` or `keyword`). A `pg` statement is the SQL that
 the first argument of the `query()` call of a `pg` receiver gives: a string, a
-template, a `+` chain (a direct argument may be in parentheses), the `text` of a config
-object, the first argument of `new Query`, `new Cursor` or `new QueryStream`, or
-a name that is followed to a same-file `const` (its value may end with `as const`). The SQL may have a part that is not a literal: the statement
-is then `dynamic`. A `pg` statement also has a `pg` object (see the spec of the
-`pg` source form). The output lists the tags that the file shows (tag
-detection), the `pg` receivers that it shows (receiver detection) and
+template, a `+` chain (a direct argument may be in parentheses), the `text` of a
+config object, the first argument of `new Query`, `new Cursor` or
+`new QueryStream`, or a name that is followed to a same-file `const` (its value
+may end with `as const`). The SQL may have a part that is not a literal: the
+statement is then `dynamic`. A `pg` statement also has a `pg` object (see the
+spec of the `pg` source form). The output lists the tags that the file shows
+(tag detection), the `pg` receivers that it shows (receiver detection) and
 `not_followed`, the calls whose first argument gives no statement, each with its
 line. The given receivers are added to the detected ones; they never replace
 them.
@@ -1836,11 +1837,12 @@ class PgCalls:
                 close = match_close(t, found[1])
                 if close is not None and close + 1 == e:
                     return self.submittable(found[0], found[1], close)
-        group_start, group_end = self.ungrouped(s, e)
-        if (group_start, group_end) == (s, e):
+        inner_start, inner_end = self.ungrouped(s, e)
+        if inner_start == s:
             result = self.text_expression(s, e)
-        else:  # a group follows only the forms that `read_value` reads: a name in a group is not followed
-            result = self.read_value(group_start, group_end) if group_start < group_end else None
+        else:
+            # a group follows only the forms that `read_value` reads: a name in a group is not followed
+            result = self.read_value(inner_start, inner_end) if inner_start < inner_end else None
         if isinstance(result, Value):
             length, present = values_of(t, self.detector, e)
             return Use(result, "direct", length, present)

@@ -775,6 +775,7 @@ class GroupedArgumentTest(FormsCase):
             "(new Query('SELECT 1'))",
             "({ text: 'SELECT 1' })",
             "('a') + ('b')",
+            "('a' + 'b') + c",
             "(5)",
         ]
         for argument in cases:
@@ -783,9 +784,6 @@ class GroupedArgumentTest(FormsCase):
 
     def test_a_group_around_a_name_is_not_followed_even_for_a_const(self):
         self.assertNotFollowed("const q = 'SELECT 1';\npool.query((q));", lines=(4,))
-
-    def test_a_group_around_the_start_of_a_longer_argument_keeps_its_result(self):
-        self.assertNotFollowed("pool.query(('a' + 'b') + c);")
 
 
 class AsConstTest(FormsCase):

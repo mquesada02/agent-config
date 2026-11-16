@@ -676,13 +676,21 @@ class GroupedAndAsConstTest(WriteBackTestCase):
         )
 
     def test_a_dynamic_grouped_form_is_refused_and_writes_no_file(self):
-        source = HEAD + "export const a = (x: string) => pool.query(('select ' + x))\nexport const b = (x: string) => pool.query((`select ${x}`))\n"
+        source = (
+            HEAD
+            + "export const a = (x: string) => pool.query(('select ' + x))\n"
+            + "export const b = (x: string) => pool.query((`select ${x}`))\n"
+        )
         for index in (0, 1):
             with self.subTest(index=index):
                 self.assert_refused(source, index, "select 1", "dynamic")
 
     def test_a_value_change_in_a_grouped_form_is_refused_and_writes_no_file(self):
-        source = HEAD + "export const a = () => pool.query(('select id from t'))\nconst q = 'select 1' as const\npool.query(q)\n"
+        source = (
+            HEAD
+            + "export const a = () => pool.query(('select id from t'))\n"
+            + "const q = 'select 1' as const\npool.query(q)\n"
+        )
         self.assert_refused(source, 0, "select name from t", "value_changed")
         self.assert_refused(source, 1, "select 2", "value_changed")
 
