@@ -61,7 +61,7 @@ Protection rules [S1, S2]:
 - Custom deployment protection rules: built from GitHub Apps. They work through the `deployment_protection_rule` webhook. Any number of apps can be installed on a repository. At most 6 rules can be enabled on one environment. The feature carries a "beta" note in the source. [S2, S3]
 - A job that references an environment does not start until all rules pass. It cannot read environment secrets before that. [S3]
 - A job that waits for approval shows "Waiting". If not approved in 30 days, it fails. [S3]
-- Plans: on GitHub Free, environments (and their secrets) work only for public repositories. Required reviewers, wait timers, the admin-bypass setting and custom rules also only for public repositories on Free, Pro and Team. Deployment branches and tags: public repositories, plus private repositories on Pro and Team. Environment variables: public repositories, plus private on Pro and Team. If a repository goes from public to private, configured protection rules and secrets are ignored. [S1, S2]
+- Plans: on GitHub Free, environments (and their secrets) work only for public repositories. Required reviewers, wait timers, the admin-bypass setting and custom rules are also available only in public repositories on Free, Pro and Team. Deployment branches and tags: public repositories, plus private repositories on Pro and Team. Environment variables: public repositories, plus private on Pro and Team. If a repository goes from public to private, configured protection rules and secrets are ignored. [S1, S2]
 - Self-hosted runners: "not run in an isolated container, even if they use environments." Treat environment secrets like repository secrets. [S2]
 
 Environment secrets and variables [S1, S2]:

@@ -8,7 +8,7 @@ Collected 2026-11-15. Source: the workflow files and the file history of the sam
 - 10 repos hold CD workflows. 38 CD workflow files in total (deploy, release, promote, rollback, apply, publish, scheduled audit).
 - The other 10 repos with workflows (the TypeScript ingestion family) hold CI only. One of them says in a comment that its deploy path was deleted.
 - I read in full: the CD files of repos B, D, E, F, G, H and the Terraform apply files of repo C. The thin caller files of repos I, J and K have the same shape as repo H. I scanned them for triggers, inputs and the called template, not line by line.
-- History: the CD files are young and have few commits (2 to 5 each). The template hub (repo G) has the most (16 for the deploy template, 11 for the legacy deploy, 8 for the rollback).
+- History: the CD files are young and have few commits (2 to 5 each). The template hub (repo G) has the most: about ten to fifteen for the deploy template, and fewer for the legacy deploy and the rollback.
 - Labels. Labels B to E come from the CI catalog and I could match them by shape: B = the SQL database repo, C = the Terraform repo, D = the TypeScript frontend, E = the landing site. The new labels start at F:
   - Repo B: SQL database repo. Its only CD file publishes a signed migration bundle.
   - Repo C: Terraform infrastructure repo. 5 CD files (apply, apply-stage, a scheduled settings audit, a manual DNS test, a manual runner smoke test) and one plan-on-PR file.
@@ -72,7 +72,7 @@ Each line is: number, mark, repos, neutral description.
 
 15. bad: G, H, I, J, K: no `timeout-minutes` on any CD job (the default is 360 minutes). F, D and E have none either. Only repos B and C set limits (10 and 55 min). A stuck Lambda wait or smoke curl can run for 6 hours.
 16. good: B: the limit is 10 minutes with a comment that says why (shorter than the OIDC token lifetime, so the job fails fast instead of dying with an expired token).
-17. good: C, D, E, F: every deploy uses `concurrency` with `cancel-in-progress: false`, and a comment says that GitHub keeps one pending run per group. F uses one group per kind of ref so a develop push cannot replace a pending tag run.
+17. good: C, D, E, F: every deploy uses `concurrency` with `cancel-in-progress: false`, and a comment states a one-pending-run-per-group rule (a disputed claim, see cd-practices.md, section 1). F uses one group per kind of ref so a develop push cannot replace a pending tag run.
 18. bad: G, H, I, J, K: the deploy template has no `concurrency` block. Two promotions or a rollback during a deploy can write to the same tenant at once. Only the tag job and the promote job have a group.
 19. good: D, E, F: a docs filter on a deploy push trigger is acceptable because the deploy is not a required check, and the comments say so. F keeps the list in one script and a test compares it with the workflow. The bad form is the same filter on a required CI check (see the CI catalog).
 20. good: D, E, F: the CD build jobs use the toolchain cache of the setup action (pnpm or Maven), so a rebuild does not download every dependency.
