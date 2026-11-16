@@ -1,7 +1,7 @@
 # The bash command reader that the Bash PreToolUse hooks share (hooks/worktree-branch/check_branch_name.py and
 # hooks/subagent-readonly/block_subagent_writes.py). Each hook loads this file by its path (`spec_from_file_location`), because a hook runs
-# with `python3 -I`, which gives no import path to a sibling folder. A hook loads it inside its `load_reader`, so a load failure is a deny
-# of that hook and never a crash.
+# with `python3 -I`, which gives no import path to a sibling folder. A hook loads it with its `load_shared`, which its `load_reader` and its
+# rules class call. Both run inside the `try` of the hook `main`, so a load failure is a deny of that hook and never a crash.
 # It holds: the loader of the workflow-audit script as a module, the reader of `$(...)` and backtick substitution bodies, and the walk over a
 # command text (the nesting depth guard, the data heredoc strip, the join and the split, and the `eval` and shell `-c` extraction).
 # It holds no deny rule. Each hook gives the walk its rules (see `Walk`).
