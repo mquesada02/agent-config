@@ -12,6 +12,7 @@ FENCE = "```"
 ALL_SECTIONS = ["style", "formatter", "sources", "rules"]
 CATALOG = (
     [f"PGJS-{n:02d}" for n in range(1, 5)]
+    + [f"PGN-{n:02d}" for n in range(1, 7)]
     + [f"PG-{n:02d}" for n in range(1, 11)]
     + [f"PLAN-{n:02d}" for n in range(1, 6)]
 )

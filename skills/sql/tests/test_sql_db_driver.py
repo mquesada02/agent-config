@@ -442,6 +442,9 @@ class DriverTest(base.TempTest):
                                        "sequence_warning:app-pg13", "sequence_warning:app-pg18"],
                     "write-dblink-trigger": ["downgraded:app-pg13", "downgraded:app-pg18"],
                     "select-query-to-xml": ["downgraded:app-pg13", "downgraded:app-pg18"],
+                    "pgn-dynamic": ["no_connection:app-pg13", "no_connection:app-pg18"],
+                    "pgn-06-facts": ["facts:app-pg13", "facts:app-pg18"],
+                    "pgn-plan-select": plans,
                     "bad-password": ["connection_failed:app-badpw"],
                     "wrong-host": ["connection_failed:app-wronghost"]}
         rules = {"facts-pg-02": {"expect": ["PG-02"], "forbid": []},
@@ -451,7 +454,10 @@ class DriverTest(base.TempTest):
                  "plan-04-nested-loop": {"expect": ["PLAN-04"], "forbid": []},
                  "plan-05-cache": {"expect": ["PLAN-05"], "forbid": []},
                  "plan-clean": {"expect": [], "forbid": [f"PLAN-0{n}" for n in range(1, 6)]},
-                 "plan-disabled": {"expect": [], "forbid": ["PLAN-02"]}}
+                 "plan-disabled": {"expect": [], "forbid": ["PLAN-02"]},
+                 "pgn-dynamic": {"expect": ["PGN-01"],
+                                 "forbid": [f"PG-{n:02d}" for n in range(1, 11)] + [f"PGN-0{n}" for n in range(2, 7)]},
+                 "pgn-06-facts": {"expect": ["PGN-06"], "forbid": []}}
         self.assertEqual(sorted(os.listdir(CASES)), sorted(expected))
         for name, kinds in expected.items():
             with open(os.path.join(CASES, name, "db-expect.json"), encoding="utf-8") as handle:

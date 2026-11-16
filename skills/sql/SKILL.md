@@ -1,11 +1,11 @@
 ---
 name: sql
-description: Use when writing or editing SQL (PostgreSQL in .sql files or postgres.js templates), or when the user calls `/sql setup`, `/sql format` or `/sql optimize`. Setup writes the repo SQL rules file, format formats only the SQL the user points at, and optimize reports problems in a query.
+description: Use when writing or editing SQL (PostgreSQL in .sql files, postgres.js templates or pg strings), or when the user calls `/sql setup`, `/sql format` or `/sql optimize`. Setup writes the repo SQL rules file, format formats only the SQL the user points at, and optimize reports problems in a query.
 ---
 
 # SQL
 
-PostgreSQL is the only dialect. The source forms are `.sql` files and postgres.js tagged templates. This file is the router: it reads the mode, loads the repo rules file and loads only the modules that the task needs.
+PostgreSQL is the only dialect. The source forms are `.sql` files, postgres.js tagged templates and plain strings that a `pg` receiver sends to `query()`. This file is the router: it reads the mode, loads the repo rules file and loads only the modules that the task needs.
 
 ## Modes
 
@@ -49,14 +49,14 @@ It prints one JSON object with the keys `found`, `settings`, `missing_sections`,
 When you are pointed at a file to find its SQL (format, optimize, or a read of the SQL in a file), pick the source module by the file form. The extension is case-insensitive, as it is for `scripts/extract.py`.
 
 - A file that ends in `.sql`: load [sources/sql-files.md](sources/sql-files.md).
-- A file that ends in `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` or `.tsx`: load [sources/postgres-js.md](sources/postgres-js.md).
+- A file that ends in `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` or `.tsx`: run `scripts/extract.py` once, with `--tags` and `--receivers` from the rules file (leave an option out when its list is empty; the command is the same in both modules below, and the modules do not repeat the run). Read the `source` of each statement, then load the module that it needs: [sources/postgres-js.md](sources/postgres-js.md) when a statement has `source` `template`, [sources/pg.md](sources/pg.md) when a statement has `source` `pg` (a `dynamic` one too), and both when the file has both.
 - Any other file form is not supported. Say so, and do not run the extractor on it.
 
 The model-invoked path (you write SQL yourself) does not change.
 
 ## Layers
 
-A mode picks one source module and one dialect module. A later dialect or source form is one new module that this list names.
+A mode picks the source modules that the file needs (a JS/TS file can load two source modules) and one dialect module. A later dialect or source form is one new module that this list names.
 
 | Module | Load it when |
 |---|---|
@@ -68,3 +68,4 @@ A mode picks one source module and one dialect module. A later dialect or source
 | [dialects/postgres.md](dialects/postgres.md) | the SQL is PostgreSQL (the `PG-*` rules and plan reading) |
 | [sources/sql-files.md](sources/sql-files.md) | the SQL is in a `.sql` file |
 | [sources/postgres-js.md](sources/postgres-js.md) | the SQL is in a postgres.js template (the `PGJS-*` rules) |
+| [sources/pg.md](sources/pg.md) | the SQL is in a plain string that a `pg` receiver sends to `query()` (the `dynamic` rule and the `PGN-*` rules) |

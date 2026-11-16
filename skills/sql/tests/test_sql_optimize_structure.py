@@ -13,12 +13,15 @@ EVALS = os.path.join(SKILL_DIR, "evals")
 OPTIMIZE = os.path.join(SKILL_DIR, "optimize.md")
 DIALECT = os.path.join(SKILL_DIR, "dialects", "postgres.md")
 SOURCE = os.path.join(SKILL_DIR, "sources", "postgres-js.md")
+PG_SOURCE = os.path.join(SKILL_DIR, "sources", "pg.md")
 ROUTER = os.path.join(SKILL_DIR, "SKILL.md")
 README = os.path.join(REPO, "README.md")
 
 # The catalog of the ticket (severities of the general spec).
 SEVERITIES = {
     "PGJS-01": "critical", "PGJS-02": "required", "PGJS-03": "critical", "PGJS-04": "critical",
+    "PGN-01": "critical", "PGN-02": "critical", "PGN-03": "required", "PGN-04": "critical",
+    "PGN-05": "required", "PGN-06": "required",
     "PG-01": "critical", "PG-02": "critical", "PG-03": "required", "PG-04": "required",
     "PG-05": "suggestion", "PG-06": "suggestion", "PG-07": "suggestion",
     "PG-08": "suggestion", "PG-09": "suggestion", "PG-10": "suggestion",
@@ -83,7 +86,10 @@ def entries(path):
 
 def catalog_ids():
     """The PGJS-* and PG-* ids of CATALOG in scripts/rules_file.py, read through the reader command line."""
-    candidates = [f"PGJS-{n:02d}" for n in range(100)] + [f"PG-{n:02d}" for n in range(100)]
+    candidates = (
+        [f"PGJS-{n:02d}" for n in range(100)] + [f"PGN-{n:02d}" for n in range(100)]
+        + [f"PG-{n:02d}" for n in range(100)]
+    )
     toml = "[rules]\ndisabled = [" + ", ".join(f'"{c}"' for c in candidates) + "]\n"
     with tempfile.TemporaryDirectory() as repo:
         os.makedirs(os.path.join(repo, "docs", "agents"))
@@ -132,7 +138,7 @@ def case_folders():
 
 class CatalogTest(unittest.TestCase):
     def test_each_module_holds_its_ids_in_order_with_all_fields(self):
-        for path, prefix in ((DIALECT, "PG-"), (SOURCE, "PGJS-")):
+        for path, prefix in ((DIALECT, "PG-"), (SOURCE, "PGJS-"), (PG_SOURCE, "PGN-")):
             with self.subTest(module=os.path.basename(path)):
                 found, order = entries(path)
                 self.assertEqual(len(order), len(set(order)), "duplicate id")
@@ -146,12 +152,14 @@ class CatalogTest(unittest.TestCase):
         catalog = catalog_ids()
         _, dialect = entries(DIALECT)
         _, source = entries(SOURCE)
+        _, pg_source = entries(PG_SOURCE)
         self.assertEqual(sorted(dialect), sorted(i for i in catalog if i.startswith("PG-")))
         self.assertEqual(sorted(source), sorted(i for i in catalog if i.startswith("PGJS-")))
-        self.assertEqual(sorted(dialect + source), sorted(SEVERITIES))
+        self.assertEqual(sorted(pg_source), sorted(i for i in catalog if i.startswith("PGN-")))
+        self.assertEqual(sorted(dialect + source + pg_source), sorted(SEVERITIES))
 
     def test_each_severity_is_the_catalog_severity(self):
-        for path in (DIALECT, SOURCE):
+        for path in (DIALECT, SOURCE, PG_SOURCE):
             found, _ = entries(path)
             for rule_id, fields in found.items():
                 with self.subTest(rule=rule_id):
@@ -159,7 +167,7 @@ class CatalogTest(unittest.TestCase):
                     self.assertTrue(severity.startswith(SEVERITIES[rule_id]), severity)
 
     def test_each_example_has_a_bad_and_a_good_fenced_form(self):
-        for path in (DIALECT, SOURCE):
+        for path in (DIALECT, SOURCE, PG_SOURCE):
             body = section(read(path), "Rules")
             for block in re.split(r"(?m)^### ", body)[1:]:
                 rule_id = block.split("\n", 1)[0].strip()
@@ -406,6 +414,89 @@ class OptimizeModuleTest(unittest.TestCase):
         self.assertNotIn("Rewrite (unproven", text)
 
 
+class PgModuleTest(unittest.TestCase):
+    """The pg source module, the router text and the pg lines of optimize.md (ticket 615)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = read(PG_SOURCE)
+        cls.rules = {rule_id: dict(fields) for rule_id, fields in entries(PG_SOURCE)[0].items()}
+
+    def test_the_module_has_the_sections_and_names_the_extractor_run_and_keys(self):
+        for heading in ("Find the statements", "Read a statement", "The dynamic rule", "Errors", "Rules"):
+            with self.subTest(heading=heading):
+                section(self.text, heading)
+        for needle in (
+            "scripts/extract.py", "--tags", "--receivers", "detected_receivers", "`receivers`", "not_followed",
+            "line_starts", "const_name", "statement_count", "values_length", "values_present", "query_mode",
+            "`calls`", "`dynamic`", '{"expression"', "`source`", "`pg`", "position",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, self.text)
+        self.assertNotRegex(self.text, r"(?i)\bstub\b")
+        self.assertNotIn("#390", self.text)
+
+    def test_a_line_maps_with_line_starts_and_not_by_the_decoded_offset(self):
+        self.assertRegex(" ".join(self.text.split()), r"(?i)never by the offset in the decoded")
+
+    def test_the_dynamic_rule_gives_only_pgn_01_and_no_database_use(self):
+        body = " ".join(section(self.text, "The dynamic rule").split())
+        for needle in ("only `PGN-01`", "no plan call", "no rewrite proof", "no catalog facts", "never formatted"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, body)
+        self.assertIn("`PG-*`", body)
+        self.assertIn("`PGN-02` to `PGN-06`", body)
+
+    def test_the_six_rules_name_what_the_spec_says(self):
+        needles = {
+            "PGN-01": {"Detects": ["dynamic"], "Fix": ["escapeIdentifier", "escapeLiteral", "values"]},
+            "PGN-02": {
+                "Detects": ["statement_count", "values_length", "`values: []`", "extended", "`rows`", "`name`"],
+                "Why it matters": ["native", "simple", "extended"],
+                "Fix": ["one statement per call"],
+            },
+            "PGN-03": {"Detects": ["values_length", "null", "values_present"], "Fix": ["one value per placeholder"]},
+            "PGN-04": {"Detects": ["IN ($n)", "array literal"], "Fix": ["= ANY($n)"]},
+            "PGN-05": {"Detects": ["`name`", "different"], "Why it matters": ["Prepared statements must be unique"]},
+            "PGN-06": {"Detects": ["PGJS-02", "`Date`", "`date`", "calls[].line"], "Fix": ["PGJS-02"]},
+        }
+        for rule_id, fields in needles.items():
+            for field, words in fields.items():
+                for word in words:
+                    with self.subTest(rule=rule_id, field=field, word=word):
+                        self.assertIn(word, self.rules[rule_id][field])
+
+    def test_pgn_02_and_pgn_05_say_what_an_expression_value_does(self):
+        self.assertRegex(self.rules["PGN-02"]["Detects"], r"(?i)expression")
+        self.assertRegex(self.rules["PGN-05"]["Detects"], r"(?i)expression")
+
+    def test_the_router_loads_each_module_by_the_source_values_and_runs_the_extractor_once(self):
+        router = read(ROUTER)
+        body = " ".join(section(router, "Source module").split())
+        for needle in (
+            "sources/postgres-js.md", "sources/pg.md", "`source`", "`template`", "`pg`", "--tags", "--receivers",
+            "once", "both",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, body)
+        self.assertRegex(body, r"(?i)dynamic")
+        layers = section(router, "Layers")
+        self.assertRegex(layers, r"\| \[sources/pg\.md\]\(sources/pg\.md\) \|")
+        self.assertIn("can load two source modules", " ".join(layers.split()))
+        self.assertIn("`sources` (the tags and the receivers) uses detection for that run", router)
+        self.assertRegex(router, r"(?i)\bpg\b.*string|string.*\bpg\b")
+
+    def test_optimize_names_the_pg_module_the_pgn_rules_and_the_pg_database_rules(self):
+        text = " ".join(read(OPTIMIZE).split())
+        for needle in (
+            "sources/pg.md", "`PGN-*`", "same completeness rule", "`dynamic` statement gets only `PGN-01`",
+            "a `pg` statement", "no catalog facts", "call line of each `calls` entry", "`PGN-06`",
+            "A fix of a `PGJS-*` or `PGN-*` finding", "every `PGJS-*` and `PGN-*` finding",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text)
+
+
 class CaseFilesTest(unittest.TestCase):
     def test_there_is_a_case_for_each_rule_and_the_special_cases(self):
         cases = case_folders()
@@ -419,6 +510,29 @@ class CaseFilesTest(unittest.TestCase):
         for name in case_folders():
             expected.update(json.loads(read(os.path.join(EVALS, name, "expect.json")))["expect"])
         self.assertEqual(sorted(set(SEVERITIES) - expected), [])
+
+    def test_each_pgn_case_expects_its_rule_and_has_the_where_cell_grader(self):
+        for number in range(1, 7):
+            name = f"opt-pgn-{number:02d}"
+            folder = os.path.join(EVALS, name)
+            with self.subTest(case=name):
+                data = json.loads(read(os.path.join(folder, "expect.json")))
+                self.assertEqual(data, {"expect": [f"PGN-{number:02d}"], "forbid": []})
+                head = frontmatter(read(os.path.join(folder, "graders", "fires-at-bad-call.md")))
+                self.assertEqual(key(head, "type"), "regex")
+                self.assertEqual(key(head, "flags"), "m")
+                self.assertIn(f"PGN-{number:02d}", unquote(key(head, "pattern")))
+
+    def test_the_pgn_05_grader_needs_both_shared_name_lines_and_not_the_other_name(self):
+        head = frontmatter(read(os.path.join(EVALS, "opt-pgn-05", "graders", "fires-at-bad-call.md")))
+        pattern = re.compile(unquote(key(head, "pattern")), re.M)
+        row = "| 1 | PGN-05 | {} | One name, two texts. | Use one name per text. |"
+        self.assertTrue(pattern.search(row.format("src/queries.ts:6, src/queries.ts:10")))
+        self.assertTrue(pattern.search(row.format("src/queries.ts:10, src/queries.ts:6")))
+        for where in ("src/queries.ts:6", "src/queries.ts:10", "src/queries.ts:6, src/queries.ts:14",
+                      "src/queries.ts:6, src/queries.ts:10, src/queries.ts:14"):
+            with self.subTest(where=where):
+                self.assertIsNone(pattern.search(row.format(where)))
 
     def test_the_clean_case_forbids_every_critical_and_required_id(self):
         data = json.loads(read(os.path.join(EVALS, "opt-clean", "expect.json")))
@@ -537,7 +651,8 @@ class ReadmeTest(unittest.TestCase):
         text = read(os.path.join(EVALS, "README.md"))
         for needle in (
             "grade_eval_results.py", "--keep-temp", "--json", "--output-dir", "opt-clean", "opt-no-rules-file",
-            "grade_rule_ids.py", "grade_no_change.py", "grade_report.py",
+            "grade_rule_ids.py", "grade_no_change.py", "grade_report.py", "opt-pgn-01", "opt-pgn-06",
+            "fires-at-bad-call.md",
         ):
             with self.subTest(needle=needle):
                 self.assertIn(needle, text)
