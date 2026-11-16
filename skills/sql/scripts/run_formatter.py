@@ -3,6 +3,7 @@
 
 Usage: python3 run_formatter.py <repo root> <file> --tool <name>
            --range <start>-<end> [--range ...] --output <path> [--tags <t1,t2,...>]
+           [--receivers <r1,r2,...>]
 
 The target statements are the top-level statements of <file> that lie inside a
 --range. The tool runs twice on a temp copy, from the repo root, with the repo's
@@ -24,7 +25,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sql_text import (  # noqa: E402
-    UsageError, parse_arguments, parse_range, read_lines, run_extractor, usage_failure,
+    UsageError, check_receivers, parse_arguments, parse_range, read_lines, run_extractor, usage_failure,
 )
 
 JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
@@ -197,9 +198,9 @@ def splice(original, formatted, pairs):
     return result, entries
 
 
-def format_file(root, path, relative, tool, ranges, tags, output):
+def format_file(root, path, relative, tool, ranges, tags, receivers, output):
     original = read_lines(path)
-    data, message = run_extractor(path, tags)
+    data, message = run_extractor(path, tags, receivers)
     if data is None:
         raise Failed("extract", "the extractor cannot read the file: %s" % message)
     statements = top_level(data)
@@ -229,7 +230,7 @@ def format_file(root, path, relative, tool, ranges, tags, output):
         original_bytes = b"".join(original)
         first = run_pass(command, temp_file(original_bytes), root)
         first_path = temp_file(first)
-        formatted_data, message = run_extractor(first_path, tags)
+        formatted_data, message = run_extractor(first_path, tags, receivers)
         if formatted_data is None:
             raise Failed("extract", "the extractor cannot read the tool output: %s" % message)
         formatted_statements = top_level(formatted_data)
@@ -291,7 +292,7 @@ def format_file(root, path, relative, tool, ranges, tags, output):
 
 def parse_command_line(argv):
     positional, options = parse_arguments(
-        argv[1:], 2, single=("--tool", "--output", "--tags"), many=("--range",)
+        argv[1:], 2, single=("--tool", "--output", "--tags", "--receivers"), many=("--range",)
     )
     root = os.path.abspath(positional[0])
     if not os.path.isdir(root):
@@ -329,16 +330,19 @@ def parse_command_line(argv):
     tags = options.get("--tags", [None])[0]
     if tags is not None and not [tag for tag in tags.split(",") if tag]:
         raise UsageError("--tags needs at least one tag")
-    return root, path, os.path.relpath(path, real_root), tool, ranges, tags, output
+    receivers = options.get("--receivers", [None])[0]
+    if receivers is not None:
+        check_receivers(receivers)
+    return root, path, os.path.relpath(path, real_root), tool, ranges, tags, receivers, output
 
 
 def main(argv):
     try:
-        root, path, relative, tool, ranges, tags, output = parse_command_line(argv)
+        root, path, relative, tool, ranges, tags, receivers, output = parse_command_line(argv)
         report = {"tool": tool, "file": path, "ok": True, "check": None, "reason": None,
                   "changed": False, "output": None, "ranges": []}
         try:
-            changed, entries = format_file(root, path, relative, tool, ranges, tags, output)
+            changed, entries = format_file(root, path, relative, tool, ranges, tags, receivers, output)
             report.update(changed=changed, output=output, ranges=entries)
         except Failed as failure:
             report.update(ok=False, check=failure.check, reason=failure.reason)

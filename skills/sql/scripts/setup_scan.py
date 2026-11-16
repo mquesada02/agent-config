@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Scan a repo for the SQL that `/sql setup` needs and print one JSON object.
 
-Usage: python3 setup_scan.py <repo root> [--tags <t1,t2,...>]
+Usage: python3 setup_scan.py <repo root> [--tags <t1,t2,...>] [--receivers <r1,r2,...>]
 
 Walks the repo (not `.git`, `node_modules`, `dist`, `build`, `coverage`, or a
 folder that starts with `.`) in sorted path order, runs `extract.py` on each
 `.sql`, JavaScript or TypeScript file, and reports the files with SQL, the
-statement counts per form, the detected tags and the pitfall candidates (the
-catalog ids PGJS-01, PGJS-04, PG-06, PG-08 and PG-10, each with `file:line`
-evidence). At most 1000 files with SQL are read.
+statement counts per form, the detected tags, the detected `pg` receivers, the
+hints and the pitfall candidates (the catalog ids PGJS-01, PGJS-04, PG-06, PG-08
+and PG-10, each with `file:line` evidence). At most 1000 files with SQL are read.
+The detected receivers are the ones that the files show, never the `--receivers`
+list. A hint says that `pg` is a dependency of the `package.json` at the repo
+root and that no file shows a receiver.
 
 Exit code: 0 (a file that cannot be read is in "errors"), 2 for a usage error
 (one line on stderr, nothing on stdout).
@@ -46,6 +49,25 @@ OFFSET = re.compile(r"\bOFFSET\s+(\d+)\b", re.I)
 IN_PAREN = r"(?<![\w$])IN\s*\(\s*\$\{\s*(?:%s)\s*\("
 IN_BARE = r"(?<![\w$])IN\s*\$\{(?!\s*(?:%s)\s*\()"
 UNSAFE = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.unsafe\(")
+
+
+PG_HINT = (
+    "`pg` is a dependency in package.json but no file shows a `pg` receiver: list the receivers that your files "
+    "import (for example `db` from `./db`) in `[sources] receivers`."
+)
+DEPENDENCY_FIELDS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+
+
+def has_pg_dependency(repo):
+    """True when the `package.json` at the repo root lists `pg` in a dependency field (the value is not read)."""
+    try:
+        with open(os.path.join(repo, "package.json"), encoding="utf-8") as handle:
+            package = json.load(handle)
+    except (OSError, ValueError, RecursionError):
+        return False
+    if not isinstance(package, dict):
+        return False
+    return any(isinstance(package.get(field), dict) and "pg" in package[field] for field in DEPENDENCY_FIELDS)
 
 
 def find_files(repo):
@@ -128,13 +150,13 @@ def unsafe_hits(source):
     return hits
 
 
-def scan(repo, tags):
+def scan(repo, tags, receivers):
     os.chdir(repo)
     files_with_sql, errors, forms = [], [], {"template": 0, "sql": 0, "pg": 0}
-    statements, detected, truncated = 0, [], False
+    statements, detected, detected_receivers, truncated = 0, [], [], False
     hits = {rule_id: [] for rule_id in ORDER}
     for path in find_files("."):
-        data, message = sql_text.run_extractor(path, tags)
+        data, message = sql_text.run_extractor(path, tags, receivers)
         if message is not None:
             errors.append({"file": path, "message": message})
             continue
@@ -150,6 +172,9 @@ def scan(repo, tags):
         for tag in data.get("detected_tags", []):
             if tag not in detected:
                 detected.append(tag)
+        for receiver in data.get("detected_receivers", []):
+            if receiver not in detected_receivers:
+                detected_receivers.append(receiver)
         file_tags = set(data.get("detected_tags", [])) | set(tags.split(",") if tags else [])
         for statement in data["statements"]:
             if statement["parent"] is None:
@@ -175,6 +200,8 @@ def scan(repo, tags):
         "statements": statements,
         "forms": forms,
         "detected_tags": detected,
+        "detected_receivers": detected_receivers,
+        "hints": [PG_HINT] if not detected_receivers and has_pg_dependency(repo) else [],
         "candidates": candidates,
         "errors": errors,
         "truncated": truncated,
@@ -183,7 +210,7 @@ def scan(repo, tags):
 
 def main(argv):
     try:
-        positional, options = sql_text.parse_arguments(argv, 1, single=("--tags",))
+        positional, options = sql_text.parse_arguments(argv, 1, single=("--tags", "--receivers"))
         repo = positional[0]
         if not os.path.isdir(repo):
             raise sql_text.UsageError("not a folder: " + repo)
@@ -192,9 +219,12 @@ def main(argv):
             tags = options["--tags"][0]
             if not [tag for tag in tags.split(",") if tag]:
                 raise sql_text.UsageError("--tags needs at least one tag")
+        receivers = None
+        if "--receivers" in options:
+            receivers = sql_text.check_receivers(options["--receivers"][0])
     except sql_text.UsageError as error:
         return sql_text.usage_failure(error)
-    print(json.dumps(scan(os.path.abspath(repo), tags), indent=2))
+    print(json.dumps(scan(os.path.abspath(repo), tags, receivers), indent=2))
     return 0
 
 

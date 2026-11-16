@@ -358,6 +358,41 @@ class UsageTest(MeasureCase):
         self.assertUsage("--tags", "--tags", fixture("majority.sql"))
         self.assertUsage("--tags", "-x", fixture("majority.sql"))
 
+    def test_a_repeated_receivers_option(self):
+        self.assertUsage("--receivers", "a", "--receivers", "b", fixture("majority.sql"))
+
+    def test_a_receivers_option_without_a_value(self):
+        self.assertUsage(fixture("majority.sql"), "--receivers")
+        self.assertUsage("--receivers", "--receivers", fixture("majority.sql"))
+        self.assertUsage("--receivers", "-x", fixture("majority.sql"))
+
+    def test_an_empty_receivers_value_or_only_commas(self):
+        self.assertUsage("--receivers", "", fixture("majority.sql"))
+        self.assertUsage("--receivers", ",", fixture("majority.sql"))
+        self.assertUsage("--receivers", ",,", fixture("majority.sql"))
+
+    def test_the_receivers_option_alone_is_no_file(self):
+        self.assertUsage("--receivers", "db")
+
+
+class ReceiversOptionTest(MeasureCase):
+    HEAD = "import { db } from './db'\n"
+
+    def test_a_receiver_that_the_file_cannot_show_votes_only_when_it_is_given(self):
+        path = self.write("a.ts", self.HEAD + "db.query('select a from t')\n")
+        self.assertEqual(measure(path)["statements"], 0)
+        out = measure("--receivers", "db", path)
+        self.assertEqual(out["statements"], 1)
+        self.assertEqual(out["properties"]["keyword_case"]["counts"], {"upper": 0, "lower": 1})
+
+    def test_the_receivers_option_and_the_tags_option_work_together(self):
+        path = self.write(
+            "a.ts",
+            self.HEAD + "const q = ctx.db`select a from t`\ndb.query('select b from t')\n",
+        )
+        self.assertEqual(measure("--tags", "ctx.db", "--receivers", "db", path)["statements"], 2)
+        self.assertEqual(measure("--receivers", "db", "--tags", "ctx.db", path)["statements"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

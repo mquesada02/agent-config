@@ -47,6 +47,7 @@ tool = "none"
 
 [sources]
 tags = ["sql"]
+receivers = []
 
 [rules]
 disabled = []
@@ -214,6 +215,44 @@ class NewFilesTest(FilesCase):
         )
         self.assertEqual(read["missing_sections"], [])
         self.assertEqual(read["settings"]["sources"]["tags"], ["sql", "tx"])
+
+    def test_a_new_file_has_receivers_beside_tags_and_an_empty_default(self):
+        proposal = self.proposal(settings={"sources": {"tags": ["sql"]}}, services=None, prose_rules=None)
+        text = self.plan(proposal)["rules_file"]["text"]
+        self.assertIn('[sources]\ntags = ["sql"]\nreceivers = []\n', text)
+
+    def test_a_new_file_writes_a_receiver_list_and_the_reader_gives_it_back(self):
+        proposal = self.proposal(
+            settings={"sources": {"tags": [], "receivers": ["pool", "this.db"]}}, services=None, prose_rules=None,
+        )
+        text = self.plan(proposal)["rules_file"]["text"]
+        self.assertIn('[sources]\ntags = []\nreceivers = ["pool", "this.db"]\n', text)
+        self.write_rules(text)
+        read = json.loads(
+            subprocess.run([sys.executable, "-I", os.path.join(SCRIPTS, "rules_file.py"), self.repo], capture_output=True, text=True).stdout
+        )
+        self.assertEqual(read["settings"]["sources"]["receivers"], ["pool", "this.db"])
+        self.assertEqual(read["settings"]["sources"]["tags"], [])
+
+    def test_an_old_file_with_tags_gains_receivers_when_the_proposal_carries_an_empty_list(self):
+        self.write_rules(OLD_RULES)
+        proposal = self.proposal(
+            settings={"sources": {"tags": ["sql"], "receivers": []}}, services=None, prose_rules=None,
+        )
+        out = self.plan(proposal)
+        self.assertEqual(out["conflicts"], [])
+        self.assertIn('[sources]\ntags = ["sql"]\nreceivers = []\n', out["rules_file"]["text"])
+
+    def test_an_old_file_with_receivers_and_a_proposal_that_differs_is_a_conflict(self):
+        self.write_rules(OLD_RULES.replace('tags = ["sql"]', 'tags = ["sql"]\nreceivers = []'))
+        proposal = self.proposal(
+            settings={"sources": {"tags": ["sql"], "receivers": ["pool"]}}, services=None, prose_rules=None,
+        )
+        out = self.plan(proposal)
+        self.assertEqual(
+            out["conflicts"],
+            [{"target": "rules_file", "section": "sources", "key": "receivers", "current": [], "proposed": ["pool"]}],
+        )
 
     def test_the_written_files_are_read_back_by_the_readers(self):
         plan = self.plan()
@@ -389,6 +428,7 @@ class SafetyTest(FilesCase):
             {"services": ["bad name"]}, {"services": "app-dev"}, {"prose_rules": "text"},
             {"prose_rules": ["two\nlines"]}, {"settings": {"style": "x"}}, {"settings": {"other": {"a": 1}}},
             {"settings": {"style": {"a": {"b": 1}}}}, {"settings": []},
+            {"settings": {"sources": {"receivers": [{"a": 1}]}}}, {"settings": {"sources": {"receivers": {"a": 1}}}},
         ):
             cases.append(["plan", self.repo, "--proposal", self.proposal(**extra)])
         for args in cases:

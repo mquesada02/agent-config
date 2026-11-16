@@ -158,6 +158,7 @@ Grader D (`graders/grade_setup.py TRACE --repo <folder> --expect <expected.json>
 | `setup-tags-fixture` | Tags `sql`, `this.sql` and `tx` are detected and stored; three pitfall candidates, one kept; the diff is shown before the write |
 | `setup-no-sql` | A repo with no SQL: default style, empty tags, no allowlist, no detector run |
 | `setup-rerun` | A re-run asks per changed key, keeps the hand-written comment and rule, appends the new rule |
+| `setup-pg-fixture` | A repo whose SQL is two `pg` statements sent through the receivers `pool` and `client` (`pg` in the package.json, no template): the receivers are detected and stored beside an empty tag list, the measurer gets `--receivers`, no detector runs, no service is set |
 
 ### Two-turn runner (`evals/turns/run_setup_turns.py`)
 

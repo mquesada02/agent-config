@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: setup-pg-fixture
+description: Seam 4 setup case. `/sql setup` on a repo whose only SQL is two `pg` statements, sent through the receivers `pool` and `client`, with `pg` in the package.json and no postgres.js template. Setup shows the receivers, stores an empty tag list and the receiver list, and runs the measurer with `--receivers`.
+tags: [setup]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    Run `/sql setup` on the repo in the current folder (the current folder is the repo root). Nobody can answer your questions, so use these answers. Confirm the empty tag list and confirm the detected receivers as they are. Decline the formatter install. Name no PG service (the answer is "none"). Drop every candidate rule, and add no rule of my own. Show me the diff, and then confirm it and write the files. In your final message, show the whole rules file as it was written in a code block, and give the setup report: the chosen formatter and the other tools that the detector found, the tags, the receivers, the services and what was written.

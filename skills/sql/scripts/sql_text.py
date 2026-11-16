@@ -333,11 +333,13 @@ def counted_votes(statement, form):
 # --- shared command helpers ------------------------------------------------
 
 
-def run_extractor(path, tags=None):
+def run_extractor(path, tags=None, receivers=None):
     """Run `extract.py`. Returns (data, None), or (None, message) when the extraction fails."""
     command = [sys.executable, EXTRACTOR, path]
     if tags is not None:
         command += ["--tags", tags]
+    if receivers is not None:
+        command += ["--receivers", receivers]
     result = subprocess.run(
         command, capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL
     )
@@ -398,6 +400,13 @@ def parse_arguments(argv, positional_count, single=(), many=()):
     if len(positional) != positional_count:
         raise UsageError("expected %d positional arguments, got %d" % (positional_count, len(positional)))
     return positional, options
+
+
+def check_receivers(value):
+    """Return the `--receivers` value, or raise UsageError when it holds no receiver."""
+    if not [receiver for receiver in value.split(",") if receiver]:
+        raise UsageError("--receivers needs at least one receiver")
+    return value
 
 
 def finish(letter, failures):
