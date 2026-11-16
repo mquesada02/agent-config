@@ -338,7 +338,7 @@ class FixtureProofTest(unittest.TestCase):
 
 
 class ReadmeGraderDTest(unittest.TestCase):
-    """The evals README tells the reader to run grader D with --diff-in-prompt on plugin eval runs (ticket 661)."""
+    """The evals README tells the reader to run grader D with --diff-in-prompt on plugin eval runs."""
 
     @classmethod
     def setUpClass(cls):
@@ -347,8 +347,7 @@ class ReadmeGraderDTest(unittest.TestCase):
         cls.two_turn = cls.text.split("### Two-turn runner", 1)[1].split("\n## ", 1)[0]
 
     def test_the_grader_d_usage_line_names_the_flag(self):
-        lines = [line for line in self.setup_cases.splitlines() if "grade_setup.py" in line and "--diff-in-prompt" in line]
-        self.assertTrue(lines)
+        self.assertTrue(any("grade_setup.py" in line and "--diff-in-prompt" in line for line in self.setup_cases.splitlines()))
 
     def test_no_sentence_says_the_plugin_eval_cases_keep_the_shown_check(self):
         self.assertNotIn("keep the `shown` check", self.text)
