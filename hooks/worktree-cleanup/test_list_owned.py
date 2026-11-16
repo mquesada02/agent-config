@@ -124,15 +124,31 @@ class StateTest(ListCase):
         state = self.owned_state(self.list_owned())
         self.assertIn("; pushed; no PR;", state)
 
-    def test_a_new_empty_worktree_is_owned_and_not_merged(self):
-        fresh = os.path.join(self.root, "fresh")
-        self.git_out(self.main, "worktree", "add", "-q", "-b", "fresh", fresh, "main")
-        self.rows = [self.row(id="fresh-id", path=fresh, branch="refs/heads/fresh", cliProvenance={"callerTerminalHandle": HANDLE})]
+    def fresh_row(self, name="fresh", commit=False):
+        folder = os.path.join(self.root, name)
+        self.git_out(self.main, "worktree", "add", "-q", "-b", name, folder, "main")
+        if commit:
+            self.commit(folder, f"{name}.txt")
+        return self.row(id=f"{name}-id", path=folder, branch=f"refs/heads/{name}", cliProvenance={"callerTerminalHandle": HANDLE})
+
+    def test_a_branch_with_its_tip_on_the_base_is_owned_and_not_merged(self):
+        self.rows = [self.fresh_row()]
         self.stub_rows()
         state = self.owned_state(self.list_owned())
-        self.assertIn(f"{fresh} [refs/heads/fresh]", state)
-        self.assertIn("; clean; not pushed; no PR;", state)
+        self.assertIn(f"{self.rows[0]['path']} [refs/heads/fresh]", state)
+        self.assertIn("; clean; tip on origin/main; no PR;", state)
         self.assertNotIn("MERGED", state)
+
+    def test_an_unpushed_commit_off_the_base_is_not_pushed(self):
+        self.rows = [self.fresh_row(commit=True)]
+        self.stub_rows()
+        self.assertIn("; clean; not pushed; no PR;", self.owned_state(self.list_owned()))
+
+    def test_docker_compose_ls_runs_once_for_several_rows(self):
+        self.rows = [self.row(cliProvenance={"callerTerminalHandle": HANDLE}), self.fresh_row("fresh"), self.fresh_row("other")]
+        self.stub_rows()
+        self.list_owned()
+        self.assertEqual(len([c for c in self.calls() if c.startswith("docker compose ls")]), 1)
 
     def test_a_dirty_worktree_and_a_compose_stack(self):
         with open(os.path.join(self.wt, "new.txt"), "w") as f:

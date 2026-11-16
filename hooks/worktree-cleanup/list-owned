@@ -9,10 +9,8 @@
 import os
 import sys
 
-from ownership import (SKIP_COMMAND, anchor_worktree, bound_run, check_clean, check_docker, git, ownership_reason, read_json,
-                       remote_ref_sha, run, run_proof)
-
-BRANCH_PREFIX = "refs/heads/"
+from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, ancestor_problem, anchor_worktree, bound_run, caller_handle, clean_reasons,
+                       compose_stacks, default_branch, docker_reasons, fetch_base, git, list_reason, read_json, remote_ref_sha, run)
 
 
 def say(line):
@@ -44,18 +42,25 @@ def repo_rows():
 
 
 def creator_gone(row):
-    provenance = row.get("cliProvenance")
-    caller = provenance.get("callerTerminalHandle") if isinstance(provenance, dict) else None
+    caller = caller_handle(row)
     return not caller or anchor_worktree(caller) is None
 
 
-def pushed_text(path, branch, tip):
+def base_to_compare():
+    """The default branch, once its origin ref is fetched; None when it cannot be read or fetched (then no tip counts as on the base)."""
+    base = default_branch(os.getcwd())
+    return None if not base or fetch_base(os.getcwd(), base) else base
+
+
+def pushed_text(path, branch, tip, base):
     sha, error = remote_ref_sha(path, f"{BRANCH_PREFIX}{branch}")
     if error:
         return "push state unknown"
     if sha == tip:
         return "pushed"
-    return "remote branch differs from the tip" if sha else "not pushed"
+    if sha:
+        return "remote branch differs from the tip"
+    return f"tip on {REMOTE}/{base}" if base and ancestor_problem(path, tip, base) is None else "not pushed"
 
 
 def pr_text(path, branch, tip):
@@ -76,15 +81,16 @@ def terminals_text(path):
         return "live terminals unknown"
 
 
-def state_text(row):
+def state_text(row, base, stacks):
     path = os.path.realpath(row["path"])
     branch = (row.get("branch") or "").removeprefix(BRANCH_PREFIX)
-    clean = check_clean(path)
-    docker = check_docker(path)
-    parts = [clean[0].removeprefix("Clean: ") if clean else "clean"]
-    tip = git(path, "rev-parse", "HEAD").stdout.strip()
-    parts += [pushed_text(path, branch, tip), pr_text(path, branch, tip)] if branch else ["no branch checked out"]
-    parts += [terminals_text(path), docker[0].removeprefix("Docker: ") if docker else "no compose stack"]
+    parts = [(clean_reasons(path) or ["clean"])[0]]
+    if branch:
+        tip = git(path, "rev-parse", "HEAD").stdout.strip()
+        parts += [pushed_text(path, branch, tip, base), pr_text(path, branch, tip)]
+    else:
+        parts.append("no branch checked out")
+    parts += [terminals_text(path), (docker_reasons(path, stacks) or ["no compose stack"])[0]]
     return "; ".join(parts)
 
 
@@ -96,10 +102,10 @@ def main():
     rows, truncated = found
     handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
     anchor = anchor_worktree(handle)
-    _run_id, dispatches = bound_run()
+    dispatches = bound_run()[1]
     owned, orphans, others = [], [], 0
     for row in rows:
-        reason = ownership_reason(row, anchor, handle) or ("Run worker" if run_proof(row.get("id"), handle, dispatches) else None)
+        reason = list_reason(row, anchor, handle, dispatches)
         if reason:
             owned.append((row, reason))
         elif creator_gone(row):
@@ -108,14 +114,15 @@ def main():
             others += 1
     if truncated:
         say("List: Orca cut the list short, some worktrees are missing")
+    base, stacks = base_to_compare(), compose_stacks()
     say(f"Owned worktrees ({len(owned)}):")
     for row, reason in owned:
         say_row(row)
-        say(f"  owned: {reason}; {state_text(row)}")
+        say(f"  owned: {reason}; {state_text(row, base, stacks)}")
     say(f"Orphans ({len(orphans)}): no proof, no live creator terminal. Never claimed; the owner runs the command.")
     for row in orphans:
         say_row(row)
-        say(f"  {state_text(row)}")
+        say(f"  {state_text(row, base, stacks)}")
         say(SKIP_COMMAND.format(path=os.path.realpath(row["path"])))
     say(f"Not listed: {others} worktrees of live terminals of other sessions")
     return 0
