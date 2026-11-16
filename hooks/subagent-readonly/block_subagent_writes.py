@@ -12,14 +12,14 @@
 # KNOWN GAP (accepted by the owner): a write hidden in a script that the subagent runs (`bash push.sh`) is not caught here. Nor is a
 # write made by a tool that is not on the deny-list (`kubectl`, `docker`, `python -c ...`). The `autoMode` rule in settings.json is the
 # second layer for those.
-import importlib.machinery
-import importlib.util
 import json
 import os
 import re
 import sys
 
-AUDIT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workflow-audit", "audit")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared-reader"))
+import bash_reader  # noqa: E402
+
 DENY_NOTICE = ("A subagent must not change remote state. Do not run this command. Report the need as a finding in your review "
                "instead; the owner runs it.")
 UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
@@ -74,16 +74,7 @@ AWS_VALUE_OPTIONS = frozenset(("--profile", "--region", "--output", "--endpoint-
 
 
 def load_reader():
-    """The audit script as a module: it has no `.py` extension, and its `__main__` guard makes the load safe. No `.pyc` is written."""
-    previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
-    try:
-        loader = importlib.machinery.SourceFileLoader("audit_for_subagent_readonly", AUDIT)
-        spec = importlib.util.spec_from_loader(loader.name, loader)
-        module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
-        return module
-    finally:
-        sys.dont_write_bytecode = previous
+    return bash_reader.load_reader("audit_for_subagent_readonly")
 
 
 def positional(words, value_options):
@@ -159,10 +150,7 @@ def aws_reason(words):
     return None
 
 
-class DenyRules:
-    def __init__(self, audit):
-        self.audit = audit
-
+class DenyRules(bash_reader.CommandWalker):
     def git_reason(self, words):
         rest = self.audit._git_command(words)
         if rest is None:
@@ -192,13 +180,10 @@ class DenyRules:
                 reason = aws_reason(rest)
             elif name == "git" or name in self.audit.DASHED_GIT:
                 reason = self.git_reason(words[index:])
-            elif name == "eval" and rest:
-                reason = self.command_reason(" ".join(rest), depth + 1)
+            elif name == "eval":
+                reason = self.eval_reason(rest, depth)
             elif name in self.audit.SHELLS:
-                option = next((position for position, argument in enumerate(rest)
-                               if self.audit.SHELL_COMMAND_OPTION.fullmatch(argument)), None)
-                if option is not None and option + 1 < len(rest):
-                    reason = self.command_reason(rest[option + 1], depth + 1)
+                reason = self.wrapped_reason(rest, depth)
             if reason:
                 return reason
         return None
@@ -214,21 +199,6 @@ class DenyRules:
                 end = self.audit._paren_end(word, found.end())
                 bodies.append(word[found.end():end - 1])
         return bodies
-
-    def read_reason(self, command, depth):
-        """The deny reason for a command text, or None. Raises when the text cannot be read."""
-        text = self.audit._join_as_bash(self.audit.strip_data_heredocs(command, self.audit.DATA_COMMANDS))
-        items = self.audit.split_command(text)
-        for segment in (item for item in items if isinstance(item, list)):
-            reason = self.segment_reason(segment, depth)
-            if reason:
-                return reason
-            for word in segment:
-                for body in self.substitution_bodies(word):
-                    reason = self.command_reason(body, depth + 1)
-                    if reason:
-                        return reason
-        return None
 
     def backtick_reason(self, command, depth):
         """The deny reason of a gated command that a backtick form of `command` holds, naming that command, or None. It is for a text that

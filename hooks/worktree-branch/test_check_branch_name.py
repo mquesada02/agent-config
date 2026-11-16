@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -89,6 +91,45 @@ class BranchNameTest(unittest.TestCase):
                     self.assertIsNotNone(reason(wrapper.format(command)))
             with self.subTest(wrapper=wrapper, name="valid"):
                 self.assertIsNone(reason(wrapper.format(f"{CREATE} --branch fix/a")))
+
+    def test_wrapped_forms_without_a_reader_of_their_own(self):
+        for wrapper in ('bash <<< "{}"', 'bash <<<"{}"', 'sh -s <<< "{}"', 'echo "{}" | bash', 'echo "{}" | sh -s',
+                        "printf '%s' '{}' | bash", 'echo x | echo "{}" | bash', '$(echo ok) <<< x; echo "{}" | bash'):
+            for command, name in ((CREATE, "missing"), (f"{CREATE} --branch Bad", "bad"), (f"{START} --worktree new-child", "start")):
+                with self.subTest(wrapper=wrapper, name=name):
+                    self.assertIsNotNone(reason(wrapper.format(command)))
+            with self.subTest(wrapper=wrapper, name="valid"):
+                self.assertIsNone(reason(wrapper.format(f"{CREATE} --branch fix/a")))
+        self.assertIsNone(reason("echo hi | bash"))
+        self.assertIsNone(reason('bash <<< "ls"'))
+
+    def test_variable_program_word(self):
+        for program in ("$X", '"$X"', "${X}", "$(which orca)", "`which orca`", "X=1 $X", "env $X"):
+            with self.subTest(program=program):
+                self.assertIsNotNone(reason(f"{program} worktree create --name x"))
+                self.assertIsNone(reason(f"{program} worktree create --name x --branch fix/a"))
+                self.assertIsNotNone(reason(f"{program} orchestration worker-start --worktree new-child"))
+        self.assertIsNone(reason("$X ls --name x"))
+        self.assertIsNone(reason("echo $X worktree create"))
+
+    def test_unreadable_worktree_selector_is_denied(self):
+        for value in ("$X", '"$X"', "${X}", "$(pwd)", "`pwd`", "new-$X", "$X:new-child"):
+            for form in (f"--worktree {value}", f"--worktree={value}"):
+                with self.subTest(form=form):
+                    self.assertIn("worker-start", reason(f"{START} {form}"))
+        for value in ("path:$WT", "path:/w/x", "branch:fix/a"):
+            with self.subTest(value=value):
+                self.assertIsNone(reason(f"{START} --worktree {value}"))
+
+    @unittest.skipUnless(shutil.which("orca"), "the orca CLI is not installed")
+    def test_create_value_options_match_the_orca_help(self):
+        result = subprocess.run(["orca", "worktree", "create", "--help"], capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            self.skipTest("orca worktree create --help failed")
+        usage = next(line for line in result.stdout.splitlines() if line.startswith("Usage:"))
+        found = set(re.findall(r"--[a-z-]+(?= [^\s\[\]|-])", usage))
+        found |= set(re.findall(r"^\s+(--[a-z-]+) +(?:<|\S+\|)", result.stdout, re.MULTILINE))
+        self.assertEqual(found, set(hook.CREATE_VALUE_OPTIONS))
 
     def test_unreadable_text_is_denied_only_when_it_names_a_gated_command(self):
         self.assertIsNotNone(reason(f"{CREATE} 'unclosed"))

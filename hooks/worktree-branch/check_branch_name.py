@@ -7,16 +7,16 @@
 #   - `orca orchestration worker-start` with `--worktree new-child` or `--worktree new-top-level`.
 # Every Orca CLI form counts (`orca`, `orca-ide`, `orca-dev`, a full path, `$ORCA_CLI_COMMAND`). The command is read with the shared bash
 # command reader of the workflow-audit gates, so a wrapped form (`bash -c`, `eval`, a pipeline, a `&&` chain, a substitution) counts.
-# The walk over wrapped forms follows the one of hooks/subagent-readonly/block_subagent_writes.py, which has its own deny rules.
+# The walk over wrapped forms is the one of hooks/shared-reader/bash_reader.py, which hooks/subagent-readonly/block_subagent_writes.py shares.
 # A command that the reader cannot split is denied only when its raw text names one of the two gated commands.
-import importlib.machinery
-import importlib.util
 import json
 import os
 import re
 import sys
 
-AUDIT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workflow-audit", "audit")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared-reader"))
+import bash_reader  # noqa: E402
+
 # Conventional Branch 1.1.0 (https://conventionalbranch.org/#specification) with the purpose types, plus the team type `research`:
 # one `/`; lowercase letters, digits and hyphens; a dot only between two letters or digits; no leading, trailing or consecutive
 # hyphen or dot. It is matched with fullmatch, so that a trailing newline is no name character.
@@ -29,6 +29,8 @@ CREATE_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
 NEW_WORKTREES = ("new-child", "new-top-level")
 CLI_VARIABLES = ("$ORCA_CLI_COMMAND", "${ORCA_CLI_COMMAND}")
 SUBSTITUTION_START = re.compile(r"\$\(|`")
+UNRESOLVED_WORD = re.compile(r"[$`]")  # a variable or a substitution: the hook cannot read what it expands to
+LITERAL_SELECTOR = re.compile(r"[a-z]+:")  # `path:`, `branch:`: a literal prefix, so the value cannot expand to a bare `new-child`
 GATED_TEXT = re.compile(r"worker-start|worktree\W+create")
 CREATE_NOTICE = "Pass --branch <type>/<description> (type: feat, fix, chore, hotfix, release or research), as CLAUDE.md section 10 says."
 START_NOTICE = ("worker-start cannot name a branch. Create the worktree with `orca worktree create --branch <type>/<description> "
@@ -36,16 +38,7 @@ START_NOTICE = ("worker-start cannot name a branch. Create the worktree with `or
 
 
 def load_reader():
-    """The audit script as a module: it has no `.py` extension, and its `__main__` guard makes the load safe. No `.pyc` is written."""
-    previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
-    try:
-        loader = importlib.machinery.SourceFileLoader("audit_for_worktree_branch", AUDIT)
-        spec = importlib.util.spec_from_loader(loader.name, loader)
-        module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
-        return module
-    finally:
-        sys.dont_write_bytecode = previous
+    return bash_reader.load_reader("audit_for_worktree_branch")
 
 
 def option_values(arguments, name, value_options):
@@ -67,14 +60,18 @@ def option_values(arguments, name, value_options):
     return values
 
 
-class BranchRules:
+class BranchRules(bash_reader.CommandWalker):
     def __init__(self, audit):
-        self.audit = audit
-        self.create_head = audit._cli_head(self.is_orca, CREATE_VALUE_OPTIONS, ["worktree", "create"])
-        self.start_head = audit._cli_head(self.is_orca, audit.ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
+        super().__init__(audit)
+        self.create_head = audit._cli_head(self.is_program, CREATE_VALUE_OPTIONS, ["worktree", "create"])
+        self.start_head = audit._cli_head(self.is_program, audit.ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
 
     def is_orca(self, word):
         return self.audit._is_orca(word) or word in CLI_VARIABLES
+
+    def is_program(self, word):
+        """An Orca program word, or a word that a variable or a substitution builds (`$X worktree create ...`): it may be Orca."""
+        return self.is_orca(word) or bool(UNRESOLVED_WORD.search(word))
 
     def create_reason(self, arguments):
         if self.audit._is_help(arguments):
@@ -91,6 +88,9 @@ class BranchRules:
         values = option_values(arguments, "--worktree", self.audit.ORCA_VALUE_OPTIONS)
         if any(value in NEW_WORKTREES for value in values):
             return f"worker-start with a new worktree gives a hyphen name. {START_NOTICE}"
+        for value in values:
+            if UNRESOLVED_WORD.search(value) and not LITERAL_SELECTOR.match(value):
+                return f"worker-start --worktree {value!r} may expand to a new worktree, and the hook cannot read it. {START_NOTICE}"
         return None
 
     def orca_reason(self, words):
@@ -108,17 +108,39 @@ class BranchRules:
         for index, word in enumerate(words):
             rest = words[index + 1:]
             reason = None
-            if self.is_orca(word):
+            if self.is_orca(word) or (index == 0 and self.is_program(word)):
                 reason = self.orca_reason(words[index:])
-            elif os.path.basename(word) == "eval" and rest:
-                reason = self.command_reason(" ".join(rest), depth + 1)
+            elif os.path.basename(word) == "eval":
+                reason = self.eval_reason(rest, depth)
             elif os.path.basename(word) in self.audit.SHELLS:
-                option = next((position for position, argument in enumerate(rest)
-                               if self.audit.SHELL_COMMAND_OPTION.fullmatch(argument)), None)
-                if option is not None and option + 1 < len(rest):
-                    reason = self.command_reason(rest[option + 1], depth + 1)
+                reason = self.wrapped_reason(rest, depth) or self.here_string_reason(rest, depth)
             if reason:
                 return reason
+        return None
+
+    def here_string_reason(self, rest, depth):
+        """The deny reason of the text that a here-string gives a shell (`bash <<< "..."`), or None."""
+        for position, word in enumerate(rest):
+            if word.startswith("<<<"):
+                text = word[3:] or (rest[position + 1] if position + 1 < len(rest) else "")
+                return self.command_reason(text, depth + 1)
+        return None
+
+    def items_reason(self, items, depth):
+        """The deny reason of a shell at the end of a pipe: it runs the text that the earlier commands print (`echo "..." | bash`). The
+        arguments of every earlier command are read as one command text, whatever prints them, so a doubt denies."""
+        separator, arguments = None, []
+        for item in items:
+            if isinstance(item, str):
+                separator = self.audit._operator(item) or separator
+                continue
+            words = self.audit._command_words(item)
+            if (separator in ("|", "|&") and words and os.path.basename(words[0]) in self.audit.SHELLS
+                    and not any(self.audit.SHELL_COMMAND_OPTION.fullmatch(argument) for argument in words[1:])):
+                reason = self.command_reason(" ".join(arguments), depth + 1)
+                if reason:
+                    return reason
+            arguments.extend(words[1:])
         return None
 
     def substitution_bodies(self, word):
@@ -140,17 +162,7 @@ class BranchRules:
         if depth > self.audit.MAX_SHELL_DEPTH:
             return "shell commands are nested too deep to read"
         try:
-            text = self.audit._join_as_bash(self.audit.strip_data_heredocs(command, self.audit.DATA_COMMANDS))
-            for segment in (item for item in self.audit.split_command(text) if isinstance(item, list)):
-                reason = self.segment_reason(segment, depth)
-                if reason:
-                    return reason
-                for word in segment:
-                    for body in self.substitution_bodies(word):
-                        reason = self.command_reason(body, depth + 1)
-                        if reason:
-                            return reason
-            return None
+            return self.read_reason(command, depth)
         except Exception as error:  # a ValueError of the reader, a RecursionError, or any other failure
             if GATED_TEXT.search(command):
                 return f"the command cannot be read ({type(error).__name__}) and names a gated Orca command"

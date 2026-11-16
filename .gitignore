@@ -8,6 +8,8 @@
 !hooks/context-handoff/*.py
 !hooks/forked-skills/
 !hooks/forked-skills/*.py
+!hooks/shared-reader/
+!hooks/shared-reader/*.py
 !hooks/subagent-readonly/
 !hooks/subagent-readonly/*.py
 !hooks/setup-diff-prompt/
