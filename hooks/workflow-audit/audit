@@ -653,6 +653,7 @@ def _subagents_folder(transcript_path):
 
 def _audited_transcripts(worktree, dir_fd):
     """The transcripts of every registered session that touches the worktree, and the versions read.
+    Of a counted session: the main transcript, and only the subagent transcripts that touch the worktree themselves.
     A session whose main transcript is missing (ENOENT), and a subagent file that is missing, are skipped.
     Raises Unavailable when no session touches it or another read error occurs."""
     root = os.path.realpath(worktree)
@@ -681,8 +682,10 @@ def _audited_transcripts(worktree, dir_fd):
         if not any(needle in text for text in texts.values() for needle in needles):
             continue  # speed rule: a transcript that never holds the path cannot touch the worktree
         transcripts = [_read_transcript(file_path, text) for file_path, text in texts.items()]
-        if any(_touches(transcript, spellings, root) for transcript in transcripts):
-            audited.append(transcripts)
+        touching = [_touches(transcript, spellings, root) for transcript in transcripts]
+        if any(touching):  # the session counts when any of its transcripts touches the worktree
+            # the main transcript is transcripts[0]; a subagent that never touches the worktree is not judged
+            audited.append([transcript for number, transcript in enumerate(transcripts) if number == 0 or touching[number]])
     if not audited:
         raise Unavailable("no registered session touches the worktree")
     return audited

@@ -49,8 +49,11 @@ class SafetyCase(AuditCase):
     def edit(self, call_id="e1", seconds=1):
         return edit_row(os.path.join(self.repo, "a.txt"), call_id, seconds)
 
-    def s7(self, rows=None, subagents=None, extra_sessions=()):
-        """The S7 item of a record over one session (and more sessions given as (id, rows, subagents))."""
+    def s7(self, rows=None, subagents=None, extra_sessions=(), touching=True):
+        """The S7 item of a record over one session (and more sessions given as (id, rows, subagents)).
+        A subagent is judged only when it touches the worktree, so by default each one gets a cwd inside it."""
+        if touching and subagents:
+            subagents = {name: [{**sub_rows[0], "cwd": self.repo}, *sub_rows[1:]] for name, sub_rows in subagents.items()}
         self.register_session("s1", [self.edit()] if rows is None else rows, subagents=subagents)
         for session_id, session_rows, session_subagents in extra_sessions:
             self.register_session(session_id, session_rows, subagents=session_subagents)
@@ -104,6 +107,27 @@ class S7SubagentTest(SafetyCase):
         rows = subagent_rows()
         rows[1]["message"]["model"] = 7
         self.assert_item(self.s7(subagents={"a1": rows}), "fail", UNAVAILABLE)
+
+    def test_a_subagent_that_never_touches_the_worktree_is_not_judged(self):
+        item = self.s7(subagents={"a1": subagent_rows(model=OPUS)}, touching=False)
+        self.assert_item(item, "pass", "0 subagents")
+        self.assertNotIn(OPUS, item["evidence"])
+
+    def test_a_subagent_that_touches_the_worktree_is_judged_by_each_kind_of_touch(self):
+        for kind in ("bash", "edit", "cwd"):
+            with self.subTest(kind=kind):
+                self.setUp()  # a new worktree path for each kind
+                row = {"bash": bash_row(f"ls {self.repo}", "b9", 2),
+                       "edit": edit_row(os.path.join(self.repo, "b.txt"), "e9", 2, cwd="/elsewhere"),
+                       "cwd": bash_row("ls", "b9", 2, cwd=os.path.join(self.repo, "sub"))}[kind]
+                self.assert_item(self.s7(subagents={"a1": [*subagent_rows(model=OPUS), row]}, touching=False), "fail", OPUS)
+
+    def test_a_session_where_only_a_subagent_touches_still_counts_with_its_main_transcript(self):
+        main_rows = [text_row(OPUS, cwd="/elsewhere")]
+        item = self.s7(rows=main_rows, subagents={"a1": [*subagent_rows(model=OPUS), bash_row(f"ls {self.repo}", "b9", 2)],
+                                                  "a2": subagent_rows(model=OPUS)}, touching=False)
+        self.assert_item(item, "fail", "agent-a1.jsonl")
+        self.assertNotIn("agent-a2.jsonl", item["evidence"])
 
     def test_the_failing_lines_are_cut_to_ten(self):
         item = self.s7(subagents={f"a{n:02d}": subagent_rows(model=OPUS) for n in range(12)})
