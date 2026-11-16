@@ -51,12 +51,10 @@ class SafetyCase(AuditCase):
 
     def s7(self, rows=None, subagents=None, extra_sessions=(), touching=True):
         """The S7 item of a record over one session (and more sessions given as (id, rows, subagents)).
-        A subagent is judged only when it touches the worktree, so by default each one gets a cwd inside it."""
-        if touching and subagents:
-            subagents = {name: [{**sub_rows[0], "cwd": self.repo}, *sub_rows[1:]] for name, sub_rows in subagents.items()}
-        self.register_session("s1", [self.edit()] if rows is None else rows, subagents=subagents)
+        A subagent is judged only when it touches the worktree; `touching=False` leaves the given rows as they are."""
+        self.register_session("s1", [self.edit()] if rows is None else rows, subagents=subagents, touching=touching)
         for session_id, session_rows, session_subagents in extra_sessions:
-            self.register_session(session_id, session_rows, subagents=session_subagents)
+            self.register_session(session_id, session_rows, subagents=session_subagents, touching=touching)
         return self.items()["S7"]
 
     def worker(self, model, extra_rows=()):
