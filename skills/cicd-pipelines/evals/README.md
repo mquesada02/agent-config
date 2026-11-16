@@ -56,6 +56,27 @@ Notes on the cost and monorepo cases:
 
 Every fixture is synthetic. No text comes from a private repo.
 
+## CD intake facts
+
+The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `value`, `status` and `source`. A recorded `repo/intake.json` holds the 12 CD facts too (27 facts in a file that has no `scripts`, 28 in one that has). The 12 keys come after `supported_node_majors`, in this order. The value of each is the real output of the script on the case fixture (a copy outside any git repo, offline), so with no GitHub remote the facts that need `gh` hold their defaults. The default of each fact is the value that the review uses when the fact is unknown:
+
+| Fact | Value | Default |
+|---|---|---|
+| `environments` | list of `{name, reviewers, wait_timer, branch_policy, admin_bypass}` | `[]` (none), status `default` |
+| `plan` | `{visibility, plan, reviewers_available}` | private, plan `null`, reviewers proposed (a private repo may need GitHub Enterprise), status `default` |
+| `rulesets` | list of `{name, target, enforcement}` | `null`, status `unknown` |
+| `classic_protection` | `{branch, protected, required_pull_request_reviews, enforce_admins}` of the default branch | `null`, status `unknown` |
+| `deploy_targets` | kinds found in the workflow steps | `[]`, status `default` |
+| `iac_tools` | tools found in the workflow steps | `[]`, status `default` |
+| `aws_variables` | `{role, region}`: the names of the `vars.*` on the `role-to-assume:` and `aws-region:` lines, never a value | the placeholders `vars.AWS_ROLE_<ENV>` and `vars.AWS_REGION`, status `default` |
+| `release_tool` | list of `changesets`, `release-please`, `semantic-release`, `release-it` | `[]` (create adds Changesets), status `default` |
+| `publish_target` | the registries of the published packages (`npmjs` or a registry URL) | `["npmjs"]`, status `default` |
+| `release_tag_pattern` | one glob: `v*`, `[0-9]*` or `*@*` | `v*`, status `default` |
+| `provenance` | true only for a public package of a public repo | `false`, status `default` when the visibility is not readable |
+| `deploy_history` | the last 10 successful runs of `deploy.yml` (any ref), with the median of each job | `null`, status `unknown` |
+
+`deploy_history` reads `deploy.yml` only. `run_history` still reads `ci.yml` on the default branch only, and `required_checks` is unchanged.
+
 ## Approval cases
 
 `approve-1-3`, `approve-2-4`, `approve-all` and `approve-none` test the fix flow. Each case gives a recorded review report and a reply (`1,3`, `2-4`, `all`, `none`). The four cases share one synthetic fixture: the `clean` workflow with five defects, one finding each, in the order of the recorded report: 1 SEC-03, 2 SEC-05, 3 COST-04, 4 COST-07, 5 COST-08.
@@ -76,7 +97,7 @@ Then run `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results f
 
 ## Create cases
 
-`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps. Each case asks "Create CI for this repo." and gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 16 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
+`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps. Each case asks "Create CI for this repo." and gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 28 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
 
 | Case | Fixture | What it proves |
 |---|---|---|

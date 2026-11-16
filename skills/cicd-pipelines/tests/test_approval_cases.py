@@ -29,7 +29,9 @@ ROWS = ["SEC-03", "SEC-05", "COST-04", "COST-07", "COST-08"]
 EDITING = [name for name in CASES if name != "approve-none"]
 FACTS = ("default_branch", "package_manager", "node_version_app", "engines", "package_kind", "os_claims",
          "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
-         "existing_workflows", "installed_tools", "supported_node_majors")
+         "existing_workflows", "installed_tools", "supported_node_majors",
+         "environments", "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools", "aws_variables",
+         "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history")
 CLEAN = os.path.join(EVALS, "clean", "repo")
 WORKFLOW = os.path.join(".github", "workflows", "ci.yml")
 
@@ -240,7 +242,7 @@ class RecordedIntake(unittest.TestCase):
         with open(case_path("approve-1-3", "repo", "intake.json"), encoding="utf-8") as handle:
             self.intake = json.load(handle)
 
-    def test_it_holds_the_15_facts_with_their_three_keys(self):
+    def test_it_holds_the_27_facts_with_their_three_keys(self):
         self.assertEqual(sorted(self.intake), sorted(FACTS))
         for name, fact in self.intake.items():
             self.assertEqual(sorted(fact), ["source", "status", "value"], name)

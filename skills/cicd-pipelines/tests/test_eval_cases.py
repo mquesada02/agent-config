@@ -315,13 +315,16 @@ class RecordedIntakeChecks:
     CASE = None
     FACTS = ("default_branch", "package_manager", "node_version_app", "engines", "package_kind", "os_claims",
              "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
-             "existing_workflows", "installed_tools", "supported_node_majors")
+             "existing_workflows", "installed_tools", "supported_node_majors",
+             "environments", "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools",
+             "aws_variables", "release_tool", "publish_target", "release_tag_pattern", "provenance",
+             "deploy_history")
 
     def setUp(self):
         with open(os.path.join(case_dir(self.CASE), "repo", "intake.json"), encoding="utf-8") as handle:
             self.intake = json.load(handle)
 
-    def test_the_file_holds_the_15_intake_facts_with_their_three_keys(self):
+    def test_the_file_holds_the_27_intake_facts_with_their_three_keys(self):
         self.assertEqual(sorted(self.intake), sorted(self.FACTS))
         for name, fact in self.intake.items():
             self.assertEqual(sorted(fact), ["source", "status", "value"], name)
