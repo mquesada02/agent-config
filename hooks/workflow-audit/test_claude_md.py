@@ -261,6 +261,41 @@ class FreshCiRuleTest(RuleTextCase):
         self.assert_not_in(self.rule, "Never rebase and force-push")
 
 
+class DeferredMinorsFilingRuleTest(RuleTextCase):
+    """Ticket #657: the post-merge step that files the deferred Minor findings."""
+
+    def setUp(self):
+        self.root = read(ROOT_CLAUDE_MD)
+        self.section8 = section(self.root, 8)
+        start = self.section8.index("After the merge and before the cleanup, file")
+        self.rule = self.section8[start:self.section8.index("After merging, run", start)]
+
+    def test_section_six_step_four_points_to_the_post_merge_step(self):
+        self.assert_in(section(self.root, 6), "Leave them unfixed in this task, because fixing them would reopen the review. "
+                       "After the merge, the session files them as an issue (section 8).")
+
+    def test_the_step_names_who_files_for_a_main_session_task_and_for_a_worker_pr(self):
+        self.assert_in(self.rule, "the session that ran the section 6 review loop files it",
+                       "the coordinator files it, from the `worker_done` report")
+
+    def test_the_issue_holds_the_pr_link_numbered_items_the_triage_line_and_the_labels(self):
+        self.assert_in(self.rule, "one issue", "links the PR", "lists each finding as a numbered item",
+                       "\"Each item needs a triage decision: fix, or accept with a reason.\"",
+                       "`needs-triage` plus `bug` or `enhancement`")
+
+    def test_no_issue_without_findings_or_for_a_pr_closed_unmerged(self):
+        self.assert_in(self.rule, "File no issue when the PR has no deferred Minor findings, or when it is closed unmerged.")
+
+    def test_the_tracker_fallback_privacy_and_no_approval_rules(self):
+        self.assert_in(self.rule, "`docs/agents/issue-tracker.md`", "With no configured tracker, list the findings in your report.",
+                       "generic content only, as section 16 says", "There is no approval step",
+                       "list the issue link in your report to the owner")
+
+    def test_the_step_sits_before_the_cleanup_sentence(self):
+        self.assertLess(self.section8.index("After the merge and before the cleanup, file"),
+                        self.section8.index("After merging, run `~/.claude/hooks/worktree-cleanup/cleanup"))
+
+
 class ContextStopRuleTest(RuleTextCase):
     """Ticket #489: section 11 bans context as a reason to stop. One test per required line."""
 
