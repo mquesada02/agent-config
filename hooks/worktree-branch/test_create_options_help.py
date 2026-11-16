@@ -13,11 +13,11 @@ import check_branch_name as hook  # noqa: E402
 
 # The value options of `orca worktree create` that the installed Orca help shows (issue #715). The branch hook keeps them as a literal
 # list (CREATE_VALUE_OPTIONS); this test finds a new value option of Orca before a wrong branch read does.
-NAME = r"(--[a-z0-9][a-z0-9-]*)"
+OPTION_NAME = r"(--[a-z0-9][a-z0-9-]*)"
 # A value placeholder: `<...>` with no space inside, or an enumeration of two or more words joined by `|`. A single word is no placeholder.
 PLACEHOLDER = r"(?:<[^<>\s]*>|[a-z0-9]+(?:\|[a-z0-9]+)+)"
-USAGE_OPTION = re.compile(NAME + r"[ \t]+" + PLACEHOLDER)
-OPTIONS_LINE = re.compile(r"^[ \t]*" + NAME + r"[ \t]+" + PLACEHOLDER)
+USAGE_OPTION = re.compile(OPTION_NAME + r"[ \t]+" + PLACEHOLDER)
+OPTIONS_LINE = re.compile(r"^[ \t]*" + OPTION_NAME + r"[ \t]+" + PLACEHOLDER)
 
 
 class HelpParseError(Exception):
@@ -28,10 +28,10 @@ def parse_value_options(help_text):
     """The value options of the help text, each with its two leading dashes: the union of the first usage line and the lines of the
     `Options:` section (up to its blank line). `Notes:` and `Examples:` are not read."""
     lines = help_text.splitlines()
-    usage_lines = [line for line in lines if line.startswith("Usage:")]
-    if not usage_lines:
+    usage = next((line for line in lines if line.startswith("Usage:")), None)
+    if usage is None:
         raise HelpParseError("the help has no usage line")
-    found = set(USAGE_OPTION.findall(usage_lines[0]))
+    found = set(USAGE_OPTION.findall(usage))
     in_options = False
     for line in lines:
         if in_options:
@@ -89,9 +89,9 @@ Notes:
 
 
 class CreateOptionsHelpTest(unittest.TestCase):
-    def stub_path(self, script, help_text=None):
-        """A search path whose first directory holds a stub `orca` that runs the shell `script`; the system directories follow, so that
-        a stub can run `cat` or `sleep`. The real `orca` is never found first."""
+    def stub_path(self, script, help_text=None, interpreter="/bin/sh"):
+        """A search path whose first directory holds a stub `orca` that the `interpreter` runs with the `script`; the system directories
+        follow, so that a stub can run `cat` or `sleep`. The real `orca` is never found first."""
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         if help_text is not None:
@@ -101,7 +101,7 @@ class CreateOptionsHelpTest(unittest.TestCase):
             script = f"cat '{help_file}'"
         stub = os.path.join(directory.name, "orca")
         with open(stub, "w") as handle:
-            handle.write(f"#!/bin/sh\n{script}\n")
+            handle.write(f"#!{interpreter}\n{script}\n")
         os.chmod(stub, 0o755)
         return os.pathsep.join((directory.name, "/usr/bin", "/bin"))
 
@@ -134,14 +134,8 @@ class CreateOptionsHelpTest(unittest.TestCase):
             installed_value_options(self.stub_path("exec sleep 10"), timeout=1)
 
     def test_stub_that_cannot_start_fails(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        stub = os.path.join(directory.name, "orca")
-        with open(stub, "w") as handle:
-            handle.write("#!/nonexistent/interpreter\n")
-        os.chmod(stub, 0o755)
         with self.assertRaises(HelpParseError):
-            installed_value_options(directory.name)
+            installed_value_options(self.stub_path("", interpreter="/nonexistent/interpreter"))
 
     def test_failure_message_names_the_options_on_one_side_only(self):
         with self.assertRaises(AssertionError) as caught:
