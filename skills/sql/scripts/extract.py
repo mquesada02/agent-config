@@ -39,6 +39,7 @@ SQL_EXTENSION = ".sql"
 REGEX_KEYWORDS = frozenset(
     "return typeof instanceof in of new delete void throw case do else yield await".split()
 )
+CONTROL_KEYWORDS = frozenset("if while for with".split())
 CLASS_MODIFIERS = frozenset(
     "public private protected readonly static declare override abstract".split()
 )
@@ -660,10 +661,41 @@ def close_element(stack, tokens, frame, end):
     return end
 
 
+def after_control_header(tokens):
+    """The last token is the `)` that closes the header of `if`, `while`, `for` or `with`.
+
+    The body of such a statement can be a bare expression, so a `/` after the `)` starts a regex."""
+    if not punct(tokens[-1], ")"):
+        return False
+    depth = 0
+    for k in range(len(tokens) - 1, -1, -1):
+        if punct(tokens[k], ")"):
+            depth += 1
+        elif punct(tokens[k], "("):
+            depth -= 1
+            if depth == 0:
+                return control_keyword_before(tokens, k)
+    return False
+
+
+def control_keyword_before(tokens, k):
+    """True when the `(` at `tokens[k]` follows `if`, `while`, `for` (or `for await`) or `with`.
+
+    A keyword after `.` or `?.` is a property name: `obj.if(a) / 2`."""
+    j = k - 1
+    if j >= 1 and name_is(tokens[j], "await") and name_is(tokens[j - 1], "for"):
+        j -= 1
+    if j < 0 or tokens[j][0] != "name" or tokens[j][1] not in CONTROL_KEYWORDS:
+        return False
+    return not (j > 0 and (punct(tokens[j - 1], ".") or punct(tokens[j - 1], "?.")))
+
+
 def slash_starts_regex(tokens):
     if not tokens:
         return True
     if after_export_default(tokens):
+        return True
+    if after_control_header(tokens):
         return True
     if after_postfix_operator(tokens):
         return False

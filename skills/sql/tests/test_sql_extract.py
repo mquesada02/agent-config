@@ -1019,10 +1019,55 @@ class SlashTest(ExtractTestCase):
             with self.subTest(src=src):
                 self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [1]))
 
-    def test_the_notes_state_the_two_slash_rules(self):
+    def test_a_slash_after_the_header_of_a_control_statement_starts_a_regex(self):
+        for header in ("if (ok)", "while (ok)", "for (;;)", "for (const x of y)", "with (o)", "if (f(a))", "for await (const x of y)"):
+            src = header + " /`/.test(s);\nconst q = sql`SELECT 1`;\n"
+            with self.subTest(header=header):
+                self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [2]))
+
+    def test_a_header_that_holds_a_template_with_an_interpolation(self):
+        src = "if (g(`a${(b)}`)) /x`/.test(s);\nconst q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [2]))
+
+    def test_the_issue_example_gives_three_statements_with_and_without_braces(self):
+        tail = "pool.query('SELECT 1');\npool.query('SELECT 2');\nconst t = `x`;\npool.query('SELECT 3');\n"
+        head = "import { Pool } from 'pg';\nconst pool = new Pool();\n"
+        for body in ("if (ok) /`/.test(s);\n", "if (ok) { /`/.test(s); }\n"):
+            with self.subTest(body=body):
+                data = self.extract(head + body + tail, name="a.ts", tags="sql")
+                self.assertEqual([s["text"] for s in data["statements"]], ["SELECT 1", "SELECT 2", "SELECT 3"])
+
+    def test_a_slash_after_any_other_close_paren_is_a_division(self):
+        controls = (
+            "const h = f(a) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = (a + b) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = x[i] / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = obj.if(a) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = obj?.if(a) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = await (x) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+            "const h = x) / 2; const q = sql`SELECT 1`; const r = 4 / 2;\n",
+        )
+        for src in controls:
+            with self.subTest(src=src):
+                self.assertEqual(self.found(src, SLASH_NAMES), (["SELECT 1"], [1]))
+
+    def test_an_element_after_a_control_header_is_scanned_as_an_element(self):
+        src = "if (a) <b>it's</b>; const q = sql`SELECT 1`;\n"
+        self.assertEqual(self.found(src, JSX_NAMES), (["SELECT 1"], [1]))
+
+    def test_the_notes_state_the_three_slash_rules(self):
         with open(NOTES, encoding="utf-8") as handle:
             notes = handle.read()
-        for needle in ("## Regex or division", "i++ / 2", "export default /re/", "obj.default / 2", "a + +/re/.source"):
+        for needle in (
+            "## Regex or division",
+            "Three rules apply before the usual rule",
+            "i++ / 2",
+            "export default /re/",
+            "obj.default / 2",
+            "a + +/re/.source",
+            "if (ok) /re/.test(s)",
+            "f(a) / 2",
+        ):
             with self.subTest(needle=needle):
                 self.assertIn(needle, notes)
 
