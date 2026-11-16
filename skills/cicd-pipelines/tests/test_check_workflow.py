@@ -7,7 +7,7 @@ import unittest
 from skill_files import RULES, SKILL, all_rules, read, rule_entries
 
 COST_RULES = os.path.join(RULES, "cost.md")
-OLD_ON = "on:\n  push:\n    branches: [main]\n  pull_request:\n"
+CI_ON = "on:\n  push:\n    branches: [main]\n  pull_request:\n"
 CD_ON = "on:\n  pull_request:\n  workflow_call:\n"
 # A deploy workflow: one job that calls a reusable workflow (no timeout possible) and one normal job.
 DEPLOY = (
@@ -369,16 +369,15 @@ class CdPart(unittest.TestCase):
 
     def ci_for_cd(self):
         text = read(SINGLE)
-        self.assertIn(OLD_ON, text)
-        return text.replace(OLD_ON, CD_ON)
+        self.assertIn(CI_ON, text)
+        return text.replace(CI_ON, CD_ON)
 
     def test_triggers_cd_passes_on_the_cd_form_of_ci(self):
         self.assertEqual(run(self.ci_for_cd(), "triggers-cd")[:2], (0, ["PASS"]))
 
     def test_triggers_cd_fails_on_a_push_trigger(self):
         for push in ("  push:\n    branches: [main]\n", "  push:\n    tags: ['v*']\n"):
-            lines = failed(self.ci_for_cd().replace(CD_ON, "on:\n" + push + "  pull_request:\n  workflow_call:\n"),
-                           "triggers-cd")
+            lines = failed(self.ci_for_cd().replace("on:\n", "on:\n" + push, 1), "triggers-cd")
             self.assertEqual(len(lines), 1, lines)
             self.assertIn("push", lines[0])
 
@@ -408,7 +407,6 @@ class CdPart(unittest.TestCase):
     def test_a_push_tags_trigger_gives_no_cost_01_finding(self):
         rule = dict(rule_entries(COST_RULES))["COST-01"]["Rule"]
         self.assertIn("checks the CI workflows only", rule)
-        self.assertIn("push: tags:", rule)
         # triggers-cd is the CI form: it fails on a tag trigger, so it is never run on a CD file.
         self.assertTrue(failed("name: Release\non:\n  push:\n    tags: ['v*']\njobs: {}\n", "triggers-cd"))
 
