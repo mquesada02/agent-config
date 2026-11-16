@@ -97,6 +97,18 @@ class RulesFileReaderTest(unittest.TestCase):
         self.assertEqual(out["unknown_ids"], [])
         self.assertIsNone(out["error"])
 
+    def test_the_sources_receivers_list_is_passed_through_beside_the_tags(self):
+        self.write(doc(FULL_BLOCK.replace('tags = ["sql", "this.sql", "tx"]', 'tags = ["sql"]\nreceivers = ["pool", "this.db"]')))
+        code, out = self.read()
+        self.assertEqual(code, 0)
+        self.assertEqual(out["settings"]["sources"], {"tags": ["sql"], "receivers": ["pool", "this.db"]})
+        self.assertIsNone(out["error"])
+
+    def test_an_empty_receivers_list_is_passed_through_as_an_empty_list(self):
+        self.write(doc(FULL_BLOCK.replace('tags = ["sql", "this.sql", "tx"]', "tags = []\nreceivers = []")))
+        code, out = self.read()
+        self.assertEqual(out["settings"]["sources"], {"tags": [], "receivers": []})
+
     def test_a_partial_file_names_each_missing_section_in_order(self):
         self.write(doc('[style]\nkeyword_case = "lower"\n\n[rules]\ndisabled = []\n'))
         code, out = self.read()

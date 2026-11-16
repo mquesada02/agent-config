@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -343,6 +344,80 @@ class PgStatementsTest(RunnerTestCase):
         self.assertTrue(out["changed"])
 
 
+RECEIVER_TS_FILE = """import postgres from "postgres";
+import { db } from "./db";
+const sql = postgres();
+export const one = () => sql`select 1`;
+export const two = () => db.query("select 2");
+"""
+
+# A stand-in for `extract.py` in a copy of the scripts folder. It logs its argument list, then runs the real extractor.
+EXTRACT_WRAPPER = """import json, os, subprocess, sys
+me = os.path.abspath(__file__)
+with open(me + ".log", "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+real = {real!r}
+result = subprocess.run([sys.executable, real, *sys.argv[1:]], capture_output=True, text=True)
+sys.stdout.write(result.stdout)
+sys.stderr.write(result.stderr)
+sys.exit(result.returncode)
+"""
+
+
+class ReceiversOptionTest(RunnerTestCase):
+    def test_the_receivers_option_is_accepted_and_changes_no_output(self):
+        self.write("store.ts", RECEIVER_TS_FILE)
+        self.fake("prettier", local=True, replace=[["select", "SELECT"]])
+        plain = self.run_ok("store.ts", "prettier-plugin-embed", "4-4")
+        plain_output = self.read(self.out)
+        out = self.run_ok("store.ts", "prettier-plugin-embed", "4-4", extra=["--receivers", "db"])
+        self.assertEqual(out, plain)
+        self.assertEqual(self.read(self.out), plain_output)
+        self.assertIn('db.query("select 2")', plain_output)
+
+    def test_the_receivers_option_reaches_the_extractor_in_both_of_its_calls(self):
+        copy = os.path.join(self._tmp.name, "scripts-copy")
+        shutil.copytree(os.path.join(SKILL_DIR, "scripts"), copy, ignore=shutil.ignore_patterns("__pycache__"))
+        real = os.path.join(SKILL_DIR, "scripts", "extract.py")
+        with open(os.path.join(copy, "extract.py"), "w", encoding="utf-8") as handle:
+            handle.write(EXTRACT_WRAPPER.format(real=real))
+        self.write("store.ts", RECEIVER_TS_FILE)
+        self.fake("prettier", local=True, replace=[["select", "SELECT"]])
+        command = [
+            sys.executable, os.path.join(copy, "run_formatter.py"), self.repo, "store.ts", "--tool", "prettier-plugin-embed",
+            "--range", "4-4", "--output", self.out, "--tags", "sql", "--receivers", "db",
+        ]
+        env = dict(os.environ)
+        env["PATH"] = self.bin + os.pathsep + env["PATH"]
+        result = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with open(os.path.join(copy, "extract.py.log"), encoding="utf-8") as handle:
+            calls = [json.loads(line) for line in handle]
+        self.assertEqual(len(calls), 2)
+        for argv in calls:
+            self.assertEqual(argv[1:], ["--tags", "sql", "--receivers", "db"])
+
+    def test_no_receivers_option_passes_none_to_the_extractor(self):
+        copy = os.path.join(self._tmp.name, "scripts-copy")
+        shutil.copytree(os.path.join(SKILL_DIR, "scripts"), copy, ignore=shutil.ignore_patterns("__pycache__"))
+        real = os.path.join(SKILL_DIR, "scripts", "extract.py")
+        with open(os.path.join(copy, "extract.py"), "w", encoding="utf-8") as handle:
+            handle.write(EXTRACT_WRAPPER.format(real=real))
+        self.write("store.ts", RECEIVER_TS_FILE)
+        self.fake("prettier", local=True, replace=[["select", "SELECT"]])
+        command = [
+            sys.executable, os.path.join(copy, "run_formatter.py"), self.repo, "store.ts", "--tool", "prettier-plugin-embed",
+            "--range", "4-4", "--output", self.out,
+        ]
+        env = dict(os.environ)
+        env["PATH"] = self.bin + os.pathsep + env["PATH"]
+        result = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with open(os.path.join(copy, "extract.py.log"), encoding="utf-8") as handle:
+            calls = [json.loads(line) for line in handle]
+        self.assertEqual([argv[1:] for argv in calls], [[], []])
+
+
 class UnwritableOutputTest(RunnerTestCase):
     def test_an_output_that_cannot_be_written_is_a_failed_run_with_json(self):
         self.write("store.ts", TS_FILE)
@@ -546,6 +621,11 @@ class UsageTest(RunnerTestCase):
     def test_a_file_form_that_is_not_supported(self):
         self.write("notes.txt", "select 1;\n")
         self.assert_usage_error(file="notes.txt")
+
+    def test_an_empty_receivers_value_or_only_commas_or_a_repeat(self):
+        for extra in (["--receivers", ""], ["--receivers", ","], ["--receivers", "a", "--receivers", "b"], ["--receivers"]):
+            with self.subTest(extra=extra):
+                self.assert_usage_error(extra=extra)
 
     def test_a_tool_and_an_output_are_required(self):
         result = subprocess.run([sys.executable, SCRIPT, self.repo, "q.sql", "--range", "1-1"], capture_output=True, text=True)

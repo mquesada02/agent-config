@@ -278,6 +278,96 @@ class PgScanTest(ScanCase):
         self.assertGreater(out["forms"]["pg"], 0)
 
 
+class ReceiversTest(ScanCase):
+    def test_detected_receivers_are_the_union_of_the_files_in_first_seen_order(self):
+        self.write("a.ts", PG_HEAD + "pool.query('select 1');\n")
+        self.write("b.ts", "import pg from 'pg';\nconst client = new pg.Client();\nclient.query('select 2');\npool.query('select 3');\n")
+        self.write("c.ts", PG_HEAD + "pool.query('select 4');\n")
+        out = self.scan()
+        self.assertEqual(out["detected_receivers"], ["pool", "client"])
+
+    def test_a_repo_with_no_pg_has_no_detected_receivers(self):
+        self.write("a.ts", TAGGED)
+        self.assertEqual(self.scan()["detected_receivers"], [])
+
+    def test_the_receivers_option_makes_a_receiver_that_the_file_cannot_show_count_but_is_not_detected(self):
+        self.write("a.ts", "import { db } from './db';\ndb.query('select * from t');\n")
+        plain = self.scan()
+        self.assertEqual(plain["forms"]["pg"], 0)
+        out = self.scan("--receivers", "db")
+        self.assertEqual(out["forms"]["pg"], 1)
+        self.assertEqual(out["files_with_sql"], ["a.ts"])
+        self.assertEqual(out["detected_receivers"], [])
+        self.assertEqual(self.candidate(out, "PG-08")["evidence"], [{"file": "a.ts", "line": 2}])
+
+    def test_the_receivers_option_and_the_tags_option_work_together(self):
+        self.write("a.ts", "import { db } from './db';\nconst q = ctx.db`select 1`;\ndb.query('select 2');\n")
+        out = self.scan("--tags", "ctx.db", "--receivers", "db")
+        self.assertEqual(out["forms"], {"template": 1, "sql": 0, "pg": 1})
+
+    def test_usage_errors_of_the_receivers_option(self):
+        for args in (
+            [self.repo, "--receivers", ""],
+            [self.repo, "--receivers", ","],
+            [self.repo, "--receivers", "a", "--receivers", "b"],
+            [self.repo, "--receivers"],
+        ):
+            with self.subTest(args=args):
+                code, out, err = run(*args)
+                self.assertEqual(code, 2)
+                self.assertEqual(out, "")
+                self.assertEqual(len(err.strip().splitlines()), 1)
+
+
+class HintTest(ScanCase):
+    def hints(self, package, *extra):
+        if package is not None:
+            self.write("package.json", package if isinstance(package, str) else json.dumps(package))
+        return self.scan(*extra)["hints"]
+
+    def assert_hint(self, hints):
+        self.assertEqual(len(hints), 1, hints)
+        for word in ("package.json", "pg", "[sources] receivers", "db", "./db"):
+            with self.subTest(word=word):
+                self.assertIn(word, hints[0])
+
+    def test_hints_is_empty_with_no_package_json(self):
+        self.assertEqual(self.hints(None), [])
+
+    def test_pg_in_each_of_the_four_dependency_fields_gives_the_hint(self):
+        for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            with self.subTest(field=field):
+                self.write("package.json", json.dumps({field: {"pg": "^8.0.0"}}))
+                self.assert_hint(self.scan()["hints"])
+
+    def test_the_value_of_the_pg_entry_is_not_read(self):
+        self.assert_hint(self.hints({"dependencies": {"pg": None}}))
+
+    def test_a_package_json_without_pg_gives_no_hint(self):
+        self.assertEqual(self.hints({"dependencies": {"postgres": "^3"}, "devDependencies": {"pg-cursor": "^2"}}), [])
+
+    def test_a_detected_receiver_gives_no_hint(self):
+        self.write("a.ts", PG_HEAD + "pool.query('select 1');\n")
+        self.assertEqual(self.hints({"dependencies": {"pg": "^8"}}), [])
+
+    def test_the_given_receiver_list_does_not_count_so_the_hint_shows_on_the_second_run(self):
+        self.write("a.ts", "import { db } from './db';\ndb.query('select 1');\n")
+        self.assert_hint(self.hints({"dependencies": {"pg": "^8"}}, "--receivers", "db"))
+
+    def test_a_package_json_that_cannot_be_read_gives_no_hint_and_no_error(self):
+        for text in ("{not json", "[]", "null", '"pg"', "42", json.dumps({"dependencies": ["pg"]}), json.dumps({"dependencies": "pg"})):
+            with self.subTest(text=text):
+                self.assertEqual(self.hints(text), [])
+
+    def test_a_nested_package_json_is_not_read(self):
+        self.write("packages/api/package.json", json.dumps({"dependencies": {"pg": "^8"}}))
+        self.assertEqual(self.scan()["hints"], [])
+
+    def test_a_folder_named_package_json_gives_no_hint_and_no_error(self):
+        os.makedirs(os.path.join(self.repo, "package.json"))
+        self.assertEqual(self.scan()["hints"], [])
+
+
 class UnsafeTest(ScanCase):
     def unsafe(self, call):
         self.write("a.ts", "const sql = postgres();\nconst q = " + call + ";\n")

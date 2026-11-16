@@ -39,7 +39,7 @@ SETTING_SECTIONS = rules_file.SECTIONS
 DEFAULTS = {
     "style": dict(sql_text.DEFAULT_STYLE),
     "formatter": {"tool": "none"},
-    "sources": {"tags": []},
+    "sources": {"tags": [], "receivers": []},
     "rules": {"disabled": []},
 }
 REPO_RULES_HEADING = "## Repo rules"
