@@ -4,6 +4,8 @@
 !hooks/
 !hooks/force-model-invocation.sh
 !hooks/block-aws-credentials.py
+!hooks/bash-reader/
+!hooks/bash-reader/*.py
 !hooks/context-handoff/
 !hooks/context-handoff/*.py
 !hooks/forked-skills/
