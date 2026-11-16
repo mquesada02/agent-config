@@ -994,6 +994,10 @@ class DeployHistory(IntakeCase):
     def test_a_failed_jobs_call_is_unknown(self):
         self.assertFact(self.history(fail_jobs=True)["deploy_history"], None, "unknown")
 
+    def test_an_answer_without_the_workflow_runs_key_is_unknown(self):
+        self.box.route(DEPLOY_RUNS, {"total_count": 0})
+        self.assertFact(self.facts({"package.json": {}})["deploy_history"], None, "unknown")
+
     def test_a_job_that_succeeds_in_only_some_runs_has_the_median_of_those_runs(self):
         jobs = self.history(extra_job_runs=(2, 4, 6))["deploy_history"]["value"]["jobs"]
         self.assertEqual(jobs["smoke"], {"median_seconds": 40})
