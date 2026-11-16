@@ -4,8 +4,16 @@ import subprocess
 import sys
 import unittest
 
-from skill_files import SKILL, all_rules, read
+from skill_files import RULES, SKILL, all_rules, read, rule_entries
 
+COST_RULES = os.path.join(RULES, "cost.md")
+OLD_ON = "on:\n  push:\n    branches: [main]\n  pull_request:\n"
+CD_ON = "on:\n  pull_request:\n  workflow_call:\n"
+# A deploy workflow: one job that calls a reusable workflow (no timeout possible) and one normal job.
+DEPLOY = (
+    "name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  ci:\n    uses: ./.github/workflows/ci.yml\n"
+    "  deploy:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - run: echo deploy\n"
+)
 SCRIPT = os.path.join(SKILL, "scripts", "check_workflow.py")
 SINGLE = os.path.join(SKILL, "templates", "single-package.yml")
 MONO = os.path.join(SKILL, "templates", "monorepo.yml")
@@ -31,7 +39,7 @@ COVERAGE = {
     ("SEC-02",): "dependabot", ("SEC-03",): "permissions", ("SEC-04",): "no-run-expr",
     ("SEC-05",): "persist-credentials", ("SEC-07", "SEC-09"): "no-privileged-trigger",
     ("SEC-08",): "no-text", ("SEC-10",): "audit-job", ("MAINT-01",): "short-run-blocks",
-    ("MAINT-02",): "short-comments",
+    ("MAINT-02",): "short-comments", ("COST-01",): "triggers-cd",
 }
 NOT_CLAIMED = {"SEC-06", "GRAPH-06", "GRAPH-07", "MAINT-03", "NAME-09"}
 
@@ -354,6 +362,66 @@ class SupportFiles(unittest.TestCase):
                          ("0" * 40 + " # v7.0.1", "v7"), ("          persist-credentials: false\n", ""),
                          ("  schedule:\n    - cron: '17 6 * * 1'\n", "")):
             self.assertTrue(failed(AUDIT_WORKFLOW.replace(old, new), "security-audit"), old)
+
+
+class CdPart(unittest.TestCase):
+    """The CD parts of COST-01 to COST-05: the triggers-cd form, the call-job timeout skip and the rule texts."""
+
+    def ci_for_cd(self):
+        text = read(SINGLE)
+        self.assertIn(OLD_ON, text)
+        return text.replace(OLD_ON, CD_ON)
+
+    def test_triggers_cd_passes_on_the_cd_form_of_ci(self):
+        self.assertEqual(run(self.ci_for_cd(), "triggers-cd")[:2], (0, ["PASS"]))
+
+    def test_triggers_cd_fails_on_a_push_trigger(self):
+        for push in ("  push:\n    branches: [main]\n", "  push:\n    tags: ['v*']\n"):
+            lines = failed(self.ci_for_cd().replace(CD_ON, "on:\n" + push + "  pull_request:\n  workflow_call:\n"),
+                           "triggers-cd")
+            self.assertEqual(len(lines), 1, lines)
+            self.assertIn("push", lines[0])
+
+    def test_triggers_cd_fails_when_a_trigger_is_missing(self):
+        self.assertIn("pull_request", failed(self.ci_for_cd().replace("  pull_request:\n", ""), "triggers-cd")[0])
+        self.assertIn("workflow_call", failed(self.ci_for_cd().replace("  workflow_call:\n", ""), "triggers-cd")[0])
+
+    def test_triggers_cd_fails_on_a_paths_filter(self):
+        for key in ("paths", "paths-ignore"):
+            text = self.ci_for_cd().replace("  pull_request:\n", f"  pull_request:\n    {key}: ['docs/**']\n")
+            self.assertIn("paths", failed(text, "triggers-cd")[0])
+
+    def test_the_two_trigger_forms_stay_different(self):
+        self.assertTrue(failed(self.ci_for_cd(), "triggers"))
+        self.assertTrue(failed(read(SINGLE), "triggers-cd"))
+
+    def test_timeouts_skips_a_job_that_calls_a_reusable_workflow(self):
+        self.assertEqual(run(DEPLOY, "timeouts")[:2], (0, ["PASS"]))
+
+    def test_timeouts_still_flags_a_job_with_a_step_level_uses(self):
+        text = DEPLOY.replace("    timeout-minutes: 10\n", "").replace("- run: echo deploy", "- uses: ./act")
+        lines = failed(text, "timeouts")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("job deploy", lines[0])
+        self.assertNotIn("job ci ", lines[0])
+
+    def test_a_push_tags_trigger_gives_no_cost_01_finding(self):
+        rule = dict(rule_entries(COST_RULES))["COST-01"]["Rule"]
+        self.assertIn("checks the CI workflows only", rule)
+        self.assertIn("push: tags:", rule)
+        # triggers-cd is the CI form: it fails on a tag trigger, so it is never run on a CD file.
+        self.assertTrue(failed("name: Release\non:\n  push:\n    tags: ['v*']\njobs: {}\n", "triggers-cd"))
+
+    def test_the_cost_rule_texts_state_their_cd_parts(self):
+        rules = {rule_id: fields["Rule"] for rule_id, fields in rule_entries(COST_RULES)}
+        required = {
+            "COST-01": ("workflow_call", "push: tags:"), "COST-02": ("deploy-<env>",), "COST-03": ("DEPLOY-08",),
+            "COST-04": ("DEPLOY-09", "calls a reusable workflow", "keep their own timeouts"),
+            "COST-05": ("package-manager-cache: false",),
+        }
+        for rule_id, phrases in required.items():
+            for phrase in phrases:
+                self.assertIn(phrase, rules[rule_id], (rule_id, phrase))
 
 
 class CommandLine(unittest.TestCase):
