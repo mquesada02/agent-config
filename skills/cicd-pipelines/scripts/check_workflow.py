@@ -10,8 +10,9 @@ persist-credentials pinned-runners no-run-expr named-run-steps short-run-blocks 
 timeout=<job>:<minutes> gate changes fail-fast matrix-node=<majors> matrix-only-test matrix-name no-shards
 install=<command> audit-job no-privileged-trigger no-needs-between job-names affected-run=<turbo|nx|pnpm>
 checkout-depth=default workers=1 text=<s> no-text=<s> dependabot security-audit.
-CD assertions (deploy.yml, and rollback.yml for the last one): stage-environments concurrency-cd no-install-in-deploy
-digest-check package-upload rollback-workflow.
+CD assertions: stage-environments concurrency-cd no-install-in-deploy digest-check package-upload rollback-workflow.
+They read deploy.yml. concurrency-cd, no-install-in-deploy and digest-check also read the jobs of rollback.yml, and
+rollback-workflow reads only rollback.yml.
 Output: one line "FAIL <assertion>: <message>" for each failed assertion, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error, unknown assertion or unreadable file.
 """
@@ -478,6 +479,8 @@ def a_security_audit(wf, _):
 
 CD_INSTALL = re.compile(r"\b(npm (ci|install)|pnpm (install|i)|yarn install)\b")
 CD_BUILD = re.compile(r"\b(pnpm (run )?build|npm run build|yarn (run )?build|tsc)\b")
+DEPLOY_JOB = r"deploy-"
+ROLLBACK_JOB = r"roll-?back"
 
 
 def cd_jobs(wf, pattern):
@@ -486,18 +489,14 @@ def cd_jobs(wf, pattern):
 
 
 def deploy_and_rollback_jobs(wf):
-    return {**cd_jobs(wf, r"deploy-"), **cd_jobs(wf, r"roll-?back")}
+    return {**cd_jobs(wf, DEPLOY_JOB), **cd_jobs(wf, ROLLBACK_JOB)}
 
 
-def job_concurrency(job):
-    """The group and the cancel value of the job-level `concurrency:` block (None when missing)."""
-    group = field(job, "group", ("      ",))
-    cancel = field(job, "cancel-in-progress", ("      ",))
-    return group, cancel
+NO_CD_JOBS = ["no deploy or rollback job"]
 
 
 def a_stage_environments(wf, _):
-    deploy = cd_jobs(wf, r"deploy-")
+    deploy = cd_jobs(wf, DEPLOY_JOB)
     if not deploy:
         return ["no deploy job (an id that starts with `deploy-`)"]
     failures = [f"job {job} has environment {field(lines, 'environment')!r}, expected {job[len('deploy-'):]!r}"
@@ -510,11 +509,12 @@ def a_stage_environments(wf, _):
 def a_concurrency_cd(wf, _):
     jobs = deploy_and_rollback_jobs(wf)
     if not jobs:
-        return ["no deploy or rollback job"]
+        return NO_CD_JOBS
     failures = []
     for job, lines in jobs.items():
-        group, cancel = job_concurrency(lines)
-        expected = "deploy-${{ inputs.environment }}" if re.match(r"roll-?back", job) else job
+        group = field(lines, "group", ("      ",))
+        cancel = field(lines, "cancel-in-progress", ("      ",))
+        expected = "deploy-${{ inputs.environment }}" if re.match(ROLLBACK_JOB, job) else job
         if group != expected:
             failures.append(f"job {job} has concurrency group {group!r}, expected {expected!r}")
         if cancel != "false":
@@ -525,7 +525,7 @@ def a_concurrency_cd(wf, _):
 def a_no_install_in_deploy(wf, _):
     jobs = deploy_and_rollback_jobs(wf)
     if not jobs:
-        return ["no deploy or rollback job"]
+        return NO_CD_JOBS
     return [f"job {job} has an install or build step: {line}" for job, lines in jobs.items()
             for line in run_lines(lines) if CD_INSTALL.search(line) or CD_BUILD.search(line)]
 
@@ -533,7 +533,7 @@ def a_no_install_in_deploy(wf, _):
 def a_digest_check(wf, _):
     jobs = deploy_and_rollback_jobs(wf)
     if not jobs:
-        return ["no deploy or rollback job"]
+        return NO_CD_JOBS
     call = re.compile(r"scripts/deploy-and-verify\.sh\s+\S+\s+\S+")
     return [f"job {job} does not call scripts/deploy-and-verify.sh with the bucket and the commit SHA"
             for job, lines in jobs.items() if not any(call.search(line) for line in run_lines(lines))]

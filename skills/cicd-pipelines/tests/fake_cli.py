@@ -42,6 +42,13 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 ZIP = b"synthetic zip bytes"
 
 
+def trash(path):
+    """Move a folder to /tmp/cd-scripts-trash (the repo rule: never a recursive delete)."""
+    folder = os.path.join(tempfile.gettempdir(), "cd-scripts-trash")
+    os.makedirs(folder, exist_ok=True)
+    os.rename(path, os.path.join(folder, os.path.basename(path)))
+
+
 class Run:
     """One run of a template script: exit code, output and the logged tool calls."""
 
@@ -57,7 +64,7 @@ class Run:
 class Sandbox:
     def __init__(self, test):
         self.dir = tempfile.mkdtemp(prefix="cd-scripts-")
-        test.addCleanup(self.cleanup)
+        test.addCleanup(trash, self.dir)
         self.bin = os.path.join(self.dir, "bin")
         self.store = os.path.join(self.dir, "store")
         self.work = os.path.join(self.dir, "work")
@@ -71,12 +78,6 @@ class Sandbox:
                 handle.write(text)
             os.chmod(path, 0o755)
         self.store_artifact()
-
-    def cleanup(self):
-        # Move the sandbox to /tmp/cd-scripts-trash (the repo rule: never a recursive delete).
-        trash = os.path.join(tempfile.gettempdir(), "cd-scripts-trash")
-        os.makedirs(trash, exist_ok=True)
-        os.rename(self.dir, os.path.join(trash, os.path.basename(self.dir)))
 
     def store_artifact(self, zip_bytes=ZIP, digest=None):
         """Put app.zip and app.zip.sha256 in the fake bucket. A digest other than the real one makes a changed zip."""

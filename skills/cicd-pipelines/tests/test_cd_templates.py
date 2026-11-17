@@ -1,13 +1,14 @@
 """Text checks of the CD templates for the stories that no assertion of check_workflow.py covers."""
 import glob
+import json
 import os
 import re
 import shutil
-import json
 import subprocess
 import tempfile
 import unittest
 
+from fake_cli import trash
 from skill_files import SKILL, read
 
 TEMPLATES = os.path.join(SKILL, "templates")
@@ -18,18 +19,16 @@ ROLLBACK = read(os.path.join(TEMPLATES, "rollback.yml"))
 
 def job(text, job_id):
     """The text of one job: from its key at two spaces of indent to the next job key."""
-    return re.search(r"(?ms)^  " + re.escape(job_id) + r":\n(.*?)(?=^  [a-z][\w-]*:\n|\Z)", text).group(0)
-
-
-def step_index(text, needle):
-    return text.index(needle)
+    found = re.search(r"(?ms)^  " + re.escape(job_id) + r":\n(.*?)(?=^  [a-z][\w-]*:\n|\Z)", text)
+    assert found, f"job {job_id} is missing"
+    return found.group(0)
 
 
 class DeployTemplate(unittest.TestCase):
     def test_the_package_job_assumes_the_artifacts_role_after_it_downloads_the_build(self):
         package = job(DEPLOY, "package")
-        self.assertLess(step_index(package, "actions/download-artifact@"),
-                        step_index(package, "aws-actions/configure-aws-credentials@"))
+        self.assertLess(package.index("actions/download-artifact@"),
+                        package.index("aws-actions/configure-aws-credentials@"))
         self.assertIn("role-to-assume: ${{ vars.AWS_ROLE_ARTIFACTS }}", package)
 
     def test_the_skip_notice_runs_only_on_a_docs_only_push(self):
@@ -47,10 +46,10 @@ class DeployTemplate(unittest.TestCase):
         self.assertIn("if: github.ref_type == 'tag'", prod)
         self.assertNotIn("needs", prod)
         self.assertIn("fetch-depth: 0", prod)
-        self.assertLess(step_index(prod, "git merge-base --is-ancestor HEAD origin/main"),
-                        step_index(prod, './scripts/check-staged.sh "$SHA"'))
-        self.assertLess(step_index(prod, './scripts/check-staged.sh "$SHA"'),
-                        step_index(prod, "aws-actions/configure-aws-credentials@"))
+        self.assertLess(prod.index("git merge-base --is-ancestor HEAD origin/main"),
+                        prod.index('./scripts/check-staged.sh "$SHA"'))
+        self.assertLess(prod.index('./scripts/check-staged.sh "$SHA"'),
+                        prod.index("aws-actions/configure-aws-credentials@"))
         self.assertIn("deployments: read", prod)
 
     def test_the_final_tag_pattern_and_the_ci_call(self):
@@ -130,7 +129,7 @@ class EveryCdFile(unittest.TestCase):
     def test_actionlint_passes_on_the_cd_templates(self):
         # deploy.yml calls ./.github/workflows/ci.yml, so the run uses the ci.yml of the clean CD fixture as a stand-in.
         root = tempfile.mkdtemp(prefix="cd-lint-")
-        self.addCleanup(os.rename, root, os.path.join(tempfile.gettempdir(), "trash-" + os.path.basename(root)))
+        self.addCleanup(trash, root)
         workflows = os.path.join(root, ".github", "workflows")
         os.makedirs(workflows)
         for name in ("deploy.yml", "release.yml", "rollback.yml"):
