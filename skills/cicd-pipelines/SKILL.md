@@ -17,15 +17,15 @@ Read the whole branch file with the Read tool, never only a part of it with a se
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md). When the user replies to a review report with a selection (`all`, `none`, a list or a range), follow "Fix on approval" in [review.md](review.md).
 - **Create** (the user asks for a new CI workflow): follow [create.md](create.md). It picks a template, fills it from the intake facts and ends with a self-review report.
-- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and [rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md) when the repo has a deploy workflow (see "Loading by need"), and keep your edit consistent with them. Do not review the whole repo.
+- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and [rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md) when the repo has a deploy workflow, and [rules/release.md](rules/release.md) and [rules/publish.md](rules/publish.md) under their own load rules (see "Loading by need"), and keep your edit consistent with them. Do not review the whole repo.
 
 ## Loading by need
 
 The CI rule files (naming, job graph, cost, security and maintainability) load always. They apply to the CD workflow files too. The monorepo file loads only for a monorepo. Each CD rule file loads only when its rule below holds, and only when the file exists in `rules/`:
 
 - `DEPLOY` and `ROLLBACK` ([rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md)): when the request names a deploy or a rollback, or the repo has a deploy workflow (the `existing_workflows` fact lists `deploy.yml`, or the `deploy_targets` fact has a value).
-- `RELEASE` (`rules/release.md`): when the request names a release, or the repo has a release tool or tag-driven releases (the `release_tool` fact).
-- `PUBLISH` (`rules/publish.md`): when the intake finds a published package (the `package_kind` fact).
+- `RELEASE` ([rules/release.md](rules/release.md)): when the request names a release, or the repo has a release tool or tag-driven releases: the `release_tool` fact has a value, the `existing_workflows` fact lists `release.yml`, or the `release_tag_pattern` fact has the status `detected` (a tag of a version shape exists).
+- `PUBLISH` ([rules/publish.md](rules/publish.md)): when the intake finds a published package (the `package_kind` fact).
 - `PROTECT` (`rules/protect.md`): with any CD rule file, or when the request is about branch protection, rulesets or environments.
 
 ## Modules
@@ -46,3 +46,5 @@ The CI rule files (naming, job graph, cost, security and maintainability) load a
 - [rules/maintainability.md](rules/maintainability.md): MAINT-01 to MAINT-03 (long `run:` blocks, step comments, copied workflows).
 - [rules/deploy.md](rules/deploy.md): DEPLOY-01 to DEPLOY-10 (build once, stages and environments, the digest check, OIDC roles, the version check, silent skips, the step-by-step rollout, docs-only pushes, CD timeouts, PR dry runs). Load it by the DEPLOY rule of "Loading by need".
 - [rules/rollback.md](rules/rollback.md): ROLLBACK-01 to ROLLBACK-06 (the rollback workflow, no rebuild, durable artifacts, one target at a time, the native automatic rollback, the shared concurrency group). Load it by the ROLLBACK rule of "Loading by need".
+- [rules/release.md](rules/release.md): RELEASE-01 to RELEASE-06 (one release tool, annotated tags on main, the tag ruleset, the release token and actor, the triggers, release notes). Load it by the RELEASE rule of "Loading by need".
+- [rules/publish.md](rules/publish.md): PUBLISH-01 to PUBLISH-05 (npm trusted publishing, the frozen install with no cache, dependency order, a safe re-run, the `release.yml` name). Load it by the PUBLISH rule of "Loading by need".
