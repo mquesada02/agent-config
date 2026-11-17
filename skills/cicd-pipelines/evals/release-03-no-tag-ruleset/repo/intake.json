@@ -49,11 +49,9 @@
     "source": "no os field in any package.json"
   },
   "test_runners": {
-    "value": [
-      "vitest"
-    ],
-    "status": "detected",
-    "source": "dependencies and config files"
+    "value": [],
+    "status": "default",
+    "source": "no test runner dependency or config file"
   },
   "monorepo": {
     "value": {

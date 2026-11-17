@@ -454,8 +454,10 @@ class ReleaseRules(unittest.TestCase):
             self.assertIn(text, rule)
 
     def test_the_text_holds_no_url_and_no_write_api_call(self):
-        names_no_url_and_no_repo_link(self, read(self.path))
-        self.assertNotIn("gh api", read(self.path))
+        text = read(self.path)
+        names_no_url_and_no_repo_link(self, text)
+        self.assertNotIn("gh api", text)
+        self.assertIsNone(re.search(r"-X (POST|PUT|PATCH|DELETE)", text))
 
 
 class PublishRules(unittest.TestCase):

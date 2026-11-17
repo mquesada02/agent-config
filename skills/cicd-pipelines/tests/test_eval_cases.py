@@ -832,10 +832,6 @@ class ReleasePublishCases(unittest.TestCase):
     def setUpClass(cls):
         cls.releases = {name: workflow_text(name, "publish.yml" if name == cls.RENAMED else "release.yml")
                         for name in cls.ALL}
-        cls.packages = {name: read(os.path.join(case_dir(name), "repo", "package.json")) for name in cls.ALL}
-
-    def job(self, case):
-        return job_text(self.releases[case], "release")
 
     def test_the_cases_are_exactly_these_with_their_lists(self):
         found = {n for n in review_cases() if n.startswith(("release-", "publish-"))}
@@ -850,7 +846,7 @@ class ReleasePublishCases(unittest.TestCase):
                              ["ci.yml", "publish.yml" if name == self.RENAMED else "release.yml"], name)
             self.assertTrue(os.path.exists(os.path.join(case_dir(name), "repo", ".changeset", "config.json")), name)
 
-    def test_the_good_files_hold_the_rule_text_forms_so_a_case_differs_only_where_its_rule_needs(self):
+    def test_the_good_files_hold_the_forms_that_the_rule_texts_pass(self):
         good = self.releases["release-01-two-release-tools"]
         job = job_text(good, "release")
         for text in ("branches: [main]", "workflow_dispatch:", "environment: release", "id-token: write",
@@ -864,11 +860,12 @@ class ReleasePublishCases(unittest.TestCase):
             self.assertEqual(self.releases[name], good, name)
 
     def test_release_01_has_two_release_tools(self):
-        self.assertIn('"semantic-release"', self.packages["release-01-two-release-tools"])
-        self.assertIn('"@changesets/cli"', self.packages["release-01-two-release-tools"])
+        package = read(os.path.join(case_dir("release-01-two-release-tools"), "repo", "package.json"))
+        self.assertIn('"semantic-release"', package)
+        self.assertIn('"@changesets/cli"', package)
 
     def test_release_02_makes_a_lightweight_tag(self):
-        job = self.job("release-02-lightweight-tag")
+        job = job_text(self.releases["release-02-lightweight-tag"], "release")
         self.assertIn('git tag "v$VERSION"', job)
         self.assertNotRegex(job, r"git tag (-a|-s|-m)")
 
@@ -914,9 +911,6 @@ class ReleasePublishCases(unittest.TestCase):
         self.assertNotIn("npm view", text)
         self.assertNotIn("changeset publish", text)
 
-    def test_publish_05_holds_the_good_release_job_in_publish_yml_and_no_release_yml(self):
-        workflows = os.path.join(case_dir(self.RENAMED), "repo", ".github", "workflows")
-        self.assertFalse(os.path.exists(os.path.join(workflows, "release.yml")))
 
 class RecordedIntakeRelease03(RecordedIntakeChecks, unittest.TestCase):
     CASE = "release-03-no-tag-ruleset"

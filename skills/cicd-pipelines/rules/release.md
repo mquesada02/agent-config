@@ -9,7 +9,7 @@ How a release workflow (`release.yml`) makes a release: one release tool, annota
 
 ### RELEASE-01
 - **Severity:** required
-- **Rule:** The repo uses one release tool. The skill keeps the existing tool. The `release_tool` fact lists the tools found (`changesets`, `release-please`, `semantic-release`, `release-it`). Two or more values are a finding that names them. An empty value (status `default`) is a finding too, because this file is loaded only for a release repo. When a repo has none, create mode adds Changesets (the owner choice), which works for a single package and for a monorepo and gives each change an explicit version intent.
+- **Rule:** The repo uses one release tool. The skill keeps the existing tool. The `release_tool` fact lists the tools found (`changesets`, `release-please`, `semantic-release`, `release-it`). Two or more values are a finding that names them. An empty value (status `default`) is a finding too, but only when this file loads (a release repo, or a request that names a release). When a repo has none, create mode adds Changesets (the owner choice), which works for a single package and for a monorepo and gives each change an explicit version intent.
 - **Check:** mechanical: the `release_tool` fact has exactly one value.
 - **Fix:** Keep the one tool that the release workflow runs and remove the other tools, or, when the repo has none, add Changesets.
 
