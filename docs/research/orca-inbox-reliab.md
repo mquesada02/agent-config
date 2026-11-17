@@ -10,9 +10,9 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 
 1. The open-ask cases have a built-in cause: Orca's own worker preamble and CLI help tell a worker to end its turn after `ask`, while `CLAUDE.md` section 7 says never to end it. The two instructions conflict.
 2. Orca stores an ask as mail and wakes the worker with the reply. Recent logs show the wake working. The old "nobody wakes the worker" failures (October) were found before the coordinator rule "read the terminal after each reply" existed.
-3. Other turn-ends are a separate failure: a worker ends its turn with no ask open and no `worker_done` (three cases in the logs, 2026-11-09 to 2026-11-13).
+3. Other turn-ends are a separate failure: a worker ends its turn with no ask open and no `worker_done` (three cases seen in local logs).
 4. The restart case: after the PC restart Orca closed the old dispatch as lost, and the Task went back to `ready`. `--retry-of` accepts only a failed or blocked Task, so it was refused (`task_not_startable`).
-5. The recovery that worked on 2026-11-17: a plain `worker-start --task` (no `--retry-of`) on the same worktree, plus a resume note. It needed the coordinator, not the owner.
+5. The recovery that worked in the one real restart case: a plain `worker-start --task` (no `--retry-of`) on the same worktree, plus a resume note. It needed the coordinator, not the owner.
 6. Not found: any Orca code that restarts a dead worker terminal, or that expires a pending ask. A Stop hook can block a turn end today (the context hook does it), but nothing exposes the "open ask" state to a hook (INFERENCE).
 7. Options with costs are in the section "Options for the owner".
 
@@ -22,7 +22,7 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 
 - FACT, `CLAUDE.md` section 7: "A worker never ends its turn while an `ask`, a background test run or a CI watch is open. It waits on them in the foreground (a blocking wait with no short timeout), or it keeps working on parts that they do not touch." Same rule in section 11.
 - FACT, Orca's bundled orchestration guide (printed by `orca skills get orchestration --full`): "To ask your coordinator, run `ask`, then end your turn; Orca wakes you with the answer."
-- FACT, the worker preamble that Orca injects (seen in this task's brief): "Ask the coordinator, then end your turn; Orca wakes you with the answer."
+- FACT, the worker preamble that Orca injects: "Ask the coordinator, then end your turn; Orca wakes you with the answer."
 - FACT, `orca orchestration ask --help` (read by a subagent): "From a worker, a new question goes to its coordinator and ask returns at once: end your turn, and Orca wakes you with the answer as mail. ... --wait and --resume block until the answer instead; --timeout-ms accepts 1 to 1800000 ms per wait (default 600000 = 10 minutes, max 30 minutes), and a timeout leaves the question pending."
 - INFERENCE: a worker that follows the preamble (the text nearest to the command) breaks the section 7 rule. The rule can be kept only with `--wait` or `--resume`, and each wait lasts at most 30 minutes, so a long answer needs a loop of waits.
 
@@ -31,18 +31,18 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 - FACT (Orca CLI help and bundled server code, read by a subagent): an ask is a stored mail message of type `question`. The dispatch stays `dispatched` during an ask. No "asking" state exists. Dispatch states: pending, dispatched, completed, failed, circuit_broken. Task states: pending, ready, dispatched, completed, failed, blocked. Worker states: starting, start_unknown, ready, stopping, stop_unknown, succeeded, failed, stopped, abandoned.
 - FACT (bundled guide): `send` to a working worker "gets it when its current turn ends; a finished or closed one gets it as a follow-up Task and reports with `worker_done`".
 - INFERENCE: nothing found that expires a pending question. If the worker's terminal is gone, no code was found that starts it again; the reply stays in the inbox.
-- FACT (coordinator logs, local and not tracked): on 2026-11-16 a worker ended its turn with a question open; the coordinator wrote that "Orca woke it with the reply, so no work was lost". On 2026-11-14 and 2026-11-15 the coordinator confirmed a new worker turn after each reply; once the terminal first looked idle and a wake prompt was sent.
+- OBSERVATION from local logs (not tracked, paraphrased): in one case a worker ended its turn with a question open, and Orca woke it when the reply came, so no work was lost. In several other cases the coordinator confirmed a new worker turn after a reply; once the terminal first looked idle and a wake prompt was sent.
 
 ### F3. History of the open-ask failure
 
 - FACT (issue 111, closed): four cases in October 2026 where a worker sent `ask`, ended its turn and sat idle for 1.5 to 7 hours. In one case "the answer landed in the worker's ask output file one minute after the worker ended its turn". The issue lists three proposals: a worker rule, a coordinator rule, and "Optional: a Stop hook in worker sessions that blocks ending the turn while the session has an open `ask`". The owner chose the first two and no hook (comment of 2026-11-03: "(c), not chosen").
 - FACT: both rules are now in `CLAUDE.md` (section 7, the worker paragraph and the coordinator paragraph "after every `reply` to a worker, the coordinator reads the worker's terminal and confirms that a new turn started").
-- FACT (coordinator logs): turn ends after the rules existed: 2026-11-12 and 2026-11-13 (three workers ended their turn while a background eval ran; "Claude Code starts a new turn when a background shell exits, so the work still continues"), 2026-11-16 (open question). The rule broke each time and no work was lost.
+- OBSERVATION from local logs (paraphrased): after the two rules existed, turn ends happened again in at least 4 cases: three workers ended their turn while a background job ran, and one ended its turn with a question open. In the background-job cases the work continued, because Claude Code starts a new turn when a background shell exits. No work was lost in any case.
 - INFERENCE: the rule does not hold by itself; the coordinator's read-the-terminal step is what catches it.
 
 ### F4. A second turn-end failure: no ask open, no `worker_done`
 
-- FACT (coordinator logs): 2026-11-09 a successor worker "ended its turn with 'Next: commit…', as if it waited for a go-ahead" and had no question. 2026-11-11 a worker "ended its turn without sending `worker_done`, which the workflow does not allow"; the coordinator sent a message and a wake prompt and the worker resumed.
+- OBSERVATION from local logs (paraphrased): in 2 cases a worker ended its turn with no question open and no `worker_done`. One had written a "next step" line as if it waited for a go-ahead. The coordinator sent a message and a wake prompt, and the worker resumed.
 - INFERENCE: a Stop hook that blocks a turn end with neither an open ask nor a `worker_done` would cover this case and the open-ask case with one check.
 
 ### F5. Hooks that exist today
@@ -51,19 +51,19 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 - FACT (same file): the hook already knows the worker role from the injected preamble and tells a worker to read finished background `ask` outputs.
 - INFERENCE: a worker Stop hook is feasible with this pattern. Open points: (a) how the hook learns that an ask is open (it would have to read Orca state or the worker's own log; no hook in this repo does either today), (b) a loop guard so a legitimately finished worker is not trapped (the 3-re-block halt is a model), (c) a worker that is told to "end your turn" by Orca would be blocked from doing the Orca-documented flow.
 
-### F6. What happened in the restart case (2026-11-17)
+### F6. What happened in the restart case
 
-- FACT (coordinator log): after the PC restart the coordinator ran `run-use` (the first `worker-start` failed with `consumer_fenced`: "worker-start needs the coordinator bound to the Run"), then `worker-start --task <task> --retry-of <old dispatch> --worktree path:<same worktree>`. Orca answered `task_not_startable`: "Task ... cannot retry from Dispatch ...", data `"status":"ready"`, next step "--retry-of must name the latest settled Dispatch of a failed or blocked Task; check dispatch-show ... and worker-show ...".
-- FACT (coordinator log): the coordinator then ran the same command without `--retry-of`; it started a new dispatch on the same worktree. The coordinator wrote a resume note for the new worker (state of the worktree, where the old worker stopped) and sent it.
-- FACT (coordinator log): the coordinator later wrote "Orca closed its dispatch as lost. That is expected after the restart, and the new dispatch replaces it."
-- FACT: the same error appears in at least three coordinator logs, two of them dated 2026-11-11 and 2026-11-17. INFERENCE: it is a repeating pattern, not a one-off.
-- FACT (the same coordinator log): on 2026-11-17 the coordinator also had to move files back from a backup folder, because `/tmp` content is lost at reboot. That is a separate restart cost (see Gaps).
+- OBSERVATION from local logs (paraphrased): after the PC restart the coordinator first had to bind itself to the Run again (a `worker-start` before that failed with the Orca error code `consumer_fenced`). Then it ran `worker-start` with `--retry-of` for the old dispatch, and Orca refused it with the error code `task_not_startable`. The error data showed the Task status `ready`.
+- FACT (Orca behaviour, F7): the refusal text names the rule: `--retry-of` must name the latest settled Dispatch of a failed or blocked Task.
+- OBSERVATION from local logs (paraphrased): the coordinator then ran the same command without `--retry-of`. It started a new dispatch on the same worktree. The coordinator sent the new worker a resume note (state of the worktree, where the old worker stopped). Orca had marked the old dispatch as lost.
+- OBSERVATION from local logs: the same `task_not_startable` error appears in at least 3 coordinator logs. INFERENCE: it is a repeating pattern, not a one-off.
+- OBSERVATION from local logs: the coordinator also had to move files back from a backup folder, because `/tmp` content is lost at reboot. That is a separate restart cost (see Gaps).
 
 ### F7. Why `--retry-of` is refused
 
 - FACT (Orca bundled server code, read by a subagent): the retry is accepted only if all hold: the dispatch exists and belongs to the Task; it is the Task's latest dispatch; the Task has no active remote placement; the worker state is `failed`, `stopped` or `abandoned` (or, with no worker row, the dispatch status is `failed`); and the Task status is `failed` or `blocked`. A running worker (starting, ready, stopping, start_unknown, stop_unknown) is not retryable.
 - FACT (same source): without `--retry-of`, "only a ready Task can start".
-- INFERENCE: after the restart the Task was `ready` (the error data says so), so the plain start was allowed and `--retry-of` was refused by the Task-status check.
+- INFERENCE: after the restart the Task was `ready` (observed in the error data in local logs), so the plain start was allowed and `--retry-of` was refused by the Task-status check.
 - FACT (bundled guide, recovery reference): "After three failed starts in one `--retry-of` chain, the Dispatch circuit-breaks and the Task fails." Reopening a circuit-broken Task is allowed only when the user explicitly asks. "Silence, a startup timeout, or `unverifiable` liveness alone never proves exit or authorizes autonomous stop, abandon, retry, or release." An `escalation` with `stopReason` `exited` or `lost` "means it is gone: retry it or tell the user."
 - FACT (bundled guide): `worker-abandon` "fence[s] a worker without claiming its process stopped"; `worker-stop` can end with `stop_unknown`.
 
@@ -72,13 +72,13 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 - FACT (bundled server code): coordination state lives in a local SQLite database (tables for dispatch contexts, worker dispatches, terminal resources, messages). Each worker row stores a runtime epoch.
 - FACT (same source): reconcile is lazy, on read. A worker in `starting` with an old epoch becomes `start_unknown`; `stopping` becomes `stop_unknown`. A worker in `ready` has no conversion that was found.
 - FACT (bundled guide): terminal handles are runtime-scoped; "after an Orca restart or a `terminal_handle_stale` error, re-list and continue with the replacement only".
-- INFERENCE: a worker that was `ready` and working at restart can stay `ready` in the database with a dead terminal. The coordinator log shows the final result was "lost" and the Task `ready`; the code path that did this was not found.
+- INFERENCE: a worker that was `ready` and working at restart can stay `ready` in the database with a dead terminal. Local logs show the final result was a lost dispatch and a `ready` Task; the code path that did this was not found.
 - Not found: any heartbeat timeout that fails a worker, and any code that restarts a dead worker terminal.
 
 ### F9. Gate interaction (INFERENCE)
 
 - FACT (`CLAUDE.md` section 7): "A hook blocks `orchestration worker-start` until this audit passes; a plain `worker-start --retry-of` for a worker handover is exempt".
-- INFERENCE: the recovery that worked (plain `worker-start --task`, no `--retry-of`) is not in that exemption. It worked on 2026-11-17 because the pre-dispatch audit of that Run had already passed; whether the gate would refuse it for a Run with no audit record was not tested.
+- INFERENCE: the recovery that worked (plain `worker-start --task`, no `--retry-of`) is not in that exemption. It worked in the observed case, probably because the pre-dispatch audit of that Run had already passed; whether the gate would refuse it for a Run with no audit record was not tested.
 
 ## Options for the owner
 
@@ -98,12 +98,12 @@ Each option states its cost. They can be combined. Open asks first (O1 to O5), r
 
 - No code was found that restarts a dead worker terminal, expires a pending ask, or fails a worker on a missing heartbeat. Absence in the code read is not proof; the bundled server code is one minified file.
 - The exact flags of `worker-start --help` and `orchestration dispatch --help` were not read: a local hook blocked those two help calls. The flags come from Orca's own CLI spec file.
-- The code path that turned the old dispatch into "lost" and the Task into `ready` was not found. Only the coordinator's logs show the result.
+- The code path that turned the old dispatch into a lost dispatch and the Task into `ready` was not found. Only local logs show the result.
 - Not tested live (the task forbids orchestration commands): whether a plain `worker-start --task` passes the pre-dispatch gate in a Run with no audit record; whether `ask --wait` survives a restart.
 - How a hook could learn that an ask is open is unknown. Candidates: the worker's own ask output file, a worker-side marker, or an Orca read command; none was tested.
-- Counts are small: four October cases, five to six later turn-end cases, three `task_not_startable` logs. No rate per worker-hour exists. The restart case is one real recovery.
+- Counts are small: four cases in issue 111, about six later turn-end cases in local logs, three logs with `task_not_startable`. No rate per worker-hour exists. The restart case is one real recovery.
 - A restart also loses `/tmp` content (scratchpad briefs, the audit folder). The coordinator moved files to a backup folder by hand before the restart and restored them after. This is outside ticket 757 and is listed for the owner.
-- The 2026-11-12 and 2026-11-13 background-eval case may be a different failure: a worker waits on a background job, not on an ask. The rule in section 7 names it, and Claude Code's own background-job wake saved it.
+- The background-job cases may be a different failure: a worker waits on a background job, not on an ask. The rule in section 7 names it, and Claude Code's own background-job wake saved it.
 
 ## Sources read and sources that failed
 
@@ -117,7 +117,7 @@ Each option states its cost. They can be combined. Open asks first (O1 to O5), r
 **Read (outside this repo, local, read-only):**
 - Orca's version-matched guide: `orca skills get orchestration --full` (ask, wake, recovery, retry, circuit breaker, abandon, stop).
 - Orca CLI help text and its bundled CLI spec and server files (read by a Sonnet subagent): ask, worker-start, worker-stop, worker-abandon, worker-release, worker-show, reset, request-show; the retry check; the state tables; the runtime-epoch reconcile.
-- Coordinator session logs (local, not tracked, and not quoted beyond short generic lines): the restart recovery of 2026-11-17, `task_not_startable` errors of 2026-11-11 and 2026-11-17, turn-end cases of 2026-11-09, 2026-11-11, 2026-11-12, 2026-11-13 and 2026-11-16.
+- Coordinator session logs (local, private, not tracked; paraphrased as observations, never quoted): one restart recovery, three logs with `task_not_startable`, and about six turn-end cases.
 
 **Failed or not read:**
 - `worker-start --help` and `orchestration dispatch --help`: blocked by a local hook; replaced by the CLI spec file.
