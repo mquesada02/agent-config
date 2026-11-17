@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: publish-04-no-published-version-check
+context:
+  scaffold_script: scaffold.sh

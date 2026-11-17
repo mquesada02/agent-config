@@ -17,6 +17,8 @@ MONO_IDS = ["MONO-01", "MONO-02"]
 SEC_IDS = [f"SEC-{n:02d}" for n in range(1, 11)]
 DEPLOY_IDS = [f"DEPLOY-{n:02d}" for n in range(1, 11)]
 ROLLBACK_IDS = [f"ROLLBACK-{n:02d}" for n in range(1, 7)]
+RELEASE_IDS = [f"RELEASE-{n:02d}" for n in range(1, 7)]
+PUBLISH_IDS = [f"PUBLISH-{n:02d}" for n in range(1, 6)]
 ZIZMOR_MAPPING = {
     "unpinned-uses": "SEC-01", "excessive-permissions": "SEC-03", "template-injection": "SEC-04",
     "artipacked": "SEC-05", "dangerous-triggers": "SEC-07", "secrets-inherit": "SEC-08",
@@ -378,6 +380,147 @@ class RollbackRules(unittest.TestCase):
         self.assertIsNone(re.search(r"-X (POST|PUT|PATCH|DELETE)", text))
 
 
+def names_no_url_and_no_repo_link(test, text):
+    """The rule text is generic: no URL and no link to a repository (the sample repos stay private)."""
+    test.assertNotRegex(text, r"https?://")
+    test.assertNotIn("github.com", text)
+
+
+class ReleaseRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["release"]
+        cls.entries = rule_entries(cls.path)
+        cls.release = dict(cls.entries)
+
+    def test_the_release_file_holds_release_01_to_release_06_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in self.entries], RELEASE_IDS)
+
+    def test_the_severity_levels_follow_the_ticket_table(self):
+        self.assertEqual({rule_id: level(fields) for rule_id, fields in self.release.items()},
+                         {rule_id: "required" for rule_id in RELEASE_IDS})
+        self.assertIn("suggestion (an app)", self.release["RELEASE-06"]["Severity"])
+
+    def test_the_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No release rule is critical", read(self.path))
+
+    def test_every_check_starts_with_mechanical(self):
+        for rule_id, fields in self.release.items():
+            self.assertTrue(fields["Check"].startswith("mechanical"), rule_id)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.release.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_release_01_wants_exactly_one_tool_and_adds_changesets_when_none(self):
+        fields = self.release["RELEASE-01"]
+        for text in ("The skill keeps the existing tool", "Two or more values are a finding", "An empty value (status `default`)",
+                     "create mode adds Changesets"):
+            self.assertIn(text, fields["Rule"])
+        self.assertIn("exactly one value", fields["Check"])
+
+    def test_release_02_wants_annotated_tags_on_a_commit_on_main(self):
+        rule = self.release["RELEASE-02"]["Rule"]
+        for text in ("`-a`, `-s` or `-m`", "`git merge-base --is-ancestor <sha> origin/main`", "A job with a `workflow_dispatch` trigger needs that ancestor step",
+                     "only a job that runs for a push to main alone passes without it", "A tag that a release tool action makes is not read"):
+            self.assertIn(text, rule)
+
+    def test_release_03_reads_the_rulesets_fact_and_checks_only_that_an_active_tag_ruleset_exists(self):
+        rule = self.release["RELEASE-03"]["Rule"]
+        for text in ("restricted creation, no update and no delete", "`target: tag` and `enforcement: active`",
+                     "With any other status there is no finding", "Only the existence of an active tag ruleset is checked",
+                     "The PROTECT rules give the content of the ruleset"):
+            self.assertIn(text, rule)
+
+    def test_release_04_defines_the_release_actor_and_the_token_rules(self):
+        rule = self.release["RELEASE-04"]["Rule"]
+        for text in ("never a personal access token (PAT)", "`app-id`, `client-id` and `private-key`",
+                     "an App token with no `environment` on the job is a finding", "`push: tags` trigger",
+                     "start no new workflow run", "The release actor is the identity that creates the tag",
+                     "`github-actions[bot]`"):
+            self.assertIn(text, rule)
+
+    def test_release_05_allows_only_a_push_to_main_and_a_dispatch(self):
+        rule = self.release["RELEASE-05"]["Rule"]
+        for text in ("only `push` to main and `workflow_dispatch`", "A `pull_request` trigger is a finding",
+                     "A tag push trigger (`push: tags:`) in the release workflow is a finding too",
+                     "`schedule`, `workflow_run`, `release`, `workflow_call`"):
+            self.assertIn(text, rule)
+
+    def test_release_06_has_two_severities_and_a_verdict_for_each_tool(self):
+        rule = self.release["RELEASE-06"]["Rule"]
+        for text in ("`required` when any `package_kind` entry is published", "`softprops/action-gh-release`",
+                     "A repo with semantic-release has notes", "release-it) is not read and gives no finding"):
+            self.assertIn(text, rule)
+
+    def test_the_text_holds_no_url_and_no_write_api_call(self):
+        names_no_url_and_no_repo_link(self, read(self.path))
+        self.assertNotIn("gh api", read(self.path))
+
+
+class PublishRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["publish"]
+        cls.entries = rule_entries(cls.path)
+        cls.publish = dict(cls.entries)
+
+    def test_the_publish_file_holds_publish_01_to_publish_05_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in self.entries], PUBLISH_IDS)
+
+    def test_the_severity_levels_follow_the_ticket_table(self):
+        expected = {"PUBLISH-01": "required", "PUBLISH-02": "required", "PUBLISH-03": "required",
+                    "PUBLISH-04": "suggestion", "PUBLISH-05": "suggestion"}
+        self.assertEqual({rule_id: level(fields) for rule_id, fields in self.publish.items()}, expected)
+
+    def test_the_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No publish rule is critical", read(self.path))
+
+    def test_every_check_starts_with_its_kind(self):
+        for rule_id, fields in self.publish.items():
+            kind = "judgement" if rule_id == "PUBLISH-04" else "mechanical"
+            self.assertTrue(fields["Check"].startswith(kind), rule_id)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.publish.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_publish_01_holds_the_trusted_publishing_versions_and_names_the_registry_url_conflict(self):
+        rule = self.publish["PUBLISH-01"]["Rule"]
+        for text in ("`permissions: id-token: write`", "GitHub-hosted runner", "Node 22.14.0 or later", "npm 11.5.1 or later",
+                     "`NPM_TOKEN`", "A version below 22.14.0 is a finding", "A major `24` or later passes both checks",
+                     "`lts/*`, a `node-version-file`", "The sources conflict on `registry-url`",
+                     "the semantic-release recipe says not to set it", "The rule takes no side",
+                     "does not affect Changesets"):
+            self.assertIn(text, rule)
+
+    def test_publish_02_wants_a_frozen_install_and_no_cache(self):
+        rule = self.publish["PUBLISH-02"]["Rule"]
+        for text in ("`pnpm install --frozen-lockfile`", "`package-manager-cache: false`", "`actions/cache`", "COST-05 owns the CI install"):
+            self.assertIn(text, rule)
+
+    def test_publish_03_names_the_tool_forms_of_the_dependency_order(self):
+        rule = self.publish["PUBLISH-03"]["Rule"]
+        for text in ("`changeset publish`", "`pnpm -r publish`", "`npm publish --workspaces` is a finding", "at least two `package_kind` entries"):
+            self.assertIn(text, rule)
+
+    def test_publish_04_skips_a_published_version(self):
+        rule = self.publish["PUBLISH-04"]["Rule"]
+        for text in ("`npm view <name>@<version>`", "A plain `npm publish` with no check is a finding"):
+            self.assertIn(text, rule)
+
+    def test_publish_05_names_release_yml_marks_the_row_with_the_flag_and_never_renames(self):
+        fields = self.publish["PUBLISH-05"]
+        for text in ("names `release.yml` exactly", "its row gets the ⚑ mark", "The skill never renames the file"):
+            self.assertIn(text, fields["Rule"])
+        self.assertIn("trusted-publisher entry of each package on npm to `release.yml`", fields["Fix"])
+
+    def test_provenance_is_not_a_rule_and_the_text_holds_no_url(self):
+        text = read(self.path)
+        self.assertIn("Provenance is not a rule", text)
+        names_no_url_and_no_repo_link(self, text)
+
+
 class SecurityRules(unittest.TestCase):
     def setUp(self):
         self.sec = dict(rule_entries(rule_files()["security"]))
@@ -696,6 +839,20 @@ class Router(unittest.TestCase):
         modules = self.text[self.text.index("## Modules"):]
         self.assertIn("[rules/rollback.md](rules/rollback.md): ROLLBACK-01 to ROLLBACK-06", modules)
 
+    def test_the_release_load_rule_covers_a_tag_driven_release_and_both_files_are_linked(self):
+        start = self.text.index("## Loading by need")
+        section = self.text[start:self.text.index("## Modules")]
+        for text in ("[rules/release.md](rules/release.md)", "[rules/publish.md](rules/publish.md)",
+                     "the `release_tool` fact has a value", "the `existing_workflows` fact lists `release.yml`",
+                     "the `release_tag_pattern` fact has the status `detected`"):
+            self.assertIn(text, section)
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("[rules/release.md](rules/release.md): RELEASE-01 to RELEASE-06", modules)
+        self.assertIn("[rules/publish.md](rules/publish.md): PUBLISH-01 to PUBLISH-05", modules)
+        bullet = self.text[self.text.index("**Another edit**"):start]
+        self.assertIn("rules/release.md", bullet)
+        self.assertIn("rules/publish.md", bullet)
+
     def test_the_modules_list_names_the_cost_and_monorepo_rules(self):
         modules = self.text[self.text.index("## Modules"):]
         self.assertIn("COST-01 to COST-08", modules)
@@ -783,6 +940,15 @@ class ReviewSteps(unittest.TestCase):
         checks = self.text[self.text.index("## required checks"):self.text.index("## tool status")]
         self.assertIn("add a name-09 row (suggestion) marked with ⚑", checks)
         self.assertIn("fixed sentence of name-09", checks)
+
+    def test_the_publish_05_row_gets_the_flag_mark_the_npm_admin_step_and_is_never_edited(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        self.assertIn("a publish-05 row also gets ⚑", contract)
+        self.assertIn("for a publish-05 row, this section also holds the npm admin step", contract)
+        self.assertIn("the heading says branch protection until tickets 673 and 677 reword it", contract)
+        approval = self.text[self.text.index("## fix on approval"):]
+        self.assertIn("a publish-05 row is never edited", approval)
+        self.assertIn("a skipped ⚑ row gets no admin steps", approval)
 
     def test_it_loads_the_job_graph_and_maintainability_rule_files(self):
         self.assertIn("rules/job-graph.md", self.text)
