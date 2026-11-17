@@ -206,6 +206,28 @@ class CrossCheckAndModelTest(PreDispatchCase):
         self.assertEqual(self.pd_item("XC")["result"], "fail")
 
 
+class TrackerOnlyReviewerTest(PreDispatchCase):
+    """A plan-review reviewer that reads only the tracker: its transcript never touches the worktree."""
+
+    def register_tracker_only(self, model="claude-sonnet-5-5"):
+        self.register_session("s2", [edit_row(os.path.join(self.repo, "other.txt"), "t2", 2)],
+                              subagents={"trk1": subagent_rows(model=model)}, touching=False)
+        self.write_ledger("feature", [round_event(loop=LOOP_3, reviewers=("trk1",)), round_event(loop=LOOP_41)])
+
+    def test_a_sonnet_reviewer_passes_xc_and_s7(self):
+        self.register_tracker_only()
+        self.assertEqual(self.pre_dispatch().returncode, 0)
+        self.assertEqual(self.pd_item("XC")["result"], "pass")
+        self.assertEqual(self.pd_item("S7")["result"], "pass")
+
+    def test_a_reviewer_that_is_not_sonnet_fails_xc_but_is_not_judged_by_s7(self):
+        self.register_tracker_only("claude-opus-5-5")
+        self.assertEqual(self.pre_dispatch().returncode, 1)
+        self.assertEqual(self.pd_item("XC")["result"], "fail")
+        self.assertIn("not a Sonnet subagent", self.pd_item("XC")["evidence"])
+        self.assertEqual(self.pd_item("S7")["result"], "pass")
+
+
 class NoSessionTest(PreDispatchCase):
     default_session = False
 
