@@ -12,7 +12,7 @@ Which parts of the workflow should be configurable, and at which levels (global,
 
 1. Today almost every workflow setting is prose in the user instructions file (global level) or a constant inside the audit code. Only the test command is a per-repo declaration that code reads.
 2. The audit hard-codes the review caps (5 and 3 rounds) and the Sonnet check. A per-repo or per-group change of these needs a code change in the audit, not a text change.
-3. Claude Code has four settings scopes plus managed settings. It has no "project group" scope.
+3. Claude Code has four settings scopes: managed, user, shared project and project local. It has no "project group" scope.
 4. CLAUDE.md files do not override each other. They are concatenated, and a conflict between two files is resolved by the model "arbitrarily". Prose is not a safe place for a rule that a lower level may change.
 5. A group level can be built from existing features: a shared folder plus `@path` imports, `.claude/rules/` symlinks, or additional directories. This is INFERENCE: not run.
 6. Hooks from all scopes merge. A lower scope cannot remove a hook of a higher scope. This helps keep safety rules.
@@ -42,7 +42,7 @@ INFERENCE: the settings split into three kinds. Kind A is prose that a model fol
 
 ### F2. Claude Code settings scopes
 
-FACT, source https://code.claude.com/docs/en/settings: four files plus managed settings. User (`~/.claude/settings.json`), shared project (`.claude/settings.json`), project local (`.claude/settings.local.json`), managed (`managed-settings.json` and other delivery ways).
+FACT, source https://code.claude.com/docs/en/settings: four scopes. User (`~/.claude/settings.json`), shared project (`.claude/settings.json`), project local (`.claude/settings.local.json`), managed (`managed-settings.json` and other delivery ways).
 
 FACT (same page): precedence, highest first: "managed settings, command line, project local, shared project, user".
 

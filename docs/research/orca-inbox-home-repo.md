@@ -60,7 +60,7 @@ How does the "home repo" pattern apply to a project group of many repos? What is
 - FACT: `@path` imports, `.claude/rules/` symlinks and `--add-dir` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` bring a file or folder outside the working folder into a session. Imports outside the working folder need a one-time approval. Source: same page, as read in `orca-inbox-group-memory.md` F4.
 - FACT: in a worktree, `CLAUDE.md` files and `.claude/rules/` load from the worktree. Source: https://code.claude.com/docs/en/worktrees, as read in `orca-inbox-repo-memory.md` F7.
 - INFERENCE: a worker whose folder is a worktree of a child repo has no home repo above it. It does not load the home repo's `AGENTS.md`, rules or skills. The article says "start your sessions there", so it assumes the coordinator starts in the home repo and then works in child clones. It does not cover separate worker sessions that start in child repos. UNTESTED.
-- INFERENCE: to reach those workers, each child repo needs a git-ignored `CLAUDE.local.md` with one `@` import of the home repo file, or the launcher passes `--add-dir`. This is the same wiring that 776 (O2) and 778 (O2, O3) already list. The home repo does not remove that wiring; it names the file to import.
+- INFERENCE: to reach those workers, each child repo needs a git-ignored `CLAUDE.local.md` with one `@` import of the home repo file, or the launcher passes `--add-dir`. This is the same wiring that 776 (O2) and 778 (gap 2, F3) already list. The home repo does not remove that wiring; it names the file to import.
 - INFERENCE: Orca workers run in worktrees under the Orca workspace folder, not under a group folder (`orca-inbox-config.md` F3). So "the folder above" never reaches a home repo there.
 
 ### F5. Fit with Claude Code auto memory
@@ -81,7 +81,7 @@ How does the "home repo" pattern apply to a project group of many repos? What is
 
 ### F7. Costs and limits
 
-- FACT: under the owner's rules, every task in a git repo ends with a PR, after a review loop and an audit, and work happens in a worktree (user instructions, sections 6, 8, 10). A change to the home repo follows them. Small edits cost that full flow unless the owner exempts them. INFERENCE for the size of the cost: `orca-inbox-tests.md` (#756) records three foreground test runs of 523 to 603 s, capped by a 600 s limit; the exact cost for a docs-only change is not measured here.
+- FACT: under the owner's rules, every task in a git repo ends with a PR, after a review loop and an audit, and work happens in a worktree (`CLAUDE.md` of this repo, sections 6, 8, 10). A change to the home repo follows them. Small edits cost that full flow unless the owner exempts them. INFERENCE for the size of the cost: `orca-inbox-tests.md` (#756) records three foreground test runs of 523 to 603 s; the 601 s and 603 s runs stopped at a 600 s limit; the exact cost for a docs-only change is not measured here.
 - INFERENCE: concurrent edits of one tracked file by several sessions are caught at merge, not prevented. Branches diverge; a fact merged on the default branch reaches a worker only when its branch has it (777 F7).
 - FACT: the article itself notes limits of scale (about 400 repos) and that submodules are not needed (F1).
 - Token cost is about the size of the loaded text. A pointer line of about 30 words is about 40 tokens (rough estimate, UNTESTED), so 20 pointers cost about 800 tokens in a session that loads the file. A session that loads the whole shared docs folder pays more; the article does not bound it. INFERENCE.

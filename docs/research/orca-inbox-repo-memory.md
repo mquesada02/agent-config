@@ -201,4 +201,4 @@ Failed or not read:
 - https://code.claude.com/docs/en/settings-reference (not fetched; keys `autoMemoryDirectory` and `autoMemoryEnabled` were taken from the memory page instead)
 - https://code.claude.com/docs/en/hooks (not read)
 - One shell call that listed local research folders was refused by the auto mode classifier because a hook rewrote its input. Its result was not used.
-- No third-party memory service other than the official MCP server was read.
+- No third-party memory service other than the official MCP server was read. `orca-inbox-group-memory.md` F7 to F10 covers the other memory tools.

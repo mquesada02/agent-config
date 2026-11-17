@@ -16,9 +16,9 @@ Which form should the inbox interface take? The inbox lists the project groups, 
 2. FACT: Orca has its own plugin system with sidebar panels written in TSX or HTML. This is the "view inside Orca" form, and it is native (F1).
 3. FACT: an Orca plugin panel is sandboxed and has no network. Its host API has no orchestration method (no inbox, no reply, no gate). A plugin can read workspace status, agent state and unread marks, notify, and type into terminals (F2).
 4. INFERENCE, UNTESTED: a plugin worker is an out-of-process Node module, so it may run the `orca` CLI and so reach the mailbox and `reply`. This is the one unknown that decides whether the Orca view can answer questions itself (F3).
-5. FACT: a Claude Code mod can run commands with `$.process.run` (CLI only) and draw a pane. A pane shows only inside one session, and only from 144 terminal columns unless asked (F5).
+5. FACT: a Claude Code mod can run commands with `$.process.run` (CLI only) and draw a pane. A pane shows only inside one session, and only from 144 terminal columns (110 in the `$.ui.open` doc; F5 notes both) unless asked.
 6. FACT: Textual (Python) can serve one TUI app in a terminal or in a browser with `textual serve`. This makes the TUI and web forms one code base (F6).
-7. FACT: no open-source project found covers the owner's case as a ready tool. Novadeck, Hermes IDE and cmux Feed are design references; their licences limit code reuse (`oss` 3.1, 3.5).
+7. INFERENCE from a search: no open-source project found covers the owner's case as a ready tool. Novadeck, Hermes IDE and cmux Feed are design references; their licences limit code reuse (`oss` 3.1, 3.5).
 8. INFERENCE: notifications are the weakest point of every form. Orca push is tied to agent state changes, and the phone has no answer path (`orca` 3.7, §6 item 3). A web page or a TUI needs an extra sender such as ntfy.
 9. INFERENCE: an answer written from any UI must reach the section 6 audit as the owner's own words. The audit checks `AskUserQuestion` answers today (gap G1).
 10. Options O1 to O6 are below, with costs.
