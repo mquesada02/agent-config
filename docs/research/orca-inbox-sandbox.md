@@ -9,13 +9,13 @@ Can sandboxes with a shared pool of dedicated, capped resources (CPU and memory)
 ## Short answer
 
 1. A systemd user slice is the best fit. One slice gets one `CPUQuota` and one `MemoryMax`. The kernel enforces both for all processes below it, so many agents and worktrees share one budget. FACT (man `systemd.resource-control`); the "sum of all children" reading is INFERENCE from cgroups v2 (the quota sits on the parent).
-2. This PC (8 cores, 30 GB) already delegates the `cpu`, `memory` and `pids` controllers to the user manager. FACT (`cat .../user@1000.service/cgroup.subtree_control` printed `cpu memory pids`). No root step is needed for these three. `cpuset` is not delegated, so `AllowedCPUs=` (core pinning) is not available to a user unit. FACT (same file; the user slice lists `cpu memory pids` only).
+2. This PC (8 cores, 30 GB) already delegates the `cpu`, `memory` and `pids` controllers to the user manager. FACT (`cat .../user@1000.service/cgroup.subtree_control` printed `cpu memory pids`). INFERENCE: no root step is needed for these three (UNTESTED). `cpuset` is not delegated, so `AllowedCPUs=` (core pinning) is not available to a user unit. FACT (same file; the user slice lists `cpu memory pids` only).
 3. Docker works too, but its containers run under the root daemon, outside the user slice. A user slice cannot cap them. Only `--cpus` and `--memory` per container, or a system-level parent cgroup (`--cgroup-parent`), can. Each container then needs its own limit or the same parent. FACT (docker 29.9.3, rootful, `docker run --help`); INFERENCE for the placement.
-4. agent-substrate/substrate does not fit: it needs a Kubernetes cluster and refuses plain containers. FACT (README). The other projects found cap CPU and memory per sandbox (microsandbox, `--cpus` per sandbox) or not at all (sandbox-runtime). No project found shares one budget across agents on one PC.
+4. agent-substrate/substrate does not fit: it needs a Kubernetes cluster and refuses plain containers. FACT (README). The other projects found cap CPU and memory per sandbox (microsandbox, a `cpus` option per sandbox), or have no cap that this research found (sandbox-runtime). No project found shares one budget across agents on one PC.
 5. Replacing the 2-worker rule is possible in principle. A cap protects the PC. The runner's worker count then controls speed inside the cap. INFERENCE. A runner that reads `nproc` sees all 8 cores and starts too many workers inside a small cap. This needs a test. UNTESTED.
 6. S2 does not accept a wrapper in front of the declared command. It needs the declared text, with at most a leading `cd <worktree> &&`. FACT (`check_s2`). Three ways out: run the whole agent or terminal inside the slice (command text unchanged), declare the wrapper as the test command, or change S2.
 7. Best fit with the S2 rule: put the Orca terminals (or the agent processes) in the slice, not each test command. INFERENCE. Whether Orca can start terminals in a slice is not known. UNTESTED.
-8. The CPU cap is a quota, not a guarantee. A quota set below the owner's need leaves the owner's session untouched only when the pool cap is lower than the whole PC. The owner's own work stays outside the slice. INFERENCE.
+8. The CPU cap is a quota, not a guarantee. A pool cap below the whole PC leaves CPU free for the owner. The owner's own work stays outside the slice. INFERENCE.
 9. Memory: `MemoryMax` kills processes (OOM killer inside the unit) when usage cannot stay under it. `MemoryHigh` throttles first. A test run can die with no clear message. FACT (man page); the effect on a test run is INFERENCE.
 10. Cost: low for a slice (no image, no daemon, no volume to clean). Higher for containers (image, volumes, cleanup rules in docker.md). Highest for Kubernetes-based tools.
 
@@ -70,8 +70,8 @@ Found with `gh search repos` and by name. Data from the GitHub API on 2026-11-17
 | superradcompany/microsandbox | Apache-2.0 | 2026-11-17 | v0.7.15 (2026-11-12) | per sandbox (`cpus`, `memory`) |
 | schmitthub/clawker | MIT | 2026-11-16 | v2026.11.1 (2026-11-05) | none found in README |
 | containers/bubblewrap | not set by API | 2026-10-14 | v0.13.1 (2026-10-14) | none (namespaces only) |
-| netblue30/firejail | GPL-2.0 | 2026-11-17 | 0.9.82.2 (2026-11-03) | not checked |
-| google/gvisor | Apache-2.0 | 2026-11-17 | not checked | via the host container runtime |
+| netblue30/firejail | GPL-2.0 | 2026-11-17 | 0.9.82.2 (2026-11-03) | none found in the lines read |
+| google/gvisor | Apache-2.0 | 2026-11-17 | not checked | via the host container runtime (INFERENCE) |
 | Docker Sandboxes (`sbx`) | not named | not checked | not checked | "Not covered" on the docs page |
 
 - FACT (sandbox-runtime README): "enforcing filesystem and network restrictions on arbitrary processes at the OS level, without requiring a container". A search of the README for `cpu`, `memory`, `cgroup`, `resource` and `limit` found no CPU or memory option. It limits file and network access, not load. INFERENCE: it can run inside a slice, and the two are independent.
@@ -83,11 +83,11 @@ Found with `gh search repos` and by name. Data from the GitHub API on 2026-11-17
 ### F6. What S2 needs with a wrapper command
 
 - FACT (`hooks/workflow-audit/audit`, `check_s2`, and the ticket 756 file F1): a Bash call counts as a run when the declared text is inside the command and the command, after removing one leading `cd <worktree> &&`, equals the declared text. No other prefix is removed. If there is no `cd` prefix, the row's working directory must be inside the worktree. Every Edit or Write inside the worktree must come before the run. A foreground run needs a non-error result whose last output line is not the failure line of the redact hook. A background run needs a task notice with status `completed` and exit code 0.
-- FACT (same): `systemd-run --user --slice=agents.slice --wait --pipe <declared>` fails the equality test (`normalised(call) == declared`), so the run does not count and S2 reports "the declared command did not run".
+- INFERENCE (from the same code): `systemd-run --user --slice=agents.slice --wait --pipe <declared>` fails the equality test (`normalised(call) == declared`), so the run does not count and S2 reports "the declared command did not run".
 - FACT (man `systemd-run`): `--wait` shows the exit code and status of the main process. Whether `systemd-run` itself returns that exit code is not in the lines read. UNTESTED: S2 needs a non-zero exit to show as failure (for a foreground run, the redact hook appends its failure line from the exit code of the shell command).
 - FACT (man `systemd-run`): `--pipe` inherits stdin, stdout and stderr. A pipe or a redirect inside the declared command is not a problem for this check, but S2 does not accept a pipe around the declared command (ticket 756 file F1).
 - INFERENCE, three ways out:
-  - W1. Run the terminal or the agent inside the slice. The command text stays the same, so S2 needs no change. The 2-worker rule can go once the runner cap is real. This needs a way to start Orca terminals under a slice. UNTESTED.
+  - W1. Run the terminal or the agent inside the slice. The command text stays the same, so S2 needs no change. The 2-worker rule can go for runners that read cgroup limits, once the cap is real. This needs a way to start Orca terminals under a slice. UNTESTED.
   - W2. Declare the wrapper as the test command in the `### Test command` block. S2 then matches the wrapper text. Cost: the block is longer, and every agent must copy it exactly. The cap holds only when the agent uses this exact text. A run of the old unwrapped command would still be honoured by the agent, not by the kernel, so it is not blocked.
   - W3. Change S2 to accept a defined wrapper prefix (like it accepts `cd <worktree> &&`). Cost: a code change and a new test in `hooks/workflow-audit`. It also needs a rule so the prefix cannot hide a changed command.
 - INFERENCE: a wrapper script in the repo as the declared command (the "option C" of the ticket 756 file) gives one fixed text, so S2 holds. The script would call `systemd-run`.
@@ -119,7 +119,7 @@ Cost: none. The limit stays agent-honoured, and each agent passes the flag. A pa
 
 ### O3. Wrap each test run with `systemd-run --user --slice=... --wait --pipe`, declared as the test command (W2)
 
-- Gain: no Orca change. The cap holds for the declared run.
+- Gain: no Orca change. The cap holds for the declared run when the agent uses this exact text (see W2).
 - Cost: S2 matches the longer text; each agent must copy it; the first `systemd-run` needs the slice limits already set; other commands (builds, agents) stay uncapped; exit-code behaviour needs a test.
 
 ### O4. Wrap with `systemd-run` and change S2 to accept a defined prefix (W3)
@@ -153,8 +153,8 @@ INFERENCE on order: O2 first (as a measured trial), with O3 as the fallback if O
 - How would `MemoryMax` kills show in the agent and in the audit? Not tested.
 - Is a docs-only or a lighter test path wanted? That is ticket 756, not this one.
 - Docker Sandboxes (`sbx`), E2B, Firecracker, Apptainer: no primary source read for resource caps.
-- Not researched for any option except the systemd slice and Docker: the start cost per run, the cleanup rules, the fit with git worktrees and the fit with Orca terminals. A property is covered for such an option only where a finding or the F5 table states it.
-- Orca itself may offer a limit on workers or terminals (see `orca-inbox-orca.md` if it exists); not read here.
+- Not researched for any option except the systemd slice and Docker: the start cost per run, the cleanup rules, the fit with git worktrees and the fit with Orca terminals. A property is covered for such an option only where a finding or the F5 table states it. The fit of Docker with Orca terminals is not researched either.
+- Orca itself may offer a limit on workers or terminals (see `orca-inbox-orca.md`); not re-read here.
 
 ## Sources read and sources that failed
 
