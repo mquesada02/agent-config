@@ -40,7 +40,7 @@ def report(*fixes, flag_rows=()):
         rows.append(f"| {index} | {cell} | ci.yml:{index} | Problem {index}. | {fix} |")
     lines = ["# cicd-pipelines review: all workflows", "", "## Required", "", HEADER, SEPARATOR] + rows + [""]
     if flag_rows:
-        lines += ["## ⚑ Branch protection change needed", "", "Admin step: add the required check `CI passed`.", ""]
+        lines += ["## ⚑ Admin steps", "", "Admin step: add the required check `CI passed`.", ""]
     return "\n".join(lines + ["## Approve", "", "Reply with `all`.", ""])
 
 
@@ -121,10 +121,19 @@ class JudgeFixQuality(unittest.TestCase):
         self.assertIn("admin steps", first)
         self.assertNotIn("Admin step: add the required check", second)
 
+    def test_a_lock_only_row_gets_no_flag_section_line_and_its_label_has_no_lock_mark(self):
+        text = report("Write the ruleset.").replace("| NAME-01 |", "| NAME-01 🔒 |")
+        self.add_case("name-01-x", [text])
+        code, out, _ = self.run_script()
+        (prompt,) = self.prompts()
+        self.assertNotIn("section:", prompt)
+        self.assertIn("rule NAME-01 🔒", prompt)
+        self.assertNotIn("🔒", out)
+
     def test_a_name_09_row_gets_the_flag_section_even_without_the_flag_mark(self):
         text = report("Add the job `ci-passed`.", "Rename the job.", "Tell the user the check names.")
         text = text.replace("| NAME-03 |", "| NAME-09 |")
-        flag_section = "## ⚑ Branch protection change needed\n\nRemove `test`, add `CI passed`.\n\n"
+        flag_section = "## ⚑ Admin steps\n\nRemove `test`, add `CI passed`.\n\n"
         self.assertIn("\n## Approve", text)
         self.add_case("name-09-x", [text.replace("## Approve", flag_section + "## Approve")])
         self.run_script()

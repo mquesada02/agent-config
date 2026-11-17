@@ -51,6 +51,13 @@ class GradeRuleIds(unittest.TestCase):
         code, _, _ = self.grade(text, "--expect", "NAME-08")
         self.assertEqual(code, 0)
 
+    def test_the_lock_mark_and_both_marks_are_not_part_of_the_token(self):
+        text = make_report(required=[row("PROTECT-02", lock=True), row("PROTECT-01", flag=True, lock=True)])
+        code, _, _ = self.grade(text, "--expect", "PROTECT-01", "PROTECT-02")
+        self.assertEqual(code, 0)
+        code, _, _ = self.grade(text, "--forbid", "PROTECT-02")
+        self.assertEqual(code, 1)
+
     def test_a_bare_tool_id_is_matched_exactly(self):
         text = make_report(suggestion=[row("unpinned-uses")])
         code, _, _ = self.grade(text, "--forbid", "unpinned-uses")

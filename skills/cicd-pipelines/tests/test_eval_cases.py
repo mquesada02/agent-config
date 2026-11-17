@@ -82,16 +82,36 @@ PUBLISH_CASES = {
     "publish-04-no-published-version-check": (["PUBLISH-04"], []),
     "publish-05-publish-workflow-renamed": (["PUBLISH-05"], []),
 }
+PROTECT_CASES = {
+    "protect-01-no-main-ruleset": (["PROTECT-01"], []),
+    "protect-02-no-tag-ruleset": (["PROTECT-02"], []),
+    "protect-03-env-accepts-any-branch": (["PROTECT-03"], []),
+    "protect-04-prod-no-reviewers": (["PROTECT-04"], []),
+    "protect-05-admin-bypass-on-prod": (["PROTECT-05"], []),
+    "protect-06-classic-and-ruleset-stack": (["PROTECT-06"], []),
+    "protect-07-claimed-protection-missing": (["PROTECT-07"], []),
+    "protect-08-repo-wide-role-arn": (["PROTECT-08"], []),
+}
+# The cases whose report has a lock row (the protection writes of PROTECT-01 to PROTECT-04).
+PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
+                      "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 30
+CD_CASE_COUNT = 38
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
 
+def extra_graders(name):
+    """The grader files that a case holds besides the expect, forbid, no-edit, section and judge ones."""
+    if not name.startswith("protect-"):
+        return set()
+    return {"section-graph-triggers.md"} | ({"section-lock-note.md"} if name in PROTECT_LOCK_CASES else set())
+
+
 def row_pattern(rule_id):
     """The pattern of an expect or forbid grader: the id in the Rule cell of a table row."""
-    return r"^\|\s*\d+\s*\|\s*" + rule_id + r"(?:\s*⚑)?\s*\|"
+    return r"^\|\s*\d+\s*\|\s*" + rule_id + r"(?:\s*⚑)?(?:\s*🔒)?\s*\|"
 
 
 def job_ids(workflow_text):
@@ -263,7 +283,8 @@ class ReviewCases(unittest.TestCase):
         for name in review_cases():
             expect, forbid = expect_lists(name)
             expected_files = ({f"expect-{r}.md" for r in expect} | {f"forbid-{r}.md" for r in forbid}
-                              | set(NO_EDIT_GRADERS) | {f"{s}.md" for s in SECTION_GRADERS} | {"fix-quality.md"})
+                              | set(NO_EDIT_GRADERS) | {f"{s}.md" for s in SECTION_GRADERS} | {"fix-quality.md"}
+                              | extra_graders(name))
             self.assertEqual(grader_files(name), expected_files, name)
             for rule in expect:
                 meta = frontmatter(os.path.join(case_dir(name), "graders", f"expect-{rule}.md"))
@@ -279,6 +300,13 @@ class ReviewCases(unittest.TestCase):
             "Defaults: none.", "NAME-06 was checked.")
         self.assertTrue(re.search(row_pattern("NAME-04"), report, re.M))
         self.assertFalse(re.search(row_pattern("NAME-06"), report, re.M))
+
+    def test_the_expect_pattern_accepts_the_flag_mark_the_lock_mark_or_both_in_that_order(self):
+        for kwargs in ({}, {"flag": True}, {"lock": True}, {"flag": True, "lock": True}):
+            report = make_report(required=[row("PROTECT-01", **kwargs)])
+            self.assertTrue(re.search(row_pattern("PROTECT-01"), report, re.M), kwargs)
+        for cell in ("PROTECT-01 🔒 ⚑", "PROTECT-01 ⚑ ⚑", "PROTECT-011", "PROTECT-01 x"):
+            self.assertFalse(re.search(row_pattern("PROTECT-01"), f"| 1 | {cell} | ci.yml:3 | A. | B. |", re.M), cell)
 
     def test_the_no_edit_graders_allow_zero_calls(self):
         for name in review_cases():
@@ -959,6 +987,219 @@ class RecordedIntakeDeploy09(RecordedIntakeChecks, unittest.TestCase):
         self.assertEqual(len(self.timeouts()), len(job_ids(text)) - 1)
         self.assertIn("uses: ./.github/workflows/ci.yml", job_text(text, "ci"))
         self.assertNotIn("timeout-minutes", job_text(text, "ci"))
+
+
+PROTECT_GOOD = {
+    "environments": [{"name": name, "reviewers": name == "prod", "wait_timer": 0, "branch_policy": "custom",
+                      "admin_bypass": False} for name in ("artifacts", "dev", "staging", "prod")],
+    "plan": {"visibility": "private", "plan": "enterprise", "reviewers_available": True},
+    "rulesets": [{"name": "main", "target": "branch", "enforcement": "active"},
+                 {"name": "release tags", "target": "tag", "enforcement": "active"}],
+    "classic_protection": {"branch": "main", "protected": False, "required_pull_request_reviews": False,
+                           "enforce_admins": False},
+    "required_checks": ["CI passed"],
+    "release_tag_pattern": "v*",
+    "existing_workflows": [".github/workflows/ci.yml", ".github/workflows/deploy.yml",
+                           ".github/workflows/rollback.yml"],
+}
+
+
+class ProtectCases(unittest.TestCase):
+    """The PROTECT cases: one good deploy and rollback repo with a recorded intake, changed only where a rule needs."""
+    FIRST = "protect-01-no-main-ruleset"
+    COMMENT = "protect-07-claimed-protection-missing"
+    ROLE = "protect-08-repo-wide-role-arn"
+    GROUP = "group: deploy-${{ inputs.environment }}"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.deploys = {name: workflow_text(name, "deploy.yml") for name in PROTECT_CASES}
+        cls.rollbacks = {name: workflow_text(name, "rollback.yml") for name in PROTECT_CASES}
+
+    def test_the_cases_are_exactly_these_with_their_lists(self):
+        self.assertEqual({n for n in review_cases() if n.startswith("protect-")}, set(PROTECT_CASES))
+        for name, lists in PROTECT_CASES.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_every_case_has_a_ci_deploy_and_rollback_workflow_and_no_release_workflow(self):
+        for name in PROTECT_CASES:
+            workflows = os.path.join(case_dir(name), "repo", ".github", "workflows")
+            self.assertEqual(sorted(os.listdir(workflows)), ["ci.yml", "deploy.yml", "rollback.yml"], name)
+
+    def test_the_good_files_are_the_deploy_02_files_and_the_rollback_with_the_deploy_group(self):
+        base = os.path.join("deploy-02-tag-run-staging-record", "repo")
+        for rel in (".github/workflows/ci.yml", "package.json", "pnpm-lock.yaml", "scripts/check-staged.sh",
+                    "scripts/deploy-lambda.sh"):
+            good = read(os.path.join(EVALS, base, rel))
+            for name in PROTECT_CASES:
+                self.assertEqual(read(os.path.join(case_dir(name), "repo", rel)), good, (name, rel))
+        source = workflow_text("rollback-06-other-concurrency-group", "rollback.yml")
+        good_rollback = source.replace("group: rollback-${{ inputs.environment }}", self.GROUP)
+        self.assertNotEqual(good_rollback, source)
+        for name in PROTECT_CASES:
+            self.assertEqual(self.rollbacks[name], good_rollback, name)
+
+    def test_the_fixtures_differ_from_the_good_deploy_workflow_only_where_the_rule_needs(self):
+        good = workflow_text("deploy-02-tag-run-staging-record", "deploy.yml")
+        for name in PROTECT_CASES:
+            if name not in (self.COMMENT, self.ROLE):
+                self.assertEqual(self.deploys[name], good, name)
+        self.assertEqual(self.deploys[self.COMMENT].replace("  # Required reviewers approve every prod deploy.\n", ""),
+                         good)
+        self.assertEqual(self.deploys[self.COMMENT].count("# Required reviewers approve every prod deploy."), 1)
+        changed = good.replace("    environment: artifacts\n", "").replace("vars.AWS_ROLE_ARTIFACTS", "vars.AWS_ROLE_ARN")
+        self.assertEqual(self.deploys[self.ROLE], changed)
+
+    def test_protect_07_has_a_comment_with_a_listed_phrase_and_the_environment_name_before_the_prod_job(self):
+        text = self.deploys[self.COMMENT]
+        line = next(l for l in text.splitlines() if l.strip().startswith("# Required reviewers"))
+        self.assertIn("required reviewer", line.lower())
+        self.assertRegex(line, r"\bprod\b")
+        self.assertLess(text.index(line), text.index("  deploy-prod:\n"))
+
+    def test_protect_08_has_a_job_with_no_environment_that_reads_a_role_arn(self):
+        job = job_text(self.deploys[self.ROLE], "package")
+        self.assertNotIn("environment:", job)
+        self.assertIn("vars.AWS_ROLE_ARN", job)
+        for other in ("deploy-dev", "deploy-staging", "deploy-prod"):
+            self.assertIn("environment:", job_text(self.deploys[self.ROLE], other))
+
+    def test_every_job_that_names_an_environment_names_one_of_the_recorded_environments(self):
+        names = {entry["name"] for entry in PROTECT_GOOD["environments"]}
+        for name in PROTECT_CASES:
+            for text in (self.deploys[name], self.rollbacks[name]):
+                found = set(re.findall(r"(?m)^    environment: (.+)$", text))
+                self.assertTrue(found, name)
+                for environment in found - {"${{ inputs.environment }}"}:
+                    self.assertIn(environment, names, (name, environment))
+
+    def test_the_trigger_and_lock_note_graders_exist_exactly_where_the_design_says(self):
+        for name in review_cases():
+            files = grader_files(name)
+            self.assertEqual("section-graph-triggers.md" in files, name in PROTECT_CASES, name)
+            self.assertEqual("section-lock-note.md" in files, name in PROTECT_LOCK_CASES, name)
+
+    def grader(self, case, file):
+        return frontmatter(os.path.join(case_dir(case), "graders", file))
+
+    def test_the_trigger_grader_wants_the_three_lines_in_order_and_no_fourth_trigger_line(self):
+        meta = self.grader(self.FIRST, "section-graph-triggers.md")
+        self.assertEqual((meta["type"], meta["flags"]), ("regex", "m"))
+        for line in ("push main: Deploy", "tag v\\*: Deploy", "dispatch: Rollback"):
+            self.assertIn(line, meta["pattern"])
+        fence = "`" * 3
+        lines = ["push main: Deploy ── ci ─ package ─ deploy-dev ─ deploy-staging",
+                 "tag v*: Deploy ── deploy-prod (final tag, needs the staging record)",
+                 "dispatch: Rollback ── rollback (a tag, one environment)"]
+
+        def sketch(body):
+            return "\n".join(["## Job graph after the fixes", "", fence] + body + [fence, "", "## Approve"])
+
+        def matches(body):
+            return re.search(meta["pattern"], sketch(body), re.M) is not None
+
+        self.assertTrue(matches(lines))
+        self.assertTrue(matches([lines[0], "  note", lines[1], lines[2], "  deploy-prod ─ done"]))
+        self.assertFalse(matches(lines[:2]))
+        self.assertFalse(matches([lines[1], lines[0], lines[2]]))
+        self.assertFalse(matches(lines + ["push main: Release ── release"]))
+        self.assertFalse(matches([lines[0], lines[1], "push main: Release ── release", lines[2]]))
+
+    def test_the_lock_note_grader_matches_the_note_line_only(self):
+        meta = self.grader(self.FIRST, "section-lock-note.md")
+        self.assertEqual((meta["type"], meta["flags"]), ("regex", "m"))
+        report = make_report(required=[row("PROTECT-02", lock=True)])
+        self.assertTrue(re.search(meta["pattern"], report, re.M))
+        self.assertFalse(re.search(meta["pattern"], make_report(required=[row("NAME-06")]), re.M))
+
+
+class RecordedIntakeProtect(RecordedIntakeChecks):
+    """A PROTECT case: the recorded intake holds the good state of each fact that a PROTECT rule reads, but one."""
+    CHANGED = ()
+
+    def test_every_fact_but_the_changed_one_is_the_good_state_and_detected(self):
+        for name, good in PROTECT_GOOD.items():
+            if name in self.CHANGED:
+                self.assertNotEqual(self.intake[name]["value"], good, name)
+            else:
+                self.assertEqual(self.intake[name]["value"], good, name)
+            self.assertEqual(self.intake[name]["status"], "detected", name)
+
+    def environment(self, name):
+        return next(e for e in self.intake["environments"]["value"] if e["name"] == name)
+
+
+class RecordedIntakeProtect01(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-01-no-main-ruleset"
+    CHANGED = ("rulesets", "classic_protection")
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertEqual(self.intake["rulesets"]["value"], [PROTECT_GOOD["rulesets"][1]])
+        self.assertEqual(self.intake["classic_protection"]["value"],
+                         {"branch": "main", "protected": True, "required_pull_request_reviews": True,
+                          "enforce_admins": True})
+
+
+class RecordedIntakeProtect02(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-02-no-tag-ruleset"
+    CHANGED = ("rulesets",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertEqual(self.intake["rulesets"]["value"], [PROTECT_GOOD["rulesets"][0]])
+
+
+class RecordedIntakeProtect03(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-03-env-accepts-any-branch"
+    CHANGED = ("environments",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertEqual(self.environment("prod")["branch_policy"], "none")
+        self.assertEqual({e["branch_policy"] for e in self.intake["environments"]["value"]}, {"custom", "none"})
+
+
+class RecordedIntakeProtect04(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-04-prod-no-reviewers"
+    CHANGED = ("environments",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertFalse(self.environment("prod")["reviewers"])
+        self.assertTrue(self.intake["plan"]["value"]["reviewers_available"])
+
+
+class RecordedIntakeProtect05(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-05-admin-bypass-on-prod"
+    CHANGED = ("environments",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertTrue(self.environment("prod")["admin_bypass"])
+        self.assertTrue(self.environment("prod")["reviewers"])
+        self.assertEqual(self.environment("prod")["branch_policy"], "custom")
+
+
+class RecordedIntakeProtect06(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-06-classic-and-ruleset-stack"
+    CHANGED = ("classic_protection",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertTrue(self.intake["classic_protection"]["value"]["protected"])
+        self.assertEqual(self.intake["rulesets"]["value"], PROTECT_GOOD["rulesets"])
+        self.assertEqual(self.intake["required_checks"]["value"], ["CI passed"])
+
+
+class RecordedIntakeProtect07(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-07-claimed-protection-missing"
+    CHANGED = ("environments",)
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertFalse(self.environment("prod")["reviewers"])
+
+
+class RecordedIntakeProtect08(RecordedIntakeProtect, unittest.TestCase):
+    CASE = "protect-08-repo-wide-role-arn"
+    CHANGED = ()
+
+    def test_the_changed_fact_differs_only_in_the_part_of_its_rule(self):
+        self.assertEqual(self.intake["environments"]["value"], PROTECT_GOOD["environments"])
 
 
 class CdFixtures(unittest.TestCase):

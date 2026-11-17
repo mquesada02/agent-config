@@ -19,6 +19,7 @@ DEPLOY_IDS = [f"DEPLOY-{n:02d}" for n in range(1, 11)]
 ROLLBACK_IDS = [f"ROLLBACK-{n:02d}" for n in range(1, 7)]
 RELEASE_IDS = [f"RELEASE-{n:02d}" for n in range(1, 7)]
 PUBLISH_IDS = [f"PUBLISH-{n:02d}" for n in range(1, 6)]
+PROTECT_IDS = [f"PROTECT-{n:02d}" for n in range(1, 9)]
 ZIZMOR_MAPPING = {
     "unpinned-uses": "SEC-01", "excessive-permissions": "SEC-03", "template-injection": "SEC-04",
     "artipacked": "SEC-05", "dangerous-triggers": "SEC-07", "secrets-inherit": "SEC-08",
@@ -523,6 +524,127 @@ class PublishRules(unittest.TestCase):
         names_no_url_and_no_repo_link(self, text)
 
 
+class ProtectRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.path = rule_files()["protect"]
+        cls.text = read(cls.path)
+        cls.entries = rule_entries(cls.path)
+        cls.protect = dict(cls.entries)
+
+    def test_the_protect_file_holds_protect_01_to_protect_08_in_order(self):
+        self.assertEqual([rule_id for rule_id, _ in self.entries], PROTECT_IDS)
+
+    def test_the_severities_and_the_check_kinds_follow_the_ticket_table(self):
+        self.assertEqual({rule_id: level(fields) for rule_id, fields in self.protect.items()},
+                         {**{f"PROTECT-0{n}": "required" for n in range(1, 6)},
+                          "PROTECT-06": "suggestion", "PROTECT-07": "suggestion", "PROTECT-08": "suggestion"})
+        for rule_id, fields in self.protect.items():
+            kind = "judgement" if rule_id == "PROTECT-08" else "mechanical"
+            self.assertTrue(fields["Check"].startswith(kind), rule_id)
+
+    def test_the_file_says_that_no_rule_in_it_is_critical(self):
+        self.assertIn("No protect rule is critical", self.text)
+
+    def test_every_fix_is_one_sentence(self):
+        for rule_id, fields in self.protect.items():
+            self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", fields["Fix"])), 1, rule_id)
+
+    def test_the_four_verified_facts_name_their_doc_pages(self):
+        section = self.text[self.text.index("## Verified GitHub facts"):self.text.index("## Definitions")]
+        for text in ("Ruleset `PUT`: replace or merge", "Not stated", "\"Update a repository ruleset\"",
+                     "An array of rules within the ruleset", "whole ruleset object",
+                     "Classic PAT scopes for rulesets and branch protection", "\"Update branch protection\"",
+                     "requires admin or owner permissions to the repository", "\"Scopes for OAuth apps\"",
+                     "treat a 403 or a 404 on the first `GET` as no admin scope",
+                     "\"Create or update an environment\"", "`can_admins_bypass`",
+                     "The REST API cannot clear the admin bypass", "PROTECT-05 is a manual ⚑ step",
+                     "Environment `PUT`: replace or merge", "sends the whole object"):
+            self.assertIn(text, section)
+
+    def test_the_file_holds_no_runnable_write_call_and_no_url_but_doc_paths(self):
+        for banned in ("gh api", "curl", "--method", "-X PUT", "-X POST", "http://", "https://"):
+            self.assertNotIn(banned, self.text)
+
+    def test_the_definitions_hold_the_reads_the_status_rule_and_the_marks(self):
+        section = self.text[self.text.index("## Definitions"):self.text.index("### PROTECT-01")]
+        for text in ("the 2-step flow", "A ⚑ mark means a manual admin step", "and nothing else",
+                     "only by PROTECT-03", "raises no finding of a rule when the finding condition of that rule uses the fact",
+                     "A fact that only the Fix uses never suppresses a finding",
+                     "`classic_protection` in PROTECT-01 and `release_tag_pattern` in PROTECT-02",
+                     "PROTECT-04 also accepts the `plan` fact with the status `default`",
+                     "Its other fact, `environments`, must still be `detected`",
+                     "The facts do not hold the rule content of a ruleset, the bypass actors of a ruleset"):
+            self.assertIn(text, section)
+
+    def test_protect_01_writes_the_main_ruleset_and_carries_the_classic_settings(self):
+        rule = self.protect["PROTECT-01"]["Rule"]
+        for text in ("`target: branch` and `enforcement: active`", "does not hold `CI passed` as its only name",
+                     "an empty list is a finding too", "Content: a PR is required", "force pushes and deletions are blocked",
+                     "the bypass list is empty", "`enforce_admins` is true",
+                     "deleting the classic rule is a ⚑ step on the same row"):
+            self.assertIn(text, rule)
+
+    def test_protect_02_needs_only_an_active_tag_ruleset(self):
+        rule = self.protect["PROTECT-02"]["Rule"]
+        for text in ("`target: tag` and `enforcement: active`", "The rule has no other condition",
+                     "a tag ruleset for another pattern passes", "a `default` value such as `v*` is usable",
+                     "RELEASE-04 defines it", "the reason \"the PROTECT-02 row writes the ruleset\""):
+            self.assertIn(text, rule)
+
+    def test_protect_03_defines_a_tag_run_and_an_expression_environment_and_the_replacement_step(self):
+        rule = self.protect["PROTECT-03"]["Rule"]
+        for text in ("`github.ref_type == 'tag'`", "`startsWith(github.ref, 'refs/tags/')`",
+                     "whatever the workflow triggers are (a `needs` link decides nothing)",
+                     "stands for each value in the `options` of that input",
+                     "is not checked and raises no finding", "`branch_policy` is `none`",
+                     "a protected-branch policy does not accept tags", "A `custom` policy passes",
+                     "prod accepts only the final-tag pattern, and every other environment accepts only `main`",
+                     "GitHub cannot rename an environment", "deleting the old environment after the first deploy is a ⚑ manual step",
+                     "its secrets do not move"):
+            self.assertIn(text, rule)
+
+    def test_protect_04_needs_the_plan_and_names_the_default_plan_and_the_no_reviewers_plan(self):
+        rule = self.protect["PROTECT-04"]["Rule"]
+        for text in ("`reviewers: false`, and `plan.reviewers_available` is true", "the merged PR is the approval",
+                     "may need GitHub Enterprise", "`prevent_self_review: true`", "no `prevent_self_review` value"):
+            self.assertIn(text, rule)
+
+    def test_protect_05_is_a_manual_step_and_names_the_ruleset_bypass_limit(self):
+        rule = self.protect["PROTECT-05"]["Rule"]
+        for text in ("`admin_bypass: true`", "no field for the admin bypass", "manual ⚑ step with no 🔒",
+                     "not checked on an existing ruleset", "The facts do not hold the bypass actors of a ruleset"):
+            self.assertIn(text, rule)
+
+    def test_protect_06_yields_to_protect_01_so_one_repo_gets_one_classic_deletion(self):
+        rule = self.protect["PROTECT-06"]["Rule"]
+        for text in ("both apply and stack", "PROTECT-01 raises no row", "PROTECT-06 raises none"):
+            self.assertIn(text, rule)
+
+    def test_protect_07_reads_one_comment_line_for_the_listed_phrases(self):
+        rule = self.protect["PROTECT-07"]["Rule"]
+        for text in ("one comment line", "`branch protection`, `protected branch`, `ruleset`, `tag protection`, "
+                     "`protected tag`, `required reviewer`, `required review`", "case does not matter",
+                     "need an active branch ruleset or `classic_protection.protected: true`",
+                     "the environment whose name the same comment line holds as a word, or on `prod`",
+                     "every fact that could show it is `detected`", "A comment that holds none of these phrases is not read"):
+            self.assertIn(text, rule)
+        self.assertIn("(a file edit, no mark)", self.protect["PROTECT-07"]["Fix"])
+
+    def test_protect_08_is_a_judgement_on_repo_wide_role_arns_and_app_keys(self):
+        rule = self.protect["PROTECT-08"]["Rule"]
+        for text in ("names no `environment`", "`AWS_ROLE` or `ROLE_ARN`", "`APP_PRIVATE_KEY` or `APP_ID`",
+                     "so that case is not a finding", "The skill writes no secret or variable"):
+            self.assertIn(text, rule)
+
+    def test_the_marks_of_each_fix_follow_the_design(self):
+        for rule_id, mark in (("PROTECT-01", "marks ⚑ 🔒"), ("PROTECT-02", "mark 🔒"), ("PROTECT-03", "mark 🔒, and ⚑"),
+                              ("PROTECT-04", "mark 🔒"), ("PROTECT-05", "mark ⚑"), ("PROTECT-06", "mark ⚑"),
+                              ("PROTECT-08", "mark ⚑")):
+            self.assertIn(mark, self.protect[rule_id]["Fix"], rule_id)
+        self.assertNotIn("🔒", self.protect["PROTECT-07"]["Fix"])
+
+
 class SecurityRules(unittest.TestCase):
     def setUp(self):
         self.sec = dict(rule_entries(rule_files()["security"]))
@@ -811,6 +933,15 @@ class Router(unittest.TestCase):
         self.assertIn("rules/deploy.md", bullet)
         self.assertIn("rules/rollback.md", bullet)
         self.assertIn("when the repo has a deploy workflow", bullet)
+        self.assertIn("[rules/protect.md](rules/protect.md)", bullet)
+        self.assertIn("under their own load rules", bullet)
+
+    def test_the_modules_list_names_the_protect_file_with_its_load_rule(self):
+        modules = self.text[self.text.index("## Modules"):]
+        self.assertIn("- [rules/protect.md](rules/protect.md): PROTECT-01 to PROTECT-08", modules)
+        self.assertIn("Load it by the PROTECT rule of \"Loading by need\"", modules)
+        section = self.text[self.text.index("## Loading by need"):self.text.index("## Modules")]
+        self.assertIn("- `PROTECT` ([rules/protect.md](rules/protect.md)):", section)
 
     def test_loading_by_need_gives_the_load_rule_of_each_cd_family_before_the_modules_list(self):
         start = self.text.index("## Loading by need")
@@ -947,10 +1078,49 @@ class ReviewSteps(unittest.TestCase):
         contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
         self.assertIn("a publish-05 row also gets ⚑", contract)
         self.assertIn("for a publish-05 row, this section also holds the npm admin step", contract)
-        self.assertIn("the heading says branch protection until tickets 673 and 677 reword it", contract)
+        self.assertIn("6. `## ⚑ admin steps`", contract)
+        self.assertNotIn("branch protection change needed", self.text)
+        self.assertNotIn("reword it", contract)
         approval = self.text[self.text.index("## fix on approval"):]
         self.assertIn("a publish-05 row is never edited", approval)
         self.assertIn("a skipped ⚑ row gets no admin steps", approval)
+
+    def test_the_rule_cell_has_the_lock_mark_after_the_flag_mark_and_a_name_09_row_may_hold_both(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        for text in ("a 🔒 follows the id (after the ⚑ when there is one: `⚑ 🔒`)", "the 2-step flow",
+                     "a name-09 row also gets 🔒 when the `rulesets` fact is `detected` and holds an active branch ruleset",
+                     "a row stays one rule at one severity"):
+            self.assertIn(text, contract)
+        naming = read(rule_files()["naming"])
+        for text in ("Never edit classic branch protection.", "the row also gets 🔒 (Rule cell `NAME-09 ⚑ 🔒`)",
+                     "never write them yourself, except a ruleset change that the 2-step flow writes after its own approval",
+                     "After the merge, an admin changes the required checks as the ⚑ section shows."):
+            self.assertIn(text, naming)
+
+    def test_the_lock_note_comes_after_the_last_table_and_only_with_a_lock_row(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        for text in ("directly after the last table, write the lock note", "starts `🔒 = a protection write.`",
+                     "write the note only when at least one row has 🔒", "it is not a numbered section",
+                     "it comes before the ⚑ section and the job graph", "the skill skips a 🔒 row"):
+            self.assertIn(text, contract)
+        self.assertLess(contract.index("write the lock note"), contract.index("6. `## ⚑ admin steps`"))
+
+    def test_the_job_graph_sketch_has_one_line_for_each_trigger_and_the_intake_line_names_the_defaults(self):
+        contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
+        for text in ("one line for each trigger", "`push main: deploy ── ...`",
+                     "`tag <pattern>: deploy ── deploy-prod (...)`", "`<pattern>` is the `release_tag_pattern` value",
+                     "`dispatch: rollback ── ...`", "`push main: release ── ...`",
+                     "a repo with no `release.yml` has three lines", "ends with `defaults:`", "`defaults: none.`"):
+            self.assertIn(text, contract)
+
+    def test_the_fix_flow_skips_a_lock_row_a_manual_protect_row_and_a_release_03_row(self):
+        step = self.text[self.text.index("4. **edit.**"):self.text.index("5. **no edit, or no workflow edited.**")]
+        for text in ("a 🔒 row is never edited in this version",
+                     "\"the protection write flow is not part of this version\"",
+                     "a protect-05, protect-06 or protect-08 row", "\"the fix is a manual admin step\"",
+                     "a release-03 row is skipped with the reason \"the protect-02 row writes the ruleset\"",
+                     "temporary", "ticket 674"):
+            self.assertIn(text, step)
 
     def test_it_loads_the_job_graph_and_maintainability_rule_files(self):
         self.assertIn("rules/job-graph.md", self.text)
@@ -1027,6 +1197,15 @@ class EvalReadme(unittest.TestCase):
         for flag in ("claude plugin eval", "--no-publish", "-j 2", "--runs 3", "--threshold 1.0",
                      "--scaffold", "--ablation with-without"):
             self.assertIn(flag, text)
+
+    def test_it_describes_each_protect_case_and_the_new_report_parts(self):
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        for name in ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset", "protect-03-env-accepts-any-branch",
+                     "protect-04-prod-no-reviewers", "protect-05-admin-bypass-on-prod",
+                     "protect-06-classic-and-ruleset-stack", "protect-07-claimed-protection-missing",
+                     "protect-08-repo-wide-role-arn", "section-lock-note.md", "section-graph-triggers.md",
+                     "the required PROTECT ids (01 to 05)"):
+            self.assertIn(name, text)
 
     def test_the_allowed_tools_are_the_intake_call_and_no_gh_api(self):
         text = read(os.path.join(SKILL, "evals", "README.md"))

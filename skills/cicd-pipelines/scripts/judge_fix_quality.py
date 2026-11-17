@@ -39,6 +39,7 @@ final_message = _shared.final_message
 JUDGE = "fix-quality"
 COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 FLAG = "⚑"
+LOCK = "🔒"
 DEFAULT_JUDGE = ["claude", "-p", "--model", "haiku", "--tools", "", "--disable-slash-commands",
                  "--no-session-persistence"]
 TIMEOUT_SECONDS = 300
@@ -199,7 +200,7 @@ def judge_run(label, trace_path, files, text, command, out):
             continue
         judged += 1
         passed += verdict == "PASS"
-        out.append(f"{label} row {number} {cells[1].replace(FLAG, '').strip()}: {verdict} {reason}")
+        out.append(f"{label} row {number} {cells[1].replace(FLAG, '').replace(LOCK, '').strip()}: {verdict} {reason}")
     ok = errors == 0 and passed == judged
     out.append(f"{label}: {'PASS' if ok else 'FAIL'}")
     return passed, judged, ok, errors

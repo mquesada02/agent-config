@@ -1,0 +1,250 @@
+{
+  "default_branch": {
+    "value": "main",
+    "status": "default",
+    "source": "no default branch found (no gh answer, no origin HEAD)"
+  },
+  "package_manager": {
+    "value": {
+      "manager": "pnpm",
+      "lockfile": "pnpm-lock.yaml"
+    },
+    "status": "detected",
+    "source": "package.json packageManager"
+  },
+  "node_version_app": {
+    "value": ">=22",
+    "status": "detected",
+    "source": "package.json engines.node"
+  },
+  "engines": {
+    "value": [
+      {
+        "path": ".",
+        "value": ">=22",
+        "status": "detected",
+        "source": "./package.json engines.node"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "package_kind": {
+    "value": [
+      {
+        "path": ".",
+        "value": "app",
+        "status": "detected",
+        "source": "./package.json private and publish signals"
+      }
+    ],
+    "status": "detected",
+    "source": "package.json of each package"
+  },
+  "os_claims": {
+    "value": [
+      "linux"
+    ],
+    "status": "default",
+    "source": "no os field in any package.json"
+  },
+  "test_runners": {
+    "value": [
+      "vitest"
+    ],
+    "status": "detected",
+    "source": "dependencies and config files"
+  },
+  "monorepo": {
+    "value": {
+      "monorepo": false,
+      "tool": null
+    },
+    "status": "detected",
+    "source": "no pnpm-workspace.yaml and no workspaces field"
+  },
+  "visibility": {
+    "value": "private",
+    "status": "default",
+    "source": "repository visibility not readable (private, 2 vCPU assumed)"
+  },
+  "runner_labels": {
+    "value": [
+      {
+        "label": "ubuntu-24.04",
+        "kind": "standard",
+        "vcpus": 2,
+        "status": "detected",
+        "source": ".github/workflows/ci.yml"
+      }
+    ],
+    "status": "detected",
+    "source": ".github/workflows runs-on values"
+  },
+  "required_checks": {
+    "value": [
+      "CI passed"
+    ],
+    "status": "detected",
+    "source": "branch protection + rulesets (recorded for the eval)"
+  },
+  "run_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "recorded for the eval: ci.yml has no history"
+  },
+  "existing_workflows": {
+    "value": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/deploy.yml",
+      ".github/workflows/rollback.yml"
+    ],
+    "status": "detected",
+    "source": ".github/workflows"
+  },
+  "installed_tools": {
+    "value": {
+      "actionlint": {
+        "installed": false
+      },
+      "zizmor": {
+        "installed": false
+      },
+      "pinact": {
+        "installed": false
+      }
+    },
+    "status": "detected",
+    "source": "PATH: actionlint, zizmor, pinact"
+  },
+  "supported_node_majors": {
+    "value": {
+      "majors": [
+        22,
+        24,
+        26
+      ],
+      "newest_lts": 26
+    },
+    "status": "default",
+    "source": "offline list tools.md dated 2026-11-09"
+  },
+  "environments": {
+    "value": [
+      {
+        "name": "artifacts",
+        "reviewers": false,
+        "wait_timer": 0,
+        "branch_policy": "custom",
+        "admin_bypass": false
+      },
+      {
+        "name": "dev",
+        "reviewers": false,
+        "wait_timer": 0,
+        "branch_policy": "custom",
+        "admin_bypass": false
+      },
+      {
+        "name": "staging",
+        "reviewers": false,
+        "wait_timer": 0,
+        "branch_policy": "custom",
+        "admin_bypass": false
+      },
+      {
+        "name": "prod",
+        "reviewers": true,
+        "wait_timer": 0,
+        "branch_policy": "none",
+        "admin_bypass": false
+      }
+    ],
+    "status": "detected",
+    "source": "gh api repos/example-org/example-app/environments"
+  },
+  "plan": {
+    "value": {
+      "visibility": "private",
+      "plan": "enterprise",
+      "reviewers_available": true
+    },
+    "status": "detected",
+    "source": "gh api orgs/example-org"
+  },
+  "rulesets": {
+    "value": [
+      {
+        "name": "main",
+        "target": "branch",
+        "enforcement": "active"
+      },
+      {
+        "name": "release tags",
+        "target": "tag",
+        "enforcement": "active"
+      }
+    ],
+    "status": "detected",
+    "source": "gh api repos/example-org/example-app/rulesets"
+  },
+  "classic_protection": {
+    "value": {
+      "branch": "main",
+      "protected": false,
+      "required_pull_request_reviews": false,
+      "enforce_admins": false
+    },
+    "status": "detected",
+    "source": "gh api repos/example-org/example-app/branches/main/protection: Branch not protected"
+  },
+  "deploy_targets": {
+    "value": [],
+    "status": "default",
+    "source": "no workflow step shows a deploy target (none)"
+  },
+  "iac_tools": {
+    "value": [],
+    "status": "default",
+    "source": "no workflow step shows an IaC tool (none)"
+  },
+  "aws_variables": {
+    "value": {
+      "role": [
+        "vars.AWS_ROLE_<ENV>"
+      ],
+      "region": [
+        "vars.AWS_REGION"
+      ]
+    },
+    "status": "default",
+    "source": "no vars.* name found for: role vars.AWS_ROLE_<ENV>, region vars.AWS_REGION; these are placeholders, replace them with the repo's own variable names"
+  },
+  "release_tool": {
+    "value": [],
+    "status": "default",
+    "source": "no release tool file or dependency (none, so create adds Changesets)"
+  },
+  "publish_target": {
+    "value": [
+      "npmjs"
+    ],
+    "status": "default",
+    "source": "no published package (npmjs)"
+  },
+  "release_tag_pattern": {
+    "value": "v*",
+    "status": "detected",
+    "source": "git tag --list (recorded for the eval)"
+  },
+  "provenance": {
+    "value": false,
+    "status": "default",
+    "source": "visibility not readable (provenance not automatic)"
+  },
+  "deploy_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "no deploy history recorded for the eval"
+  }
+}

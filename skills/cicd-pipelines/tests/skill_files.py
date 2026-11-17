@@ -11,6 +11,7 @@ PREFIXES = {
     "naming": "NAME", "job-graph": "GRAPH", "cost": "COST",
     "security": "SEC", "monorepo": "MONO", "maintainability": "MAINT", "deploy": "DEPLOY",
     "rollback": "ROLLBACK", "release": "RELEASE", "publish": "PUBLISH",
+    "protect": "PROTECT",
 }
 LEVELS = ("critical", "required", "suggestion")
 
