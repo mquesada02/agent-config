@@ -14,8 +14,8 @@ Where do tokens and PC resources go in the current workflow, and which cuts keep
 4. FACT: Opus 5.5 turns are 40 percent of the index, and they are in coordinator and plain sessions. The settings file sets Opus 5.5 at effort `xhigh` for the main model. Workers and all subagents run on Sonnet.
 5. FACT: every subagent starts with a first request of about 19,000 cache-read tokens and about 33,000 cache-write tokens. A reviewer run has a median of 230,000 to 283,000 tokens in 4 to 8 turns, so the fixed start is a large part of each run. Sibling reviewers started within 20 seconds each write the 33,000 again.
 6. FACT: the ledgers show where review rounds pay off. A final-phase code-review round finds a Blocking finding in 8 percent of rounds (64 of 816). A correctness-phase round does so in 32 percent. Plan-review rounds find one in 26 to 80 percent, depending on loop and phase.
-7. INFERENCE: the cuts with the best saving-to-risk ratio are (a) a leaner start for subagents, (b) one merged reviewer in final-phase rounds, (c) cache hygiene in long coordinator sessions, and (d) a model or effort change for coordinator sessions. Each needs a quality test first (section "Options"). None is proved here.
-8. FACT: the 8,270 deferred Minor findings and 10,402 plan-review Minor findings are the largest output of reviewers. In recorded triage batches the owner accepted every item (memory notes). INFERENCE: a Minor cap saves output tokens but trades away findings by definition; it is not a no-loss cut.
+7. INFERENCE: cuts with a measured basis are (a) a leaner start for subagents, (b) one merged reviewer in final-phase rounds, (c) cache hygiene in long coordinator sessions, and (d) a model or effort change for coordinator sessions. Each needs a quality test first (section "Options"). None is proved here.
+8. FACT: the 8,270 deferred Minor findings and 10,402 plan-review-5.3 Minor findings are the largest output of reviewers. In recorded triage batches the owner accepted every item (memory notes). INFERENCE: a Minor cap saves output tokens but trades away findings by definition; it is not a no-loss cut.
 9. FACT: PC load is set by concurrency: a median of 6 and a p90 of 14 top-level sessions were active per 10 minutes in the last 7 days, with a peak of 35 (110 transcripts with subagents). The 2-worker rule is per agent, so total load is not capped. The sandbox research (`orca-inbox-sandbox.md`) gives a kernel-enforced shared cap.
 10. Existing tools cover measurement well (`/usage` breakdown, OpenTelemetry, ccusage). They do not cover a quality test; that part must be built.
 
@@ -70,7 +70,7 @@ FACT (cache-read tokens of the coordinator-and-worker group, by the last skill i
 
 INFERENCE by step, adding the subagent index of F2 (review reviewers run in these steps):
 - Map and spec (wayfinder, grilling, to-spec): about 5 percent of coordinator and worker reads. No subagents. Small.
-- Plan-review: the largest named step. 17 percent of reads in the coordinator and worker group plus 780 USD of reviewers (6.5 percent of the index). Plan-review loops write 13,143 findings (2,741 Blocking, 10,402 Minor) across 421 plan-review-5.3, 64 plan-review-3 and 62 plan-review-4.1 ledgers.
+- Plan-review: the largest named step. 17 percent of reads in the coordinator and worker group plus 780 USD of reviewers (6.5 percent of the index). Plan-review loops write 17,935 findings (3,955 Blocking, 13,980 Minor): plan-review-5.3 wrote 13,143 (2,741 Blocking, 10,402 Minor) across 421 ledgers, and plan-review-3 and 4.1 wrote 4,792 (1,214 Blocking, 3,578 Minor) across 64 and 62 ledgers.
 - Implement: about 7 percent. Needed work.
 - Review loop (code-review, verifier, simplify, commit): 640 + 580 USD of subagents plus about 7 percent of reads for `code-review`; the `simplify` row is inflated.
 - Audit: 8 percent of reads plus 340 USD of auditors.
@@ -82,7 +82,7 @@ INFERENCE by step, adding the subagent index of F2 (review reviewers run in thes
 - FACT (https://code.claude.com/docs/en/prompt-caching, "Subagents and the cache"): a subagent "starts its own conversation with its own system prompt and tool set", and its first request "doesn't read the parent's cache". Subagents get a 5-minute TTL, "even on a subscription until you choose a longer one". A fork inherits the parent's prefix and reads the parent's cache.
 - FACT (https://code.claude.com/docs/en/sub-agents): "Other built-in and custom subagents load both [CLAUDE.md and the git status snapshot], unless you set `omitClaudeMd`." A custom subagent can set `model`, `effort`, `tools` (allowlist), `skills`, `autoCompactWindow` and `omitClaudeMd`. `CLAUDE_CODE_SUBAGENT_MODEL` sets one model for all subagents.
 - FACT: `CLAUDE.md` of this config is 32,497 bytes (262 lines). INFERENCE: about 8,000 tokens (4 bytes per token). The rest of the 33,000 written tokens is not measured here; candidates are the skill and agent listings, deferred tool names, hook-added context and the git snapshot. UNTESTED: which part is identical between siblings.
-- INFERENCE: the written 33,000 tokens cost about 0.08 USD per run at the 5-minute price. Over 17,600 subagent runs in the window that is about 530 million tokens (about 1,300 USD of index, 11 percent of all). Part of it is unavoidable.
+- INFERENCE: the written 33,000 tokens cost about 0.08 USD per run at the 5-minute price. Over 18,734 subagent runs in the window (F2 table) that is about 618 million tokens (18,734 x 33,000), about 1,500 USD of index at 0.08 USD per run, about 13 percent of all. Part of it is unavoidable.
 - FACT (Anthropic): the cache-write price is 1.25 times input for 5 minutes and 2 times for 1 hour; a read is 0.05 times input for Sonnet 5.5 and Opus 5.5 (https://platform.claude.com/docs/en/build-with-claude/prompt-caching and the pricing page).
 
 ### F5. What the review loops find (ledgers)
@@ -150,7 +150,7 @@ INFERENCE for the design; UNTESTED.
 Savings are index shares of the 11,900 total and are INFERENCE. Risks are to quality. The options are not exclusive and are not ranked.
 
 **O1. Lean start for review subagents (custom definitions with `omitClaudeMd`, a tool allowlist, no extra skills).**
-- Saving: if CLAUDE.md is about 8,000 of the 33,000 written tokens, about 140 million cache-write tokens, about 350 USD (3 percent). Larger if the skill and tool listings can also be cut (not measured).
+- Saving: if CLAUDE.md is about 8,000 of the 33,000 written tokens, about 150 million cache-write tokens (18,734 x 8,000), about 375 USD (3 percent). Larger if the skill and tool listings can also be cut (not measured).
 - Risk: the Standards axis of code-review uses documented repo standards, and CLAUDE.md is one of them; the plan-review axes read CLAUDE.md where their axis text says. A reviewer without it may miss a rule violation, and may break the "read-only" wording in section 11 if it is moved. Verifier and auditor need the rule text the brief names, so the brief must carry it.
 - Test: F8 steps 2 to 4 on the same reviewer set, with and without `omitClaudeMd`. Measure first with a single run what the 33,000 tokens hold (UNTESTED).
 - Cost: a new definition file per role, and the skills that spawn `general-purpose` must name it.
@@ -180,7 +180,7 @@ Savings are index shares of the 11,900 total and are INFERENCE. Risks are to qua
 - Cost: a second model setting to maintain.
 
 **O6. Smaller CLAUDE.md and briefs (move section 7, 8 and 16 detail into skills that load on demand).**
-- Saving: each turn of every session and subagent reads the file. With about 257,000 turns and 18,800 session and subagent starts in the window, 8,000 tokens cost about 590 USD (5 percent); halving it saves about 300 USD (2.5 percent). INFERENCE from the 4-bytes-per-token estimate.
+- Saving: each turn of every session and subagent reads the file. With about 257,000 turns (INFERENCE, not from the F2 table) and about 19,900 starts (18,734 subagent runs plus 1,172 sessions) in the window, 8,000 tokens cost about 590 USD (5 percent); halving it saves about 300 USD (2.5 percent). INFERENCE from the 4-bytes-per-token estimate.
 - Risk: a rule that is not in context is not followed. Hooks and the audit enforce some rules, not all. Sections 6 and 7 are the core of the audit.
 - Test: audit pass rate and loop outcomes on a fixed set of 10 tasks, before and after.
 - Cost: a rewrite of config text; the config repo tests read CLAUDE.md (`orca-inbox-tests.md` F5).

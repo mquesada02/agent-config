@@ -125,7 +125,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 - How: the group memory has one index line per repo with the absolute path of that repo's memory index. The coordinator reads on demand. Repo facts go to the repo's own session as mail.
 - Correctness: no cross-writer conflict, because each folder keeps one writer. A read can be stale; the `modified` field shows age.
 - Harness: works with Read today (F3). Fails if `blockReadsOutsideWorkingDirectories` is on. UNTESTED.
-- Tokens: about 3 KB for the index of 20 repos at start. Each repo read costs the size of the file read, only when needed.
+- Context cost, about 3 KB for the index of 20 repos at start. Each repo read costs the size of the file read, only when needed.
 - Fit: the group memory stays small and holds group facts only. Repo facts keep one source of truth.
 - Cost: the repo session must act on mail. A repo session that is not running cannot record a fact until it starts.
 
@@ -134,7 +134,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 - How: the coordinator edits topic files (and the index) of each repo.
 - Correctness: risk of lost edits when a repo session writes at the same time (F5). Lower risk if the coordinator only creates new topic files and the repo session adds the index line.
 - Harness: no lock or merge. A write outside the working folder may be blocked by `blockWritesOutsideWorkingDirectories`. UNTESTED.
-- Tokens: same as O1.
+- Context cost, same as O1.
 - Fit: faster hand-off, but two writers per folder break the one-writer rule that keeps O1 safe.
 - Cost: needs a rule list for which files each side may edit, and a check, which nothing existing provides.
 
@@ -143,7 +143,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 - How: `docs/` or `.claude/` files, imported by `CLAUDE.md` with `@path`, or `memory: project` for named subagents (F6).
 - Correctness: git history, review and merge. A fact is stale on branches that lack it (F7).
 - Harness: native. Imports cost tokens in every session of that repo, because they load in full (F6).
-- Tokens: the whole imported file at every start; path-scoped rules lower this.
+- Context cost, the whole imported file at every start; path-scoped rules lower this.
 - Fit: the group memory can link to the file path in the repo. The facts leave the machine-local store, so other machines can read them.
 - Cost: a PR per change; text is visible to everyone who reads the repo. Not for private notes in a public repo.
 
@@ -152,7 +152,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 - How: set `autoMemoryDirectory` per group, or `CLAUDE_CODE_PROJECT_DIR_NAME` with a config folder per group (F8).
 - Correctness: many sessions write one `MEMORY.md`; the same lost-edit risk as O2, across more writers.
 - Harness: native settings. The env variable also moves transcripts and the config folder, which is a large side effect.
-- Tokens: the 200-line / 25 KB limit covers all repos of the group together (F2). A group of about 20 repos fills it sooner.
+- Context cost, the 200-line / 25 KB limit covers all repos of the group together (F2). A group of about 20 repos fills it sooner.
 - Fit: this is the group memory itself. It removes the per-repo view.
 - Cost: repo facts and group facts mix; a repo session loads facts of other repos, which costs tokens it may not need.
 
@@ -161,7 +161,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 - How: run the official memory server with one file per group; sessions call its tools (F9).
 - Correctness: a lock serializes writes; a stale fact is still possible, because entities carry no age field in the README (INFERENCE).
 - Harness: MCP is native. The server needs Node.js 24 or later.
-- Tokens: tool schemas plus a call per read or write. Not loaded at start, so a session must be told to query it.
+- Context cost, tool schemas plus a call per read or write. Not loaded at start, so a session must be told to query it.
 - Fit: a second store beside auto memory and the group memory. Two places to look.
 - Cost: a dependency to run; the quality of retrieval for this use is UNTESTED.
 
@@ -169,7 +169,7 @@ Each option can combine with the others. Costs are estimates (INFERENCE) unless 
 
 - How: durable facts already live in issues and in the map (INFERENCE from the map's "Decisions so far" list). The coordinator reads issues with `gh`.
 - Correctness: issues have history and one canonical text.
-- Tokens: a read per issue, only on need.
+- Context cost, a read per issue, only on need.
 - Fit: the group memory keeps only pointers (issue numbers).
 - Cost: issue text is not loaded at start; small facts (tool quirks, local paths) have no home.
 

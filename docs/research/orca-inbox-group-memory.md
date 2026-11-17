@@ -16,7 +16,7 @@ Labels: FACT (with source), INFERENCE (reasoned from facts), UNTESTED (not run; 
 6. The open-source memory tools (claude-mem, mem0, Basic Memory, the MCP memory server, Graphiti) mostly add a daemon, a vector store or a second model call. Basic Memory is the closest to plain Markdown, but its licence is AGPL-3.0. None of them removes the need for a curated index. FACT (F7 to F10).
 7. Entries that belong in a group memory: stable facts and rules of the group, owner decisions with their date, and the state of each running effort as one line plus a pointer. Entries that do not belong: anything derivable from code or git, and any long log. INFERENCE from F1 and the Claude Code rule that auto memory skips derivable content (F1).
 8. The current personal memory of the owner shows the failure mode: one flat index of 57 lines and about 12.5 KB, with some lines near 900 bytes, mixing rules, finished efforts and live efforts. It is under the 25 KB limit, but it grows each effort. FACT (F11).
-9. The cheapest design to test first is a group folder of Markdown files with one short index, wired in by `autoMemoryDirectory` in each repo's local settings, plus an append-only "state" file per effort so no two sessions write the same file. This is INFERENCE and UNTESTED (O1).
+9. A group folder of Markdown files with one short index, wired in by `autoMemoryDirectory` in each repo's local settings, plus an append-only "state" file per effort so no two sessions write the same file, needs only files and settings and no new tool. This is INFERENCE and UNTESTED (O1).
 10. The owner must decide: the folder layout, who may write which file, and whether a database or tool is worth its cost (section Options).
 
 ## Findings

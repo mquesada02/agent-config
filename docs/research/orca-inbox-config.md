@@ -129,7 +129,21 @@ FACT, sources in `docs/research/`: `orca-inbox-haiku.md` finds Haiku is not safe
 | Floors and ceilings for a value | A `userConfig` number with `min` and `max`; `maxEffortLevel` (lowest cap wins, from any scope) (F2, F5) | Only for those keys. The settings page shows the pattern "stricter value wins" for about a dozen keys (its "Exceptions" table). It is not a general feature. |
 | Hook reads a config | Nothing ready-made; the hook reads a file | No. Each hook (or one shared reader module) must do it. |
 | Typed config with validation | `claude plugin validate`, JSON schema for settings | For settings and plugin manifests only. |
-| Workflow-level config tools (Open source) | Our earlier survey (`orca-inbox-oss.md`) found no project that covers a per-level workflow configuration. We did not run a new open-source search for this ticket. | UNTESTED for this ticket. |
+| Workflow-level config tools (Open source) | Our earlier survey (`orca-inbox-oss.md`) found no project that covers a per-level workflow configuration. A new search for this ticket is below the table. | See the search below. |
+
+### Open-source tools for layered configuration (search on 2026-11-17)
+
+| Tool | License | Last activity | Levels | What it covers |
+|---|---|---|---|---|
+| Claude Code settings (https://code.claude.com/docs/en/settings) | not open source (INFERENCE) | docs current | Managed, user, shared project, project local, and `--settings` per session (FACT) | Model, permissions, hooks and environment. List keys merge across scopes; scalar keys take the highest scope; managed settings win (FACT). No group level and no review-round or workflow-step keys (FACT). |
+| Aider (https://aider.chat/docs/config/aider_conf.html) | Apache-2.0 (FACT, GitHub API) | last push 2026-05-22 (FACT) | Home folder, repo root, current folder; later files win (FACT) | `model`, `weak-model`, `editor-model`, `test-cmd`, `auto-test` (FACT). No review rounds or safety rules on that page (INFERENCE). |
+| Ruler (https://github.com/intellectronica/ruler) | MIT (FACT) | last push 2026-11-14 (FACT) | Global fallback, nearest project `.ruler/` folder, nested folders (experimental), sections per agent (FACT, README) | Distributes rules and MCP servers to many agents. No models, review rounds or test commands (INFERENCE). |
+| Rulesync (https://github.com/dyoshikawa/rulesync) | MIT (FACT) | last push 2026-11-17 (FACT) | Project, plus a `--global` mode; target tool chosen per run (FACT, README) | Generates rules, hooks, permissions, subagents and skills for each tool (FACT). No group level or models per role in the README (INFERENCE). |
+| Continue (https://docs.continue.dev/customize/deep-dives/configuration) | Apache-2.0 (FACT) | last push 2026-11-16 (FACT) | User file; the workspace file is deprecated (FACT) | An editor tool. Model roles are not on the page read (FACT). |
+
+- INFERENCE: no tool found has all three levels (global, project group, repo). None has a group level.
+- INFERENCE: tools with layered files (Claude Code, Aider, Continue) cover models, permissions or test commands. Tools that sync across agents (Ruler, Rulesync) cover rules, hooks and permissions. None lists review rounds or workflow steps as settings.
+- Not checked: Roo Code custom modes, OpenHands and other workflow frameworks.
 
 ## 5. Options for the owner
 

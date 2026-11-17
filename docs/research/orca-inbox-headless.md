@@ -19,7 +19,7 @@ Can coordinators or workers run without a terminal UI and keep the harness? Comp
 7. INFERENCE: removing the TUI saves terminal rendering, one pseudo-terminal and one open tab per session. It does not save model tokens: the context, the tools and the hooks are the same. No measurement exists; we ran none.
 8. FACT: `claude --bg` runs sessions with no terminal open. The owner can list, read, reply and attach. A permission dialog needs an attach. It is a research preview.
 9. GAP: no source says whether the audit reads a headless transcript the same way, or whether an Orca mailbox wake works for a headless coordinator. Both need a test.
-10. INFERENCE: the cheapest route that keeps the harness is Orca's own chat surface for workers. It needs no new code. It changes where the owner answers.
+10. INFERENCE: Orca's own chat surface for workers keeps the harness and needs no new code. It changes where the owner answers.
 
 ## Findings
 
@@ -113,6 +113,23 @@ Can coordinators or workers run without a terminal UI and keep the harness? Comp
 | Handoff for a headless session | None; auto-compact only (F7) | No |
 | Audit evidence from a headless transcript | None tested | Unknown (F7) |
 | Wake a headless coordinator on Orca mail | None tested; `Monitor` with `check --peek --wait` is a candidate (`orca-inbox-orca.md` 3.13) | Unknown |
+
+### Open-source projects (search on 2026-11-17)
+
+Sources: the GitHub API and each README. Where a README is silent on hooks, the cell says INFERENCE. No source code was read.
+
+| Project | License | Last release or activity | How it runs the agent | Hooks and settings | How a human answers |
+|---|---|---|---|---|---|
+| CloudCLI UI (https://github.com/siteboon/claudecodeui) | AGPL-3.0 | v1.37.9, 2026-11-16 | Web and mobile UI over Claude Code. INFERENCE: through the SDK or the CLI. | FACT (README): uses the same MCP servers, permissions, settings and sessions as Claude Code. INFERENCE: hooks load too. | Browser or phone UI; FACT (README): manages sessions remotely. |
+| claude-code-webui (https://github.com/sugyan/claude-code-webui) | MIT | 0.1.56, 2025-09-18; last push 2026-05-29 | FACT (README): needs the Claude CLI; streams chat from a local backend. | INFERENCE: the local CLI loads the settings. The README does not say. | FACT (README): permission dialogs on desktop and mobile. |
+| Happy (https://github.com/slopus/happy) | MIT | CLI beta 2026-10-09; last push 2026-11-17 | FACT (README): the CLI "wraps the Claude Code and Codex harnesses", with a relay server and a mobile app. | INFERENCE: it wraps the real harness, so hooks stay. The README does not say. | FACT (README): phone app with push notifications. |
+| opcode (https://github.com/winfunc/opcode) | AGPL-3.0 | v0.2.0, 2025-08-31; last push 2026-11-06 | FACT (README): desktop GUI that runs background agents. INFERENCE: it starts the CLI. | FACT (README): per-agent file and network permissions. Hooks: not stated. | Desktop GUI. |
+| Claude Squad (https://github.com/smtg-ai/claude-squad) | AGPL-3.0 | v1.0.20, 2026-08-20; last push 2026-11-13 | FACT (README): one tmux session per agent (a pseudo-terminal approach). | INFERENCE: the full terminal UI runs, so hooks and settings load. | FACT (README): terminal UI that switches between sessions. |
+| Claude Agent SDK for Python (https://github.com/anthropics/claude-agent-sdk-python) | MIT | v0.2.183, 2026-11-16 | SDK that drives Claude Code from code. INFERENCE: it starts the CLI as a subprocess. | INFERENCE: it can load project settings and hooks (see F-section on `settingSources`). | The host code answers, through permission callbacks. INFERENCE. |
+
+- FACT: three web or mobile front ends (CloudCLI UI, claude-code-webui, Happy) let a human approve tools from a phone or a browser.
+- INFERENCE: none of these projects routes questions from many workers into one shared inbox. Each is a per-session UI.
+- INFERENCE: the READMEs rarely say whether hooks load. A source or docs check is needed before the spec relies on any of them.
 
 ## Options for the owner
 
