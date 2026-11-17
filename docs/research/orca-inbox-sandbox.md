@@ -153,7 +153,7 @@ INFERENCE on order: O2 first (as a measured trial), with O3 as the fallback if O
 - How would `MemoryMax` kills show in the agent and in the audit? Not tested.
 - Is a docs-only or a lighter test path wanted? That is ticket 756, not this one.
 - Docker Sandboxes (`sbx`), E2B, Firecracker, Apptainer: no primary source read for resource caps.
-- Not researched, per option: substrate: cleanup of its sandboxes and volumes, and the fit with Orca terminals. microsandbox: cleanup of its sandboxes, and the fit with git worktrees. sandbox-runtime, bubblewrap, firejail, gVisor: cleanup and the fit with Orca terminals.
+- Not researched for any option except the systemd slice and Docker: the start cost per run, the cleanup rules, the fit with git worktrees and the fit with Orca terminals. A property is covered for such an option only where a finding or the F5 table states it.
 - Orca itself may offer a limit on workers or terminals (see `orca-inbox-orca.md` if it exists); not read here.
 
 ## Sources read and sources that failed
