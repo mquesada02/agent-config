@@ -1,0 +1,47 @@
+name: Rollback
+run-name: Rollback ${{ inputs.environment }} to ${{ github.ref_name }}
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to roll back
+        type: choice
+        options: [dev, staging, prod]
+permissions:
+  contents: read
+jobs:
+  roll-back:
+    name: Roll back
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # id-token: write lets the job assume the environment role with OIDC.
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check that the tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Assume the environment role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 3600
+      - name: Deploy the stored zip of the tag and verify
+        env:
+          DEPLOY_TARGET: lambda
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          FUNCTION: ${{ vars.LAMBDA_FUNCTION }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+          SHA: ${{ github.sha }}
+        run: ./scripts/deploy-and-verify.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"

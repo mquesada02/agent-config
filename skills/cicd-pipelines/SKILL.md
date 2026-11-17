@@ -37,6 +37,8 @@ The CI rule files (naming, job graph, cost, security and maintainability) load a
 - [review.md](review.md): the review steps, the report contract and the fix-on-approval steps.
 - [create.md](create.md): the create steps, the fill table, and the Dependabot and `security-audit.yml` texts.
 - [templates/single-package.yml](templates/single-package.yml) and [templates/monorepo.yml](templates/monorepo.yml): the two workflow templates that create mode fills.
+- [templates/deploy.yml](templates/deploy.yml), [templates/release.yml](templates/release.yml) and [templates/rollback.yml](templates/rollback.yml): the three CD workflow templates (`Deploy`, `Release` and `Rollback`) for an AWS Lambda app. They call the repo scripts of `templates/scripts/`.
+- `templates/scripts/`: the repo scripts that the CD templates call. `deploy-and-verify.sh` downloads the stored zip, checks its SHA-256 digest, deploys it (`DEPLOY_TARGET` is `lambda` or `terraform`) and checks the live version. Deploy and rollback share it. `check-staged.sh` fails unless the GitHub deployment record shows a successful staging deploy of the commit. The dry-run tests of the skill run both with fake `aws`, `gh`, `curl` and `terraform`.
 - [scripts/check_workflow.py](scripts/check_workflow.py): the structural assertion script. It takes a workflow and assertions and returns pass or fail. The create evals and the unit tests use it.
 - [scripts/grade_create_results.py](scripts/grade_create_results.py): the post-run grader of the create eval cases (structural assertions and the real actionlint).
 - [rules/naming.md](rules/naming.md): NAME-01 to NAME-09. Each rule has an id, a default severity, the rule, its check and its fix.

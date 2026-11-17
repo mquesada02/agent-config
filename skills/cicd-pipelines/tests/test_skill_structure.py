@@ -727,7 +727,7 @@ class SecurityRules(unittest.TestCase):
 
     def test_every_rule_line_of_a_pinned_action_equals_the_create_template_line(self):
         pinned = {}
-        for name in ("single-package.yml", "monorepo.yml"):
+        for name in ("single-package.yml", "monorepo.yml", "deploy.yml", "release.yml", "rollback.yml"):
             template = read(os.path.join(SKILL, "templates", name))
             for match in re.finditer(r"uses: ([\w.-]+/[\w.-]+)@[0-9a-f]{40} # \S+", template):
                 self.assertEqual(pinned.setdefault(match.group(1), match.group(0)), match.group(0), name)
@@ -864,6 +864,14 @@ class Router(unittest.TestCase):
     def test_the_router_links_every_module_that_exists(self):
         for module in module_files():
             self.assertIn(module, self.text, f"SKILL.md does not point to {module}")
+
+    def test_the_modules_list_names_the_cd_templates_and_the_template_scripts_folder(self):
+        modules = self.text[self.text.index("## Modules"):]
+        for name in ("templates/deploy.yml", "templates/release.yml", "templates/rollback.yml"):
+            self.assertIn(f"[{name}]({name})", modules)
+        self.assertIn("templates/scripts/", modules)
+        for script in sorted(os.listdir(os.path.join(SKILL, "templates", "scripts"))):
+            self.assertIn(script, modules)
 
     def test_the_create_branch_points_to_the_create_steps_and_is_not_marked_as_unbuilt(self):
         self.assertTrue(os.path.exists(os.path.join(SKILL, "create.md")))
