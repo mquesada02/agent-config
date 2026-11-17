@@ -86,15 +86,15 @@ All counts come from one script that I ran over the local session transcripts an
 
 ## Proposals 740 to 747, judged again
 
-These are the 8 proposals of `docs/research/agent-workflow-comparison.md`, section 6 (issue 740 = P1 … issue 747 = P8). I read each issue and checked that it matches the section. Each reading below rests on two things: my load data (F1 to F8 above) and facts from the five other research files of map 752. I decide nothing.
+These are the 8 proposals of `docs/research/agent-workflow-comparison.md`, section 6 (issue 740 = P1 … issue 747 = P8). I read each issue and checked that it matches the section. Each reading below rests on two things: my load data (F1 to F8 above) and facts from the five other research files of map 752.
 
-**Source notes.** A note such as (reliab F3) means the file `docs/research/orca-inbox-reliab.md`, section F3. The five files are `orca` (ticket 753), `oss` (754), `tests` (756), `reliab` (757) and `haiku` (758). All five sit next to this file in `docs/research/`. I did not re-run any command from those files. Each fact keeps the mark (FACT, INFERENCE) that its file gave it. "Reading" lines are my INFERENCE.
+**Source notes.** A note such as (reliab F3) means the file `docs/research/orca-inbox-reliab.md`, section F3. The five files sit next to this file in `docs/research/`: `orca` (ticket 753), `oss` (754), `tests` (756), `reliab` (757), `haiku` (758). Each fact keeps the mark (FACT, INFERENCE) that its file gave it. "Reading" lines are my INFERENCE.
 
 ### 740 (P1): workers log rulings and ask only on four stop conditions
 
 - **My load data.** Workers sent 1,422 `ask` commands; coordinators sent 813 replies (F6). Owner questions: 3,363, of which 88 percent took the recommended option (F3).
 - **Other files.**
-  - FACT: Orca's own worker preamble and `ask --help` say "end your turn" after an ask, while `CLAUDE.md` section 7 says never to end it (reliab F1). Fewer asks mean fewer chances for this conflict.
+  - FACT: Orca's own worker preamble and `ask --help` say "end your turn" after an ask, while `CLAUDE.md` section 7 says never to end it (reliab F1). Fewer asks mean fewer chances for this conflict; reliab O1 removes the conflict itself.
   - FACT: four October cases of 1.5 to 7 hours idle after an ask (reliab F3). After the rules were added, turn-end cases still happened on 5 later days, with no work lost (reliab F3, F4).
   - FACT: Gas Town routes an escalation "Deacon -> Mayor -> Overseer based on severity"; "Each tier can resolve OR forward" (oss 3.2). Squadra gives the owner "the options, a recommendation and the exact words to answer" (oss 3.5). Both are README-level sources.
 - **Reading.** Strong fit for the worker-ask load. Two limits. (1) P1 keeps an ask for an irreversible action and keeps the stop at a review cap and at a failed audit (prior file, P1 "Change" and "Cost"). My data says merge (195), cap (178) and failed-audit (204) questions are 577 of 3,363. P1 as written does not remove them. (2) P1 lowers the number of asks but does not fix a turn-end with no ask open (reliab F4 and its sources section).
@@ -198,7 +198,7 @@ Each option has its cost. They are not exclusive.
 - Ledger counts come from the commands in transcripts, not from `audit ledger show` of each worktree (most worktrees are gone). Extension counts include repeated commands.
 - Haiku or model choice is out of scope here (ticket 758); I only cite its facts in the judgement section.
 - No count links an owner question to the per-ticket spec step, to a cause of a cap, or to a dependent ticket. Judgements of 743, 745 and 747 are limited by this.
-- The judgement section relies on the five other files as written. I did not re-run their commands or re-read their primary sources. Their own gaps hold (for example orca: cross-Run send untested; reliab: one real restart recovery; haiku: one run per cell; tests: the 729 false pass untested).
+- The judgement section relies on the five other files as written. I did not re-run their commands or re-read their primary sources. Their own gaps hold (see the Gaps section of each file).
 
 ## Sources read and sources that failed
 

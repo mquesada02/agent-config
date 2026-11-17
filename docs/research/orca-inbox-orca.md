@@ -46,7 +46,7 @@ What does Orca offer today that an inbox and a central coordinator per project g
 - FACT: `orchestration inbox [--limit] [--terminal] [--run] [--full]`. "Without --terminal or --run it lists every mailbox on this Orca. --run <run_id> keeps all mail in that Run, including mail to its workers; --terminal run:<run_id> keeps only the coordinator mailbox." Rows preview each body in 200 characters. (notes of `inbox`.)
 - FACT: `check --all` returns recent messages for the handle and `--format` renders them as local text (notes of `check`).
 - FACT: "To find mail after losing context, run orca orchestration inbox --terminal <mailbox> --limit <n> --full and name the mailbox: run:<run_id> ... or dispatch:<dispatch_id>" (note of `check`).
-- INFERENCE: `inbox` is the closest thing to a cross-Run inbox that Orca has today. It lists mail; it does not rank it, filter it by priority or tell what the owner must answer. `inbox` was not run (rule of this task: no orchestration command except the preamble commands).
+- INFERENCE: `inbox` is the closest thing to a cross-Run inbox that Orca has today. It lists mail; it does not rank it, filter it by priority or tell what the owner must answer. `inbox` was not run (section 7).
 - FACT: the whole database is local SQLite: `orchestration.db` in Orca's config folder (file seen in the config folder listing). Tables seen in the bundle include `messages`, `runs`, `dispatch_contexts`, `tasks`. This is state of one Orca on one machine.
 
 ### 3.4 Ask, reply, escalation

@@ -2,7 +2,7 @@
 
 Ticket 754 of map 752 (request 750). Date of reading: 2026-11-17. Builds on `docs/research/agent-workflow-comparison.md` (issue 723); it does not repeat that file.
 
-Marks: **FACT** = taken from the source named. **INFERENCE** = our reading. Star counts, `pushed_at`, licence (SPDX) and release data come from the GitHub API (`gh api repos/OWNER/REPO` and `.../releases/latest`) on 2026-11-17, unless a line says otherwise. Doc quotes were read through a fetch tool that summarises pages with a small model, so they are near-verbatim, not byte-exact. Orca facts come from the Orca findings file of ticket 753 (`docs/research/orca-inbox-orca.md` on branch `research/orca-inbox-orca`, Orca app version 1.4.261), cited as "Orca §x.y". Its own marks carry over: a statement marked FACT there is a FACT here; INFERENCE and UNTESTED stay as marked. Each "vs Orca" line below is our comparison (INFERENCE); only the Orca side of it is a FACT, and only when it cites an Orca section.
+Marks: **FACT** = taken from the source named. **INFERENCE** = our reading. Star counts, `pushed_at`, licence (SPDX) and release data come from the GitHub API (`gh api repos/OWNER/REPO` and `.../releases/latest`) on 2026-11-17, unless a line says otherwise. Doc quotes were read through a fetch tool that summarises pages with a small model, so they are near-verbatim, not byte-exact. Orca facts come from the Orca findings file of ticket 753 (`docs/research/orca-inbox-orca.md` on branch `research/orca-inbox-orca`, Orca app version 1.4.261), cited as "Orca §x.y". Its marks (FACT, INFERENCE, UNTESTED) carry over unchanged. Each "vs Orca" line below is our comparison (INFERENCE); only the Orca side of it is a FACT, and only when it cites an Orca section.
 
 ## 1. Question
 
@@ -10,7 +10,7 @@ Which public projects solve: (a) one inbox for questions from many agent session
 
 ## 2. Short answer
 
-1. No project does all five. The five problems split across different projects.
+1. No project does all five; the problems split across different projects.
 2. Inbox (a): cmux "Feed" is the best design reference. Its hooks park an agent request until the human answers in a UI or a desktop notification. amux, HumanLayer, Happy and Nimbalyst are next.
 3. Central coordinator over repos (b): only Gas Town (a Mayor over many "rigs") documents it. Ruflo and Agor claim it; their pages give little detail.
 4. Routing (c): only Gas Town documents an agent-first chain with a human last (severity, timeouts, re-escalation). mcp_agent_mail has a message bus but no escalation. Claude Code agent teams are one team per session, no nesting.
@@ -190,7 +190,7 @@ Each option is a candidate for a decision ticket. Costs are INFERENCE.
 
 ## 6. Gaps and open questions
 
-- The sweep of section 3.5 ran with `gh search repos` on nine word sets. It finds only repositories that match all the words in name, description or topics, so a project with other wording is missed. Only the top 12 to 15 hits by stars were listed per set. Hits other than the eight in the table were not read.
+- The sweep of section 3.5 (`gh search repos`, nine word sets) finds only repositories that match all the words in name, description or topics, so a project with other wording is missed. Only the top 12 to 15 hits by stars were listed per set. Hits other than the eight in the table were not read.
 - No web search ran in the inbox subagent; non-GitHub projects (for example products on other hosts) were not searched.
 - Not read: Novadeck's wiring of its inbox and its agent messaging (hooks, MCP or process reading); Squadra's handling of several registries; CAO's supervisor tools and any human-escalation docs; Hermes IDE messaging; apra-fleet escalation.
 - Not read: cmux multi-machine and phone-push docs; the Happy permission flow; amux messaging code; Beads docs; LangGraph interrupt docs; langgraph-swarm; AutoGen (status not verified; the API licence field shows the docs licence); Claude Code Remote Control approval and push lines; the allow and deny rule syntax page; MCP elicitation; Pushover, Slack bots, `notify-send`; Conductor (closed source); Agent Teams versus a central coordinator in practice.
