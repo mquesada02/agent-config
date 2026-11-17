@@ -13,7 +13,7 @@ For which workflow roles (web fetch, read-only search, inbox routing, mechanical
 3. Main worker: keep Sonnet. Terminal-Bench 4.0 is 39.2% for Haiku and 70.6% for Sonnet, and Anthropic says Sonnet and Opus "remain better choices for complex agentic coding tasks".
 4. API price: Haiku 5.5 is 20 times cheaper than Sonnet 5.5 per token for prompts up to 100,000 tokens, and 4 times cheaper above.
 5. Subscription: the only public statement is "Sonnet more than Haiku". No number exists, so the quota saving is UNVERIFIED.
-6. Speed: the model page says "Fastest" against "Fast". In our test Haiku was NOT faster per task (slower in 6 of 8 pairs), because it wrote more output and used more turns.
+6. Speed: the model page says "Fastest" against "Fast". In our test Haiku was NOT faster per task (slower in 7 of 8 pairs; task 1 is a near tie), because it wrote more output and used more turns.
 7. Correction to a common premise: the built-in Explore subagent does not use Haiku by default.
 
 ## 3. Findings

@@ -116,8 +116,8 @@ Read:
 - `.claude/CLAUDE.md` (declared test command), `CLAUDE.md` sections 6 to 8, 12 and 15 (as loaded in the session).
 - `docs/research/agent-workflow-comparison.md` (whole file).
 - Issues 752, 756 and 729 (REST `gh api`), comments of 729 (none).
-- The `~/.claude/projects` transcripts (aggregate scan, 20019 files) and the audit runtime records (852 with an S2 item, aggregates).
-- This session's own transcript row for an auto-backgrounded call and its notice.
+- The local session transcripts (aggregate scan, 20019 files) and the audit runtime records (852 with an S2 item, aggregates).
+- A local transcript row of an auto-backgrounded call and its notice (described, not quoted).
 - Static counts of test files and `def test_` lines.
 
 Failed or not done:

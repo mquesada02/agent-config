@@ -10,7 +10,7 @@ Why do workers end a turn while an `ask` is open? Why did a PC restart lose a wo
 
 1. The open-ask cases have a built-in cause: Orca's own worker preamble and CLI help tell a worker to end its turn after `ask`, while `CLAUDE.md` section 7 says never to end it. The two instructions conflict.
 2. Orca stores an ask as mail and wakes the worker with the reply. Recent logs show the wake working. The old "nobody wakes the worker" failures (October) were found before the coordinator rule "read the terminal after each reply" existed.
-3. Other turn-ends are a separate failure: a worker ends its turn with no ask open and no `worker_done` (three cases seen in local logs).
+3. Other turn-ends are a separate failure: a worker ends its turn with no ask open and no `worker_done` (two cases seen in local logs).
 4. The restart case: after the PC restart Orca closed the old dispatch as lost, and the Task went back to `ready`. `--retry-of` accepts only a failed or blocked Task, so it was refused (`task_not_startable`).
 5. The recovery that worked in the one real restart case: a plain `worker-start --task` (no `--retry-of`) on the same worktree, plus a resume note. It needed the coordinator, not the owner.
 6. Not found: any Orca code that restarts a dead worker terminal, or that expires a pending ask. A Stop hook can block a turn end today (the context hook does it), but nothing exposes the "open ask" state to a hook (INFERENCE).

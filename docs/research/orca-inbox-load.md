@@ -19,13 +19,13 @@ What does the owner do by hand today, and how often? Count, by type, the owner q
 
 ## Findings (with sources)
 
-All counts come from one script that I ran over the local session transcripts and from `gh`. The scripts are in my scratchpad, not in the repo. I publish counts and types only. Method limits are in "Gaps".
+All counts come from one script that I ran over the local session transcripts and from `gh`. The scripts are not in the repo. I publish counts and types only. Method limits are in "Gaps".
 
 ### F1. Scope of the data
 
-- FACT: 1,157 top-level sessions (subagent files excluded). Source: transcripts under `~/.claude/projects` (command: a Python script over every `*.jsonl`).
+- FACT: 1,157 top-level sessions (subagent files excluded). Source: the local session transcripts (command: a Python script over every top-level transcript file).
 - FACT: roles, by a rule on the content: 325 plain sessions, 129 coordinators, 703 workers.
-- FACT: 3 groups, by repo path: a work group of about 20 repos (253 sessions), a second product group of 4 repos (170), a personal group of 8 repos (734).
+- FACT: 3 project groups, by repo path: a work group, a second product group and a personal group.
 - FACT: the data spans 2026-09-11 to 2026-11-17 with 38 active days. The week of 2026-11-09 holds 517 sessions and 1,856 prompts, the peak.
 
 ### F2. Prompts, by size
@@ -70,7 +70,7 @@ All counts come from one script that I ran over the local session transcripts an
 
 ### F6. Orca messages and broadcasts
 
-- FACT: coordinators received 1,496 "You have N orchestration message(s)" notices (all roles together, by group: personal 1,003, second 170, work 733; the sum is higher because workers also get notices, 410). Each notice interrupts the coordinator turn, not the owner directly.
+- FACT: coordinators received 1,496 "You have N orchestration message(s)" notices; workers received 410 more (1,906 in all roles). Each notice interrupts the coordinator turn, not the owner directly.
 - FACT: workers sent 1,422 `ask` commands and 758 `worker_done`; coordinators sent 813 replies and started 896 workers (counts include retries; one worker can have several terminals).
 - INFERENCE: asks sent (1,422) are more than replies (813): some asks were answered through another path (terminal send, or the owner typed in the worker terminal; 194 prompts exist in worker terminals), and some are counted from retries. The data does not say how many asks reached the owner.
 - FACT: restart broadcasts ("Orca or the PC restarted…"): 295 in total (plain 62, coordinator 118, worker 115). Each restored session must be told what to do again.
@@ -88,14 +88,14 @@ All counts come from one script that I ran over the local session transcripts an
 
 These are the 8 proposals of `docs/research/agent-workflow-comparison.md`, section 6 (issue 740 = P1 … issue 747 = P8). I read each issue and checked that it matches the section. Each reading below rests on two things: my load data (F1 to F8 above) and facts from the five other research files of map 752. I decide nothing.
 
-**Source notes.** A note such as (reliab F3) means the file `docs/research/orca-inbox-reliab.md`, section F3. The five files are `orca` (ticket 753), `oss` (754), `tests` (756), `reliab` (757) and `haiku` (758). I read them on branches `research/orca-inbox-<slug>` with `git show origin/<branch>:docs/research/orca-inbox-<slug>.md`. I did not re-run any command from those files. Each fact keeps the mark (FACT, INFERENCE) that its file gave it. "Reading" lines are my INFERENCE.
+**Source notes.** A note such as (reliab F3) means the file `docs/research/orca-inbox-reliab.md`, section F3. The five files are `orca` (ticket 753), `oss` (754), `tests` (756), `reliab` (757) and `haiku` (758). All five sit next to this file in `docs/research/`. I did not re-run any command from those files. Each fact keeps the mark (FACT, INFERENCE) that its file gave it. "Reading" lines are my INFERENCE.
 
 ### 740 (P1): workers log rulings and ask only on four stop conditions
 
 - **My load data.** Workers sent 1,422 `ask` commands; coordinators sent 813 replies (F6). Owner questions: 3,363, of which 88 percent took the recommended option (F3).
 - **Other files.**
   - FACT: Orca's own worker preamble and `ask --help` say "end your turn" after an ask, while `CLAUDE.md` section 7 says never to end it (reliab F1). Fewer asks mean fewer chances for this conflict.
-  - FACT: four October cases of 1.5 to 7 hours idle after an ask (reliab F3). After the rules were added, turn-end cases still happened on 5 to 6 later days, with no work lost (reliab F3, F4).
+  - FACT: four October cases of 1.5 to 7 hours idle after an ask (reliab F3). After the rules were added, turn-end cases still happened on 5 later days, with no work lost (reliab F3, F4).
   - FACT: Gas Town routes an escalation "Deacon -> Mayor -> Overseer based on severity"; "Each tier can resolve OR forward" (oss 3.2). Squadra gives the owner "the options, a recommendation and the exact words to answer" (oss 3.5). Both are README-level sources.
 - **Reading.** Strong fit for the worker-ask load. Two limits. (1) P1 keeps an ask for an irreversible action and keeps the stop at a review cap and at a failed audit (prior file, P1 "Change" and "Cost"). My data says merge (195), cap (178) and failed-audit (204) questions are 577 of 3,363. P1 as written does not remove them. (2) P1 lowers the number of asks but does not fix a turn-end with no ask open (reliab F4 and its sources section).
 
@@ -205,9 +205,9 @@ Each option has its cost. They are not exclusive.
 Read:
 - `docs/research/agent-workflow-comparison.md` (this repo), sections 1 to 6.
 - Issue 752 (map) and issue 755 (ticket), and issues 740 to 747, through `gh api repos/<this repo>/issues/<n>` (the `gh issue view` command fails on a GraphQL deprecation).
-- Local transcripts: every top-level `*.jsonl` under `~/.claude/projects` (about 1,157 sessions with data), read by Python scripts. Command output shown above.
+- Local session transcripts: every top-level transcript file (about 1,157 sessions with data), read by Python scripts. Command output shown above.
 - `gh pr list --state merged` for this repo (count of 211 merged PRs after 2026-10-12).
-- The five other research files of map 752, from branches `research/orca-inbox-orca`, `-oss`, `-tests`, `-reliab` and `-haiku` (`git show origin/<branch>:docs/research/orca-inbox-<slug>.md`), each in full.
+- The five other research files of map 752 (`docs/research/orca-inbox-orca.md`, `-oss.md`, `-tests.md`, `-reliab.md` and `-haiku.md`), each in full.
 
 Failed or not done:
 - The first `gh api` call for issue 755 was blocked once by a hook that changed the command, and succeeded on retry.
