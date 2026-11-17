@@ -32,6 +32,7 @@ The CI rule files (naming, job graph, cost, security and maintainability) load a
 
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the repo files and makes read-only `gh api` calls. It reads the dated offline Node list from [tools.md](tools.md) when it has no network.
 - [scripts/check_pins.py](scripts/check_pins.py): the SEC-01 pin check. It makes read-only `gh api` calls and tells whether each pinned SHA is the commit of its version comment tag.
+- [scripts/protect_write.py](scripts/protect_write.py): the protection write script. `--read`, `--show` and `--apply` make every protection read and write of the protection step in "Fix on approval" in [review.md](review.md), with the `gh` CLI. Run it as one plain command (no `cd`, `;`, `&&` or pipe), as the intake script, so that a permission rule can match it. The main session runs it, never a subagent. It is the only way that the skill writes branch protection, rulesets or environments.
 - [tools.md](tools.md): detection and install hints for actionlint, zizmor and pinact, the zizmor-to-SEC mapping, the output merge, the SHA lookup and the dated offline list of supported Node majors (the intake script reads this list with no network).
 - [review.md](review.md): the review steps, the report contract and the fix-on-approval steps.
 - [create.md](create.md): the create steps, the fill table, and the Dependabot and `security-audit.yml` texts.

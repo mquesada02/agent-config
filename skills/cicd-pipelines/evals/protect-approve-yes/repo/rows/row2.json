@@ -1,0 +1,27 @@
+{
+  "path": "repos/example-org/example-app/environments/prod",
+  "method": "PUT",
+  "seen": {
+    "wait_timer": 0,
+    "prevent_self_review": false,
+    "reviewers": [],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true
+    }
+  },
+  "proposed": {
+    "wait_timer": 0,
+    "prevent_self_review": true,
+    "reviewers": [
+      {
+        "type": "Team",
+        "id": 1001
+      }
+    ],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true
+    }
+  }
+}
