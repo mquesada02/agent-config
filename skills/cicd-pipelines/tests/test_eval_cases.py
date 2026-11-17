@@ -1261,6 +1261,11 @@ class CdFixtures(unittest.TestCase):
     def test_the_cd_cases_exist(self):
         self.assertEqual(len(self.cases), CD_CASE_COUNT)
 
+    def test_the_four_create_cd_cases_exist(self):
+        for name in ("create-cd-lambda-app", "create-cd-changesets-library", "create-cd-monorepo-publish",
+                     "create-cd-terraform"):
+            self.assertIn(name, self.cases)
+
     def test_no_cd_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():
             for form in GIT_URLS:

@@ -17,6 +17,8 @@ ALL_CASES = CASES + CD_CASES
 CI_BASE = {"create-cd-lambda-app": "create-npm-app", "create-cd-terraform": "create-npm-app",
            "create-cd-changesets-library": "create-pnpm-library",
            "create-cd-monorepo-publish": "create-pnpm-turbo-monorepo"}
+TARGET = {"create-cd-lambda-app": "AWS Lambda", "create-cd-changesets-library": "AWS Lambda",
+          "create-cd-monorepo-publish": "AWS Lambda", "create-cd-terraform": "Terraform"}
 RELEASE = os.path.join(SKILL, "templates", "release.yml")
 WF = ".github/workflows/"
 FACTS = ["default_branch", "package_manager", "node_version_app", "engines", "scripts", "package_kind", "os_claims",
@@ -339,8 +341,7 @@ class CdCases(unittest.TestCase):
     def test_the_prompt_names_the_deploy_target(self):
         for name in CD_CASES:
             text = read(os.path.join(case_dir(name), "prompt.md"))
-            target = "Terraform" if name.endswith("terraform") else "AWS Lambda"
-            self.assertIn(f"The deploy target is {target}.", text, name)
+            self.assertIn(f"The deploy target is {TARGET[name]}.", text, name)
 
     def test_the_recorded_intake_has_no_deploy_target_and_a_build_script(self):
         for name in CD_CASES:
@@ -381,16 +382,15 @@ class CdCases(unittest.TestCase):
     def test_the_files_that_the_steps_give_pass_the_asserts_of_each_case(self):
         for name in CD_CASES:
             asserts = load(name, "expect.json")["asserts"]
-            terraform = name.endswith("terraform")
+            fill = terraform_fill if TARGET[name] == "Terraform" else str
             release = read(RELEASE)
             if "text=npm ci" in asserts[WF + "release.yml"]:
-                release = (release.replace("      - name: Set up pnpm\n", "", 1)
-                           .replace("        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1\n", "", 1)
+                release = (re.sub(r"      - name: Set up pnpm\n        uses: pnpm/action-setup@.*\n", "", release, count=1)
                            .replace("pnpm install --frozen-lockfile", "npm ci")
                            .replace("publish: pnpm run release", "publish: npm run release"))
             files = {WF + "ci.yml": filled(name, cd_form),
-                     WF + "deploy.yml": terraform_fill(read(DEPLOY)) if terraform else read(DEPLOY),
-                     WF + "rollback.yml": terraform_fill(read(ROLLBACK)) if terraform else read(ROLLBACK),
+                     WF + "deploy.yml": fill(read(DEPLOY)),
+                     WF + "rollback.yml": fill(read(ROLLBACK)),
                      WF + "release.yml": release}
             for path, text in files.items():
                 self.assertEqual(check(text, *asserts[path]), (0, ["PASS"]), (name, path))

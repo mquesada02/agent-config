@@ -250,7 +250,8 @@ def terraform_block():
 def terraform_fill(text):
     """A CD template filled for the Terraform target, by the 4 changes of the "Terraform steps" section."""
     text = text.replace("DEPLOY_TARGET: lambda", "DEPLOY_TARGET: terraform")
-    text = re.sub(r"(      - name: Deploy the [^\n]*\n)", lambda match: terraform_block() + match.group(1), text)
+    block = terraform_block()
+    text = re.sub(r"(      - name: Deploy the [^\n]*\n)", lambda match: block + match.group(1), text)
     text = text.replace("      - name: Check out the deploy script\n", "      - name: Check out the repo\n")
     text = text.replace("          sparse-checkout: scripts\n", "")
     return text.replace("vars.LAMBDA_FUNCTION", "vars.DEPLOY_NAME")
@@ -340,7 +341,8 @@ class CdStepOne(unittest.TestCase):
         for needle in ("(even for \"both\")", "write no `ci.yml`, no Dependabot file and no `security-audit.yml`",
                        "the final message holds report rows and no file is edited", "COST-01 (CD part)",
                        "`workflow_call` trigger with no `code` output", "One row names the rule GRAPH-06",
-                       "the severity of its rule", "The fix-on-approval flow edits the CI file after the owner approves"):
+                       "the severity of its rule", "When the CI file lacks the CD part",
+                       "The fix-on-approval flow edits the CI file after the owner approves"):
             self.assertIn(needle, self.step)
 
     def test_the_rules_are_in_the_spec_order(self):

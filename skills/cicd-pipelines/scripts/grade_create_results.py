@@ -10,7 +10,8 @@ ran with --keep-temp), takes each fenced `yaml` block under a `### <path>` headi
 section, and runs check_workflow.py on it with the assertions that the `asserts` object of
 DIR/<case>/expect.json lists for that path. It also runs the real `actionlint` on each written workflow
 block when actionlint is on PATH (all the workflow blocks of a run sit together under `.github/workflows/`
-of one temp folder, so a local reusable workflow call resolves). A path that the case asserts and the message does not show fails the run.
+of one temp folder, so a local reusable workflow call resolves).
+A path that the case asserts and the message does not show fails the run.
 A missing actionlint prints `NOT RUN actionlint: not on PATH` and does not fail the run.
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failed check, one line "<case>#<n>: PASS|FAIL"
 for each run, then PASS or FAIL. Exit code: 0 pass, 1 fail, 2 usage error or unreadable result.
