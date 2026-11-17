@@ -84,7 +84,7 @@ Notes:
 - Options, unranked:
   - D1. Accept `2>&1` and `> file` after the command when the call is a background run with an exit 0 notice (the exit code is the command's own). Stops catching: nothing about success. A redirect to a file hides output from the transcript; the session loses the printed summary (no change for S2).
   - D2. Treat `;` like `&&` when the declared command is last (the exit code is the command's). Stops catching: nothing about the declared command's result.
-  - D3. Refuse pipes always (keep today). A pipe's exit code is the last command's unless `pipefail` is set, so `| tail` can hide a failure. Keep it.
+  - D3. Refuse pipes always (keep today). A pipe's exit code is the last command's unless `pipefail` is set, so `| tail` can hide a failure. Stops catching: nothing new; it keeps refusing passing runs that use a pipe.
   - D4. Name the refused form in the fail text (a list of: extra step before, extra step after, redirect, pipe, stale copy, outside worktree). Stops catching: nothing; costs a few lines and tests.
 
 ### 1.6 Case E: other ways a passing run fails S2 (FACT)
@@ -146,13 +146,13 @@ Sample: 775 stored records (199 for this repo, 576 for other repos of the owner)
 | S7 | every subagent and worker runs on a Sonnet model (section 9) | 3 / 7 / 10 | 5 "no assistant row with a model" or unreadable (not a violation) | 1 | 5 ran on Haiku or Opus |
 | S8 | conventional commit headers, no attribution line (section 8) | 0 / 26 / 26 | 26 of 26 other repos: 17 records show merge-commit headers (20 of 26 records date before the merge exemption of #287), 10 show `revert` headers, others ticket-style or comma-scope headers; 3 records have a human co-author line | 0 | none |
 | S9 | no recursive `rm`, no `docker prune`, test runners with at most 2 workers (sections 13, 14, 15) | 19 / 77 / 96 | by evidence row (103 unique rows): 61 "cannot split the command", 50 of those commands ran fine (not a violation); 15 flag-value rows (a value like `2` followed by a backtick or colon) | 8 | 17 of 27 `rm` rows use `rm -r` as a command word (5 this repo, 12 other); 5 other-repo `rm` rows were denied before running |
-| S10 | each Blocking finding quotes a line that reviewers wrote (section 7 plan-review rule) | 0 / 1 / 1 | not examined | 0 | 1 linked finding with no quote |
+| S10 | each Blocking finding quotes a line that reviewers wrote (section 7 plan-review rule) | 0 / 1 / 1 | 0 of 1 false; 1 not classifiable as false: 9 linked findings have no quote (INFERENCE: they may predate the quote rule; the record has no date for the finding) | 0 | 1 (a linked ledger with 9 unquoted findings) |
 | L1 | finding types follow the section 6 evidence rules | 6 / 10 / 16 | judgement; see 2.3 | 0 | reasons with a quote missing (pre-dispatch 8 times) |
 | L2 | each review phase ran on the right diff | 3 / 10 / 13 | 3 of 3 this repo cascade from S6 or XC ("evidence unavailable") | 1 | none separate from S6 and XC |
-| L3 | the done report lists the deferred Minor findings | 0 / 10 / 10 | not examined | 0 | 10 reports without the list |
+| L3 | the done report lists the deferred Minor findings | 0 / 10 / 10 | 0 of 10 false; 8 real (the report omits 1 to about 20 deferred findings of the ledger, read from the auditor text); 2 not classifiable (no ledger to compare) | 0 | 8 |
 | L4 | no claim in the done report contradicts the evidence | 5 / 23 / 28 | 4 of 5 this repo, and 10 of 23 other, only repeat an S2 fail | 3 | 1 report claimed the full command while the runs lacked a folder |
 | L5 | the small-task estimate was right | 8 / 10 / 18 | 4 of 8 this repo are 74 to 147 changed lines, which pass the current 150-line rule; the brief then said about 50 | 0 | 4 are 167 to 331 lines |
-| L6 | a ticket has its spec link and plan-review rounds | 0 / 18 / 18 | not examined (tickets in an external tracker) | 0 | unknown |
+| L6 | a ticket has its spec link and plan-review rounds | 0 / 18 / 18 | 4 of 18 look false (the report says the plan-review ran, but its evidence is outside the ledger and has no link event: another branch, issue comments, a local spec); 9 real (the report itself says it took the small-task path or ran no plan-review, which section 7 forbids for a ticket); 5 not classifiable (no ledger, a research ticket, or no statement in the report about plan-review) | 0 | 9 |
 | pre-dispatch (96 records) | S3, S5, S7, XC, S10, L1 before dispatch | 17 fails: L1 10, S5 4 (2 SETUP), XC 4, S3 3, S7 3 | S3 "no round event" on a research-only map (issue 773): 1; XC "not a subagent of an audited transcript" 2 (cause not read); 2 SETUP | not measured | L1 8 (Blocking findings with no quote), S7 3, S5 2 (past cap) |
 
 (Overrides: the 12 PRs and their failed items are listed in 2.2. A PR with several failed items is counted once per item. S2 counts: PRs 739 and 797.)
@@ -176,7 +176,7 @@ Sample: 775 stored records (199 for this repo, 576 for other repos of the owner)
 - **L1.** The auditor fails a Minor finding that has the evidence of a Blocking one, although the section 6 text says "The loop session decides the final type". Option: keep; or restrict L1 to the written evidence rules and not to type judgement. What the second stops catching: a Blocking bug filed as Minor to avoid a verifier.
 - **L4.** It repeats S2: 4 of 5 fails here and 10 of 23 in other repos restate an S2 fail. If S2 is fixed, these go away. The one real catch is a claim about the full declared command that the runs did not support.
 - **L5.** The brief said about 50 lines for part of the period and CLAUDE.md now says about 150. Four of the eight fails here are 74 to 147 lines. Option: keep the single source (the brief reads the number from CLAUDE.md). What it stops catching: nothing; removes drift.
-- **L6, L3.** Not examined in detail. L6: 18 fails in other repos where tickets live in an external tracker; L3: 10 reports with no deferred list.
+- **L6, L3, S10.** Classified from the auditor text in the record (29 fails, all in other repos). L6 (18): 9 real, 4 look false, 5 not classifiable. L3 (10): 8 real, 0 false, 2 not classifiable because no ledger exists. S10 (1): 0 false, 1 not classifiable as false. An option for L6: let the session write the link event to the plan-review ledger; what that stops catching: nothing, it only fixes the 4 form cases.
 - **Pre-dispatch.** One structural false fail: S3 on a map with no spec yet (issue 773). Another: "no ledger" on a fresh repo. The L1 and S7 fails match real rule breaks.
 
 ### 2.4 How other agent workflows check evidence (FACT from `agent-workflow-comparison.md`)
@@ -192,7 +192,7 @@ That document found that, in the pages read, no public workflow keeps an audit r
 - Declarations: 11 versions found in the git history of the declaring files.
 - Overrides: methods 1 and 2 in 2.2. PR data from `gh pr list` (226 PRs of this repo, read-only). Records joined to PRs by branch name and by the last record before the PR creation time.
 - S9 rows: each evidence line (file and row) was opened, and the tool result checked for a hook denial or an error. `rm` text was split into "command word" and "text inside another command" by a regular expression (it may miss forms; counts are approximate).
-- False fail judgement: by evidence text and path patterns for S1, S8, S7, S9, S5, S6, XC; by transcript for S2 of this repo (4 of 4 looked at; 1 undetermined); by evidence text of the auditor for L items. Other repos' S2 declared fails (21) were not classified: their declared commands differ and their transcripts were not scanned for them.
+- False fail judgement: by evidence text and path patterns for S1, S8, S7, S9, S5, S6, XC; by transcript for S2 of this repo (4 of 4 looked at; 1 undetermined); by evidence text of the auditor for L items (the L3, L6 and S10 sample is 29 of 29 fails, classified from the record text alone; `.ledger.txt` and `.sessions.txt` side files are not in the store, which holds `ledger-*.jsonl` files). Other repos' S2 declared fails (21) were not classified: their declared commands differ and their transcripts were not scanned for them.
 
 ## Gaps and open questions
 
