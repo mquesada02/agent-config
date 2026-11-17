@@ -548,6 +548,9 @@ class IssueFilingAllowRuleTest(RuleTextCase):
     def test_the_entry_allows_create_only(self):
         self.assert_in(self.entry, "Create only: an edit, close, comment, reopen or label change of an existing issue")
 
+    def test_the_create_only_clause_excludes_only_repos_that_the_rules_do_not_name(self):
+        self.assert_in(self.entry, "a command for a repo that these rules do not name, and any call that the transcript shows as made by a subagent do not match.")
+
     def test_the_other_entries_and_the_subagent_soft_deny_stay(self):
         self.assertEqual([entry.split(":")[0] for entry in self.auto_mode["allow"]],
                          ["$defaults", "Orca Worker Handover", "Orca Successor Takeover", "Issue Filing"])
