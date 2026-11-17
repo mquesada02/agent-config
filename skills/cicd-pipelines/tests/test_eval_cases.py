@@ -3,6 +3,8 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 import unittest
 
 from report_fixtures import make_report, row
@@ -97,7 +99,7 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
                       "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 40  # the 38 earlier CD cases and the two protection approval cases
+CD_CASE_COUNT = 41  # the 38 earlier CD cases, the two protection approval cases and `clean-cd`
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -273,11 +275,12 @@ class ReviewCases(unittest.TestCase):
             if "measured" in fields["Severity"]:
                 self.assertIn(rule_id, forbidden, f"no review case forbids the measured rule {rule_id}")
 
-    def test_the_clean_case_forbids_every_critical_and_required_id(self):
-        expect, forbid = expect_lists("clean")
-        self.assertEqual(expect, [])
+    def test_the_clean_cases_forbid_every_critical_and_required_id(self):
         wanted = [rule_id for _, rule_id, fields in all_rules() if level(fields) in ("critical", "required")]
-        self.assertEqual(sorted(forbid), sorted(wanted))
+        for case in ("clean", "clean-cd"):
+            expect, forbid = expect_lists(case)
+            self.assertEqual(expect, [], case)
+            self.assertEqual(sorted(forbid), sorted(wanted), case)
 
     def test_the_graders_match_the_expect_lists(self):
         for name in review_cases():
@@ -686,6 +689,45 @@ class CleanWorkflow(unittest.TestCase):
         self.assertEqual(minute % 2, 1)
         self.assertIn("pnpm audit --audit-level=high", text)
         self.assertIn("contents: read", text)
+
+
+class CleanCdCase(unittest.TestCase):
+    """The clean CD fixture is a good CD repo: the structural assertions of the CD part pass on its files."""
+    CHECK = os.path.join(os.path.dirname(EVALS), "scripts", "check_workflow.py")
+
+    def check(self, name, *assertions):
+        done = subprocess.run([sys.executable, "-I", self.CHECK, "-", "--assert", *assertions],
+                              input=workflow_text("clean-cd", name), capture_output=True, text=True)
+        self.assertEqual((done.returncode, done.stdout), (0, "PASS\n"), name)
+
+    def test_the_ci_workflow_has_the_cd_part(self):
+        self.check("ci.yml", "triggers-cd", "name=CI", "timeouts", "gate")
+        self.assertIn("name: dist", workflow_text("clean-cd"))
+
+    def test_the_deploy_rollback_and_release_workflows_pass_the_cd_assertions(self):
+        self.check("deploy.yml", "name=Deploy", "stage-environments", "concurrency-cd", "no-install-in-deploy",
+                   "digest-check", "package-upload", "timeouts", "permissions")
+        self.check("rollback.yml", "name=Rollback", "rollback-workflow", "concurrency-cd", "no-install-in-deploy",
+                   "digest-check", "timeouts", "permissions")
+        self.check("release.yml", "name=Release", "timeouts", "permissions")
+
+    def test_the_repo_holds_the_scripts_and_the_changesets_config(self):
+        base = os.path.join(case_dir("clean-cd"), "repo")
+        for path in ("scripts/deploy-and-verify.sh", "scripts/check-staged.sh", ".changeset/config.json"):
+            self.assertTrue(os.path.isfile(os.path.join(base, path)), path)
+
+    def test_the_scripts_equal_the_templates(self):
+        skill = os.path.dirname(EVALS)
+        for name in ("deploy-and-verify.sh", "check-staged.sh"):
+            self.assertEqual(read(os.path.join(case_dir("clean-cd"), "repo", "scripts", name)),
+                             read(os.path.join(skill, "templates", "scripts", name)), name)
+
+    def test_the_workflows_equal_the_templates_except_for_the_pins(self):
+        skill = os.path.dirname(EVALS)
+        pin = re.compile(r"@[0-9a-f]{40} # v")
+        for name in ("deploy.yml", "release.yml", "rollback.yml"):
+            self.assertEqual(pin.sub("@PIN # v", workflow_text("clean-cd", name)),
+                             pin.sub("@PIN # v", read(os.path.join(skill, "templates", name))), name)
 
 
 class DeployCases(unittest.TestCase):
