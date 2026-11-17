@@ -4,6 +4,8 @@
 # Runs checks 1 (Target), 2 (Ownership), 3 (Clean), 4 (Submodules pushed), 5 (Merged), 6 (Pushed), 7 (Main checkout) and 8 (Docker),
 # then the section 8 after-merge actions: remote branch delete, main-checkout switch and pull, `orca worktree rm --force`, local branch delete.
 # Check 5 also passes, with no merged PR, a tip that is on origin/<base> after a fetch (#300); <base> is --base or the default branch.
+# It also passes when every file the branch changes is the same on origin/<base>, or when a merged PR's head contains the tip
+# (a squash-merged coordinator PR, #787); that PR's base is then used.
 # A merged PR at the tip takes precedence: its base is used and --base is ignored.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import os
@@ -11,7 +13,8 @@ import sys
 import time
 
 from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, anchor_worktree, bound_run, check_clean, check_docker, check_ownership,
-                       default_branch, failure_text, git, read_json, remote_ref_sha, row_worktree, run, run_proof, tip_off_base)
+                       ancestor_problem, default_branch, failure_text, fetch_base, git, read_json, remote_ref_sha, row_worktree, run,
+                       run_proof)
 
 USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 PROTECTED = ("develop", "main")
@@ -138,10 +141,57 @@ def check_merged(target, branch, tip, named_base):
     if bases:
         return [], bases.pop(), default, sorted(pr["number"] for pr in matching if isinstance(pr.get("number"), int))
     base = named_base or default
-    problem = tip_off_base(target, tip, base)
-    if problem:
-        return [f"Merged: no merged PR has the local tip {tip[:12]} as its head, and {problem}"], None, None, None
-    return [], base, default, []
+    problem = fetch_base(target, base)
+    if problem is None:
+        problem = ancestor_problem(target, tip, base)
+        if problem and changes_on_base(target, tip, base):
+            return [], base, default, []
+    if not problem:
+        return [], base, default, []
+    bases = containing_pr_bases(target, tip)
+    if bases is None:
+        problem += "; the search for a merged PR that contains it failed"
+    elif len(bases) > 1:
+        return ["Merged: merged PRs that contain the tip have different base branches, the base cannot be chosen"], None, None, None
+    elif bases:
+        return [], bases.pop(), default, []
+    return [f"Merged: no merged PR has the local tip {tip[:12]} as its head or contains it, and {problem}"], None, None, None
+
+
+def changes_on_base(target, tip, base):
+    """True when every file that the branch changes since its fork point is the same on the fetched origin/<base>,
+    so the base already holds the branch's work, for example after a redundant PR was closed (#787)."""
+    ref = f"refs/remotes/{REMOTE}/{base}"
+    fork = git(target, "merge-base", tip, ref)
+    if fork.returncode != 0:
+        return False
+    names = git(target, "diff", "--no-renames", "--name-only", "-z", fork.stdout.strip(), tip)
+    if names.returncode != 0:
+        return False
+    paths = [path for path in names.stdout.split("\0") if path]
+    if not paths:
+        return True
+    return git(target, "--literal-pathspecs", "diff", "--quiet", ref, tip, "--", *paths).returncode == 0
+
+
+def containing_pr_bases(target, tip):
+    """The base branches of the merged PRs whose head commit has the tip as an ancestor, as when a coordinator branch
+    that merged this branch was squash-merged (#787). None when GitHub cannot be read."""
+    prs = read_json(run("gh", "pr", "list", "--state", "merged", "--search", tip,
+                        "--json", "number,headRefOid,baseRefName", cwd=target))
+    if not isinstance(prs, list):
+        return None
+    bases = set()
+    for pr in prs:
+        number, head, base = (pr.get(key) if isinstance(pr, dict) else None for key in ("number", "headRefOid", "baseRefName"))
+        if not (isinstance(number, int) and isinstance(head, str) and isinstance(base, str)):
+            continue
+        fetch = git(target, "fetch", REMOTE, f"refs/pull/{number}/head")
+        if fetch.returncode != 0 or git(target, "rev-parse", "FETCH_HEAD").stdout.strip() != head:
+            continue
+        if git(target, "merge-base", "--is-ancestor", tip, head).returncode == 0:
+            bases.add(base)
+    return bases
 
 
 def check_pushed(target, branch, tip, numbers):

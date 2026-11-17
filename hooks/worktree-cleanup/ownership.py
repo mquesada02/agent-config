@@ -204,11 +204,6 @@ def ancestor_problem(target, tip, base):
     return None
 
 
-def tip_off_base(target, tip, base):
-    """None when the tip is on origin/<base> after a fetch, so the branch holds nothing the base lacks (#300); else why not."""
-    return fetch_base(target, base) or ancestor_problem(target, tip, base)
-
-
 def remote_ref_sha(target, ref):
     """Return (sha, error). The sha is None when the ref is absent on the remote."""
     result = git(target, "ls-remote", REMOTE, ref)
