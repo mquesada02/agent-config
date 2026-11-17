@@ -77,6 +77,18 @@ class SquashTest(CleanupCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(os.path.isdir(self.wt))
 
+    def test_a_branch_with_no_net_change_is_removed(self):
+        os.remove(os.path.join(self.wt, "work.txt"))
+        git("commit", "-q", "-am", "revert work", cwd=self.wt, env=self.env)
+        git("push", "-q", "origin", self.BRANCH, cwd=self.wt, env=self.env)
+        self.tip = self.git_out(self.wt, "rev-parse", "HEAD")
+        self.commit(self.main, "later.txt")
+        git("push", "-q", "origin", "main", cwd=self.main, env=self.env)
+        self.stub_search([])
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(os.path.isdir(self.wt))
+
     def test_a_branch_whose_files_differ_on_the_base_is_refused(self):
         with open(os.path.join(self.main, "work.txt"), "w") as f:
             f.write("other")

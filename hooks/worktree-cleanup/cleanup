@@ -148,13 +148,13 @@ def check_merged(target, branch, tip, named_base):
             return [], base, default, []
     if not problem:
         return [], base, default, []
-    bases = containing_pr_bases(target, tip)
-    if bases is None:
+    containing = containing_pr_bases(target, tip)
+    if containing is None:
         problem += "; the search for a merged PR that contains it failed"
-    elif len(bases) > 1:
+    elif len(containing) > 1:
         return ["Merged: merged PRs that contain the tip have different base branches, the base cannot be chosen"], None, None, None
-    elif bases:
-        return [], bases.pop(), default, []
+    elif containing:
+        return [], containing.pop(), default, []
     return [f"Merged: no merged PR has the local tip {tip[:12]} as its head or contains it, and {problem}"], None, None, None
 
 
