@@ -13,7 +13,7 @@ For which workflow roles (web fetch, read-only search, inbox routing, mechanical
 3. Main worker: keep Sonnet. Terminal-Bench 4.0 is 39.2% for Haiku and 70.6% for Sonnet, and Anthropic says Sonnet and Opus "remain better choices for complex agentic coding tasks".
 4. API price: Haiku 5.5 is 20 times cheaper than Sonnet 5.5 per token for prompts up to 100,000 tokens, and 4 times cheaper above.
 5. Subscription: the only public statement is "Sonnet more than Haiku". No number exists, so the quota saving is UNVERIFIED.
-6. Speed: the model page says "Fastest" against "Fast". In our test Haiku was NOT faster per task (slower in 7 of 8 pairs; task 1 is a near tie), because it wrote more output and used more turns.
+6. Speed: the model page says "Fastest" against "Fast". In our test Haiku was NOT faster per task (slower in all 8 pairs by API time; task 1 is a near tie, 3987 ms against 3477 ms), because it wrote more output and used more turns.
 7. Correction to a common premise: the built-in Explore subagent does not use Haiku by default.
 
 ## 3. Findings
@@ -74,7 +74,7 @@ Checks for task 8: 7 valid inputs and 11 invalid inputs, run by a plain Python s
 
 **Reading of the table.**
 - Quality: no difference on tasks 1, 4, 5, 6, 7, 8. On task 2 both found both bugs. Haiku rated one extra item (a type check on `size`) as Blocking; Sonnet rated the same item Minor. On task 3 Haiku added three unrequested Minor findings to a correct diff. Sonnet said "no findings". INFERENCE: Haiku is noisier, not blind, in this test. A loop that records every Minor finding would record more with Haiku.
-- Speed: Haiku was slower than Sonnet in 7 of 8 pairs (wall time, `duration_api_ms`; task 1 is a near tie). Haiku wrote 2 to 5 times more output tokens in most pairs. INFERENCE: its default effort is `medium` and it wrote longer answers, so the "Fastest" label did not show up per task. This holds only for these 8 tasks.
+- Speed: Haiku was slower than Sonnet in all 8 pairs (API time, `duration_api_ms`; task 1 is a near tie, and task 6 is inflated by a cold cache). Haiku wrote 2 to 5 times more output tokens in most pairs. INFERENCE: its default effort is `medium` and it wrote longer answers, so the "Fastest" label did not show up per task. This holds only for these 8 tasks.
 - Cost as reported by Claude Code (`total_cost_usd`, list price): Haiku about $0.03 against Sonnet about $0.09 on the pairs with the same cache state (tasks 2 to 5, 8), about 3 times less, not 20 times, because the 120,000-token fixed prefix is mostly cache reads and cache writes. The pairs for tasks 1, 6 and 7 differ in cache state and are not comparable. Not a subscription figure.
 
 **Limits of the test.** One run per cell, so no variance. Small, clean, synthetic inputs, not real diffs. The planted bugs are classic. The expected labels in task 1 are ours. One Haiku version and one Sonnet version. No test of long tasks, many tool turns, or Haiku at `low` effort. No measure of subscription quota. The fixed prefix of about 120,000 tokens hides per-token price gaps in the cost column.
