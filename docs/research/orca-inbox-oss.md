@@ -17,7 +17,8 @@ Which public projects solve: (a) one inbox for questions from many agent session
 5. No-person approval (d) has three mechanisms: static rules, a second model (Claude Code auto mode, Codex auto-review, OpenHands analyzer) and deny-guards (cc-safety-net).
 6. Notifications (e): Claude Code `Notification` hook plus ntfy or a chat bridge with Approve/Deny buttons (Channels permission relay, Lucarne, claude-ntfy-hook).
 7. Licence risks: cmux (GPL), Claude Squad and CloudCLI (AGPL), amux (Commons Clause), Agor (BSL) and the Rust mcp_agent_mail (custom rider) are not permissive.
-8. Reusable ideas are in section 5; each needs the owner's decision.
+8. A search sweep (section 3.5) found newer projects close to Orca: Novadeck (one inbox plus agent messaging by handle; GPL-3.0), Squadra (recorded owner decisions with options and a recommendation; MIT), CAO (supervisor and workers on tmux; Apache-2.0) and Hermes IDE (worktree IDE with an attention inbox; BSL). Most other hits have under 100 stars.
+9. Reusable ideas are in section 5; each needs the owner's decision.
 
 ## 3. Findings
 
@@ -115,6 +116,41 @@ Details, with sources:
 - **Happy** push relay and **Claude Code Channels**: see 3.1.
 - **disler hooks demo**: the Notification hook speaks text-to-speech; no licence in the API.
 
+### 3.5 Search sweep (2026-11-17)
+
+Method: `gh search repos <words> --limit N --sort stars --json fullName,stargazersCount,pushedAt,license,description` on nine word sets: "tmux agent dashboard claude"; "mcp agent mail inter-agent messaging"; "agent inbox human-in-the-loop approval"; "multi-repo coding agent orchestrator coordinator"; "claude code inbox"; "agent mailbox"; "multi-agent coordinator claude"; "claude notification approve"; "agent escalation human". Each word set matches repositories that contain all the words, so a long set returns few hits. Star counts and licence keys come from the search output. Only the projects marked "README read" had their README read (first 3500 characters, plus a keyword search for Novadeck, Squadra and CAO); for the others the only source is the one-line search description. Most hits are small (under 100 stars); stars are a weak signal of quality.
+
+**Closest to the Orca problem (README read):**
+
+| Project | Stars | pushed_at | Release | Licence |
+|---|---|---|---|---|
+| Novadeck (novadeck-org/novadeck) | 47 | 2026-11-17 | v1.6.59 (2026-11-13) | GPL-3.0; created 2026-09-19 |
+| Squadra (dagoSte/squadra) | 1281 | 2026-11-12 | v3.15.1 (2026-11-09) | MIT |
+| CLI Agent Orchestrator, CAO (awslabs/cli-agent-orchestrator) | 1569 | 2026-11-17 | v2.5.3 (2026-10-08) | Apache-2.0 |
+| Orchvia (masonlee39/orchvia) | 18 | 2026-10-03 | not checked | MIT; created 2026-09-19 |
+| Shura (mm0rsy/shura) | 0 | 2026-05-19 | not checked | Apache-2.0 |
+| Hermes IDE (hermes-hq/hermes-ide) | 354 | 2026-11-16 | not checked | BSL 1.1 (README badge) |
+| apra-fleet (Apra-Labs/apra-fleet) | 107 | 2026-11-17 | not checked | API "other"; README badge Apache 2.0 |
+| Intaris (fpytloun/intaris) | 22 | 2026-11-08 | not checked | API "other" |
+
+- **Novadeck** (https://github.com/novadeck-org/novadeck). FACT (README): "When an agent needs you, its question comes to one Inbox, and you answer it right there." "Every agent's permission prompts, plans and questions land in one Inbox. Most you answer with a click." Choices are Allow, always allow and Deny. "Agents message each other by handle and start their own teammates. Claude Code, Codex and Antigravity can share a team." A Messages pane shows a teammate's question to a lead and the lead's answer. Runs on macOS, Windows and Linux; "no account, no telemetry". INFERENCE: the closest public match to both gaps (inbox and agent-to-agent ask and answer in one app), but it is a terminal app and not a worktree IDE. The README does not say how the inbox is wired to the agents (hooks, MCP or process reading); that is not read. GPL-3.0 limits code reuse.
+- **Squadra** (https://github.com/dagoSte/squadra). FACT (README): "one coordinates, others build, and a window that did not write the code reviews it. Assignments, decisions, executed checks and review reports stay in one shared registry on your computer." "A task starts only when its recipient confirms receiving it." "Questions with the sentence ready. When a decision is yours, you get the options, a recommendation and the exact words to answer." CLI verbs include `task`, `brief`, `ack`, `deliver`, `review`, `check`, `close` and `decision --owner-words`. A dashboard shows "requests for your input". Python standard library only; macOS and POSIX. INFERENCE: the closest design to the owner's question handling (a recorded decision with the owner's own words, option plus recommendation), and its ack-before-start rule is a pattern for dispatch. One registry per project, not a central inbox over several coordinators (not stated in the README).
+- **CAO** (https://github.com/awslabs/cli-agent-orchestrator). FACT (README): "coordinates multiple AI coding CLIs so a supervisor can delegate work to specialist agents in parallel or sequence"; "runs a local `cao-server`, starts provider CLIs in isolated terminal sessions, and gives a supervisor tools for coordinating workers"; needs tmux 3.3 or later; supports Claude Code, Codex, Kiro, Copilot, OpenCode, Cursor and others; has scheduled "flows" and a web UI. INFERENCE: a maintained supervisor and worker model by a large vendor, the nearest to Orca's coordinator and worker split; the README gives no escalation chain to a human (the docs for supervisor tools were not read).
+- **Orchvia** (https://github.com/masonlee39/orchvia). FACT (README): "Tasks, messages, approvals and token usage are stored in SQLite before anything runs. After a crash, work whose outcome is unknown waits for you instead of being retried." "A result counts as done only after a person or a check you registered accepts it." Agents are long-lived Claude Code and Codex sessions that message each other through a mailbox. Library with TypeScript and Python SDKs. Very new and small.
+- **Shura** (https://github.com/mm0rsy/shura). FACT (README): "a multi-agent orchestration system for coordinating work across multiple repositories". Each repo gets a Product Owner agent; a Program Manager "is your only touchpoint throughout". Context is injected at dispatch, and "Agents do not share state files directly". Zero stars; a Claude Code plugin. INFERENCE: a design sketch of one central session over per-repo leads; no evidence of use.
+- **Hermes IDE** (https://github.com/hermes-hq/hermes-ide). FACT (README): a desktop app with a worktree and a branch per task, "one status for every agent: working, needs approval, asked you, done, error or idle", "The attention inbox counts the agents blocked on you, and ⌘I jumps to the one that has waited longest", and a Review Desk. BSL 1.1 is source-available, not open source. INFERENCE: it matches Orca's shape (IDE, worktrees, terminals) and adds an inbox; no agent-to-agent messaging in the lines read.
+- **apra-fleet** (https://github.com/Apra-Labs/apra-fleet). FACT (README): "Run a fleet of AI agents across your devices, your providers, your workflows"; agents on registered machines over SSH, with supervisors, watchdogs and dashboards; MCP compatible. INFERENCE: a multi-machine fleet model; the escalation to a human was not read.
+- **Intaris** (https://github.com/fpytloun/intaris). FACT (README): evaluates tool calls against the user's stated intention; "A read-only fast path handles routine calls; other calls can go through model evaluation and, when needed, escalation"; audit trail; MCP proxy; self-hosted. It states it is "not a sandbox". Another example of a second-model approver (see 3.3).
+
+**Other hits (search description only, not read):**
+
+- Approval inboxes for agents: impri (6 stars, MIT), handup (3, other licence), hitly (2, Apache-2.0), agent-gate (0, MIT), human-in-the-loop-inbox (0, MIT), agent-approval-inbox-preview (0, no licence key). All are tiny; none had a README read.
+- Mailboxes and buses: Tether, a local mailbox for CLI agents (29 stars, Apache-2.0); agentdrop (25, Apache-2.0); agent-mailbox-mcp (1, MIT); AAMP by larksuite, a mailbox protocol over email (123, MIT); agentcomm (17, MIT); openmeld (1428, MIT, "collaboration system for people and AI agents"); zenflow (59, Apache-2.0, workflow engine with an LLM coordinator).
+- Dashboards: ai-maestro (853, MIT), recon (268, MIT, tmux-native), tmuxcc (68, MIT), agentdock (29, MIT), octomux (25, MIT, "kanban fleet view, one permi..." cut off), tmux-agent-status (25, MIT), armada (9, MIT).
+- Notifiers with approval from the phone or desktop: ccnotifs (22, MIT, macOS, "Approve permission prompts directly"), claude-terminal-remote (3, MIT, ntfy), hook-me-up (2, MIT, macOS notifications with answers), claude-shadow (9, MIT, push), claudecodeui and Lucarne (see 3.1 and 3.4).
+- Escalation and oversight: chap, a protocol runtime compatible with MCP and A2A (123, Apache-2.0); agentic-sidecar (65, MIT, "real-time supervision, escalation, and human"); agent-guard (25, MIT).
+- INFERENCE: this sweep shows that the "one inbox for many agents" idea has many small new projects (most created in 2026). Only Novadeck, Squadra and Hermes IDE had a README read that matches Orca's problem in more than one point.
+
 ## 4. Comparison with Orca (INFERENCE)
 
 - Orca has the agent-to-agent bus (ask, reply, send, check) and worktrees plus terminals in one IDE. No project in this set joins all of that with an inbox for the human.
@@ -136,8 +172,9 @@ Each option is a candidate for a decision ticket. Costs are INFERENCE.
 
 ## 6. Gaps and open questions
 
-- No GitHub search sweep ran: the subagent hook blocked `gh api search/*`. Projects were checked by name, from the cmux and Happy docs and from model knowledge. A search for tmux dashboards, MCP buses and other coordinators remains open, from a session that can run `gh api "search/repositories?q=..."`.
-- No web search ran in the inbox subagent.
+- The sweep of section 3.5 ran with `gh search repos` on nine word sets. It finds only repositories that match all the words in name, description or topics, so a project with other wording is missed. Only the top 12 to 15 hits by stars were listed per set. Hits other than the eight in the table were not read.
+- No web search ran in the inbox subagent; non-GitHub projects (for example products on other hosts) were not searched.
+- Not read: Novadeck's wiring of its inbox and its agent messaging (hooks, MCP or process reading); Squadra's handling of several registries; CAO's supervisor tools and any human-escalation docs; Hermes IDE messaging; apra-fleet escalation.
 - Not read: cmux multi-machine and phone-push docs; the Happy permission flow; amux messaging code; Beads docs; LangGraph interrupt docs; langgraph-swarm; AutoGen (status not verified; the API licence field shows the docs licence); Claude Code Remote Control approval and push lines; the allow and deny rule syntax page; MCP elicitation; Pushover, Slack bots, `notify-send`; Conductor (closed source); Agent Teams versus a central coordinator in practice.
 - Releases not checked: Beads, mcp_agent_mail, claude-plugins-official.
 - No project was run. Maturity here means stars, `pushed_at` and releases, not quality.
@@ -149,7 +186,8 @@ Each option is a candidate for a decision ticket. Costs are INFERENCE.
 Read: GitHub API metadata for every repository above; READMEs of Gas Town, mcp_agent_mail, Ruflo, Agor, AG2, LangGraph supervisor, OpenHands, HumanLayer, Happy, Nimbalyst, amux, cmux (README, docs/feed.md, docs/agent-hooks.md), CCManager, Claude Squad, Emdash, Omnara, Agent Inbox, AgentAPI, ccswarm; Gas Town docs/design/escalation.md; Claude Code docs (permission-modes, hooks in part, channels, agent-teams, cross-session-messaging); Codex approvals page; Gemini CLI policy-engine doc; OpenHands security guide; OpenAI Agents SDK handoffs page; CrewAI hierarchical page; A2A life-of-a-task page.
 
 Failed or limited:
-- `gh api search/*` and `-f` flags were denied by the read-only subagent hook; coverage was by named checks.
+- `gh api search/*` and `-f` flags were denied by the read-only subagent hook; the first pass was by named checks, and section 3.5 later added `gh search repos`.
+- Three `gh search repos` calls and a metadata loop were blocked or needed a retry because a hook changed the command text; a loop of `gh api` calls was denied by a hook, so release data for the other sweep hits was not collected.
 - `ccswarm` raw `main/README.md` returned 404; the API readme was used.
 - `stravu/nimbalyst` returned 404; the right path is `nimbalyst/nimbalyst`.
 - `langchain-ai/agent-inbox` has no release (404).
