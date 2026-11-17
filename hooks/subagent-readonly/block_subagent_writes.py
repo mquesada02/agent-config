@@ -12,14 +12,15 @@
 # KNOWN GAP (accepted by the owner): a write hidden in a script that the subagent runs (`bash push.sh`) is not caught here. Nor is a
 # write made by a tool that is not on the deny-list (`kubectl`, `docker`, `python -c ...`). The `autoMode` rule in settings.json is the
 # second layer for those.
-import importlib.machinery
 import importlib.util
 import json
 import os
 import re
 import sys
 
-AUDIT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workflow-audit", "audit")
+HOOKS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AUDIT = os.path.join(HOOKS, "workflow-audit", "audit")
+SHARED = os.path.join(HOOKS, "bash-reader", "bash_reader.py")
 DENY_NOTICE = ("A subagent must not change remote state. Do not run this command. Report the need as a finding in your review "
                "instead; the owner runs it.")
 UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
@@ -73,17 +74,21 @@ AWS_VALUE_OPTIONS = frozenset(("--profile", "--region", "--output", "--endpoint-
                                "--cli-input-yaml"))
 
 
-def load_reader():
-    """The audit script as a module: it has no `.py` extension, and its `__main__` guard makes the load safe. No `.pyc` is written."""
+def load_shared():
+    """The shared reader module, loaded by its file path (the hook runs with `python3 -I`). No `.pyc` is written. It keeps no state."""
     previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
-        loader = importlib.machinery.SourceFileLoader("audit_for_subagent_readonly", AUDIT)
-        spec = importlib.util.spec_from_loader(loader.name, loader)
+        spec = importlib.util.spec_from_file_location("bash_reader_for_subagent_readonly", SHARED)
         module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
+        spec.loader.exec_module(module)
         return module
     finally:
         sys.dont_write_bytecode = previous
+
+
+def load_reader():
+    """The audit script as a module, loaded by the shared reader module."""
+    return load_shared().load_audit(AUDIT, "audit_for_subagent_readonly")
 
 
 def positional(words, value_options):
@@ -162,6 +167,7 @@ def aws_reason(words):
 class DenyRules:
     def __init__(self, audit):
         self.audit = audit
+        self.walk = load_shared().Walk(audit, self)
 
     def git_reason(self, words):
         rest = self.audit._git_command(words)
@@ -170,41 +176,34 @@ class DenyRules:
         first = self.audit._words(rest[:1])
         return unresolved_reason(first, "git subcommand") or ("git push changes the remote" if first == ["push"] else None)
 
-    def segment_reason(self, segment, depth):
-        words = self.audit._command_words(segment)
-        if not words:
-            return None
-        first = os.path.basename(words[0])
-        reason = unresolved_reason([first], "command word")
-        if reason:
-            return reason
-        if first in self.audit.NAMING_ONLY_COMMANDS:
-            return None
-        for index, word in enumerate(words):
-            name = os.path.basename(word)
-            rest = words[index + 1:]
-            reason = None
-            if self.audit._is_gh(word):
-                reason = gh_reason(rest)
-            elif name == "terraform":
-                reason = terraform_reason(rest)
-            elif name == "aws":
-                reason = aws_reason(rest)
-            elif name == "git" or name in self.audit.DASHED_GIT:
-                reason = self.git_reason(words[index:])
-            elif name == "eval" and rest:
-                reason = self.command_reason(" ".join(rest), depth + 1)
-            elif name in self.audit.SHELLS:
-                option = next((position for position, argument in enumerate(rest)
-                               if self.audit.SHELL_COMMAND_OPTION.fullmatch(argument)), None)
-                if option is not None and option + 1 < len(rest):
-                    reason = self.command_reason(rest[option + 1], depth + 1)
-            if reason:
-                return reason
+    # The rules that the shared walk (hooks/bash-reader/bash_reader.py) asks of a hook.
+    def first_word_reason(self, words):
+        return unresolved_reason([os.path.basename(words[0])], "command word")
+
+    def word_reason(self, words, index, items, position, depth):
+        name = os.path.basename(words[index])
+        rest = words[index + 1:]
+        if self.audit._is_gh(words[index]):
+            return gh_reason(rest)
+        if name == "terraform":
+            return terraform_reason(rest)
+        if name == "aws":
+            return aws_reason(rest)
+        if name == "git" or name in self.audit.DASHED_GIT:
+            return self.git_reason(words[index:])
         return None
 
+    def depth_reason(self):
+        return UnnamedReason(f"shell commands nested deeper than {self.audit.MAX_SHELL_DEPTH}")
+
+    def unreadable_reason(self, command, depth, error):
+        return self.backtick_reason(command, depth) or UnnamedReason(f"the command cannot be read ({type(error).__name__})")
+
     def substitution_bodies(self, word):
-        """The text of each `$(...)` and backtick substitution in a word. The splitter does not open one inside double quotes."""
+        """The text of each `$(...)` and backtick substitution in a word. The splitter does not open one inside double quotes.
+        This is the legacy reader of this hook, and it differs from the shared reader on purpose (the move into the shared module changed
+        no behavior of this hook): it raises on every backtick form, and it rescans inside a body, so it raises on a dollar-paren text that
+        holds a quoted dollar-paren and visits a nested body twice."""
         bodies = []
         for found in re.finditer(r"\$\(|`", word):
             if found.group() == "`":
@@ -217,18 +216,7 @@ class DenyRules:
 
     def read_reason(self, command, depth):
         """The deny reason for a command text, or None. Raises when the text cannot be read."""
-        text = self.audit._join_as_bash(self.audit.strip_data_heredocs(command, self.audit.DATA_COMMANDS))
-        items = self.audit.split_command(text)
-        for segment in (item for item in items if isinstance(item, list)):
-            reason = self.segment_reason(segment, depth)
-            if reason:
-                return reason
-            for word in segment:
-                for body in self.substitution_bodies(word):
-                    reason = self.command_reason(body, depth + 1)
-                    if reason:
-                        return reason
-        return None
+        return self.walk.read_reason(command, depth)
 
     def backtick_reason(self, command, depth):
         """The deny reason of a gated command that a backtick form of `command` holds, naming that command, or None. It is for a text that
@@ -254,12 +242,7 @@ class DenyRules:
 
     def command_reason(self, command, depth=0):
         """The deny reason for a command text, or None. Raises nothing: what cannot be read is denied."""
-        if depth > self.audit.MAX_SHELL_DEPTH:
-            return UnnamedReason(f"shell commands nested deeper than {self.audit.MAX_SHELL_DEPTH}")
-        try:
-            return self.read_reason(command, depth)
-        except Exception as error:  # a ValueError of the reader, a RecursionError, or any other failure
-            return self.backtick_reason(command, depth) or UnnamedReason(f"the command cannot be read ({type(error).__name__})")
+        return self.walk.command_reason(command, depth)
 
 
 def main():

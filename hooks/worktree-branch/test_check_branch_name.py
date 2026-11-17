@@ -94,6 +94,12 @@ class BranchNameTest(unittest.TestCase):
         self.assertIsNotNone(reason(f"{CREATE} 'unclosed"))
         self.assertIsNone(reason("echo 'unclosed"))
 
+    def test_a_create_command_inside_backticks_is_read(self):
+        self.assertIsNone(reason(f"x=`{CREATE} --branch fix/a`"))
+        self.assertIsNotNone(reason(f"x=`{CREATE}`"))
+        self.assertIsNone(reason(f"echo \"`{CREATE} --branch fix/a`\""))
+        self.assertIsNotNone(reason(f"echo \"`{CREATE}`\""))
+
     def test_hook_output(self):
         deny = run_hook({"tool_name": "Bash", "tool_input": {"command": CREATE}})
         self.assertEqual(deny["hookSpecificOutput"]["permissionDecision"], "deny")
