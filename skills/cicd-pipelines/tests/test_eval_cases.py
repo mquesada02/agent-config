@@ -67,9 +67,24 @@ ROLLBACK_CASES = {
     "rollback-05-native-rollback-disabled": (["ROLLBACK-05"], []),
     "rollback-06-other-concurrency-group": (["ROLLBACK-06"], []),
 }
+RELEASE_CASES = {
+    "release-01-two-release-tools": (["RELEASE-01"], []),
+    "release-02-lightweight-tag": (["RELEASE-02"], []),
+    "release-03-no-tag-ruleset": (["RELEASE-03"], []),
+    "release-04-pat-token": (["RELEASE-04"], []),
+    "release-05-tag-push-trigger": (["RELEASE-05"], []),
+    "release-06-no-release-notes": (["RELEASE-06"], []),
+}
+PUBLISH_CASES = {
+    "publish-01-npm-token": (["PUBLISH-01"], []),
+    "publish-02-cached-publish": (["PUBLISH-02"], []),
+    "publish-03-no-dependency-order": (["PUBLISH-03"], []),
+    "publish-04-no-published-version-check": (["PUBLISH-04"], []),
+    "publish-05-publish-workflow-renamed": (["PUBLISH-05"], []),
+}
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 19
+CD_CASE_COUNT = 30
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -806,6 +821,110 @@ class RollbackCases(unittest.TestCase):
         for name, text in self.deploys.items():
             if name != self.RUN_ARTIFACT:
                 self.assertEqual(text, good, name)
+
+
+class ReleasePublishCases(unittest.TestCase):
+    """The RELEASE and PUBLISH cases: a good Changesets library, changed only where the rule of a case needs it."""
+    ALL = {**RELEASE_CASES, **PUBLISH_CASES}
+    RENAMED = "publish-05-publish-workflow-renamed"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.releases = {name: workflow_text(name, "publish.yml" if name == cls.RENAMED else "release.yml")
+                        for name in cls.ALL}
+
+    def test_the_cases_are_exactly_these_with_their_lists(self):
+        found = {n for n in review_cases() if n.startswith(("release-", "publish-"))}
+        self.assertEqual(found, set(self.ALL))
+        for name, lists in self.ALL.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_every_case_has_a_ci_workflow_a_changeset_config_and_one_release_workflow(self):
+        for name in self.ALL:
+            workflows = os.path.join(case_dir(name), "repo", ".github", "workflows")
+            self.assertEqual(sorted(os.listdir(workflows)),
+                             ["ci.yml", "publish.yml" if name == self.RENAMED else "release.yml"], name)
+            self.assertTrue(os.path.exists(os.path.join(case_dir(name), "repo", ".changeset", "config.json")), name)
+
+    def test_the_good_files_hold_the_forms_that_the_rule_texts_pass(self):
+        good = self.releases["release-01-two-release-tools"]
+        job = job_text(good, "release")
+        for text in ("branches: [main]", "workflow_dispatch:", "environment: release", "id-token: write",
+                     "actions/create-github-app-token@", "private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
+                     "node-version: 24", "package-manager-cache: false", "pnpm install --frozen-lockfile",
+                     "publish: pnpm changeset publish"):
+            self.assertIn(text, good)
+        self.assertIn("timeout-minutes: 15", job)
+        self.assertNotIn("cache: pnpm", good)
+        for name in ("release-03-no-tag-ruleset", "publish-05-publish-workflow-renamed"):
+            self.assertEqual(self.releases[name], good, name)
+
+    def test_release_01_has_two_release_tools(self):
+        package = read(os.path.join(case_dir("release-01-two-release-tools"), "repo", "package.json"))
+        self.assertIn('"semantic-release"', package)
+        self.assertIn('"@changesets/cli"', package)
+
+    def test_release_02_makes_a_lightweight_tag(self):
+        job = job_text(self.releases["release-02-lightweight-tag"], "release")
+        self.assertIn('git tag "v$VERSION"', job)
+        self.assertNotRegex(job, r"git tag (-a|-s|-m)")
+
+    def test_release_04_uses_a_pat_and_no_app_token(self):
+        text = self.releases["release-04-pat-token"]
+        self.assertIn("secrets.RELEASE_PAT", text)
+        self.assertNotIn("create-github-app-token", text)
+
+    def test_release_05_runs_on_a_tag_push(self):
+        text = self.releases["release-05-tag-push-trigger"]
+        self.assertIn("tags: ['v*']", text)
+        self.assertNotIn("branches: [main]", text)
+
+    def test_release_06_turns_the_notes_off_in_the_config_and_in_the_action_input(self):
+        config = read(os.path.join(case_dir("release-06-no-release-notes"), "repo", ".changeset", "config.json"))
+        self.assertEqual(json.loads(config)["changelog"], False)
+        self.assertIn("createGithubReleases: false", self.releases["release-06-no-release-notes"])
+
+    def test_publish_01_stores_an_npm_token_and_has_no_id_token(self):
+        text = self.releases["publish-01-npm-token"]
+        self.assertIn("secrets.NPM_TOKEN", text)
+        self.assertNotIn("id-token", text)
+
+    def test_publish_02_caches_the_package_manager(self):
+        text = self.releases["publish-02-cached-publish"]
+        self.assertIn("cache: pnpm", text)
+        self.assertNotIn("package-manager-cache", text)
+
+    def test_publish_03_is_a_monorepo_that_publishes_each_package_in_a_loop(self):
+        text = self.releases["publish-03-no-dependency-order"]
+        self.assertIn("npm publish", text)
+        self.assertNotIn("changeset publish", text)
+        for package in ("core", "cli"):
+            data = json.loads(read(os.path.join(case_dir("publish-03-no-dependency-order"), "repo", "packages",
+                                                package, "package.json")))
+            self.assertNotIn("private", data)
+        self.assertIn("packages/*", read(os.path.join(case_dir("publish-03-no-dependency-order"), "repo",
+                                                      "pnpm-workspace.yaml")))
+
+    def test_publish_04_runs_a_plain_npm_publish_with_no_view_check(self):
+        text = self.releases["publish-04-no-published-version-check"]
+        self.assertIn("run: npm publish", text)
+        self.assertNotIn("npm view", text)
+        self.assertNotIn("changeset publish", text)
+
+
+class RecordedIntakeRelease03(RecordedIntakeChecks, unittest.TestCase):
+    CASE = "release-03-no-tag-ruleset"
+
+    def test_the_rulesets_are_detected_and_hold_no_tag_ruleset(self):
+        fact = self.intake["rulesets"]
+        self.assertEqual(fact["status"], "detected")
+        self.assertTrue(fact["value"])
+        self.assertTrue(all(ruleset["target"] != "tag" for ruleset in fact["value"]))
+
+    def test_the_repo_has_one_release_tool_a_published_package_and_a_release_workflow(self):
+        self.assertEqual(self.intake["release_tool"]["value"], ["changesets"])
+        self.assertEqual([entry["value"] for entry in self.intake["package_kind"]["value"]], ["published"])
+        self.assertIn(".github/workflows/release.yml", self.intake["existing_workflows"]["value"])
 
 
 class RecordedIntakeDeploy09(RecordedIntakeChecks, unittest.TestCase):

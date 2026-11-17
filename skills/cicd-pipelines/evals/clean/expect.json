@@ -47,6 +47,15 @@
     "ROLLBACK-01",
     "ROLLBACK-02",
     "ROLLBACK-03",
-    "ROLLBACK-06"
+    "ROLLBACK-06",
+    "RELEASE-01",
+    "RELEASE-02",
+    "RELEASE-03",
+    "RELEASE-04",
+    "RELEASE-05",
+    "RELEASE-06",
+    "PUBLISH-01",
+    "PUBLISH-02",
+    "PUBLISH-03"
   ]
 }

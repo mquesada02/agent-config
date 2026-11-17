@@ -1,0 +1,13 @@
+{
+  "name": "example-core",
+  "version": "1.0.0",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc"
+  }
+}
