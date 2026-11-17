@@ -209,7 +209,7 @@ Read (HTTP 200 through WebFetch). Version labels are those the pages showed.
 9. https://jestjs.io/docs/getting-started (30.5)
 10. https://jestjs.io/docs/ecmascript-modules
 10b. https://jestjs.io/docs/mock-functions
-11. Local: /home/mquesada/.claude/skills/cicd-pipelines/ (`scripts/intake.py` lines 32-33, `create.md`, `rules/job-graph.md`, `rules/cost.md`)
+11. Local: `skills/cicd-pipelines/` in this repo (`scripts/intake.py` lines 32-33, `create.md`, `rules/job-graph.md`, `rules/cost.md`)
 12. https://vitest.dev/api/test
 13. https://vitest.dev/guide/improving-performance
 14. https://jestjs.io/docs/configuration (`maxWorkers`; same page as 3b)
