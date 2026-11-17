@@ -31,10 +31,9 @@ CREATE_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
 NEW_WORKTREES = ("new-child", "new-top-level")
 CLI_VARIABLES = ("$ORCA_CLI_COMMAND", "${ORCA_CLI_COMMAND}")
 GATED_TEXT = re.compile(r"worker-start|worktree\W+create")
-# The shell rules (issue 717): the text of an echo or printf that is piped to a shell, and of a here-string, is read as a command text.
+# The shell rules: the text of an echo or printf that is piped to a shell, and of a here-string, is read as a command text.
 ECHO_PRINTF = ("echo", "printf")
 ECHO_OPTION = re.compile(r"-[neE]+")
-HERE_STRING_UNREADABLE = re.compile(r"[$`]")  # a backslash is no doubt mark in a here-string text
 TEXT_UNREADABLE = re.compile(r"[\\$`]")
 FORMAT_UNREADABLE = re.compile(r"[%\\$`]")
 CREATE_NOTICE = "Pass --branch <type>/<description> (type: feat, fix, chore, hotfix, release or research), as CLAUDE.md section 10 says."
@@ -216,7 +215,7 @@ class BranchRules:
         return None
 
     def fed_text_reason(self, text, depth):
-        if HERE_STRING_UNREADABLE.search(text):
+        if self.shared.EXPANSION.search(text):
             return "a here-string text that is fed to a shell cannot be read (it holds an expansion or a command substitution)"
         return self.fed_reason(text, depth)
 

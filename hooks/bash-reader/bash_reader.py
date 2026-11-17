@@ -58,7 +58,8 @@ SHORT_CLUSTER = re.compile(r"-[A-Za-z]+")
 VALUE_CLUSTER = re.compile(r"[-+][A-Za-z]*[oO][A-Za-z]*")  # `-o` or `-O` anywhere in the cluster takes the next word as its value
 EXPANSION = re.compile(r"[$`]")  # a word with an expansion can become no word: bash then reads standard input
 VALUE_LONG_OPTIONS = frozenset(("--rcfile", "--init-file"))
-CLOSING_GROUP_CHARS = frozenset(");&\n")
+CLOSING_GROUP_CHARS = ");&\n"
+OPERATOR_START = re.compile("(?=" + OPERATOR + ")")  # matches at each operator start, overlapping starts included
 
 
 def has_command_option(audit, arguments):
@@ -70,7 +71,10 @@ def has_command_option(audit, arguments):
 
 def reads_standard_input(audit, arguments):
     """(b) True when a shell with no `-c` option reads its commands from standard input, by the script argument rule. `arguments` are the
-    words after the shell name. A redirection word is dropped. A `-` or a short cluster with `s` ends the scan: it reads standard input."""
+    words after the shell name. A redirection word is dropped. A `-` or a short cluster with `s` ends the scan: it reads standard input.
+    A cluster with `o` anywhere in it (`-o`, `-eo`, `+o`) and a long option in VALUE_LONG_OPTIONS take the next word as their value. The first
+    other word is a script: standard input is read only when that word holds `$` or a backtick (it may expand to nothing). The same holds
+    for the word after `--`. With no script word the shell reads standard input."""
     words = [word for _, word in audit._significant(arguments)]
     index = 0
     while index < len(words):
@@ -101,7 +105,7 @@ def here_string_texts(words):
         if OPERATOR not in word:
             continue
         pieces = word.split(OPERATOR)
-        for start in re.finditer("(?=" + OPERATOR + ")", word):
+        for start in OPERATOR_START.finditer(word):
             text = word[start.start() + len(OPERATOR):]
             if text:
                 texts.append(text)
@@ -190,7 +194,8 @@ def split_shell_word(audit, words):
 def split_fused_redirection(words):
     """(g) The words, with a word that is fused with a redirection (`-s>`, `-x<<<text`, `pipefail>`) replaced by the text before the
     redirection and the rest. A word whose part before its first `<` or `>` is empty or a file-descriptor prefix (`2`, `{fd}`, `&`) is
-    already a redirection word and stays. No word is changed or removed."""
+    already a redirection word and stays. The text word that follows a spaced here-string operator (`<<<`, `0<<<`) stays whole. Every other
+    word is cut, quoted arguments after the shell word included (an over-read: it fails closed). No word is changed or removed."""
     result, operand = [], False
     for word in words:
         cut = next((index for index, char in enumerate(word) if char in "<>"), -1)
@@ -206,7 +211,7 @@ def split_fused_redirection(words):
 
 def _pipe_token(token):
     """True for a separator token that is a pipe: after its leading closing-group characters it starts with `|` and not `||`."""
-    rest = token.lstrip("".join(CLOSING_GROUP_CHARS))
+    rest = token.lstrip(CLOSING_GROUP_CHARS)
     return rest.startswith("|") and not rest.startswith("||")
 
 
@@ -254,7 +259,7 @@ def pipe_producer(audit, items, position):
         if chain[0] == index and separator <= pipe:
             closers = 0
             scan = separator
-            while scan < pipe and isinstance(items[scan], str) and set(items[scan]) <= CLOSING_GROUP_CHARS:
+            while scan < pipe and isinstance(items[scan], str) and set(items[scan]) <= set(CLOSING_GROUP_CHARS):
                 closers += items[scan].count(")")
                 scan += 1
             if scan == pipe:

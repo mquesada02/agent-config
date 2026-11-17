@@ -131,10 +131,6 @@ class HereStringTextsTest(unittest.TestCase):
         self.assertEqual(shared.here_string_texts(["a<<<b<<<", "c"]), ["b<<<", "b", "c"])
         self.assertEqual(shared.here_string_texts(["<<<a<<<"]), ["a<<<", "a"])
 
-    def test_a_split_word_that_ends_in_an_operator_keeps_the_next_word_whole(self):
-        self.assertEqual(shared.split_fused_redirection(["<<<a<<<", "x>y"]), ["<<<a<<<", "x>y"])
-        self.assertEqual(shared.split_fused_redirection(["-s<<<a<<<", "x>y"]), ["-s", "<<<a<<<", "x>y"])
-
     def test_the_text_word_of_a_spaced_operator_is_read_whole_and_cut(self):
         self.assertEqual(shared.here_string_texts(["<<<", "x<<<y"]), ["x<<<y", "y"])
 
@@ -167,6 +163,10 @@ class SplitShellWordTest(unittest.TestCase):
 
 
 class SplitOptionRedirectionTest(unittest.TestCase):
+    def test_a_split_word_that_ends_in_an_operator_keeps_the_next_word_whole(self):
+        self.assertEqual(shared.split_fused_redirection(["<<<a<<<", "x>y"]), ["<<<a<<<", "x>y"])
+        self.assertEqual(shared.split_fused_redirection(["-s<<<a<<<", "x>y"]), ["-s", "<<<a<<<", "x>y"])
+
     def test_an_option_word_fused_with_a_redirection_is_split(self):
         self.assertEqual(shared.split_fused_redirection(["-s<<<x"]), ["-s", "<<<x"])
         self.assertEqual(shared.split_fused_redirection(["-s>"]), ["-s", ">"])
