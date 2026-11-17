@@ -4,7 +4,7 @@
 Usage: grade_report.py REPORT
 
 REPORT is a path, or - for stdin. Checks: summary, sections, tables, numbering, counts, unique,
-flag-section, approve, tools (a bullet for each tool: its version when on PATH, an install hint when not).
+flag-section, lock-note, defaults, approve, tools (a bullet for each tool: its version when on PATH, an install hint when not).
 Output: one line "FAIL <check>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 """
@@ -18,7 +18,9 @@ COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 HEADINGS = {"critical": "## Critical", "required": "## Required", "suggestion": "## Suggestions"}
 SEVERITIES = list(HEADINGS)
 FLAG = "⚑"
+LOCK = "🔒"
 FLAG_HEADING = "## ⚑"
+LOCK_NOTE = "🔒 = a protection write."
 GRAPH_HEADING = "## Job graph after the fixes"
 APPROVE_HEADING = "## Approve"
 APPROVE_FINDINGS = "Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a range such as `1-12`."
@@ -35,6 +37,7 @@ MARKERS = [
     ("critical table", lambda s: s == HEADINGS["critical"]),
     ("required table", lambda s: s == HEADINGS["required"]),
     ("suggestion table", lambda s: s == HEADINGS["suggestion"]),
+    ("lock note", lambda s: s.startswith(LOCK_NOTE)),
     ("flag section", lambda s: s.startswith(FLAG_HEADING)),
     ("job graph", lambda s: s == GRAPH_HEADING),
     ("approve", lambda s: s == APPROVE_HEADING),
@@ -143,7 +146,7 @@ def grade(text):
     for severity in SEVERITIES:
         seen = set()
         for cells in rows[severity]:
-            rule = cells[1].replace(FLAG, "").strip() if len(cells) > 1 else ""
+            rule = cells[1].replace(FLAG, "").replace(LOCK, "").strip() if len(cells) > 1 else ""
             if not RULE_ID.match(rule):
                 fail("unique", f"the Rule cell {cells[1:2]} is not one rule id")
             elif rule in seen:
@@ -157,6 +160,18 @@ def grade(text):
         fail("flag-section", "a row has the flag mark, but there is no flag section")
     if has_section and not any_flag:
         fail("flag-section", "there is a flag section, but no row has the flag mark")
+
+    # lock-note: the note exists exactly when a row has the lock mark (its place is part of the section order)
+    any_lock = any(LOCK in cells[1] for severity in SEVERITIES for cells in rows[severity] if len(cells) > 1)
+    has_note = index["lock note"] is not None
+    if any_lock and not has_note:
+        fail("lock-note", "a row has the lock mark, but there is no lock note")
+    if has_note and not any_lock:
+        fail("lock-note", "there is a lock note, but no row has the lock mark")
+
+    # defaults: the Intake line ends with the defaults that the review used
+    if index["intake"] is not None and "Defaults:" not in lines[index["intake"]]:
+        fail("defaults", "the Intake line has no Defaults: part")
 
     # approve: the last section is Approve, with the line of the contract
     headings = [line.strip() for line in lines if line.strip().startswith("## ")]

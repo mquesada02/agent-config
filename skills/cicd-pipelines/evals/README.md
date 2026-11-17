@@ -85,7 +85,7 @@ DEPLOY cases: `deploy-01-...` to `deploy-10-...` (one bad fixture for each DEPLO
 
 - `deploy-02-tag-run-staging-record` is the good workflow: prod runs in a tag run, has no `needs`, and checks the staging record with `scripts/check-staged.sh`. It forbids DEPLOY-02.
 - DEPLOY-09 is a measured rule, so it has one case for each part, as COST-04 does. `deploy-09-missing-timeout` is the required part, with no history. `deploy-09-timeout-too-high-with-history` is the measured part: its recorded `repo/intake.json` has `deploy_history` detected (every median at most 270 seconds, so the proposal is at most 14 minutes) and every job but the called workflow has `timeout-minutes: 30`. Its prompt tells the review not to run the intake script. `deploy-09-timeout-too-high-no-history` is the same workflow with the sandbox's unknown history, and it forbids DEPLOY-09.
-- The `clean` case and the CI create cases that write files forbid the required DEPLOY ids (01 to 06, 08 and 09), the required ROLLBACK ids (01, 02, 03 and 06), the required RELEASE ids (01 to 06) and the required PUBLISH ids (01 to 03). The review does not load the RELEASE and PUBLISH files for these cases, so these ids are a safety net.
+- The `clean` case and the CI create cases that write files forbid the required DEPLOY ids (01 to 06, 08 and 09), the required ROLLBACK ids (01, 02, 03 and 06), the required RELEASE ids (01 to 06), the required PUBLISH ids (01 to 03) and the required PROTECT ids (01 to 05). The review does not load the RELEASE, PUBLISH and PROTECT files for these cases, so these ids are a safety net.
 
 ROLLBACK cases: `rollback-01-...` to `rollback-06-...` (one bad fixture for each ROLLBACK rule). Each one is a copy of the good DEPLOY workflow fixture (`deploy-02-tag-run-staging-record`) plus a good `rollback.yml`: a `workflow_dispatch` with an environment choice, a job that runs only for a tag, the same deploy script as the deploy jobs and the group `deploy-${{ inputs.environment }}`. A fixture differs from the good files only where its rule needs it, and the cases check only their own expect list, so a fixture may also earn a finding of another rule.
 
@@ -109,6 +109,19 @@ RELEASE and PUBLISH cases: `release-01-...` to `release-06-...` and `publish-01-
 - `publish-03-no-dependency-order`: a pnpm monorepo of two published packages that publishes each one in a shell loop.
 - `publish-04-no-published-version-check`: a plain `npm publish` step with no `npm view` check.
 - `publish-05-publish-workflow-renamed`: the good release job lives in `publish.yml` and the repo has no `release.yml`. The report row of PUBLISH-05 gets the ⚑ mark, and the ⚑ section holds the npm admin step.
+
+PROTECT cases: `protect-01-...` to `protect-08-...` (one case for each PROTECT rule). Each one is a copy of the good DEPLOY workflow fixture (`deploy-02-tag-run-staging-record`: `ci.yml`, `deploy.yml`, the two scripts, `package.json` and the lockfile) plus the good `rollback.yml` of the ROLLBACK cases, and a recorded `repo/intake.json` of the 27 facts. The recorded intake holds the good state of every fact that a PROTECT rule reads (`environments` with `artifacts`, `dev`, `staging` and `prod`, each with `branch_policy: custom` and `admin_bypass: false`, and `reviewers: true` for `prod`; `rulesets` with an active branch ruleset and an active tag ruleset; `classic_protection` not protected; `required_checks` of `CI passed`; a plan that allows reviewers; `release_tag_pattern` `v*`; all `detected`), and a case changes only the fact of its own rule. The prompt tells the review not to run the intake script. The cases hold no `release.yml`, so the job graph sketch has three trigger lines. A case checks only its own expect list, so a report may also hold the row of another rule.
+
+- `protect-01-no-main-ruleset`: `rulesets` has only a tag ruleset, and the classic rule is protected (so the Fix holds the classic deletion, a ⚑ step).
+- `protect-02-no-tag-ruleset`: `rulesets` has only a branch ruleset.
+- `protect-03-env-accepts-any-branch`: `prod` has `branch_policy: none`.
+- `protect-04-prod-no-reviewers`: `prod` has `reviewers: false`.
+- `protect-05-admin-bypass-on-prod`: `prod` has `admin_bypass: true`. The Fix is a manual ⚑ step.
+- `protect-06-classic-and-ruleset-stack`: `classic_protection` is protected next to the good rulesets and the good required checks.
+- `protect-07-claimed-protection-missing`: a comment above the prod job of `deploy.yml` claims required reviewers, and `prod` has `reviewers: false` (so the report also holds a PROTECT-04 row).
+- `protect-08-repo-wide-role-arn`: the `package` job names no `environment` and reads `vars.AWS_ROLE_ARN`.
+
+The report parts that the PROTECT cases check: the 🔒 mark in the Rule cell (the `expect-<ID>.md` pattern takes `⚑`, `🔒` or both in that order), the lock note (`section-lock-note.md`, in `protect-01` to `protect-04`, whose reports hold a 🔒 row), and the three trigger lines of the job graph sketch (`section-graph-triggers.md`, in all 8 PROTECT cases and in no other case). The `Defaults:` part of the `Intake:` line is checked by `grade_report.py`.
 
 ## Approval cases
 
@@ -172,7 +185,7 @@ python3 skills/cicd-pipelines/scripts/judge_fix_quality.py <results folder>/resu
 ## Graders
 
 - `expect-<ID>.md` and `forbid-<ID>.md`: a `regex` grader that finds the id in the Rule cell of a table row. They are generated from `expect.json`, and a unit test keeps them in step.
-- `section-*.md`: `regex` graders for the section markers of the report contract.
+- `section-*.md`: `regex` graders for the section markers of the report contract. `section-lock-note.md` and `section-graph-triggers.md` are extra, and only the PROTECT cases hold them (see "CD review cases").
 - `no-edit.md`, `no-write.md`, `no-shell-write.md`: `tool_used` graders with `min: 0` and `max: 0`. The skill must not edit a workflow before approval.
 - `fix-quality.md`: an `llm` judge of the fix text. It judges the finding rows one row at a time, on the last message only. It is `arm: with-only`, so it is reported and not scored. Plugin eval reads graders only from the case folder, so every case holds the same copy, and `tests/test_fix_quality_grader.py` fails when a copy differs. To change the text, write one copy and copy it over all the others. To read why a run failed, see "Fix-quality rationale".
 - `skill-fired.md` (trigger case): `tool_used: Skill`. Under `--ablation with-without` it is an indicator of the with-arm, not part of the score.

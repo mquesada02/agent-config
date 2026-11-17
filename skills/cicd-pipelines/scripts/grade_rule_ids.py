@@ -12,6 +12,7 @@ import argparse
 import sys
 
 FLAG = "⚑"
+LOCK = "🔒"
 
 
 def read_report(path):
@@ -31,7 +32,7 @@ def rule_tokens(text):
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         if len(cells) < 2 or cells[0] == "#" or set(cells[0]) <= set("-: "):
             continue
-        tokens.add(cells[1].replace(FLAG, "").strip())
+        tokens.add(cells[1].replace(FLAG, "").replace(LOCK, "").strip())
     return tokens
 
 

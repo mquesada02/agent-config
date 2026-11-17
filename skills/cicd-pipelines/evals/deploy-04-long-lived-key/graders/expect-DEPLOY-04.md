@@ -1,5 +1,5 @@
 ---
 type: regex
-pattern: '^\|\s*\d+\s*\|\s*DEPLOY-04(?:\s*⚑)?\s*\|'
+pattern: '^\|\s*\d+\s*\|\s*DEPLOY-04(?:\s*⚑)?(?:\s*🔒)?\s*\|'
 flags: m
 ---

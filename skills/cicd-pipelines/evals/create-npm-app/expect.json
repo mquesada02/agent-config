@@ -56,7 +56,12 @@
     "RELEASE-06",
     "PUBLISH-01",
     "PUBLISH-02",
-    "PUBLISH-03"
+    "PUBLISH-03",
+    "PROTECT-01",
+    "PROTECT-02",
+    "PROTECT-03",
+    "PROTECT-04",
+    "PROTECT-05"
   ],
   "asserts": {
     ".github/workflows/ci.yml": [

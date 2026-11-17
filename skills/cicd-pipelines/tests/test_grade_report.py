@@ -139,6 +139,43 @@ class GradeReport(unittest.TestCase):
         text = make_report(required=[row("NAME-06")], flag_section=True)
         self.assertFailsCheck(text, "flag-section")
 
+    # ----- the lock mark and its note
+    def test_a_lock_row_with_the_note_passes(self):
+        self.assertPasses(make_report(required=[row("PROTECT-02", lock=True)]))
+
+    def test_a_flag_and_lock_row_passes_with_both_sections(self):
+        self.assertPasses(make_report(required=[row("PROTECT-01", flag=True, lock=True)]))
+
+    def test_a_lock_row_with_no_note_fails(self):
+        self.assertFailsCheck(make_report(required=[row("PROTECT-02", lock=True)], lock_note=False), "lock-note")
+
+    def test_a_note_with_no_lock_row_fails(self):
+        self.assertFailsCheck(make_report(required=[row("NAME-06")], lock_note=True), "lock-note")
+
+    def test_a_lock_only_row_needs_no_flag_section(self):
+        text = make_report(required=[row("PROTECT-04", lock=True)])
+        self.assertNotIn("## ⚑", text)
+        self.assertPasses(text)
+
+    def test_the_note_after_the_flag_section_is_out_of_order(self):
+        text = make_report(required=[row("PROTECT-01", flag=True, lock=True)])
+        note = next(line for line in text.splitlines() if line.startswith("🔒 = a protection write."))
+        text = text.replace(note + "\n\n", "").replace("## Job graph", note + "\n\n## Job graph")
+        self.assertFailsCheck(text, "sections")
+
+    def test_a_lock_mark_in_the_rule_cell_is_not_part_of_the_rule_id(self):
+        text = make_report(required=[row("PROTECT-01", flag=True, lock=True), row("PROTECT-01", lock=True)])
+        self.assertFailsCheck(text, "unique")
+
+    # ----- defaults
+    def test_an_intake_line_without_defaults_fails(self):
+        text = self.full().replace(" Defaults: none.", "")
+        self.assertFailsCheck(text, "defaults")
+
+    def test_an_intake_line_with_a_default_passes(self):
+        text = self.full().replace("Defaults: none.", "Defaults: plan (reviewers available).")
+        self.assertPasses(text)
+
     # ----- approve
     def test_the_approve_section_must_be_last(self):
         text = self.full() + "\n## Extra\n\nMore text.\n"

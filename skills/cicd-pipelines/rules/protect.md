@@ -1,0 +1,72 @@
+# Protect rules (PROTECT-*)
+
+What protects the default branch, the release tags and the deploy environments: a main ruleset, a tag ruleset, environments with a deployment policy, required reviewers on prod, no broad bypass, and role ARNs and App keys that belong to one environment. This file is the single source of truth for these rules. Both branches of the skill load it by need (see "Loading by need" in [SKILL.md](SKILL.md)).
+
+## Verified GitHub facts
+
+The GitHub REST docs and the published OpenAPI description were read for the writes that the PROTECT fixes make. These facts hold until the docs change.
+
+1. **Ruleset `PUT`: replace or merge.** Not stated. The page "Update a repository ruleset" (docs.github.com/en/rest/repos/rules) lists no required body field and describes `rules` as "An array of rules within the ruleset", with no sentence on omitted fields. So the Fix of PROTECT-01 and PROTECT-02 sends the whole ruleset object (name, target, enforcement, bypass actors, conditions and rules) in every write, and a write script compares the second `GET` with that whole object.
+2. **Classic PAT scopes for rulesets and branch protection.** Not stated for these endpoints. The pages "Create a repository ruleset" and "Update a repository ruleset" (docs.github.com/en/rest/repos/rules) list only fine-grained permissions (the "Administration" repository permission, write, for a ruleset write). The page "Update branch protection" (docs.github.com/en/rest/branches/branch-protection) says that protecting a branch "requires admin or owner permissions to the repository". The environment pages (docs.github.com/en/rest/deployments/environments) say that a classic token needs the `repo` scope. The page "Scopes for OAuth apps" (docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) lists only the broad `repo` scope. So use a token with admin rights on the repo, and treat a 403 or a 404 on the first `GET` as no admin scope.
+3. **Admin bypass of an environment.** The page "Create or update an environment" (docs.github.com/en/rest/deployments/environments): the `GET` of an environment returns `can_admins_bypass`, but the body of the write has only `wait_timer`, `prevent_self_review`, `reviewers` and `deployment_branch_policy`. The REST API cannot clear the admin bypass. So PROTECT-05 is a manual ⚑ step.
+4. **Environment `PUT`: replace or merge.** The page "Create or update an environment" does not say whether the write resets omitted fields, so the Fix sends the whole object (reviewers, wait timer, self-review and branch policy).
+
+## Definitions
+
+- "Mechanical" means a script or a regex can check the rule. "Judgement" means you decide. "Measured" means the rule reads measured run times of the intake.
+- The severity is fixed for each rule. The first word of the Severity bullet is the level (`critical`, `required` or `suggestion`).
+- No protect rule is critical. The SEC rules cover the exploitable security problems in CD files.
+- A 🔒 mark on a row means that the fix is a protection write: the skill shows the current and the proposed JSON of one API object and asks for a yes before each write (the 2-step flow). A ⚑ mark means a manual admin step. A row can have both.
+- **Reads.** A check reads the intake facts and the workflow files, and nothing else. The facts are `rulesets` (name, target and enforcement of each ruleset, no rule content), `classic_protection` (`protected`, `required_pull_request_reviews`, `enforce_admins`), `environments` (name, `reviewers`, `wait_timer`, `branch_policy` of `none`, `protected_branches` or `custom`, `admin_bypass`), `plan` (`reviewers_available`), `required_checks`, `release_tag_pattern` and `existing_workflows`. The workflow files are read with the Read, Glob and Grep tools, and only by PROTECT-03 (the `environment:` and the `if:` of each job), PROTECT-07 (comment lines) and PROTECT-08 (the variable and secret reads).
+- **Status.** A fact whose status is not `detected` raises no finding of a rule when the finding condition of that rule uses the fact, and the `Intake:` line says that the setting could not be read. A fact that only the Fix uses never suppresses a finding: `classic_protection` in PROTECT-01 and `release_tag_pattern` in PROTECT-02 (a `default` value is usable). PROTECT-04 also accepts the `plan` fact with the status `default` (a private repo whose plan cannot be read), because that fact always carries `reviewers_available: true` with a note. Its other fact, `environments`, must still be `detected`.
+- **Limits of the facts.** The facts do not hold the rule content of a ruleset, the bypass actors of a ruleset, the patterns of a `custom` branch policy or the `prevent_self_review` value. The Rule text of each rule says which part it cannot check.
+- **Content.** The content that a Fix writes is in the Rule text after the word "Content:", so that each Fix stays one sentence.
+- **Shared objects.** PROTECT-01 writes the main ruleset, PROTECT-02 writes the tag ruleset, and PROTECT-03 and PROTECT-04 write an environment, so two rows can write the same environment object. The write script orders them.
+
+### PROTECT-01
+- **Severity:** required
+- **Rule:** The default branch has an active branch ruleset, and `CI passed` is its only required status check. A finding: the `rulesets` fact has the status `detected` and holds no ruleset with `target: branch` and `enforcement: active`, or the `required_checks` fact has the status `detected` and does not hold `CI passed` as its only name (an empty list is a finding too). Content: a PR is required, `CI passed` is the only required status check, force pushes and deletions are blocked, and the bypass list is empty. When the `classic_protection` fact shows a protected branch, the ruleset carries every setting that the classic rule has (a PR requirement, and no admin bypass when `enforce_admins` is true), and deleting the classic rule is a ⚑ step on the same row, after the next CI run on the ruleset is green. The fact has no rule content, so the review cannot check the content of an existing ruleset. The write is a whole-object `PUT` (see "Verified GitHub facts").
+- **Check:** mechanical: the `rulesets` fact has an active branch ruleset, and the `required_checks` fact is exactly `CI passed`.
+- **Fix:** Write the main ruleset with the content above (marks ⚑ 🔒 when the classic rule is protected, otherwise 🔒).
+
+### PROTECT-02
+- **Severity:** required
+- **Rule:** The release tags have a tag ruleset (the prod deploy runs on a final tag). A finding: the `rulesets` fact has the status `detected` and holds no ruleset with `target: tag` and `enforcement: active`. The rule has no other condition. The fact has no ruleset conditions, so a tag ruleset for another pattern passes. Content: the pattern is the `release_tag_pattern` value (a `default` value such as `v*` is usable), creation is allowed only for the release actor (RELEASE-04 defines it: the release App, or GitHub Actions for a release with `GITHUB_TOKEN`), and update and delete are blocked. RELEASE-03 reads the same fact, so when both rules find the problem the report has both rows, and the RELEASE-03 row is skipped with the reason "the PROTECT-02 row writes the ruleset".
+- **Check:** mechanical: the `rulesets` fact has an active tag ruleset.
+- **Fix:** Write the tag ruleset with the content above (mark 🔒).
+
+### PROTECT-03
+- **Severity:** required
+- **Rule:** Each environment that a job of `deploy.yml`, `rollback.yml` or `release.yml` names exists and has a deployment policy that matches its trigger. A job runs for a tag ref when its own `if:` holds `github.ref_type == 'tag'` or `startsWith(github.ref, 'refs/tags/')`. Every other job runs for a branch ref, whatever the workflow triggers are (a `needs` link decides nothing). An environment that a job names with an expression (`${{ inputs.environment }}`) stands for each value in the `options` of that input. An expression that is not an input with an `options` list (a free-string input, a `matrix.*` value, or any other expression) is not checked and raises no finding. A finding: the environment is missing from a `detected` `environments` fact, or its `branch_policy` is `none`, or its `branch_policy` is `protected_branches` and a job that names it runs for a tag ref (a protected-branch policy does not accept tags). A `custom` policy passes, because the patterns are not in the fact. Content: prod accepts only the final-tag pattern, and every other environment accepts only `main`. GitHub cannot rename an environment, so when the Fix creates an environment in place of an old name (for example `prod` for `production`), deleting the old environment after the first deploy is a ⚑ manual step, and the step says that its secrets do not move to the new environment.
+- **Check:** mechanical: each environment that a job names is in the `environments` fact with a `branch_policy` other than `none`, and not `protected_branches` for a job that runs for a tag ref.
+- **Fix:** Write the environment with its deployment policy as above (mark 🔒, and ⚑ when it replaces an old environment).
+
+### PROTECT-04
+- **Severity:** required
+- **Rule:** The `prod` environment has required reviewers and `prevent_self_review`, where the plan allows them. A finding: the `environments` fact has the status `detected` and holds `prod` with `reviewers: false`, and `plan.reviewers_available` is true. When `reviewers_available` is false, the rule raises no row, and the `Intake:` line says that reviewers are not available on this plan and that the merged PR is the approval. When the `plan` fact has the status `default`, the row is raised and its Problem cell says that a private repo may need GitHub Enterprise. The fact has no `prevent_self_review` value, so a prod environment with reviewers passes. Content: the owner or team that the user names as reviewers, and `prevent_self_review: true`. The environment write sends the whole object (see "Verified GitHub facts").
+- **Check:** mechanical: the `prod` environment has `reviewers: true`, or the plan has no reviewers.
+- **Fix:** Add required reviewers and `prevent_self_review: true` to the `prod` environment (mark 🔒).
+
+### PROTECT-05
+- **Severity:** required
+- **Rule:** No broad bypass on `prod`. A finding: the `environments` fact has the status `detected` and holds `prod` with `admin_bypass: true`. The REST API has no field for the admin bypass (see "Verified GitHub facts"), so the Fix is a manual ⚑ step with no 🔒. The facts do not hold the bypass actors of a ruleset, so the other half of the rule (a ruleset's bypass list holds only the release App, for the release tags) is not checked on an existing ruleset. The content of PROTECT-01 (an empty bypass list) and PROTECT-02 (the release actor only) sets it when those rules write a ruleset.
+- **Check:** mechanical: the `prod` environment has `admin_bypass: false`.
+- **Fix:** Clear "Allow administrators to bypass configured protection rules" for the `prod` environment in its settings (mark ⚑, a manual step).
+
+### PROTECT-06
+- **Severity:** suggestion
+- **Rule:** Classic branch protection and a ruleset on the same branch both apply and stack, which hides which one blocks a merge. A finding: the `classic_protection` fact shows a protected default branch, the `rulesets` fact holds an active branch ruleset, and PROTECT-01 raises no row. When PROTECT-01 raises a row, its Fix holds the classic deletion and PROTECT-06 raises none, so one repo never gets two rows with the same classic deletion.
+- **Check:** mechanical: the `classic_protection` fact is not protected, or no active branch ruleset exists.
+- **Fix:** Delete the classic branch protection rule after the next CI run on the ruleset is green (mark ⚑, a manual step).
+
+### PROTECT-07
+- **Severity:** suggestion
+- **Rule:** A comment must not claim a protection that the API does not show. A claim is one comment line (a `#` comment) of a workflow file that holds, in that one line, one of these phrases (case does not matter): `branch protection`, `protected branch`, `ruleset`, `tag protection`, `protected tag`, `required reviewer`, `required review`. A claim is a finding when the `detected` facts do not show it: `branch protection`, `protected branch` and `ruleset` need an active branch ruleset or `classic_protection.protected: true`; `tag protection` and `protected tag` need an active tag ruleset; `required reviewer` and `required review` need `reviewers: true` on the environment whose name the same comment line holds as a word, or on `prod` when the line holds no environment name. A claim is a finding only when every fact that could show it is `detected` (for `branch protection`, `protected branch` and `ruleset`, both `rulesets` and `classic_protection`). A comment that holds none of these phrases is not read.
+- **Check:** mechanical: no comment line of a workflow claims a protection that the detected facts do not show.
+- **Fix:** Remove the claim, or add the protection with its PROTECT rule (a file edit, no mark).
+
+### PROTECT-08
+- **Severity:** suggestion
+- **Rule:** A deploy role ARN or an App key belongs to one environment. A finding (judgement): a job that names no `environment` reads a `vars.` or `secrets.` name that holds `AWS_ROLE` or `ROLE_ARN` (a role ARN), or `APP_PRIVATE_KEY` or `APP_ID` (an App key), so only a repo-wide value can exist. The review cannot tell from the workflow text whether a name that a job with an `environment` reads is set in that environment, so that case is not a finding. The skill writes no secret or variable, so the Fix is a manual ⚑ step with no 🔒.
+- **Check:** judgement: a job with no `environment` reads a role ARN or App key name.
+- **Fix:** Set each role ARN or App key as a variable or secret of its own environment and read it in a job that names that environment (mark ⚑, a manual step).

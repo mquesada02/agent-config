@@ -20,24 +20,29 @@ TOOLS_OK = [
 HEADINGS = {"critical": "## Critical", "required": "## Required", "suggestion": "## Suggestions"}
 
 
-def row(rule, where="ci.yml:3", flag=False):
-    return (rule, where, "A problem.", "A fix.", flag)
+LOCK_NOTE = ("🔒 = a protection write. The row uses the 2-step flow: after the approval, the skill shows the "
+             "current and the proposed JSON and asks for a yes before each write.")
+
+
+def row(rule, where="ci.yml:3", flag=False, lock=False):
+    return (rule, where, "A problem.", "A fix.", flag, lock)
 
 
 def table(rows, start):
     lines = [HEADER, SEPARATOR]
-    for offset, (rule, where, problem, fix, flag) in enumerate(rows):
-        cell = f"{rule} ⚑" if flag else rule
+    for offset, (rule, where, problem, fix, flag, lock) in enumerate(rows):
+        cell = " ".join([rule] + (["⚑"] if flag else []) + (["🔒"] if lock else []))
         lines.append(f"| {start + offset} | {cell} | {where} | {problem} | {fix} |")
     return lines
 
 
 def make_report(critical=(), required=(), suggestion=(), summary=None, tools=None,
-                approve=None, flag_section=None, graph=True, intake=True, checks=True):
+                approve=None, flag_section=None, graph=True, intake=True, checks=True, lock_note=None):
     """Build a valid report. Keyword arguments switch one point of the contract off or change it."""
     groups = {"critical": list(critical), "required": list(required), "suggestion": list(suggestion)}
     total = sum(len(rows) for rows in groups.values())
     any_flag = any(r[4] for rows in groups.values() for r in rows)
+    any_lock = any(r[5] for rows in groups.values() for r in rows)
     lines = ["# cicd-pipelines review: all workflows", ""]
     lines.append(summary or (
         f"**Result: {len(groups['critical'])} critical, {len(groups['required'])} required, "
@@ -54,8 +59,10 @@ def make_report(critical=(), required=(), suggestion=(), summary=None, tools=Non
         if rows:
             lines += [HEADINGS[severity], ""] + table(rows, number) + [""]
             number += len(rows)
+    if lock_note if lock_note is not None else any_lock:
+        lines += [LOCK_NOTE, ""]
     if flag_section if flag_section is not None else any_flag:
-        lines += ["## ⚑ Branch protection change needed", "",
+        lines += ["## ⚑ Admin steps", "",
                   "1. Remove the old required checks.", "2. Add the required check `CI passed`.", ""]
     if graph:
         lines += ["## Job graph after the fixes", "", FENCE, "lint ─┐", "test ─┴─ ci-passed", FENCE, ""]
