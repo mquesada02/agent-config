@@ -531,8 +531,25 @@ class IssueFilingAllowRuleTest(RuleTextCase):
         self.assert_in(self.entry, "Section 8 files only on the issue tracker that is configured for the repo the session works in.",
                        "Section 16 files only on `mquesada02/agent-config`.")
 
+    def test_the_entry_names_the_section_seven_and_required_skill_case_on_the_configured_tracker(self):
+        self.assert_in(self.entry, "section 7 or a skill that section 7 requires (a spec, a map or a ticket)",
+                       "Section 7 and the skills that it requires (for example `to-spec`, `to-tickets`, `wayfinder`) file a spec, a map or a ticket "
+                       "only on the issue tracker that is configured for the repo the session works in.")
+
+    def test_the_entry_names_the_owner_directed_case_with_its_tracker_limit(self):
+        self.assert_in(self.entry, "the owner in the current session (a follow-up or a ticket that the owner asked for or approved)",
+                       "The owner directs an issue on the issue tracker that is configured for the repo the session works in, "
+                       "or on a repo that the owner named in the current session.")
+
+    def test_the_reason_names_the_new_cases(self):
+        self.assert_in(self.entry, "Not Interfere With Workloads: the owner wrote the rules of sections 7, 8 and 16",
+                       "said that no approval step is needed for sections 8 and 16, and directs the owner-named issues.")
+
     def test_the_entry_allows_create_only(self):
         self.assert_in(self.entry, "Create only: an edit, close, comment, reopen or label change of an existing issue")
+
+    def test_the_create_only_clause_excludes_only_repos_that_the_rules_do_not_name(self):
+        self.assert_in(self.entry, "a command for a repo that these rules do not name, and any call that the transcript shows as made by a subagent do not match.")
 
     def test_the_other_entries_and_the_subagent_soft_deny_stay(self):
         self.assertEqual([entry.split(":")[0] for entry in self.auto_mode["allow"]],
