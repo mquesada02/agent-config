@@ -1,0 +1,13 @@
+{
+  "name": "example-npm-app",
+  "private": true,
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

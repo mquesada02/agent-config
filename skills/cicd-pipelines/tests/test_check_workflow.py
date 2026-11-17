@@ -4,11 +4,10 @@ import subprocess
 import sys
 import unittest
 
-from skill_files import RULES, SKILL, all_rules, read, rule_entries
+from skill_files import RULES, SKILL, all_rules, cd_form, read, rule_entries
 
 COST_RULES = os.path.join(RULES, "cost.md")
 CI_ON = "on:\n  push:\n    branches: [main]\n  pull_request:\n"
-CD_ON = "on:\n  pull_request:\n  workflow_call:\n"
 # A deploy workflow: one job that calls a reusable workflow (no timeout possible) and one normal job.
 DEPLOY = (
     "name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  ci:\n    uses: ./.github/workflows/ci.yml\n"
@@ -480,7 +479,7 @@ class CdPart(unittest.TestCase):
     def ci_for_cd(self):
         text = read(SINGLE)
         self.assertIn(CI_ON, text)
-        return text.replace(CI_ON, CD_ON)
+        return cd_form(text)
 
     def test_triggers_cd_passes_on_the_cd_form_of_ci(self):
         self.assertEqual(run(self.ci_for_cd(), "triggers-cd")[:2], (0, ["PASS"]))

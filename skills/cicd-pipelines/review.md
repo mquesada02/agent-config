@@ -24,7 +24,7 @@ Section 2 of the report lists each fact with its value. A fact with the status `
 
 When `supported_node_majors` has the status `default`, the line says `Node support list from <date>, offline`, with the date of the offline list.
 
-A `runner_labels` entry with the status `unknown` (a self-hosted label, a larger runner label, a runner group, or an expression that may name one): ask the user for the vCPU size of that label before you write the report, and put the answer in the `Intake:` line. This is the only question that the intake asks.
+A `runner_labels` entry with the status `unknown` (a self-hosted label, a larger runner label, a runner group, or an expression that may name one): ask the user for the vCPU size of that label before you write the report, and put the answer in the `Intake:` line. The intake asks only this runner-size question. Create mode asks the CD questions of [create.md](create.md) (CI, CD or both, and the deploy target).
 
 ## Job graph facts
 

@@ -9,7 +9,8 @@ message (the `result` field of the last line of the trace at `tracePath`; the tr
 ran with --keep-temp), takes each fenced `yaml` block under a `### <path>` heading of the `## Created`
 section, and runs check_workflow.py on it with the assertions that the `asserts` object of
 DIR/<case>/expect.json lists for that path. It also runs the real `actionlint` on each written workflow
-block when actionlint is on PATH. A path that the case asserts and the message does not show fails the run.
+block when actionlint is on PATH (all the workflow blocks of a run sit together under `.github/workflows/`
+of one temp folder, so a local reusable workflow call resolves). A path that the case asserts and the message does not show fails the run.
 A missing actionlint prints `NOT RUN actionlint: not on PATH` and does not fail the run.
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failed check, one line "<case>#<n>: PASS|FAIL"
 for each run, then PASS or FAIL. Exit code: 0 pass, 1 fail, 2 usage error or unreadable result.
@@ -110,16 +111,28 @@ def check_block(text, names):
     return [line for line in proc.stdout.splitlines() if line.startswith("FAIL ") and line != "FAIL"]
 
 
-def lint_block(path, text):
-    """The failure message of the real actionlint on a workflow block, or None when it passes."""
+def lint_blocks(blocks):
+    """{path: failure message of the real actionlint, or None when it passes} for each workflow block of a run.
+
+    The blocks are written together under `.github/workflows/` of one temp folder, so that a local reusable
+    workflow call (`uses: ./.github/workflows/ci.yml` in deploy.yml) resolves to the sibling block."""
+    results = {}
     with tempfile.TemporaryDirectory(prefix="create-grade-") as folder:
-        target = os.path.join(folder, os.path.basename(path))
-        with open(target, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        proc = subprocess.run(["actionlint", "-no-color", target], capture_output=True, text=True)
-    if proc.returncode == 0:
-        return None
-    return (proc.stdout.strip() or proc.stderr.strip() or f"exited {proc.returncode}").replace("\n", " | ")
+        written = {}
+        for path, text in blocks.items():
+            if path.startswith(WORKFLOWS):
+                written[path] = os.path.join(folder, path)
+                os.makedirs(os.path.dirname(written[path]), exist_ok=True)
+                with open(written[path], "w", encoding="utf-8") as handle:
+                    handle.write(text)
+        for path, target in written.items():
+            proc = subprocess.run(["actionlint", "-no-color", target], capture_output=True, text=True)
+            if proc.returncode == 0:
+                results[path] = None
+            else:
+                results[path] = (proc.stdout.strip() or proc.stderr.strip()
+                                 or f"exited {proc.returncode}").replace("\n", " | ")
+    return results
 
 
 def grade_run(case, number, trace_path, asserts, lint):
@@ -138,11 +151,9 @@ def grade_run(case, number, trace_path, asserts, lint):
             check, _, text = line[len("FAIL "):].partition(": ")
             failures.append(f"FAIL {label} {check}: {path}: {text}")
     if lint:
-        for path, text in blocks.items():
-            if path.startswith(WORKFLOWS):
-                error = lint_block(path, text)
-                if error:
-                    failures.append(f"FAIL {label} actionlint: {path}: {error}")
+        for path, error in lint_blocks(blocks).items():
+            if error:
+                failures.append(f"FAIL {label} actionlint: {path}: {error}")
     return failures
 
 

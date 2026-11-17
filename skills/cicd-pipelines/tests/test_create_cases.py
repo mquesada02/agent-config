@@ -5,12 +5,20 @@ import os
 import re
 import unittest
 
-from skill_files import EVALS, all_rules, frontmatter, level, read
-from test_create_steps import CREATE, MONO, SINGLE, check, fenced_blocks, fill_pnpm, section, single_pnpm
+from skill_files import EVALS, SKILL, all_rules, cd_form, ci_only_form, frontmatter, level, read
+from test_create_steps import (CREATE, DEPLOY, MONO, ROLLBACK, SINGLE, check, fenced_blocks, fill_pnpm, section,
+                               single_pnpm, terraform_fill)
 
 CI, DEP, SEC = ".github/workflows/ci.yml", ".github/dependabot.yml", ".github/workflows/security-audit.yml"
 WRITING = ["create-npm-app", "create-pnpm-library", "create-pnpm-turbo-monorepo", "create-playwright-app"]
 CASES = WRITING + ["create-no-lockfile"]
+CD_CASES = ["create-cd-lambda-app", "create-cd-changesets-library", "create-cd-monorepo-publish", "create-cd-terraform"]
+ALL_CASES = CASES + CD_CASES
+CI_BASE = {"create-cd-lambda-app": "create-npm-app", "create-cd-terraform": "create-npm-app",
+           "create-cd-changesets-library": "create-pnpm-library",
+           "create-cd-monorepo-publish": "create-pnpm-turbo-monorepo"}
+RELEASE = os.path.join(SKILL, "templates", "release.yml")
+WF = ".github/workflows/"
 FACTS = ["default_branch", "package_manager", "node_version_app", "engines", "scripts", "package_kind", "os_claims",
          "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
          "existing_workflows", "installed_tools", "supported_node_majors",
@@ -40,8 +48,14 @@ def clean_forbid():
     return load("clean", "expect.json")["forbid"]
 
 
-def filled(case):
-    """The workflow that the create steps give for a case, made from a template by the fill table values."""
+def filled(case, form=ci_only_form):
+    """The ci.yml that the create steps give for a case, made from a template by the fill table values.
+
+    The form removes the marked CD blocks (a CI-only run, `ci_only_form`) or keeps them (a CD run, `cd_form`)."""
+    return form(filled_text(CI_BASE.get(case, case)))
+
+
+def filled_text(case):
     template = read(MONO if "monorepo" in case else SINGLE)
     if case == "create-pnpm-library":
         return single_pnpm().replace("        node: [26]\n", "        node: [22, 24, 26]\n")
@@ -54,14 +68,15 @@ def filled(case):
 
 
 class Files(unittest.TestCase):
-    def test_the_create_cases_are_exactly_these_five(self):
+    def test_the_create_cases_are_exactly_these_nine(self):
         found = sorted(os.path.basename(p) for p in glob.glob(os.path.join(EVALS, "create-*")))
-        self.assertEqual(found, sorted(CASES))
+        self.assertEqual(found, sorted(ALL_CASES))
 
     def test_the_prompt_asks_for_ci_and_points_to_the_recorded_intake(self):
-        for name in CASES:
+        for name in ALL_CASES:
             text = read(os.path.join(case_dir(name), "prompt.md"))
-            self.assertIn("Create CI for this repo.", text, name)
+            wanted = "Create CI and CD for this repo." if name in CD_CASES else "Create CI for this repo."
+            self.assertIn(wanted, text, name)
             self.assertIn("`intake.json`", text, name)
             self.assertIn("do not run the intake script", text, name)
             tools = frontmatter(os.path.join(case_dir(name), "prompt.md"))["allowed_tools"]
@@ -70,42 +85,42 @@ class Files(unittest.TestCase):
             self.assertNotIn("cicd-pipelines", text.lower(), name)
 
     def test_the_scaffold_only_copies_the_fixture(self):
-        for name in CASES:
+        for name in ALL_CASES:
             text = read(os.path.join(case_dir(name), "scaffold.sh"))
             self.assertIn('cp -r "$here/repo/." .', text, name)
             self.assertNotIn("git", text, name)
 
     def test_no_fixture_holds_a_ci_workflow(self):
-        for name in CASES:
+        for name in ALL_CASES:
             self.assertFalse(os.path.exists(os.path.join(case_dir(name), "repo", CI)), name)
 
 
 class RecordedIntake(unittest.TestCase):
     def test_the_file_holds_the_28_facts_in_order_with_their_three_keys(self):
-        for name in CASES:
+        for name in ALL_CASES:
             intake = load(name, "repo", "intake.json")
             self.assertEqual(list(intake), FACTS, name)
             for fact, body in intake.items():
                 self.assertEqual(sorted(body), ["source", "status", "value"], f"{name} {fact}")
 
     def test_the_recorded_intake_says_that_actionlint_is_installed(self):
-        for name in CASES:
+        for name in ALL_CASES:
             tools = load(name, "repo", "intake.json")["installed_tools"]["value"]
             self.assertTrue(tools["actionlint"]["installed"], name)
             self.assertTrue(tools["actionlint"]["version"], name)
 
     def test_the_offline_node_list_names_tools_md(self):
-        for name in CASES:
+        for name in ALL_CASES:
             source = load(name, "repo", "intake.json")["supported_node_majors"]["source"]
             self.assertIn("tools.md", source, name)
 
     def test_the_lockfile_is_null_only_in_the_no_lockfile_case(self):
-        for name in CASES:
+        for name in ALL_CASES:
             lockfile = load(name, "repo", "intake.json")["package_manager"]["value"]["lockfile"]
             self.assertEqual(lockfile is None, name == "create-no-lockfile", name)
 
     def test_the_scripts_fact_lists_the_four_script_names_of_each_package(self):
-        for name in CASES:
+        for name in ALL_CASES:
             entries = load(name, "repo", "intake.json")["scripts"]["value"]
             self.assertTrue(entries, name)
             for entry in entries:
@@ -278,11 +293,11 @@ class Readme(unittest.TestCase):
     def test_the_readme_documents_the_create_run_and_the_operator_actionlint_step(self):
         text = read(os.path.join(EVALS, "README.md"))
         create = text[text.index("## Create cases"):text.index("## Graders")]
-        for needed in ("--case 'create-*'", '--allow-tools Write Edit "Bash(actionlint*)"', "grade_eval_results.py",
+        for needed in ("--case 'create-*'", '--allow-tools Write Edit "Bash(actionlint*)" "Bash(chmod*)"', "grade_eval_results.py",
                        "grade_create_results.py", "NOT RUN actionlint: not on PATH", "Real actionlint",
                        "issue 362"):
             self.assertIn(needed, create)
-        for name in CASES:
+        for name in ALL_CASES:
             self.assertIn(f"`{name}`", create)
 
 
@@ -290,7 +305,7 @@ class SyntheticFixtures(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.texts = {}
-        for name in CASES:
+        for name in ALL_CASES:
             for path in glob.glob(os.path.join(case_dir(name), "repo", "**", "*"), recursive=True) + \
                     glob.glob(os.path.join(case_dir(name), "repo", ".github", "**", "*"), recursive=True):
                 if os.path.isfile(path):
@@ -318,6 +333,67 @@ class SyntheticFixtures(unittest.TestCase):
         for path, text in self.texts.items():
             for owner in re.findall(r"uses:\s*([A-Za-z][^/\s@]*)/", text):
                 self.assertIn(owner, ("actions", "pnpm"), path)
+
+
+class CdCases(unittest.TestCase):
+    def test_the_prompt_names_the_deploy_target(self):
+        for name in CD_CASES:
+            text = read(os.path.join(case_dir(name), "prompt.md"))
+            target = "Terraform" if name.endswith("terraform") else "AWS Lambda"
+            self.assertIn(f"The deploy target is {target}.", text, name)
+
+    def test_the_recorded_intake_has_no_deploy_target_and_a_build_script(self):
+        for name in CD_CASES:
+            intake = load(name, "repo", "intake.json")
+            for fact in ("deploy_targets", "iac_tools", "existing_workflows"):
+                self.assertEqual(intake[fact]["value"], [], (name, fact))
+            for fact in ("deploy_targets", "iac_tools"):
+                self.assertEqual(intake[fact]["status"], "default", (name, fact))
+            self.assertTrue(all("build" in e["value"] for e in intake["scripts"]["value"]), name)
+
+    def test_the_expect_file_forbids_the_clean_list_and_names_the_six_files(self):
+        wanted = {WF + f for f in ("ci.yml", "deploy.yml", "release.yml", "rollback.yml", "security-audit.yml")} | {DEP}
+        for name in CD_CASES:
+            data = load(name, "expect.json")
+            self.assertEqual((data["expect"], data["forbid"]), ([], clean_forbid()), name)
+            self.assertEqual(set(data["asserts"]), wanted, name)
+            self.assertIn("triggers-cd", data["asserts"][CI], name)
+
+    def test_the_grader_set_adds_the_cd_write_graders_and_the_chmod_grader(self):
+        extra = {"wrote-dependabot.md", "wrote-security-audit.md", "wrote-deploy.md", "wrote-release.md",
+                 "wrote-rollback.md", "chmod-scripts.md"}
+        for name in CD_CASES:
+            self.assertEqual(grader_files(name), Graders.expected_files(None, name, extra), name)
+            for stem in ("deploy", "release", "rollback"):
+                wrote = meta(name, f"wrote-{stem}")
+                self.assertEqual((wrote["type"], wrote["tool"], int(wrote["min"])), ("tool_used", "Write", 1), name)
+                self.assertTrue(re.search(wrote["input_match"], '{"file_path": "/work/.github/workflows/%s.yml"}' % stem))
+            chmod = meta(name, "chmod-scripts")
+            self.assertEqual((chmod["tool"], int(chmod["min"])), ("Bash", 1), name)
+            self.assertTrue(re.search(chmod["input_match"], "chmod +x scripts/deploy-and-verify.sh"), name)
+
+    def test_the_forbid_graders_are_the_clean_ones(self):
+        for name in CD_CASES:
+            for rule in clean_forbid():
+                self.assertEqual(read(os.path.join(case_dir(name), "graders", f"forbid-{rule}.md")),
+                                 read(os.path.join(case_dir("clean"), "graders", f"forbid-{rule}.md")), (name, rule))
+
+    def test_the_files_that_the_steps_give_pass_the_asserts_of_each_case(self):
+        for name in CD_CASES:
+            asserts = load(name, "expect.json")["asserts"]
+            terraform = name.endswith("terraform")
+            release = read(RELEASE)
+            if "text=npm ci" in asserts[WF + "release.yml"]:
+                release = (release.replace("      - name: Set up pnpm\n", "", 1)
+                           .replace("        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1\n", "", 1)
+                           .replace("pnpm install --frozen-lockfile", "npm ci")
+                           .replace("publish: pnpm run release", "publish: npm run release"))
+            files = {WF + "ci.yml": filled(name, cd_form),
+                     WF + "deploy.yml": terraform_fill(read(DEPLOY)) if terraform else read(DEPLOY),
+                     WF + "rollback.yml": terraform_fill(read(ROLLBACK)) if terraform else read(ROLLBACK),
+                     WF + "release.yml": release}
+            for path, text in files.items():
+                self.assertEqual(check(text, *asserts[path]), (0, ["PASS"]), (name, path))
 
 
 if __name__ == "__main__":

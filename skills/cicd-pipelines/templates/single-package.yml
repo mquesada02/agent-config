@@ -3,6 +3,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # cd-part:start
+  workflow_call:
+    outputs:
+      code:
+        description: Whether the push changed code
+        value: ${{ jobs.changes.outputs.code }}
+  # cd-part:end
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -121,6 +128,14 @@ jobs:
         run: npm ci
       - name: Build the package
         run: npm run build
+      # cd-part:start
+      - name: Upload the build output
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+      # cd-part:end
   audit:
     name: Audit
     needs: changes

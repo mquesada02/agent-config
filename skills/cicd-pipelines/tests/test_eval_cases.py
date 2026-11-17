@@ -99,7 +99,7 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
                       "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 41  # the 38 earlier CD cases, the two protection approval cases and `clean-cd`
+CD_CASE_COUNT = 45  # the 41 earlier CD cases and the four `create-cd-*` create cases
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 

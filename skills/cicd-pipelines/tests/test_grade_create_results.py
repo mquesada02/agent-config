@@ -12,9 +12,10 @@ CI = ".github/workflows/ci.yml"
 DEPENDABOT = ".github/dependabot.yml"
 
 FAKE_ACTIONLINT = """#!{python}
-import sys
+import os, sys
 with open({log!r}, "a") as handle:
-    handle.write(" ".join(sys.argv[1:]) + "\\n")
+    target = sys.argv[-1]
+    handle.write(" ".join(sys.argv[1:]) + " siblings=" + ",".join(sorted(os.listdir(os.path.dirname(target)))) + "\\n")
 if {fail}:
     print("ci.yml:1:1: fake error [syntax-check]")
     sys.exit(1)
@@ -188,7 +189,21 @@ class GradeCreateResults(unittest.TestCase):
         with open(self.log, encoding="utf-8") as handle:
             calls = handle.read().splitlines()
         self.assertEqual(len(calls), 1, calls)
-        self.assertTrue(calls[0].endswith("ci.yml"), calls)
+        self.assertIn("ci.yml siblings=ci.yml", calls[0])
+
+    def test_a_deploy_block_is_linted_with_the_ci_block_beside_it(self):
+        self.fake_actionlint()
+        deploy = ".github/workflows/deploy.yml"
+        self.add_case("create-x", {CI: ["name=CI"], deploy: ["name=Deploy"]},
+                      [created((CI, "name: CI"), (deploy, "name: Deploy"))])
+        code, out, _ = self.grade()
+        self.assertEqual(code, 0, out)
+        with open(self.log, encoding="utf-8") as handle:
+            calls = handle.read().splitlines()
+        self.assertEqual(len(calls), 2, calls)
+        by_file = {call.split(" ")[1].rsplit("/", 1)[-1]: call for call in calls}
+        self.assertTrue(by_file["deploy.yml"].endswith("siblings=ci.yml,deploy.yml"), calls)
+        self.assertIn("/.github/workflows/deploy.yml", by_file["deploy.yml"])
 
     def test_actionlint_that_fails_fails_the_run(self):
         self.fake_actionlint(fail=True)
