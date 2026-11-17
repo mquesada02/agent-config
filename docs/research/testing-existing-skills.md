@@ -11,11 +11,11 @@ Labels: FACT (with source number from the Sources list), INFERENCE (my reasoning
 3. It says nothing about runnable tests: speed, isolation, parallel safety or grouping. FACT [1] (the files do not mention them). Those are the map's core terms, so the `testing` skill must build them.
 4. No public skill or rule set found covers setup, write and review together. INFERENCE from the search; the search was not exhaustive.
 5. The public skills found are mostly TDD process skills or tool skills (Playwright browser driving), not test-quality review skills. FACT [2][3].
-6. The best reusable source for "runnable" is the guide material: Google test sizes, Kent Beck's test desiderata, and the tool docs for filtering and isolation. FACT [6][9][10][11][12].
-7. For Rust and Node, the runner features that give "groups" and "isolation" already exist: nextest filtersets and test groups, `cargo test` unit/integration layout, `node:test` file isolation and name filters, Vitest filters and tags. FACT [10][11][12][13][14].
+6. The sources that speak to "runnable" are the guide material: Google test sizes, Kent Beck's test desiderata, and the tool docs for filtering and isolation. FACT [6][9][10][11][12].
+7. For Rust and Node, the runner features that give "groups" and "isolation" already exist: nextest filtersets and test groups, `cargo test` unit/integration layout, `node:test` file isolation and name filters, Vitest filters and tags. FACT [11][12][13][14].
 8. The pyramid, trophy and honeycomb disagree on proportions but agree on three points: speed matters, test through stable interfaces, avoid fragile cross-system tests. INFERENCE from [4][5][7][8][9].
 9. Licences differ. MIT and CC0 sources can be adapted. Articles with "all rights reserved" or CC BY-NC-ND (Creative Commons, non-commercial, no-derivatives) can only be cited and paraphrased, not copied. FACT per row in the table.
-10. Review of test quality has little public skill support. The only concrete reusable review aids found are the "mentally mutate" check and mutation tools (cargo-mutants, StrykerJS). FACT [3b][15][16]. How well they fit an agent skill is UNTESTED.
+10. Review of test quality has little public skill support. The only concrete reusable review aids found are the "mentally mutate" check and mutation tools (cargo-mutants, StrykerJS). FACT [2b][15][16]. How well they fit an agent skill is UNTESTED.
 
 ## Findings
 

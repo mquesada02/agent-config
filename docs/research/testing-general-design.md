@@ -12,7 +12,7 @@ Date of research: 2026-11-17. Options are unranked. The owner decides.
 3. FACT: Choose the lowest level that can show the failure. If a high-level test fails and no low-level test does, add a low-level test. [Fowler Pyramid]
 4. FACT: Sources disagree on mocks. Classicists prefer real objects or fakes and state checks. Mockists use mocks and behavior checks. Google says: real, then fake, then stub, interaction checks last. [Fowler Mocks; SWE Ch.13]
 5. FACT: A "runnable" test is isolated, deterministic and fast (three of Beck's twelve desiderata). Google size tags limit what a small test may do (one process, no sleep, no I/O, no blocking calls). [Test Desiderata; SWE Ch.11]
-6. FACT: Top flaky-test causes in one study of 201 fix commits: async wait (45%), concurrency (20%), test order dependency (12%). [Luo 2014]
+6. FACT: Top flaky-test causes in one study (161 analyzed fix commits): async wait (45%), concurrency (20%), test order dependency (12%). [Luo 2014]
 7. FACT: Test behaviors through public APIs. Name tests after the behavior. One condition per test. Keep tests straight-line. [SWE Ch.12; Fowler Pyramid]
 8. FACT: Coverage finds untested code. It is a poor quality score and a poor target. [Fowler TestCoverage]
 9. INFERENCE: The fallback can be a short checklist with a "when in doubt" rule per topic, plus a pointer to ask the repo's test rules file for the real commands.
@@ -135,7 +135,7 @@ F. Property-based and snapshot tests: (1) include as kinds with short guidance; 
 - Luo 2014 covers 51 open-source projects, mostly Java. Rates may differ in other languages. (INFERENCE)
 - Meszaros, "xUnit Test Patterns" (test smells, test double names) not read directly; names came via Fowler.
 - Nothing read on parallel-safety beyond isolation sources. The checklist is INFERENCE.
-- Existing skills: the map asks to check existing skills and the installed TDD skill. Not done here; this ticket covers external sources only. Other tickets may cover it.
+- Existing skills: the map asks to check existing skills and the installed TDD skill. Not done here; this ticket covers external sources only. See `testing-existing-skills.md` (ticket 811).
 - No eval of whether an agent follows this guidance (UNTESTED).
 
 ## Sources

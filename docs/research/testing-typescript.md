@@ -191,7 +191,7 @@ H. Type checking: (1) the skill states that the runner does not type-check and t
 - Jest `randomize` option and Jest sequencing docs were not read.
 - No command was run; every claim is from docs. All run-time behavior (for example hoisting with a given transform, parallel safety of a given suite) is UNTESTED.
 - No other test libraries (Playwright, Testing Library, supertest, Sinon) were read. Playwright appears only through the `cicd-pipelines` skill.
-- Existing skills and guides (the installed TDD skill, public agent skills on testing) were not reviewed here; the map asks every research ticket to look at them.
+- Existing skills and guides (the installed TDD skill, public agent skills on testing) were not reviewed here. See `testing-existing-skills.md` (ticket 811).
 
 ## Sources
 

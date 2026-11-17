@@ -84,7 +84,7 @@ Labels: FACT (with source number from the Sources list), INFERENCE (my reasoning
 - FACT: A binary-only crate (`src/main.rs`, no `src/lib.rs`) cannot be imported by `tests/`. The usual pattern is a thin `main.rs` and logic in `src/lib.rs`. [S2]
 - FACT: Cargo sets `CARGO_BIN_EXE_<name>` for integration tests when a binary target exists, so tests can run the built executable. [S9]
 - FACT: In `cargo test`, if a section (unit, integration) fails, later sections do not run. [S2]
-- FACT: Each file in `tests/` is its own crate and binary, so many files mean more link time. The Cargo reference text I read does not say this; see INFERENCE below.
+- FACT: Each file in `tests/` is its own crate and binary. [S2][S9] INFERENCE: many files mean more link time; the Cargo reference text I read does not say this.
 - INFERENCE: Fewer, larger integration test files (or one `tests/it/main.rs` with modules) cut link time. The Cargo book page read did not cover `tests/<subdir>/main.rs`. UNTESTED.
 - FACT: Doc tests: rustdoc extracts fenced blocks from `///` comments; a block passes if it compiles and runs without panic. Lines starting `#` are hidden from rendered docs but compiled. Attributes: `ignore`, `should_panic`, `no_run`, `compile_fail`, `edition2021` etc., `ignore-<target>`. `cargo test --doc` runs them. Use `?` with a hidden `Ok::<(), E>(())` last line. [S5]
 - FACT: The rustdoc book advises `text` or `#` hiding rather than `ignore`, because `ignore` is the most generic option. [S5]
@@ -113,7 +113,7 @@ Labels: FACT (with source number from the Sources list), INFERENCE (my reasoning
 ### 6. Fakes and traits as seams
 
 - FACT: `mockall` (docs.rs "latest" page showed 0.15.0): `#[automock]` generates `Mock<Name>` for most traits and for structs with one `impl` block. `mock!` handles multiple traits, external traits, several `impl` blocks. Expectations: `expect_<method>()` with `with`, `times`, `returning`, `in_sequence`. Unmatched calls panic. Async traits work with conditions. Static-method expectations are global, so tests using them need their own synchronization. [S14]
-- FACT: Mockall checks expectations when the mock is dropped (not stated verbatim in what I read; `checkpoint()` validates and clears expectations is stated). [S14]
+- INFERENCE: Mockall checks expectations when the mock is dropped (not stated verbatim in what I read). FACT: `checkpoint()` validates and clears expectations. [S14]
 - INFERENCE: Design for seams: put I/O, clock, network and randomness behind a trait; pass an implementation in (generic parameter or `Box<dyn Trait>`); in tests pass a hand-written fake or a `mockall` mock. Hand-written fakes avoid a dependency and macro limits; mocks give call-count checks.
 - INFERENCE: Prefer fakes with real behavior (in-memory store) over mocks that assert call order, because order assertions break on refactors. This is a general testing view, not a Rust-docs claim.
 - UNTESTED: No mock or seam example was compiled.
@@ -157,7 +157,7 @@ All detection is file inspection (read-only):
 
 - INFERENCE: Also check `rust-toolchain.toml` and `rust-version` in `Cargo.toml` for toolchain and MSRV. These are not covered by the pages read. UNTESTED.
 
-## Draft: what the Rust entry could say (candidate content, not a decision)
+## Draft: what the Rust entry could say (candidate content, not a decision; each rule is INFERENCE and picks one option that the owner may reject)
 
 1. Run commands. Prefer `cargo nextest run` when `.config/nextest.toml` exists or `cargo nextest` is installed; else `cargo test`. Always add `cargo test --doc` when doc tests exist, because nextest skips them. [S8]
 2. Place tests. Unit tests in `#[cfg(test)] mod tests` beside the code; integration tests in `tests/` against the public API; share helpers in `tests/common/mod.rs`; keep `main.rs` thin so logic is testable from `src/lib.rs`. [S2]
@@ -210,7 +210,7 @@ J. Retry policy: off by default; or on with `flaky-result = "fail"`.
 - Other async runtimes (`async-std`, `smol`) were not researched.
 - Mockall's MSRV and the drop-time expectation check were not confirmed. The docs.rs "latest" page showed 0.15.0; this may differ from the real latest release.
 - The Rust Book edition fetched was the current online version; its date was not shown.
-- No existing skills (for example the installed TDD skill) were compared; that belongs to another ticket.
+- No existing skills (for example the installed TDD skill) were compared here. See `testing-existing-skills.md` (ticket 811).
 
 ## Sources
 
