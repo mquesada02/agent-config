@@ -542,7 +542,8 @@ class IssueFilingAllowRuleTest(RuleTextCase):
                        "or on a repo that the owner named in the current session.")
 
     def test_the_reason_names_the_new_cases(self):
-        self.assert_in(self.entry, "Not Interfere With Workloads: the owner wrote the rules of sections 7, 8 and 16")
+        self.assert_in(self.entry, "Not Interfere With Workloads: the owner wrote the rules of sections 7, 8 and 16",
+                       "said that no approval step is needed for sections 8 and 16, and directs the owner-named issues.")
 
     def test_the_entry_allows_create_only(self):
         self.assert_in(self.entry, "Create only: an edit, close, comment, reopen or label change of an existing issue")
