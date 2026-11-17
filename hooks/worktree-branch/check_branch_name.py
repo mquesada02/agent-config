@@ -7,7 +7,7 @@
 #   - `orca orchestration worker-start` with `--worktree new-child` or `--worktree new-top-level`, or with a `--worktree` value that holds
 #     one of `$`, a backtick, `*`, `?`, `[` or `{` (a variable, substitution, glob or brace expansion could build a new-worktree name);
 #   - a word that holds `$` as the program word before `worktree create` (`$X worktree create`): the create rule applies to it. A variable
-#     program word before `worker-start` is not covered.
+#     program word before `worker-start`, and a backtick program word (`` `cmd` worktree create ``), are not covered.
 # Every Orca CLI form counts (`orca`, `orca-ide`, `orca-dev`, a full path, `$ORCA_CLI_COMMAND`). The command is read with the shared bash
 # command reader of the workflow-audit gates, so a wrapped form (`bash -c`, `eval`, a pipeline, a `&&` chain, a substitution) counts.
 # The walk over wrapped forms is the one of hooks/bash-reader/bash_reader.py, which hooks/subagent-readonly/block_subagent_writes.py shares
@@ -118,19 +118,19 @@ class BranchRules:
         if any(value in NEW_WORKTREES for value in values):
             return f"worker-start with a new worktree gives a hyphen name. {START_NOTICE}"
         if any(BUILT_VALUE.search(value) for value in values):
-            return f"worker-start with a --worktree value that a variable, substitution, glob or brace builds could hold a new worktree. {BUILT_NOTICE}"
+            return f"worker-start with a --worktree value that holds one of $ ` * ? [ {{ could hold a new worktree. {BUILT_NOTICE}"
         return None
 
     def orca_reason(self, words):
         """The deny reason of a command that starts with the program word `words[0]`, or None."""
-        head = self.create_head(words)
-        if head is not None:
-            return self.create_reason(words[len(head):])
+        if self.create_head(words) is not None:
+            return self.create_command_reason(words)
         head = self.start_head(words)
         return None if head is None else self.start_reason(words)
 
-    def variable_reason(self, words):
-        """The deny reason of a command whose program word holds `$`: only the create command is covered (a variable before worker-start is not)."""
+    def create_command_reason(self, words):
+        """The deny reason of a create command that starts with `words[0]`, or None when it is no create command. A program word that
+        holds `$` is covered here only (a variable before worker-start is not)."""
         head = self.create_head(words)
         return None if head is None else self.create_reason(words[len(head):])
 
@@ -154,7 +154,7 @@ class BranchRules:
         if self.is_orca(words[index]):
             return self.orca_reason(words[index:])
         if "$" in words[index]:
-            reason = self.variable_reason(words[index:])
+            reason = self.create_command_reason(words[index:])
             if reason:
                 return reason
         return self.shell_reason(words, index, items, position, depth)
