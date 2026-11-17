@@ -187,7 +187,7 @@ Savings are index shares of the 11,900 total and are INFERENCE. Risks are to qua
 
 **O7. Cap the Minor output of reviewers.**
 - Saving: output is 17 percent of the index; reviewer output is 5,000 or fewer tokens per run; saving is small (under 1 percent), INFERENCE.
-- Risk: this is the one cut that loses findings by definition. In recorded triage batches the owner accepted every deferred Minor (memory notes), so the loss may be nil in value, but the test of F8 cannot show it held, because the oracle counts Minor findings as noise.
+- Risk: this is the one cut that loses findings by definition. In recorded triage batches the owner accepted every deferred Minor (private triage notes; not checkable from this repo), so the loss may be nil in value, but the test of F8 cannot show it held, because the oracle counts Minor findings as noise.
 - Cost: reviewer brief text change.
 
 **O8. Skip or shrink the verifier where a reproducing test exists (proposal 744).**

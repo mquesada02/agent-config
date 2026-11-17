@@ -81,7 +81,7 @@ How does the "home repo" pattern apply to a project group of many repos? What is
 
 ### F7. Costs and limits
 
-- FACT: under the owner's rules, every task in a git repo ends with a PR, after a review loop and an audit, and work happens in a worktree (`CLAUDE.md` of this repo, sections 6, 8, 10). A change to the home repo follows them. Small edits cost that full flow unless the owner exempts them. INFERENCE for the size of the cost: `orca-inbox-tests.md` (#756) records three foreground test runs of 523 to 603 s; the 601 s and 603 s runs stopped at a 600 s limit; the exact cost for a docs-only change is not measured here.
+- FACT: under the owner's rules, every task in a git repo ends with a PR, after a review loop and an audit, and work happens in a worktree (`CLAUDE.md` of this repo, sections 6, 8, 10). A change to the home repo follows them. Small edits cost that full flow unless the owner exempts them. INFERENCE for the size of the cost: `orca-inbox-tests.md` (#756) records three foreground test runs of 523 to 603 s (two hit the 600 s limit); the exact cost for a docs-only change is not measured here.
 - INFERENCE: concurrent edits of one tracked file by several sessions are caught at merge, not prevented. Branches diverge; a fact merged on the default branch reaches a worker only when its branch has it (777 F7).
 - FACT: the article itself notes limits of scale (about 400 repos) and that submodules are not needed (F1).
 - Token cost is about the size of the loaded text. A pointer line of about 30 words is about 40 tokens (rough estimate, UNTESTED), so 20 pointers cost about 800 tokens in a session that loads the file. A session that loads the whole shared docs folder pays more; the article does not bound it. INFERENCE.
