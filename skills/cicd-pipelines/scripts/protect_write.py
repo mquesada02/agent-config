@@ -216,6 +216,12 @@ def mode_apply(row):
     before = None if row["method"] == "POST" else row["seen"]
     version = history_version(row["path"]) if row["method"] == "PUT" else None
     verify_path = row["path"]
+
+    def stop(*lines):
+        print("\n".join(lines))
+        print_before(before, version, row["path"])
+        return 1
+
     with tempfile.TemporaryDirectory() as folder:
         body_file = os.path.join(folder, "payload.json")
         with open(body_file, "w", encoding="utf-8") as handle:
@@ -223,29 +229,19 @@ def mode_apply(row):
         try:
             answer = run_gh(["api", "-X", row["method"], row["path"], "--input", body_file])
         except GhError as error:
-            print(error.line())
-            print("The write failed.")
-            print_before(before, version, row["path"])
-            return 1
+            return stop(error.line(), "The write failed.")
     try:
         if row["method"] == "POST":
             created = decode_values(answer)[0]["id"]
             verify_path = f"{row['path']}/{created}"
         after = to_write_shape(verify_path, get(verify_path))
     except GhError as error:
-        print(error.line())
-        print("The write was made, but the check after it failed.")
-        print_before(before, version, row["path"])
-        return 1
+        return stop(error.line(), "The write was made, but the check after it failed.")
     except (ValueError, KeyError, IndexError, TypeError):
-        print("The write was made, but the answer holds no id to check.")
-        print_before(before, version, row["path"])
-        return 1
+        return stop("The write was made, but the answer holds no id to check.")
     if not contains(row["proposed"], after):
-        print("The setting after the write does not hold the proposed JSON:")
-        print(diff(after, row["proposed"], "after", "proposed"))
-        print_before(before, version, row["path"])
-        return 1
+        return stop("The setting after the write does not hold the proposed JSON:",
+                    diff(after, row["proposed"], "after", "proposed"))
     print("written and verified")
     print_before(before, version, row["path"])
     return 0
