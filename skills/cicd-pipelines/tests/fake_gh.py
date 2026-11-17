@@ -22,7 +22,39 @@ with open(os.environ["FAKE_GH_LOG"], "a") as handle:
     handle.write(json.dumps(args) + "\\n")
 with open(os.environ["FAKE_GH_SCENARIO"]) as handle:
     routes = json.load(handle)
-route = routes.get(args[1]) if len(args) == 2 and args[0] == "api" else None
+method, path, body_file = "GET", None, None
+rest, number = args[1:], 0
+while number < len(rest):
+    token = rest[number]
+    if token in ("-X", "--method"):
+        method, number = rest[number + 1].upper(), number + 2
+    elif token == "--input":
+        body_file, number = rest[number + 1], number + 2
+    elif token.startswith("-"):
+        number += 1
+    else:
+        path = path or token
+        number += 1
+if body_file is not None:
+    with open(body_file) as handle:
+        body = handle.read()
+    with open(os.environ["FAKE_GH_BODIES"], "a") as handle:
+        handle.write(json.dumps({{"method": method, "path": path, "body": json.loads(body)}}) + "\\n")
+route = None
+if args and args[0] == "api" and path is not None:
+    sequence = routes.get(method + " " + path)
+    if isinstance(sequence, list):
+        counts_file = os.environ["FAKE_GH_COUNTS"]
+        with open(counts_file) as handle:
+            counts = json.load(handle)
+        key = method + " " + path
+        taken = counts.get(key, 0)
+        counts[key] = taken + 1
+        with open(counts_file, "w") as handle:
+            json.dump(counts, handle)
+        route = sequence[min(taken, len(sequence) - 1)]
+    elif method == "GET" and isinstance(routes.get(path), dict):
+        route = routes.get(path)
 if route is None:
     sys.stderr.write("gh: Not Found (HTTP 404)\\n")
     sys.exit(1)
@@ -57,9 +89,14 @@ class Sandbox:
         os.mkdir(self.home)
         self.scenario = os.path.join(self.root, "scenario.json")
         self.log = os.path.join(self.root, "gh.log")
+        self.bodies_log = os.path.join(self.root, "gh-bodies.log")
+        self.counts = os.path.join(self.root, "gh-counts.json")
         self._routes = {}
         self._write_scenario()
         open(self.log, "w").close()
+        open(self.bodies_log, "w").close()
+        with open(self.counts, "w", encoding="utf-8") as handle:
+            json.dump({}, handle)
         os.symlink(shutil.which("git"), os.path.join(self.bin, "git"))
         if gh:
             self._executable("gh", GH_SCRIPT.format(python=sys.executable))
@@ -83,6 +120,23 @@ class Sandbox:
         stdout = body if isinstance(body, str) else json.dumps(body)
         self._routes[path] = {"stdout": stdout, "stderr": stderr, "exit": exit}
         self._write_scenario()
+
+    def route_seq(self, method, path, responses):
+        """Answer `gh api -X <method> <path>` with `responses`, one for each call in order (the last one repeats).
+
+        Each response is a map with `body` (JSON-encoded unless it is a string), `exit` (default 0) and `stderr`."""
+        sequence = []
+        for response in responses:
+            body = response.get("body", "")
+            stdout = body if isinstance(body, str) else json.dumps(body)
+            sequence.append({"stdout": stdout, "stderr": response.get("stderr", ""), "exit": response.get("exit", 0)})
+        self._routes[f"{method.upper()} {path}"] = sequence
+        self._write_scenario()
+
+    def bodies(self):
+        """The calls that sent a body with `--input`, as maps of method, path and the decoded body."""
+        with open(self.bodies_log, encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
 
     def tool(self, name, version="1.0.0", fail=False):
         """Put a fake tool on PATH. It prints `version` as its only line, or exits 3 when `fail`."""
@@ -111,7 +165,8 @@ class Sandbox:
         subprocess.run(["git", "-C", path, *args], check=True, env=self.env(), capture_output=True)
 
     def env(self, offline=True, schedule=None):
-        env = {"PATH": self.bin, "HOME": self.home, "FAKE_GH_SCENARIO": self.scenario, "FAKE_GH_LOG": self.log}
+        env = {"PATH": self.bin, "HOME": self.home, "FAKE_GH_SCENARIO": self.scenario, "FAKE_GH_LOG": self.log,
+               "FAKE_GH_BODIES": self.bodies_log, "FAKE_GH_COUNTS": self.counts}
         if offline:
             env["CICD_PIPELINES_OFFLINE"] = "1"
         if schedule:

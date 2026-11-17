@@ -97,7 +97,7 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
                       "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 38
+CD_CASE_COUNT = 40  # the 38 earlier CD cases and the two protection approval cases
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -175,7 +175,7 @@ def expect_lists(name):
 
 
 def review_cases():
-    return [n for n in case_names() if not n.startswith(("trigger-", "approve-", "create-"))]
+    return [n for n in case_names() if not n.startswith(("trigger-", "approve-", "create-", "protect-approve-"))]
 
 
 def grader_files(name):

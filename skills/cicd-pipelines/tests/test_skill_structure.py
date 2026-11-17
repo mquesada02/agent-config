@@ -1027,23 +1027,23 @@ class ReviewSteps(unittest.TestCase):
         self.assertIn("copy this sentence exactly", contract)
         self.assertIn("never change its examples", contract)
 
-    def test_the_fix_flow_opens_with_the_rule_that_the_final_message_has_the_parts_of_step_9(self):
+    def test_the_fix_flow_opens_with_the_rule_that_the_final_message_has_the_parts_of_step_10(self):
         opening = self.text[self.text.index("## fix on approval"):self.text.index("1. **read the reply.**")]
         self.assertIn("never end with a prose note", opening)
-        self.assertIn("step 9", opening)
+        self.assertIn("step 10", opening)
 
     def test_a_failed_actionlint_run_does_not_end_the_fix_flow(self):
-        step = self.text[self.text.index("6. **actionlint.**"):self.text.index("7. **diff.**")]
+        step = self.text[self.text.index("7. **actionlint.**"):self.text.index("8. **diff.**")]
         self.assertIn("a failed run of actionlint", step)
         self.assertIn("does not end the fix flow", step)
-        self.assertIn("steps 7 to 9", step)
+        self.assertIn("steps 8 to 10", step)
 
     def test_the_intake_line_starts_with_the_word_and_the_colon(self):
         contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
         self.assertIn("starts exactly with `intake:`", contract)
 
     def test_the_post_fix_report_is_the_whole_contract_and_never_a_prose_summary(self):
-        step = self.text[self.text.index("9. **final message.**"):self.text.index("**admin steps.**")]
+        step = self.text[self.text.index("10. **final message.**"):self.text.index("**admin steps.**")]
         self.assertIn("never a prose summary", step)
         self.assertIn("all 8 sections", step)
 
@@ -1101,8 +1101,10 @@ class ReviewSteps(unittest.TestCase):
         contract = self.text[self.text.index("## report contract"):self.text.index("## fix on approval")]
         for text in ("directly after the last table, write the lock note", "starts `🔒 = a protection write.`",
                      "write the note only when at least one row has 🔒", "it is not a numbered section",
-                     "it comes before the ⚑ section and the job graph", "the skill skips a 🔒 row"):
+                     "it comes before the ⚑ section and the job graph",
+                     "the flow is the protection step of \"fix on approval\""):
             self.assertIn(text, contract)
+        self.assertNotIn("skips a 🔒 row", contract)
         self.assertLess(contract.index("write the lock note"), contract.index("6. `## ⚑ admin steps`"))
 
     def test_the_job_graph_sketch_has_one_line_for_each_trigger_and_the_intake_line_names_the_defaults(self):
@@ -1113,14 +1115,16 @@ class ReviewSteps(unittest.TestCase):
                      "a repo with no `release.yml` has three lines", "ends with `defaults:`", "`defaults: none.`"):
             self.assertIn(text, contract)
 
-    def test_the_fix_flow_skips_a_lock_row_a_manual_protect_row_and_a_release_03_row(self):
-        step = self.text[self.text.index("4. **edit.**"):self.text.index("5. **no edit, or no workflow edited.**")]
-        for text in ("a 🔒 row is never edited in this version",
-                     "\"the protection write flow is not part of this version\"",
+    def test_the_edit_step_leaves_a_lock_row_to_the_protection_step_and_skips_the_manual_rows(self):
+        step = self.text[self.text.index("4. **edit.**"):self.text.index("5. **protection writes.**")]
+        for text in ("a 🔒 row is not a file edit: leave it for step 5",
                      "a protect-05, protect-06 or protect-08 row", "\"the fix is a manual admin step\"",
-                     "a release-03 row is skipped with the reason \"the protect-02 row writes the ruleset\"",
-                     "temporary", "ticket 674"):
+                     "a release-03 row is skipped with the reason \"the protect-02 row writes the ruleset\""):
             self.assertIn(text, step)
+
+    def test_the_temporary_skip_of_the_lock_rows_and_its_marker_are_gone(self):
+        for gone in ("temporary", "ticket 674", "never edited in this version", "not part of this version"):
+            self.assertNotIn(gone, self.text)
 
     def test_it_loads_the_job_graph_and_maintainability_rule_files(self):
         self.assertIn("rules/job-graph.md", self.text)

@@ -131,7 +131,7 @@ The report parts that the PROTECT cases check: the 🔒 mark in the Rule cell (t
 - **Recorded intake.** `repo/intake.json` says that actionlint is on PATH (a version), and that zizmor and pinact are not. A case cannot control PATH (see the security cases), so the recorded intake makes the model run actionlint after the edits. The graders check that Bash call and its order after the first `Edit`, and a diff in the final message. This proves the attempt and the order, not a real lint pass. The unit tests prove the detection with a fake actionlint on PATH. An operator who has actionlint on PATH gets the real lint in the same run, with the same graders.
 - **Session transcript.** A run of an approval case writes the resumed session transcript into the case folder (a file named like the session id in `history.jsonl`, with the paths of the operator). `evals/.gitignore` ignores it. Do not commit it.
 - **Scaffold.** `scaffold.sh` copies `repo/` and makes the workspace a git repo with one commit, so that `git diff` works. (The review cases have no git repo.)
-- **Graders.** The final message of an editing case holds the applied list, the diff and a post-fix report (title ends with `(after fixes)`). The `expect-<ID>.md` graders (the findings that the reply did not approve) and the `forbid-<ID>.md` graders (the approved ones) read that report. `approve-none` has the three no-edit graders, `no-actionlint.md` and no report graders. Every case has `gh-api-no-write.md`: a `tool_used` grader (`max: 0`) that matches a `gh api` call on a branch protection or ruleset path with a method other than GET, or with a body flag. A call that mixes a read of such a path with a body flag for another path also matches. Run it by hand:
+- **Graders.** The final message of an editing case holds the applied list, the diff and a post-fix report (title ends with `(after fixes)`). The `expect-<ID>.md` graders (the findings that the reply did not approve) and the `forbid-<ID>.md` graders (the approved ones) read that report. `approve-none` has the three no-edit graders, `no-actionlint.md` and no report graders. Every case has `gh-api-no-write.md`: a `tool_used` grader (`max: 0`) that matches a `gh api` call on a branch protection, ruleset or environment path with a method other than GET, or with a body flag. A call that mixes a read of such a path with a body flag for another path also matches. Run it by hand:
 
 ```
 claude plugin eval skills/cicd-pipelines --case 'approve-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Edit "Bash(actionlint*)" "Bash(git diff*)" --output-dir <results folder> --json <results folder>/result.json
@@ -140,6 +140,18 @@ claude plugin eval skills/cicd-pipelines --case 'approve-*' --no-publish -j 2 --
 `Edit` is a gated tool: without `--allow-tools Edit` the run withholds it from the model, and the `actionlint-after-edit.md` grader cannot pass. The allow pattern of the actionlint call is `Bash(actionlint*)`.
 
 Then run `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. It grades the three editing cases from their `expect.json` and skips `approve-none`. The full run of these cases (3 runs each) belongs to the eval ticket, not to the ticket that added them.
+
+## Protection approval cases
+
+`protect-approve-yes` and `protect-approve-no` test the protection write step of the fix flow. They are not review cases. The recorded history ends at the `--show` output of two protection rows and the step 2 question. The prompt is the reply (`yes` or `no`).
+
+- **Rows.** The row files are in `repo/rows/`: `row1.json` (a `POST` of a ruleset) and `row2.json` (a `PUT` of the prod environment). The sandbox has no GitHub credentials. So `--apply` of row 1 fails at its first read and stops all later writes.
+- **Graders.** Each case has `gh-api-no-write.md` and its own graders for the apply call count and for the report of the stopped and not written rows.
+- **Run.** Run them by hand:
+
+```
+claude plugin eval skills/cicd-pipelines --case 'protect-approve-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/protect_write.py*)" --output-dir <results folder> --json <results folder>/result.json
+```
 
 ## Create cases
 

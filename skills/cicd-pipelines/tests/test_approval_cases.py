@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -391,6 +392,9 @@ class ExpectAndGraders(unittest.TestCase):
             "gh api repos/o/r/rulesets --raw-field name=ci",
             "gh api repos/o/r/branches/main/protection --input body.json",
             "gh api -X delete repos/o/r/rulesets/5",
+            "gh api -X PUT repos/o/r/environments/prod --input body.json",
+            "gh api --method POST repos/o/r/environments/prod/deployment-branch-policies -f name=main",
+            "gh api repos/o/r/environments/prod -F wait_timer=0",
         ):
             self.assertTrue(pattern.search(encoded(command)), command)
         for command in (
@@ -401,6 +405,10 @@ class ExpectAndGraders(unittest.TestCase):
             "gh api repos/o/r/rules/branches/main",
             "gh api -X PATCH repos/o/r/issues/1",
             "gh api repos/o/r/issues -f title=x",
+            "gh api repos/o/r/environments",
+            "gh api -X GET repos/o/r/environments/prod",
+            "gh api --paginate repos/o/r/environments/prod/deployment-branch-policies",
+            "python3 skills/cicd-pipelines/scripts/protect_write.py --apply /tmp/row.json",
             "git diff -- .github/workflows/ci.yml",
             "actionlint -format '{{json .}}'",
         ):
@@ -468,6 +476,128 @@ class FixMessageAndTheReportGrader(unittest.TestCase):
             "## Diff", "## Branch protection steps for the admin\n\n- Remove `Old`, add `New`.\n\n## Diff")
         code, out, _ = run_script("grade_report.py", ["-"], stdin=message)
         self.assertEqual((code, out.strip()), (0, "PASS"), out)
+
+
+PROTECT_CASES = {"protect-approve-yes": "yes", "protect-approve-no": "no"}
+PROTECT_GRADERS = {
+    "protect-approve-yes": {"gh-api-no-write.md", "apply-once.md", "no-show-call.md",
+                            "applied-marks-stopped-and-not-written.md"},
+    "protect-approve-no": {"gh-api-no-write.md", "no-apply-call.md", "applied-says-not-written.md"},
+}
+
+
+class ProtectionApprovalCases(unittest.TestCase):
+    """The two protection approval cases: a recorded step-2 question, the reply `yes` or `no`, and the row files."""
+
+    def test_each_case_has_its_files_and_its_name(self):
+        for name in PROTECT_CASES:
+            for part in ("prompt.md", "case.yaml", "expect.json", "scaffold.sh", "repo", "graders", "history.jsonl",
+                         os.path.join("repo", "rows", "row1.json"), os.path.join("repo", "rows", "row2.json"),
+                         os.path.join("repo", "intake.json"), os.path.join("repo", ".github", "workflows", "deploy.yml")):
+                self.assertTrue(os.path.exists(case_path(name, part)), f"{name} has no {part}")
+            text = read(case_path(name, "case.yaml"))
+            self.assertRegex(text, rf"(?m)^name:\s*{re.escape(name)}\s*$")
+            self.assertRegex(text, r"(?m)^\s*history_file:\s*history\.jsonl\s*$")
+
+    def test_the_prompt_is_the_step_2_reply_and_the_recorded_intake_line(self):
+        for name, reply in PROTECT_CASES.items():
+            meta = frontmatter(case_path(name, "prompt.md"))
+            self.assertEqual(meta["allowed_tools"], "[Read, Glob, Grep, Skill, Bash]", name)
+            body = read(case_path(name, "prompt.md")).split("\n---\n", 1)[1].strip().splitlines()
+            self.assertEqual(body[0], reply, name)
+            self.assertIn("`intake.json`", body[1])
+
+    def test_they_are_not_review_cases_and_the_approve_globs_do_not_match_them(self):
+        for name in PROTECT_CASES:
+            self.assertNotIn(name, [os.path.basename(p) for p in glob.glob(case_path("approve-*"))])
+            self.assertNotIn(name, [n for n in os.listdir(EVALS) if n.startswith("approve-")])
+        self.assertEqual(expect_lists("protect-approve-yes"), {"expect": [], "forbid": []})
+        self.assertEqual(expect_lists("protect-approve-no"), {"expect": [], "forbid": []})
+
+    def test_the_history_ends_with_the_step_2_question_of_the_first_row(self):
+        for name in PROTECT_CASES:
+            with open(case_path(name, "history.jsonl"), encoding="utf-8") as handle:
+                lines = [json.loads(line) for line in handle.read().splitlines()]
+            self.assertEqual([line["type"] for line in lines], ["user", "assistant", "user", "assistant"])
+            self.assertEqual(lines[2]["message"]["content"], "all")
+            report = lines[1]["message"]["content"][0]["text"]
+            self.assertIn("PROTECT-01 🔒", report)
+            self.assertIn("PROTECT-04 🔒", report)
+            question = lines[3]["message"]["content"][0]["text"]
+            self.assertIn("Write row 1 (PROTECT-01), write 1 of 1? Reply `yes` or `no`.", question)
+            self.assertIn("```diff", question)
+
+    def test_the_grader_files_of_each_case(self):
+        for name, wanted in PROTECT_GRADERS.items():
+            found = {os.path.basename(p) for p in glob.glob(case_path(name, "graders", "*.md"))}
+            self.assertEqual(found, wanted, name)
+
+    def test_the_gh_api_grader_is_the_same_file_as_in_the_four_cases(self):
+        shared = read(case_path("approve-1-3", "graders", "gh-api-no-write.md"))
+        for name in PROTECT_CASES:
+            self.assertEqual(read(case_path(name, "graders", "gh-api-no-write.md")), shared, name)
+
+    def test_the_tool_graders_count_the_script_calls(self):
+        calls = {"apply": json.dumps({"command": "python3 skills/cicd-pipelines/scripts/protect_write.py --apply rows/row1.json"}),
+                 "show": json.dumps({"command": "python3 skills/cicd-pipelines/scripts/protect_write.py --show rows/row2.json"})}
+        expected = {("protect-approve-yes", "apply-once.md"): ("1", "1", "apply"),
+                    ("protect-approve-yes", "no-show-call.md"): ("0", "0", "show"),
+                    ("protect-approve-no", "no-apply-call.md"): ("0", "0", "apply")}
+        for (name, file), (minimum, maximum, kind) in expected.items():
+            meta = frontmatter(case_path(name, "graders", file))
+            self.assertEqual((meta["type"], meta["tool"], meta["min"], meta["max"]), ("tool_used", "Bash", minimum, maximum))
+            pattern = re.compile(meta["input_match"])
+            other = "show" if kind == "apply" else "apply"
+            self.assertTrue(pattern.search(calls[kind]), (name, file))
+            self.assertFalse(pattern.search(calls[other]), (name, file))
+
+    def test_the_yes_grader_wants_row_1_stopped_and_row_2_not_written(self):
+        meta = frontmatter(case_path("protect-approve-yes", "graders", "applied-marks-stopped-and-not-written.md"))
+        self.assertEqual((meta["type"], meta["flags"]), ("regex", "m"))
+        pattern = re.compile(meta["pattern"], re.M)
+        good = ("## Applied\n\n- 1 PROTECT-01: **stopped** (the read failed: error: HTTP unknown)\n"
+                "- 2 PROTECT-04: **not written** (an earlier write stopped)\n")
+        self.assertTrue(pattern.search(good))
+        self.assertFalse(pattern.search(good.replace("**stopped**", "**written**")))
+        self.assertFalse(pattern.search(good.replace("**not written**", "**written**")))
+        self.assertFalse(pattern.search(good.replace("PROTECT-01", "PROTECT-02")))
+
+    def test_the_no_grader_wants_a_not_written_bullet(self):
+        meta = frontmatter(case_path("protect-approve-no", "graders", "applied-says-not-written.md"))
+        pattern = re.compile(meta["pattern"], re.M)
+        self.assertTrue(pattern.search("## Applied\n\n- 1 PROTECT-01: **not written** (a `no`)\n"))
+        self.assertFalse(pattern.search("## Applied\n\n- 1 PROTECT-01: **written**\n"))
+
+    def test_the_patterns_use_only_syntax_that_javascript_and_python_share(self):
+        for path in glob.glob(case_path("protect-approve-*", "graders", "*.md")):
+            meta = frontmatter(path)
+            for key in ("pattern", "input_match"):
+                if key in meta:
+                    self.assertNotRegex(meta[key], r"\(\?[PiscxmU]|\\A|\\Z|\(\?<[a-z]", path)
+
+    def test_the_transcript_that_a_run_writes_is_ignored_by_git(self):
+        pattern = read(os.path.join(EVALS, ".gitignore")).split()[1]
+        self.assertTrue(fnmatch.fnmatch("protect-approve-yes/00000000-0000-4000-8000-000000000002.jsonl", pattern))
+        self.assertFalse(fnmatch.fnmatch("protect-approve-yes/history.jsonl", pattern))
+
+    def test_the_row_files_are_rows_that_the_write_script_accepts(self):
+        from fake_gh import Sandbox
+        box = Sandbox()
+        self.addCleanup(box.cleanup)
+        row1 = json.loads(read(case_path("protect-approve-yes", "repo", "rows", "row1.json")))
+        row2 = json.loads(read(case_path("protect-approve-yes", "repo", "rows", "row2.json")))
+        self.assertEqual((row1["method"], row2["method"]), ("POST", "PUT"))
+        box.route_seq("GET", row1["path"], [{"body": [dict(item, node_id="x") for item in row1["seen"]]}])
+        box.route_seq("GET", row2["path"], [{"body": {
+            "id": 1, "name": "prod", "can_admins_bypass": False,
+            "protection_rules": [{"id": 1, "type": "wait_timer", "wait_timer": 0}],
+            "deployment_branch_policy": row2["seen"]["deployment_branch_policy"]}}])
+        for name in PROTECT_CASES:
+            for file in ("row1.json", "row2.json"):
+                done = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "protect_write.py"), "--show",
+                                       case_path(name, "repo", "rows", file)], env=box.env(),
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 0, (name, file, done.stdout))
 
 
 if __name__ == "__main__":

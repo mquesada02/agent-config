@@ -2,7 +2,7 @@
 
 Create a CI workflow for a repo from a template, with every rule applied and the intake facts filled in. The result passes actionlint where actionlint is installed, and its self-review has no critical and no required finding.
 
-Read only the intake JSON (see [SKILL.md](SKILL.md)) for the repo facts. The one exception is step 5: it reads the Dependabot file and `security-audit.yml` with the Read and Glob tools, as SEC-02 does in the review steps. Never edit branch protection or rulesets.
+Read only the intake JSON (see [SKILL.md](SKILL.md)) for the repo facts. The one exception is step 5: it reads the Dependabot file and `security-audit.yml` with the Read and Glob tools, as SEC-02 does in the review steps. Create mode never writes branch protection, rulesets or environments: the write belongs to the fix flow of [review.md](review.md), through `scripts/protect_write.py --apply` after the 2-step approval.
 
 ## Steps
 

@@ -27,14 +27,14 @@ def code_spans(text):
 
 
 def writes_protection(command):
-    """True when a `gh api` command names a branch protection or ruleset path and writes to it.
+    """True when a `gh api` command names a branch protection, ruleset or environment path and writes to it.
 
     A write is a method other than GET (-X or --method) or a body flag (-f, -F, --field, --raw-field, --input)."""
     command = re.sub(r"^\$\s*", "", command.strip())
     if not re.match(r"gh api\s+\S", command):
         return False
     tokens = command.split()
-    if not any(("branches/" in t and "/protection" in t) or "rulesets" in t for t in tokens):
+    if not any(("branches/" in t and "/protection" in t) or "rulesets" in t or "environments" in t for t in tokens):
         return False
     for number, token in enumerate(tokens):
         following = tokens[number + 1] if number + 1 < len(tokens) else ""
@@ -76,6 +76,8 @@ class Scan(unittest.TestCase):
             "gh api repos/o/r/rulesets -F body=@x.json",
             "gh api repos/o/r/rulesets --input body.json",
             "$ gh api repos/o/r/branches/main/protection --field a=b",
+            "gh api -X PUT repos/o/r/environments/prod --input body.json",
+            "gh api repos/o/r/environments/prod/deployment-branch-policies -f name=main",
         ):
             self.assertTrue(writes_protection(command), command)
 
@@ -85,6 +87,8 @@ class Scan(unittest.TestCase):
             "gh api -X GET repos/o/r/rulesets",
             "gh api --method get repos/o/r/rules/branches/main",
             "gh api -X PATCH repos/o/r/issues/1",
+            "gh api repos/o/r/environments",
+            "gh api -X GET repos/o/r/environments/prod",
             "gh api",
             "gh api call",
             "git diff -- ci.yml",
@@ -146,7 +150,8 @@ class FixSection(unittest.TestCase):
 
     def test_step_8_keeps_its_no_write_sentence_and_the_no_edit_before_approval_rule(self):
         steps = section(self.full, "## Steps").lower()
-        self.assertIn("never edit branch protection or rulesets", steps)
+        self.assertIn("only through `scripts/protect_write.py --apply`", steps)
+        self.assertIn("2-step approval", steps)
         self.assertIn("make no edit", steps)
         self.assertIn("fix on approval", steps)
 
@@ -228,6 +233,96 @@ class FixSection(unittest.TestCase):
         self.assertNotRegex(self.text, r"#\d{3}")
 
 
+class ProtectionStep(unittest.TestCase):
+    """The protection step of "Fix on approval": the 2-step flow of the protection write script."""
+
+    def setUp(self):
+        self.full = read(os.path.join(SKILL, "review.md"))
+        self.fix = section(self.full, "## Fix on approval").lower()
+        start = self.fix.index("5. **protection writes.**")
+        self.step = self.fix[start:self.fix.index("6. **no edit, or no workflow edited.**")]
+
+    def test_the_step_runs_the_three_modes_of_the_script_for_each_approved_lock_row_in_order(self):
+        for phrase in ("each approved 🔒 row, in the order of the numbers", "protect_write.py --read",
+                       "protect_write.py --show <row file>", "protect_write.py --apply <row file>",
+                       "own read", "the second reads the result of the first"):
+            self.assertIn(phrase, self.step)
+
+    def test_the_main_session_runs_the_script_and_the_exact_command_is_printed_on_a_denial(self):
+        self.assertIn("the main session runs the script, never a subagent", self.step)
+        self.assertIn("never calls `gh api` with a write method itself", self.step)
+        self.assertIn("when the harness denies a call of the script, print the exact "
+                      "`! python3 <skill folder>/scripts/protect_write.py --apply <row file>` command", self.step)
+
+    def test_each_exit_code_has_its_action(self):
+        for phrase in ("exit 0: show the diff in a fenced `diff` block, ask", "reply `yes` or `no`.",
+                       "exit 1: the setting changed. stop all remaining writes",
+                       "exit 2: write nothing for that row and go to the next row",
+                       "for a 403 or a 404, give the admin steps",
+                       "`## ⚑ admin steps`", "\"no admin scope\"", "for any other error, name the error and give the exact `!` command",
+                       "exit 1, and exit 2 too: stop all remaining writes",
+                       "a `--read` exit 2 is handled like a `--show` exit 2",
+                       "after `no`, write nothing for the row and go to the next row"):
+            self.assertIn(phrase, self.step)
+
+    def test_the_question_names_the_row_and_the_write_and_ends_the_turn(self):
+        for phrase in ("write row n (<rule id>), write k of m?", "end the turn",
+                       "the new check names must already be on the default branch"):
+            self.assertIn(phrase, self.step)
+
+    def test_the_reviewer_question_and_the_multi_write_row_are_described(self):
+        for phrase in ("ask the owner for the reviewer in a plain question", "a user login or a team slug",
+                       "a 404 there means an unknown name", "several writes",
+                       "deployment-branch-policies", "the row is reported as stopped"):
+            self.assertIn(phrase, self.step)
+
+    def test_a_row_is_not_written_when_its_fact_is_not_detected(self):
+        self.assertIn("not written when the `rulesets` fact is not `detected`", self.step)
+        self.assertIn("not written when the `environments` fact is not `detected`", self.step)
+
+    def test_the_step_2_reply_rule_is_pinned_next_to_the_unknown_word_rule(self):
+        reply = self.fix[self.fix.index("2. **reply grammar.**"):self.fix.index("3. **`none`.**")]
+        self.assertIn("an unknown word", reply)
+        for phrase in ("the step-2 question", "takes `yes` or `no`", "the case of the word does not matter",
+                       "any other reply to a step-2 question writes nothing for that row: name the invalid part, "
+                       "ask for `yes` or `no` again and wait", "the reviewer question takes a user login or a team slug",
+                       "do not run steps 1 to 4 again"):
+            self.assertIn(phrase, reply)
+
+    def test_the_run_no_tool_stop_needs_no_lock_row(self):
+        step = self.fix[self.fix.index("6. **no edit, or no workflow edited.**"):self.fix.index("7. **actionlint.**")]
+        self.assertIn("and no 🔒 row was approved", step)
+        self.assertIn("run no tool", step)
+        self.assertIn("a reply that approves only 🔒 rows", step)
+        self.assertIn("no `## diff`, no actionlint run and no post-fix report", step)
+
+    def test_the_final_message_defines_the_bullets_of_the_lock_rows(self):
+        for phrase in ("**written**", "**not written**", "**stopped**", "the saved \"before\" json",
+                       "the history version", "a mixed reply runs the file steps as above",
+                       "`## applied` also lists the 🔒 rows"):
+            self.assertIn(phrase, self.fix)
+
+    def test_the_no_write_paragraph_allows_only_the_script_after_the_yes(self):
+        paragraph = self.fix[self.fix.index("**no write to branch protection or rulesets.**"):]
+        self.assertIn("an environment path", paragraph)
+        self.assertIn("the one exception is `scripts/protect_write.py --apply` after the `yes`", paragraph)
+
+    def test_the_other_no_write_texts_allow_only_the_script(self):
+        steps = section(self.full, "## Steps").lower()
+        self.assertIn("only through `scripts/protect_write.py --apply`", steps)
+        create = read(os.path.join(SKILL, "create.md"))
+        self.assertIn("never writes branch protection, rulesets or environments", create)
+        self.assertIn("`scripts/protect_write.py --apply` after the 2-step approval", create)
+        naming = read(os.path.join(SKILL, "rules", "naming.md"))
+        self.assertIn("(`scripts/protect_write.py --apply`)", naming)
+
+    def test_the_router_names_the_script_as_one_plain_command(self):
+        router = read(os.path.join(SKILL, "SKILL.md"))
+        self.assertIn("[scripts/protect_write.py](scripts/protect_write.py)", router)
+        self.assertIn("one plain command (no `cd`, `;`, `&&` or pipe)", router)
+        self.assertIn("The main session runs it, never a subagent.", router)
+
+
 class ReadmeApprovalRun(unittest.TestCase):
     def setUp(self):
         self.text = read(os.path.join(EVALS, "README.md"))
@@ -249,6 +344,16 @@ class ReadmeApprovalRun(unittest.TestCase):
 
     def test_the_stale_review_notes_say_they_are_for_the_review_cases(self):
         self.assertIn("(review cases)", self.text)
+
+
+class ReadmeProtectionApprovalRun(unittest.TestCase):
+    def setUp(self):
+        self.section = section(read(os.path.join(EVALS, "README.md")), "## Protection approval cases")
+
+    def test_it_names_the_cases_and_the_run_flags(self):
+        for phrase in ("protect-approve-yes", "protect-approve-no", "--case 'protect-approve-*'",
+                       'Bash(python3 *scripts/protect_write.py*)', "repo/rows/"):
+            self.assertIn(phrase, self.section)
 
 
 if __name__ == "__main__":
