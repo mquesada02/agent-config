@@ -40,11 +40,14 @@ COVERAGE = {
     ("SEC-05",): "persist-credentials", ("SEC-07", "SEC-09"): "no-privileged-trigger",
     ("SEC-08",): "no-text", ("SEC-10",): "audit-job", ("MAINT-01",): "short-run-blocks",
     ("MAINT-02",): "short-comments", ("COST-01",): "triggers-cd",
+    ("DEPLOY-01",): "no-install-in-deploy", ("DEPLOY-02",): "stage-environments", ("DEPLOY-03",): "digest-check",
+    ("ROLLBACK-06", "COST-02"): "concurrency-cd", ("ROLLBACK-03",): "package-upload",
+    ("ROLLBACK-01",): "rollback-workflow",
 }
-# No assertion claims the DEPLOY, ROLLBACK, RELEASE, PUBLISH and PROTECT ids yet: a review case covers each of them. The
-# structural-assertion ticket moves the ids that an assertion claims into COVERAGE.
-DEPLOY_IDS = {f"DEPLOY-{n:02d}" for n in range(1, 11)}
-ROLLBACK_IDS = {f"ROLLBACK-{n:02d}" for n in range(1, 7)}
+# The CD ids that an assertion claims are in COVERAGE. A review case covers each of the other DEPLOY, ROLLBACK, RELEASE,
+# PUBLISH and PROTECT ids, so they stay here.
+DEPLOY_IDS = {f"DEPLOY-{n:02d}" for n in range(4, 11)}
+ROLLBACK_IDS = {"ROLLBACK-02", "ROLLBACK-04", "ROLLBACK-05"}
 RELEASE_IDS = {f"RELEASE-{n:02d}" for n in range(1, 7)}
 PUBLISH_IDS = {f"PUBLISH-{n:02d}" for n in range(1, 6)}
 PROTECT_IDS = {f"PROTECT-{n:02d}" for n in range(1, 9)}
@@ -79,6 +82,105 @@ class Templates(unittest.TestCase):
             text = read(path)
             self.assertNotIn("fill", text.lower())
             self.assertNotIn("shard", text.lower())
+
+
+DEPLOY_T = os.path.join(SKILL, "templates", "deploy.yml")
+ROLLBACK_T = os.path.join(SKILL, "templates", "rollback.yml")
+RELEASE_T = os.path.join(SKILL, "templates", "release.yml")
+# The shared assertions that apply to every CD template (the CI-form `concurrency` assertion does not).
+CD_SHARED = ["pinned-uses", "persist-credentials", "pinned-runners", "no-run-expr", "named-run-steps",
+             "short-run-blocks", "short-comments", "timeouts", "permissions", "no-privileged-trigger"]
+CD_DEPLOY = ["name=Deploy", "stage-environments", "concurrency-cd", "no-install-in-deploy", "digest-check",
+             "package-upload", "timeout=package:10", "timeout=skip-notice:5", "timeout=deploy-dev:30",
+             "timeout=deploy-staging:30", "timeout=deploy-prod:30"]
+
+
+class CdTemplates(unittest.TestCase):
+    def test_the_deploy_template_passes_the_cd_and_shared_assertions(self):
+        code, lines, _ = run(read(DEPLOY_T), *CD_SHARED, *CD_DEPLOY)
+        self.assertEqual((code, lines), (0, ["PASS"]))
+
+    def test_the_rollback_template_passes_its_assertions(self):
+        code, lines, _ = run(read(ROLLBACK_T), *CD_SHARED, "name=Rollback", "rollback-workflow", "concurrency-cd",
+                             "no-install-in-deploy", "digest-check", "timeout=roll-back:30")
+        self.assertEqual((code, lines), (0, ["PASS"]))
+
+    def test_the_release_template_passes_the_shared_assertions(self):
+        code, lines, _ = run(read(RELEASE_T), *CD_SHARED, "name=Release", "timeout=release:15")
+        self.assertEqual((code, lines), (0, ["PASS"]))
+
+    def breaks(self, assertion, path, old, new, message):
+        text = read(path)
+        self.assertIn(old, text)
+        lines = failed(text.replace(old, new, 1), assertion)
+        self.assertTrue(any(message in line for line in lines), lines)
+
+    def test_a_deploy_job_with_another_environment_fails_stage_environments(self):
+        self.breaks("stage-environments", DEPLOY_T, "environment: staging", "environment: dev",
+                    "job deploy-staging has environment 'dev'")
+
+    def test_a_package_job_with_no_artifacts_environment_fails_stage_environments(self):
+        self.breaks("stage-environments", DEPLOY_T, "environment: artifacts", "environment: dev",
+                    "job package does not use the `artifacts` environment")
+
+    def test_a_cancelling_group_fails_concurrency_cd(self):
+        self.breaks("concurrency-cd", DEPLOY_T, "group: deploy-prod\n      cancel-in-progress: false",
+                    "group: deploy-prod\n      cancel-in-progress: true", "job deploy-prod has cancel-in-progress 'true'")
+
+    def test_another_group_in_the_rollback_fails_concurrency_cd(self):
+        self.breaks("concurrency-cd", ROLLBACK_T, "group: deploy-${{ inputs.environment }}", "group: rollback",
+                    "job roll-back has concurrency group 'rollback'")
+
+    def test_an_install_step_in_a_deploy_job_fails_no_install_in_deploy(self):
+        self.breaks("no-install-in-deploy", DEPLOY_T, "run: git merge-base --is-ancestor HEAD origin/main",
+                    "run: pnpm install --frozen-lockfile", "has an install or build step")
+
+    def test_a_build_step_in_the_rollback_fails_no_install_in_deploy(self):
+        self.breaks("no-install-in-deploy", ROLLBACK_T, "run: git merge-base --is-ancestor HEAD origin/main",
+                    "run: pnpm build", "job roll-back has an install or build step")
+
+    def test_a_deploy_job_with_no_deploy_script_call_fails_digest_check(self):
+        self.breaks("digest-check", DEPLOY_T, 'run: ./scripts/deploy-and-verify.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"',
+                    "run: aws lambda update-function-code", "job deploy-dev does not call scripts/deploy-and-verify.sh")
+
+    def test_a_package_job_that_stores_no_digest_file_fails_package_upload(self):
+        self.breaks("package-upload", DEPLOY_T, 'aws s3 cp app.zip.sha256 "s3://$BUCKET/$SHA/app.zip.sha256"',
+                    "echo done", "does not upload app.zip.sha256")
+
+    def test_a_package_job_that_stores_the_zip_under_no_sha_fails_package_upload(self):
+        self.breaks("package-upload", DEPLOY_T, 'aws s3 cp app.zip "s3://$BUCKET/$SHA/app.zip"',
+                    'aws s3 cp app.zip "s3://$BUCKET/app.zip"', "does not upload app.zip to S3")
+
+    def test_a_push_trigger_in_the_rollback_fails_rollback_workflow(self):
+        self.breaks("rollback-workflow", ROLLBACK_T, "on:\n  workflow_dispatch:", "on:\n  push:\n  workflow_dispatch:",
+                    "expected only workflow_dispatch")
+
+    def test_a_version_input_in_the_rollback_fails_rollback_workflow(self):
+        self.breaks("rollback-workflow", ROLLBACK_T, "      environment:\n", "      version:\n        type: string\n      environment:\n",
+                    "input version can hold a version")
+
+    def test_a_rollback_job_for_any_ref_fails_rollback_workflow(self):
+        self.breaks("rollback-workflow", ROLLBACK_T, "    if: github.ref_type == 'tag'\n", "",
+                    "does not run only for a tag ref")
+
+    def test_a_workflow_with_no_deploy_job_fails_the_deploy_assertions(self):
+        for assertion in ("stage-environments", "concurrency-cd", "no-install-in-deploy", "digest-check"):
+            self.assertTrue(failed(DEPLOY, assertion), assertion)
+
+
+class InstallAssertionKeepsItsPattern(unittest.TestCase):
+    """The CD install pattern is separate from the pattern of the `install` assertion."""
+
+    def test_a_short_npm_install_next_to_npm_ci_still_fails_the_install_assertion(self):
+        text = ("name: CI\njobs:\n  a:\n    steps:\n      - run: npm ci\n"
+                "  b:\n    steps:\n      - run: npm i\n")
+        lines = failed(text, "install=npm ci")
+        self.assertTrue(any("'npm i' is not 'npm ci'" in line for line in lines), lines)
+
+    def test_a_bare_yarn_install_still_counts_as_an_install(self):
+        text = "name: CI\njobs:\n  a:\n    steps:\n      - run: yarn\n"
+        lines = failed(text, "install=yarn install --immutable")
+        self.assertTrue(any("'yarn' is not" in line for line in lines), lines)
 
 
 class Breakers(unittest.TestCase):

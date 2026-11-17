@@ -1,0 +1,168 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+permissions:
+  contents: read
+jobs:
+  ci:
+    name: CI
+    if: github.ref_type == 'branch'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+  package:
+    name: Package
+    needs: ci
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: artifacts
+    permissions:
+      contents: read
+      # id-token: write lets the job assume the artifacts role with OIDC.
+      id-token: write
+    steps:
+      - name: Download the build output
+        uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Zip the build output
+        run: |
+          (cd dist && zip -qr ../app.zip .)
+          sha256sum app.zip | cut -d' ' -f1 > app.zip.sha256
+      - name: Assume the artifacts role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARTIFACTS }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+      - name: Store the zip and its digest
+        env:
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          SHA: ${{ github.sha }}
+        run: |
+          aws s3 cp app.zip "s3://$BUCKET/$SHA/app.zip"
+          aws s3 cp app.zip.sha256 "s3://$BUCKET/$SHA/app.zip.sha256"
+  skip-notice:
+    name: Skip notice
+    needs: ci
+    if: needs.ci.outputs.code != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write the skip notice
+        run: echo "::notice::This push changed only docs, so the deploy is skipped."
+  deploy-dev:
+    name: Deploy dev
+    needs: [ci, package]
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # id-token: write lets the job assume the dev role with OIDC.
+      id-token: write
+    steps:
+      - name: Check out the deploy script
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Assume the dev role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_DEV }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 3600
+      - name: Deploy the stored zip and verify
+        env:
+          DEPLOY_TARGET: lambda
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          FUNCTION: ${{ vars.LAMBDA_FUNCTION }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+          SHA: ${{ github.sha }}
+        run: ./scripts/deploy-and-verify.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"
+  deploy-staging:
+    name: Deploy staging
+    needs: [ci, deploy-dev]
+    if: needs.ci.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # id-token: write lets the job assume the staging role with OIDC.
+      id-token: write
+    steps:
+      - name: Check out the deploy script
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Assume the staging role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_STAGING }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 3600
+      - name: Deploy the stored zip and verify
+        env:
+          DEPLOY_TARGET: lambda
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          FUNCTION: ${{ vars.LAMBDA_FUNCTION }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+          SHA: ${{ github.sha }}
+        run: ./scripts/deploy-and-verify.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"
+  deploy-prod:
+    name: Deploy prod
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: prod
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # deployments: read lets the staging check read the deployment record.
+      deployments: read
+      # id-token: write lets the job assume the prod role with OIDC.
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check that the tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Check that staging deployed this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: ./scripts/check-staged.sh "$SHA"
+      - name: Assume the prod role
+        uses: aws-actions/configure-aws-credentials@0123456789abcdef0123456789abcdef01234567 # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_PROD }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 3600
+      - name: Deploy the staged zip and verify
+        env:
+          DEPLOY_TARGET: lambda
+          BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          FUNCTION: ${{ vars.LAMBDA_FUNCTION }}
+          VERSION_URL: ${{ vars.VERSION_URL }}
+          SHA: ${{ github.sha }}
+        run: ./scripts/deploy-and-verify.sh "$BUCKET" "$SHA" "$FUNCTION" "$VERSION_URL"
