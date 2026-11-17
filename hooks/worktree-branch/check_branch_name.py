@@ -31,6 +31,12 @@ CREATE_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
 NEW_WORKTREES = ("new-child", "new-top-level")
 CLI_VARIABLES = ("$ORCA_CLI_COMMAND", "${ORCA_CLI_COMMAND}")
 GATED_TEXT = re.compile(r"worker-start|worktree\W+create")
+# The shell rules (issue 717): the text of an echo or printf that is piped to a shell, and of a here-string, is read as a command text.
+ECHO_PRINTF = ("echo", "printf")
+ECHO_OPTION = re.compile(r"-[neE]+")
+HERE_STRING_UNREADABLE = re.compile(r"[$`]")  # a backslash is no doubt mark in a here-string text
+TEXT_UNREADABLE = re.compile(r"[\\$`]")
+FORMAT_UNREADABLE = re.compile(r"[%\\$`]")
 CREATE_NOTICE = "Pass --branch <type>/<description> (type: feat, fix, chore, hotfix, release or research), as CLAUDE.md section 10 says."
 START_NOTICE = ("worker-start cannot name a branch. Create the worktree with `orca worktree create --branch <type>/<description> "
                 "--parent-worktree <your worktree>`, then use `worker-start --worktree path:<that path>` (CLAUDE.md section 10).")
@@ -77,6 +83,8 @@ class BranchRules:
         self.audit = audit
         self.shared = load_shared()
         self.walk = self.shared.Walk(audit, self)
+        self.strict = 0  # above 0 while a text that is fed to a shell is read: a nested text that cannot be read is denied
+        self.doubt = False  # set by a pipe from another producer into a shell; `command_reason` decides it at the end of its level
         self.create_head = audit._cli_head(self.is_orca, CREATE_VALUE_OPTIONS, ["worktree", "create"])
         self.start_head = audit._cli_head(self.is_orca, audit.ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
 
@@ -112,14 +120,30 @@ class BranchRules:
     def first_word_reason(self, words):
         return None
 
+    def segment_reason(self, words, items, position, depth):
+        """The shell rules for a segment whose first word is a redirection word. The walk skips a segment whose first word has a naming-only
+        base name (`>/tmp/echo bash <<<"..."`), so it would never give `word_reason` the shell word."""
+        significant = self.audit._significant(words)
+        if significant and significant[0][0] == 0:
+            return None
+        for index in range(len(words)):
+            reason = self.shell_reason(words, index, items, position, depth)
+            if reason:
+                return reason
+        return None
+
     def word_reason(self, words, index, items, position, depth):
-        return self.orca_reason(words[index:]) if self.is_orca(words[index]) else None
+        if self.is_orca(words[index]):
+            return self.orca_reason(words[index:])
+        return self.shell_reason(words, index, items, position, depth)
 
     def depth_reason(self):
         return "shell commands are nested too deep to read"
 
     def unreadable_reason(self, command, depth, error):
-        """A text that cannot be read is denied when it names a gated command."""
+        """A text that cannot be read is denied when it names a gated command, and always inside a text that is fed to a shell."""
+        if self.strict:
+            return f"a text that is fed to a shell cannot be read ({type(error).__name__})"
         if GATED_TEXT.search(command):
             return f"the command cannot be read ({type(error).__name__}) and names a gated Orca command"
         return None
@@ -128,8 +152,122 @@ class BranchRules:
         return self.shared.substitution_bodies(self.audit, word)
 
     def command_reason(self, command, depth=0):
-        """The deny reason for a command text, or None."""
-        return self.walk.command_reason(command, depth)
+        """The deny reason for a command text, or None. A pipe from another producer into a shell is a doubt: it denies only when the raw text
+        of this command level names a gated command. The flag is kept per level, so a nested text decides on its own raw text."""
+        saved, self.doubt = self.doubt, False
+        try:
+            reason = self.walk.command_reason(command, depth)
+            if reason is None and self.doubt and GATED_TEXT.search(command):
+                reason = "a shell reads a pipe from a producer that the hook cannot read, and the command names a gated Orca command"
+            return reason
+        finally:
+            self.doubt = saved
+
+    # The shell rules: the text that a shell receives through a here-string or through an echo or printf pipe is read as a command text.
+    def is_shell_word(self, word):
+        return os.path.basename(word) in self.audit.SHELLS or len(self.shared.split_shell_word(self.audit, [word])) == 2
+
+    def chain_words(self, items, position):
+        """The words of the chain of the segment at `position` as (owner position, word), in item order."""
+        return [(item, word) for item in self.shared.segment_chain(self.audit, items, position) for word in items[item]]
+
+    def fed_reason(self, text, depth):
+        """The reason of a text that is fed to a shell: it is read one level deeper, and a nested text that cannot be read is denied."""
+        self.strict += 1
+        try:
+            return self.command_reason(text, depth + 1)
+        finally:
+            self.strict -= 1
+
+    def shell_reason(self, words, index, items, position, depth):
+        audit, shared = self.audit, self.shared
+        if not self.is_shell_word(words[index]):
+            return None
+        raw = items[position]
+        chain = self.chain_words(items, position)
+        start = next(number for number, (item, _) in enumerate(chain) if item == position) + len(raw) - len(words) + index
+        head, owners, shell = [], [], 0  # the words up to the shell word, the list item of each, and the place of the shell word
+        for number, (item, word) in enumerate(chain[:start + 1]):
+            parts = shared.split_shell_word(audit, [word])
+            if number == start:
+                shell = len(head)
+            head.extend(parts)
+            owners.extend([item] * len(parts))
+        tail = [word for _, word in chain[start + 1:]]  # not split at a shell name: the text of a spaced here-string stays whole
+        # A fused word after the shell word (`-s>&2`, `-s<<<text`) must not hide it. The words after the shell word are split in one pass,
+        # with the rest of a fused shell word in front (`bash>&2`, `bash<<< "text"`): the text of a spaced here-string stays whole, and the
+        # target of a redirection stays after its operator, where `_significant` drops it.
+        arguments = shared.split_fused_redirection(head[shell:] + tail)[1:]
+        flat = head[:shell + 1] + arguments
+        if shared.has_command_option(audit, arguments):
+            return None
+        command = audit._significant(audit._command_words(head))
+        if command:
+            owner = owners[len(head) - len(audit._command_words(head)) + command[0][0]]
+            if os.path.basename(command[0][1]) in audit.NAMING_ONLY_COMMANDS and owner == position:
+                return None  # a shell name that is an argument of a naming-only command (`grep -q bash <<<"$list"`) is no shell
+        clobbered = shared.split_fused_redirection(shared.clobber_words(audit, items, position))  # `bash >|file <<<text`: cut at the `|`
+        for text in shared.here_string_texts(flat + clobbered):
+            reason = self.fed_text_reason(text, depth)
+            if reason:
+                return reason
+        if shared.reads_standard_input(audit, arguments):
+            return self.pipe_reason(items, position, depth)
+        return None
+
+    def fed_text_reason(self, text, depth):
+        if HERE_STRING_UNREADABLE.search(text):
+            return "a here-string text that is fed to a shell cannot be read (it holds an expansion or a command substitution)"
+        return self.fed_reason(text, depth)
+
+    def pipe_reason(self, items, position, depth):
+        piped, producer = self.shared.pipe_producer(self.audit, items, position)
+        if not piped:
+            return None
+        command = self.audit._command_words(producer) if producer else []
+        name = os.path.basename(command[0]) if command else None
+        if name in ECHO_PRINTF:
+            text, readable = self.echo_printf_text(name, command[1:])
+            if not readable:
+                return f"the {name} text that is piped to a shell cannot be read (an escape, an expansion or a command substitution)"
+            return self.fed_reason(text, depth)
+        self.doubt = True
+        if self.earlier_unreadable_text(items, position):
+            return "an echo or printf text before this pipe into a shell cannot be read, and the pipe producer is unknown"
+        return None
+
+    def earlier_unreadable_text(self, items, position):
+        """True when a segment before the shell holds an echo or printf word whose text cannot be read (the second part of the rule for
+        another producer: the producer lookup can name the wrong producer)."""
+        first = self.shared.segment_chain(self.audit, items, position)[0]
+        for index in range(first):
+            if not isinstance(items[index], list):
+                continue
+            words = [word for _, word in self.chain_words(items, index)]
+            for number, word in enumerate(words):
+                name = os.path.basename(word)
+                if name in ECHO_PRINTF and not self.echo_printf_text(name, words[number + 1:])[1]:
+                    return True
+        return False
+
+    def echo_printf_text(self, name, arguments):
+        """(text, readable) of an echo or printf command, from the words after its name. The text is not readable when it holds an escape, an
+        expansion or a command substitution, or when an option changes it (echo -e) or where it goes (printf -v)."""
+        words = [word for _, word in self.audit._significant(arguments)]
+        if name == "echo":
+            escapes = False
+            while words and ECHO_OPTION.fullmatch(words[0]):
+                escapes = escapes or "e" in words[0]
+                words = words[1:]
+            return " ".join(words), not escapes and not any(TEXT_UNREADABLE.search(word) for word in words)
+        if not words:
+            return "", True
+        if words[0] == "--":
+            words = words[1:]
+        elif words[0].startswith("-"):
+            return words[0], False
+        text = words[0] if words else ""
+        return text, not FORMAT_UNREADABLE.search(text)
 
 
 def main():
