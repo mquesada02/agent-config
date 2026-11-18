@@ -167,6 +167,24 @@ class BrokenReportTest(GradeCase):
         )
         self.assert_fail(report(notes=notes), "notes")
 
+    def test_id_in_lines_a_and_c(self):
+        notes = (
+            "Disabled (reason recorded, not checked): RUN-02.\n"
+            "Unknown ids in rules.disabled, ignored: RUN-02.\n"
+        )
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_id_in_lines_b_and_c(self):
+        notes = (
+            "No reason line, checked anyway: ASSERT-01.\n"
+            "Unknown ids in rules.disabled, ignored: ASSERT-01.\n"
+        )
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_empty_input_fails_title_and_summary(self):
+        out = self.assert_fail("", "title")
+        self.assertIn("FAIL summary:", out)
+
     def test_checked_id_may_be_in_a_table_and_in_line_b(self):
         notes = "No reason line, checked anyway: ASSERT-01.\n"
         self.assert_pass(report(notes=notes))

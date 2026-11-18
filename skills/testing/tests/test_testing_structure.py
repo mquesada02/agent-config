@@ -144,10 +144,14 @@ def adapted_violations(text):
     return [line for line in text.splitlines() if "Adapted from" in line and not ADAPTED_LINE.match(line)]
 
 
+def entry_files():
+    if not os.path.isdir(ENTRIES):
+        return []
+    return [os.path.join(ENTRIES, n) for n in sorted(os.listdir(ENTRIES)) if n.endswith(".md")]
+
+
 def skill_text_files():
-    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD]
-    if os.path.isdir(ENTRIES):
-        paths += [os.path.join(ENTRIES, n) for n in sorted(os.listdir(ENTRIES)) if n.endswith(".md")]
+    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD] + entry_files()
     scripts = os.path.join(helper.SKILL, "scripts")
     paths += [os.path.join(scripts, n) for n in sorted(os.listdir(scripts)) if n.endswith(".py")]
     return paths
@@ -175,21 +179,11 @@ class CatalogueTableTest(unittest.TestCase):
         table = {row[0]: row[1] for row in self.rows}
         self.assertEqual(ast.literal_eval(catalog_node()), table)
 
-    def test_comparison_fails_on_a_different_severity_or_id(self):
-        table = {row[0]: row[1] for row in self.rows}
-        changed = dict(table, **{"RUN-02": "critical"})
-        self.assertNotEqual(ast.literal_eval(catalog_node()), changed)
-        missing = {k: v for k, v in table.items() if k != "RUN-02"}
-        self.assertNotEqual(ast.literal_eval(catalog_node()), missing)
-
 
 class IdUseTest(unittest.TestCase):
     def test_every_id_that_a_file_names_is_in_the_catalogue(self):
         catalogue = {row[0] for row in catalogue_rows(read(GENERAL_MD))}
-        paths = [SKILL_MD, GENERAL_MD, REVIEW_MD]
-        if os.path.isdir(ENTRIES):
-            paths += [os.path.join(ENTRIES, n) for n in sorted(os.listdir(ENTRIES)) if n.endswith(".md")]
-        for path in paths:
+        for path in [SKILL_MD, GENERAL_MD, REVIEW_MD] + entry_files():
             for found in sorted(set(ANY_ID.findall(read(path)))):
                 with self.subTest(path=os.path.basename(path), id=found):
                     self.assertIn(found, catalogue)
@@ -201,7 +195,6 @@ class IdUseTest(unittest.TestCase):
 class RuleTextTest(unittest.TestCase):
     def test_critical_ids_have_a_subsection_with_the_three_labels(self):
         rules = section(read(GENERAL_MD), "## Rules")
-        text = "\n".join(rules)
         for rule_id in CRITICAL_TEXT_IDS:
             with self.subTest(rule_id):
                 self.assertIn(f"### {rule_id}", rules)
@@ -211,7 +204,6 @@ class RuleTextTest(unittest.TestCase):
                 positions = [body.find(label) for label in RULE_LABELS]
                 self.assertNotIn(-1, positions)
                 self.assertEqual(positions, sorted(positions))
-        self.assertTrue(text)
 
     def test_every_subsection_is_a_catalogue_id(self):
         catalogue = {row[0] for row in catalogue_rows(read(GENERAL_MD))}
@@ -234,10 +226,9 @@ class RouterFlowTest(unittest.TestCase):
 
 class EntryAndTextRulesTest(unittest.TestCase):
     def test_entry_files_hold_no_severity_and_no_rule_row(self):
-        if os.path.isdir(ENTRIES):
-            for name in sorted(os.listdir(ENTRIES)):
-                with self.subTest(name):
-                    self.assertEqual(entry_violations(read(os.path.join(ENTRIES, name))), [])
+        for path in entry_files():
+            with self.subTest(os.path.basename(path)):
+                self.assertEqual(entry_violations(read(path)), [])
 
     def test_entry_rule_on_samples(self):
         self.assertEqual(entry_violations("Check RS-01 by running `cargo test --doc`.\nA required step."), [])

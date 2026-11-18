@@ -174,21 +174,21 @@ def grade(text, catalog):
     # notes: between the Result line and the first table, each at most once, in order
     first_heading = headings[0][0] if headings else len(lines)
     start = (summary_at + 1) if summary_at is not None else 0
-    found = []
+    note_lines = []
     for i in range(start, first_heading):
         stripped = lines[i].strip()
         for name, prefixes in NOTES:
             prefix = next((p for p in prefixes if stripped.startswith(p)), None)
             if prefix:
-                found.append((name, prefix, stripped))
-    names = [name for name, _, _ in found]
+                note_lines.append((name, prefix, stripped))
+    names = [name for name, _, _ in note_lines]
     for name in dict.fromkeys(names):
         if names.count(name) > 1:
             fail("notes", f"note line ({name}) appears more than once")
     if names != sorted(names):
         fail("notes", "the note lines are not in the order (a), (b), (c), (d)")
     placed = {}
-    for name, prefix, stripped in found:
+    for name, prefix, stripped in note_lines:
         if name in ID_LIST_NOTES:
             for rule in note_ids(stripped, prefix):
                 placed.setdefault(rule, set()).add(name)

@@ -14,7 +14,7 @@ claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --s
 - `-j 2` keeps the CPU load low.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace.
 - `--allow-tools` grants the shell calls of the review: the intake script and the fixture test run (the `approve-1` case runs the fixture tests; the fixtures hold no installed `vitest`, so that run reports `not run` or `fail` with the reason, and the grader accepts any stated result).
-- `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Remove them by hand when you are done.
+- `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Move them to a dated backup folder under `/tmp` when you are done. Never delete them recursively.
 - Add `--case <glob>` to run one case.
 
 Then grade a saved final message with the report grader:
