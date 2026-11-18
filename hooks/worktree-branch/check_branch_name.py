@@ -4,7 +4,10 @@
 # turns a slash into a hyphen, so a worker gets its worktree from `worktree create --branch` first and `worker-start --worktree path:<path>`.
 # What is denied, for every session (a main session, a worker and a subagent):
 #   - `orca worktree create` without `--branch`, or with a name that breaks the rule (BRANCH_NAME below);
-#   - `orca orchestration worker-start` with `--worktree new-child` or `--worktree new-top-level`.
+#   - `orca orchestration worker-start` with `--worktree new-child` or `--worktree new-top-level`, or with a `--worktree` value that holds
+#     one of `$`, a backtick, `*`, `?`, `[` or `{` (a variable, substitution, glob or brace expansion could build a new-worktree name);
+#   - a word that holds `$` as the program word before `worktree create` (`$X worktree create`): the create rule applies to it. A variable
+#     program word before `worker-start`, and a backtick program word (`` `cmd` worktree create ``), are not covered.
 # Every Orca CLI form counts (`orca`, `orca-ide`, `orca-dev`, a full path, `$ORCA_CLI_COMMAND`). The command is read with the shared bash
 # command reader of the workflow-audit gates, so a wrapped form (`bash -c`, `eval`, a pipeline, a `&&` chain, a substitution) counts.
 # The walk over wrapped forms is the one of hooks/bash-reader/bash_reader.py, which hooks/subagent-readonly/block_subagent_writes.py shares
@@ -36,6 +39,9 @@ ECHO_PRINTF = ("echo", "printf")
 ECHO_OPTION = re.compile(r"-[neE]+")
 TEXT_UNREADABLE = re.compile(r"[\\$`]")
 FORMAT_UNREADABLE = re.compile(r"[%\\$`]")
+# A `--worktree` value that a variable, a command substitution, a backtick form, a glob or a brace expansion builds (decision 708).
+BUILT_VALUE = re.compile(r"[$`*?\[{]")
+BUILT_NOTICE = "Write the literal value, for example `--worktree path:<that path>`; a built value is denied (CLAUDE.md section 10)."
 CREATE_NOTICE = "Pass --branch <type>/<description> (type: feat, fix, chore, hotfix, release or research), as CLAUDE.md section 10 says."
 START_NOTICE = ("worker-start cannot name a branch. Create the worktree with `orca worktree create --branch <type>/<description> "
                 "--parent-worktree <your worktree>`, then use `worker-start --worktree path:<that path>` (CLAUDE.md section 10).")
@@ -84,11 +90,15 @@ class BranchRules:
         self.walk = self.shared.Walk(audit, self)
         self.strict = 0  # above 0 while a text that is fed to a shell is read: a nested text that cannot be read is denied
         self.doubt = False  # set by a pipe from another producer into a shell; `command_reason` decides it at the end of its level
-        self.create_head = audit._cli_head(self.is_orca, CREATE_VALUE_OPTIONS, ["worktree", "create"])
+        self.create_head = audit._cli_head(self.is_program, CREATE_VALUE_OPTIONS, ["worktree", "create"])
         self.start_head = audit._cli_head(self.is_orca, audit.ORCA_VALUE_OPTIONS, ["orchestration", "worker-start"])
 
     def is_orca(self, word):
         return self.audit._is_orca(word) or word in CLI_VARIABLES
+
+    def is_program(self, word):
+        """The program word of a create command: an Orca word, or a word that a variable can fill (`$X worktree create`)."""
+        return self.is_orca(word) or "$" in word
 
     def create_reason(self, arguments):
         if self.audit._is_help(arguments):
@@ -101,19 +111,28 @@ class BranchRules:
                 return f"the branch name {name!r} breaks the Conventional Branch rule. {CREATE_NOTICE}"
         return None
 
-    def start_reason(self, arguments):
-        values = option_values(arguments, "--worktree", self.audit.ORCA_VALUE_OPTIONS)
+    def start_reason(self, words):
+        """The reason for a worker-start command, from all its words (the option may sit before the subcommand words). A value that a
+        variable, a substitution, a glob or a brace expansion builds could hold a new worktree name, so it is denied."""
+        values = option_values(words, "--worktree", self.audit.ORCA_VALUE_OPTIONS)
         if any(value in NEW_WORKTREES for value in values):
             return f"worker-start with a new worktree gives a hyphen name. {START_NOTICE}"
+        if any(BUILT_VALUE.search(value) for value in values):
+            return f"worker-start with a --worktree value that holds one of $ ` * ? [ {{ could hold a new worktree. {BUILT_NOTICE}"
         return None
 
     def orca_reason(self, words):
         """The deny reason of a command that starts with the program word `words[0]`, or None."""
-        head = self.create_head(words)
-        if head is not None:
-            return self.create_reason(words[len(head):])
+        if self.create_head(words) is not None:
+            return self.create_command_reason(words)
         head = self.start_head(words)
-        return None if head is None else self.start_reason(words[len(head):])
+        return None if head is None else self.start_reason(words)
+
+    def create_command_reason(self, words):
+        """The deny reason of a create command that starts with `words[0]`, or None when it is no create command. A program word that
+        holds `$` is covered here only (a variable before worker-start is not)."""
+        head = self.create_head(words)
+        return None if head is None else self.create_reason(words[len(head):])
 
     # The rules that the shared walk (hooks/bash-reader/bash_reader.py) asks of a hook.
     def first_word_reason(self, words):
@@ -134,6 +153,10 @@ class BranchRules:
     def word_reason(self, words, index, items, position, depth):
         if self.is_orca(words[index]):
             return self.orca_reason(words[index:])
+        if "$" in words[index]:
+            reason = self.create_command_reason(words[index:])
+            if reason:
+                return reason
         return self.shell_reason(words, index, items, position, depth)
 
     def depth_reason(self):
