@@ -21,6 +21,28 @@ def read(path):
         return handle.read()
 
 
+CD_START, CD_END = "# cd-part:start", "# cd-part:end"
+
+
+def ci_only_form(text):
+    """A CI template made for a run with no CD part: each marked CD block is removed with its marker lines."""
+    out, skipping = [], False
+    for line in text.splitlines(keepends=True):
+        if line.strip() == CD_START:
+            skipping = True
+        elif line.strip() == CD_END:
+            skipping = False
+        elif not skipping:
+            out.append(line)
+    return "".join(out)
+
+
+def cd_form(text):
+    """A CI template made for step 1 rule 5: the marker lines are removed and so is the `push:` trigger."""
+    kept = [line for line in text.splitlines(keepends=True) if line.strip() not in (CD_START, CD_END)]
+    return "".join(kept).replace("  push:\n    branches: [main]\n", "", 1)
+
+
 def frontmatter(path):
     """The key/value pairs of the `---` block at the top of a file. Quotes are removed, lists stay text."""
     match = re.match(r"^---\n(.*?)\n---\n", read(path), re.S)

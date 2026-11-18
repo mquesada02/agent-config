@@ -99,7 +99,7 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
                       "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 41  # the 38 earlier CD cases, the two protection approval cases and `clean-cd`
+CD_CASE_COUNT = 45  # the 41 earlier CD cases and the four `create-cd-*` create cases
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -1260,6 +1260,11 @@ class CdFixtures(unittest.TestCase):
 
     def test_the_cd_cases_exist(self):
         self.assertEqual(len(self.cases), CD_CASE_COUNT)
+
+    def test_the_four_create_cd_cases_exist(self):
+        for name in ("create-cd-lambda-app", "create-cd-changesets-library", "create-cd-monorepo-publish",
+                     "create-cd-terraform"):
+            self.assertIn(name, self.cases)
 
     def test_no_cd_fixture_holds_a_url_but_the_two_git_url_forms(self):
         for path, text in self.texts.items():

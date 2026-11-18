@@ -155,7 +155,7 @@ claude plugin eval skills/cicd-pipelines --case 'protect-approve-*' --no-publish
 
 ## Create cases
 
-`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps. Each case asks "Create CI for this repo." and gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 28 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
+`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps for CI. `create-cd-lambda-app`, `create-cd-changesets-library`, `create-cd-monorepo-publish` and `create-cd-terraform` test the create steps for CI and CD. Each CI case asks "Create CI for this repo.", and each CD case asks "Create CI and CD for this repo." and names the deploy target. Each case gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 28 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
 
 | Case | Fixture | What it proves |
 |---|---|---|
@@ -163,14 +163,18 @@ claude plugin eval skills/cicd-pipelines --case 'protect-approve-*' --no-publish
 | `create-pnpm-library` | A pnpm library with `engines` `>=22`. Both support files are missing. | `matrix-node=22,24,26` and `install=pnpm install --frozen-lockfile`. |
 | `create-pnpm-turbo-monorepo` | A pnpm and Turborepo monorepo with two published packages (`engines` `>=22` and `>=24`). Both support files exist. | The monorepo template, `affected-run=turbo`, and both support files left unchanged (`max: 0` `Write` and `Edit` graders, and the final message shows `unchanged`). |
 | `create-playwright-app` | An app with `@playwright/test`. Both support files are missing. | The browsers install step, `workers=1`, and no browser cache. |
+| `create-cd-lambda-app` | An npm app with a `build` script. The deploy target is AWS Lambda. | `ci.yml` with `triggers-cd`, `deploy.yml`, `release.yml` (npm), `rollback.yml`, and `chmod +x` of the repo scripts. |
+| `create-cd-changesets-library` | A pnpm library with a `build` script. The deploy target is AWS Lambda. | The same six files, with pnpm in `ci.yml` and `release.yml`. |
+| `create-cd-monorepo-publish` | A pnpm and Turborepo monorepo with two published packages. The deploy target is AWS Lambda. | The monorepo `ci.yml` with `triggers-cd`, and the CD files. |
+| `create-cd-terraform` | An npm app with a `build` script. The deploy target is Terraform. | The Terraform setup steps in `deploy.yml` and `rollback.yml` (`text=terraform init -input=false`, `no-text=LAMBDA_FUNCTION`). |
 | `create-no-lockfile` | A package with no lockfile. | The run writes nothing under `.github/` (`no-write-github.md`) and names `COST-05` (`names-COST-05.md`). It has no section graders, no `wrote-ci` grader and no `asserts`, so both Python graders skip it. |
 
-In-run graders of a writing case: `wrote-ci.md` (one `Write` of `.github/workflows/ci.yml`), `actionlint-after-write.md` (a `Bash` call with `actionlint` after the first `Write`), `actionlint-ran.md`, the six `section-*.md`, one `forbid-<ID>.md` for each id of the forbid list, `gh-api-no-write.md`, and a `wrote-<file>.md` grader (`min: 1`) for each support file that the case must write.
+In-run graders of a writing case: `wrote-ci.md` (one `Write` of `.github/workflows/ci.yml`), `actionlint-after-write.md` (a `Bash` call with `actionlint` after the first `Write`), `actionlint-ran.md`, the six `section-*.md`, one `forbid-<ID>.md` for each id of the forbid list, `gh-api-no-write.md`, and a `wrote-<file>.md` grader (`min: 1`) for each support file that the case must write. A CD case adds `wrote-deploy.md`, `wrote-release.md`, `wrote-rollback.md` and `chmod-scripts.md`. The recorded `intake.json` of a CD case holds the 12 CD intake facts (`environments` to `deploy_history`), with no deploy target found, so the prompt supplies the target.
 
 Run the create cases by hand. `Write` and `Edit` are gated tools, so `--allow-tools` grants them, with the actionlint call:
 
 ```
-claude plugin eval skills/cicd-pipelines --case 'create-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Write Edit "Bash(actionlint*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/cicd-pipelines --case 'create-*' --no-publish -j 2 --runs 1 --ablation none --scaffold --trust-plugin --keep-temp --allow-tools Write Edit "Bash(actionlint*)" "Bash(chmod*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 Then run both Python graders on the result:
