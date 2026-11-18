@@ -1,6 +1,6 @@
 ---
 name: cicd-pipelines
-description: cicd-pipelines creates or reviews GitHub Actions CI and CD for Node/TypeScript repos: deploy, release, rollback, npm publish, and branch protection, rulesets and environments. Use it when asked to create or review any of these, and before you write or edit any file in .github/workflows.
+description: cicd-pipelines creates or reviews GitHub Actions CI and CD for Node/TypeScript repos: deploy, release, rollback, npm publish, and branch protection, rulesets and environments. Use it when asked to create, review, deploy, release or publish, and before you write or edit any file in .github/workflows.
 ---
 
 # cicd-pipelines
