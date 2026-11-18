@@ -39,7 +39,15 @@ class RulesPartTest(unittest.TestCase):
     def test_complete_file_has_nothing_missing(self):
         rules, detected, code = self.check(doc(helper.FULL_BLOCK))
         self.assertEqual(code, 0)
-        self.assertEqual(detected, {})
+        self.assertEqual(
+            detected["languages"],
+            [
+                {"name": "rust", "root": ".", "manifest": None},
+                {"name": "typescript", "root": "web", "manifest": None},
+            ],
+        )
+        self.assertEqual(detected["entries"], {})
+        self.assertEqual(sorted(detected["facts"]), ["rust", "typescript"])
         self.assertTrue(rules["found"])
         self.assertEqual(rules["missing_sections"], [])
         self.assertEqual(rules["disabled_without_reason"], [])
@@ -52,7 +60,7 @@ class RulesPartTest(unittest.TestCase):
     def test_absent_file(self):
         rules, detected, code = helper.run_json(self.repo.root)
         self.assertEqual(code, 0)
-        self.assertEqual(detected, {})
+        self.assertEqual(detected, {"languages": [], "entries": {}, "facts": {}})
         self.assertEqual(
             rules,
             {
@@ -193,7 +201,7 @@ class RulesPartTest(unittest.TestCase):
     def test_unwritable_settings_are_an_output_error(self):
         rules, detected, code = self.check(doc(block(top="bad = nan\n")))
         self.assert_error(rules, code, None, NOT_READ)
-        self.assertEqual(detected, {})
+        self.assertEqual(detected, {"languages": [], "entries": {}, "facts": {}})
 
     def test_bom_and_crlf_are_read_as_normal(self):
         text = doc(helper.FULL_BLOCK)
@@ -298,14 +306,16 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(done.stdout, "")
         self.assertIn("usage", done.stderr)
 
-    def test_extra_file_arguments_are_accepted_and_ignored(self):
+    def test_extra_file_arguments_do_not_change_the_rules_part(self):
         repo = helper.Repo()
         self.addCleanup(repo.close)
         repo.write(doc(helper.FULL_BLOCK))
-        plain = helper.run_json(repo.root)
-        extra = helper.run_json(repo.root, "src/lib.rs", "web/app.ts")
-        self.assertEqual(extra, plain)
-        self.assertEqual(extra[2], 0)
+        plain_rules, plain_detected, _ = helper.run_json(repo.root)
+        extra_rules, extra_detected, code = helper.run_json(repo.root, "src/lib.rs", "web/app.ts")
+        self.assertEqual(extra_rules, plain_rules)
+        self.assertEqual(extra_detected["entries"], {"src/lib.rs": "rust", "web/app.ts": "typescript"})
+        self.assertEqual(extra_detected["languages"], plain_detected["languages"])
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
