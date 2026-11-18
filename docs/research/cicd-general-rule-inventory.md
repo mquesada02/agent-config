@@ -19,7 +19,7 @@ The skill has 74 rule ids. I sorted each id into one group. In this file, the "m
 | specific | 3 |
 | Total | 74 |
 
-Counts per file: COST 8, DEPLOY 10, GRAPH 7, MAINT 3, MONO 2, NAME 9, PROTECT 8, PUBLISH 5, RELEASE 6, ROLLBACK 6, SEC 10 (sum 74).
+The per-file counts are in the Count check section.
 
 Findings:
 - Most rules hold a general idea, but their check or fix names a specific tool:
@@ -183,18 +183,7 @@ I read each rule text, check and fix. A rule is general when its text (rule, che
 
 ## Files read
 
-Rule files, all under `skills/cicd-pipelines/rules/`:
-- cost.md
-- deploy.md
-- job-graph.md
-- maintainability.md
-- monorepo.md
-- naming.md
-- protect.md
-- publish.md
-- release.md
-- rollback.md
-- security.md
+I read all 11 rule files under `skills/cicd-pipelines/rules/`. Each section above names its file.
 
 I only listed the line counts of SKILL.md and review.md in `skills/cicd-pipelines/`. The rule files carry the rule text, so they were enough for the sort.
 
