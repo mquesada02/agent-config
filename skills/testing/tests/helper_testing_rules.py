@@ -68,12 +68,10 @@ class Repo:
         folder = os.path.join(self.root, "docs", "agents")
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, "testing.md")
-        if raw:
-            with open(path, "wb") as handle:
-                handle.write(text)
-        else:
-            with open(path, "w", encoding="utf-8", newline="") as handle:
-                handle.write(text)
+        if not raw:
+            text = text.encode("utf-8")
+        with open(path, "wb") as handle:
+            handle.write(text)
         return path
 
 

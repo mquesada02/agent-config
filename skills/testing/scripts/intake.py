@@ -181,7 +181,7 @@ def read_rules(repo):
     if len(blocks) > 1:
         return failure("more than one toml block", blocks[1].opening)
 
-    settings = dict(parsed)
+    settings = parsed
     missing = check_sections(settings)
     after_block = block.opening + len(block.content) + 1
     prose = lines[: block.opening - 1] + lines[after_block:]
