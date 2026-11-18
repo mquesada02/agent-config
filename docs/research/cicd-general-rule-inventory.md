@@ -12,8 +12,8 @@ The skill has 74 rule ids. I sorted each id into one group.
 
 | Group | Count |
 |---|---|
-| general | 4 |
-| general idea, specific check | 67 |
+| general | 6 |
+| general idea, specific check | 65 |
 | specific | 3 |
 | Total | 74 |
 
@@ -21,13 +21,13 @@ Counts per file: COST 8, DEPLOY 10, GRAPH 7, MAINT 3, MONO 2, NAME 9, PROTECT 8,
 
 Findings:
 - Most rules hold a general idea. Their Check and Fix name GitHub Actions keys (`needs:`, `permissions:`, `environment:`, `concurrency`), GitHub settings (rulesets, environments) or Node tools (npm, pnpm, Changesets, Vitest). A fallback can reuse the idea and drop the check.
-- The 4 general rules are deploy checks: the digest check, the version check, the native rollout and the preview on a PR. Their rule text names no CI system and no language.
+- The 6 general rules are four deploy checks (the digest check, the version check, the native rollout and the preview on a PR), the step comment size and the step name. Their text names no GitHub Actions syntax and no Node tool.
 - The 3 specific rules only exist because of one tool: the pnpm filter (MONO-02), the stacking of classic branch protection and rulesets (PROTECT-06), and the read of GitHub required checks before a rename (NAME-09).
 - Rules that name AWS (DEPLOY-04, ROLLBACK-03, ROLLBACK-05) are not tied to a language or a CI system. They name AWS tools in the rule text, so they are in the middle group. DEPLOY-07 is in general: it says "native rollout of the target" and AWS names are only examples.
 
 ## Method
 
-I read each rule text, check and fix. A rule is general when its text holds no CI-system or language name. It is "general idea, specific check" when the goal is portable but the text names GitHub Actions or Node/TypeScript. It is specific when the goal itself needs the tool.
+I read each rule text, check and fix. A rule is general when its text (rule, check and fix) names no GitHub Actions syntax, no GitHub Action and no Node tool. Syntax means a key (for example `needs:`, `run:`, `if:`), a workflow command (`::error::`) or a workflow file (`deploy.yml`). Generic CI words (job, step, artifact, workflow) do not count, because other CI systems use them too. The owner set this test. It is "general idea, specific check" when the goal is portable but the text names GitHub Actions or Node/TypeScript. It is specific when the goal itself needs the tool.
 
 ## COST (cost.md)
 
@@ -74,7 +74,7 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | Rule id | Group | Reason | General idea |
 |---|---|---|---|
 | MAINT-01 | general idea, specific check | Names the `run:` key and a step. | Long inline scripts move to a repo script that runs locally. |
-| MAINT-02 | general idea, specific check | Names a step, the unit of a GitHub Actions job. | Keep pipeline comments short; put long reasons in the docs. |
+| MAINT-02 | general | Keep step comments short; put long reasons in the docs. | n/a |
 | MAINT-03 | general idea, specific check | Names reusable workflows and composite actions. | Share copied pipeline code through the shared-template feature of the CI system. |
 
 ## MONO (monorepo.md)
@@ -94,7 +94,7 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | NAME-04 | general idea, specific check | Names the job `name:` key. | A job name states one purpose; split a multi-task job. |
 | NAME-05 | general idea, specific check | Uses `${{ matrix.* }}` in job names. | A matrix job name shows each varying value. |
 | NAME-06 | general idea, specific check | Names the `run:` step `name:` key. | Every script step has a name. |
-| NAME-07 | general idea, specific check | Names a step, the unit of a GitHub Actions job. | A task name is a short imperative phrase with no ids or versions. |
+| NAME-07 | general | A step name is a short imperative phrase with no ids or versions. | n/a |
 | NAME-08 | general idea, specific check | Uses `needs:`, `if: always()`, `needs.*.result`. | One aggregate gate job is the only required check. |
 | NAME-09 | specific | Reads GitHub branch protection and rulesets before a rename. | n/a |
 
@@ -165,15 +165,15 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | cost.md | 8 | 0 | 8 | 0 |
 | deploy.md | 10 | 4 | 6 | 0 |
 | job-graph.md | 7 | 0 | 7 | 0 |
-| maintainability.md | 3 | 0 | 3 | 0 |
+| maintainability.md | 3 | 1 | 2 | 0 |
 | monorepo.md | 2 | 0 | 1 | 1 |
-| naming.md | 9 | 0 | 8 | 1 |
+| naming.md | 9 | 1 | 7 | 1 |
 | protect.md | 8 | 0 | 7 | 1 |
 | publish.md | 5 | 0 | 5 | 0 |
 | release.md | 6 | 0 | 6 | 0 |
 | rollback.md | 6 | 0 | 6 | 0 |
 | security.md | 10 | 0 | 10 | 0 |
-| Total | 74 | 4 | 67 | 3 |
+| Total | 74 | 6 | 65 | 3 |
 
 ## Files read
 
