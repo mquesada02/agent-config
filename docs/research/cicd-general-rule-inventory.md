@@ -6,9 +6,11 @@
 
 Issue 858 of map 856: which current rules of the cicd-pipelines skill are already general? A general rule is true for any language and any CI system.
 
+Date: 2026-11-18.
+
 ## Short answer
 
-The skill has 74 rule ids. I sorted each id into one group.
+The skill has 74 rule ids. I sorted each id into one group. In this file, the "middle group" is the group "general idea, specific check".
 
 | Group | Count |
 |---|---|
@@ -20,10 +22,14 @@ The skill has 74 rule ids. I sorted each id into one group.
 Counts per file: COST 8, DEPLOY 10, GRAPH 7, MAINT 3, MONO 2, NAME 9, PROTECT 8, PUBLISH 5, RELEASE 6, ROLLBACK 6, SEC 10 (sum 74).
 
 Findings:
-- Most rules hold a general idea. Their Check and Fix name GitHub Actions keys (`needs:`, `permissions:`, `environment:`, `concurrency`), GitHub settings (rulesets, environments) or Node tools (npm, pnpm, Changesets, Vitest). A fallback can reuse the idea and drop the check.
+- Most rules hold a general idea, but their check or fix names a specific tool:
+  - GitHub Actions keys (`needs:`, `permissions:`, `environment:`, `concurrency`);
+  - GitHub settings (rulesets, environments);
+  - Node tools (npm, pnpm, Changesets, Vitest).
+- A fallback can reuse the idea and drop the check.
 - The 6 general rules are four deploy checks (the digest check, the version check, the native rollout and the preview on a PR), the step comment size and the step name. Their text names no GitHub Actions syntax and no Node tool.
 - The 3 specific rules only exist because of one tool: the pnpm filter (MONO-02), the stacking of classic branch protection and rulesets (PROTECT-06), and the read of GitHub required checks before a rename (NAME-09).
-- Rules that name AWS (DEPLOY-04, ROLLBACK-03, ROLLBACK-05) are not tied to a language or a CI system. They name AWS tools in the rule text, so they are in the middle group. DEPLOY-07 is in general: it says "native rollout of the target" and AWS names are only examples.
+- Rules that name AWS (Amazon Web Services) (DEPLOY-04, ROLLBACK-03, ROLLBACK-05) are not tied to a language or a CI system. They name AWS tools in the rule text, so they are in the middle group. DEPLOY-07 is in general: it says "native rollout of the target" and AWS names are only examples.
 
 ## Method
 
@@ -48,8 +54,8 @@ I read each rule text, check and fix. A rule is general when its text (rule, che
 |---|---|---|---|
 | DEPLOY-01 | general idea, specific check | The check names `npm ci`, `pnpm install` and `tsc`. | Build once, deploy the artifact; no install or build step in a deploy job. |
 | DEPLOY-02 | general idea, specific check | Uses GitHub `environment:` and deployment records. | Each stage is a separate environment; prod needs a proof of a good earlier stage. |
-| DEPLOY-03 | general | A SHA-256 digest proves that prod deploys the staged artifact. | n/a |
-| DEPLOY-04 | general idea, specific check | Names AWS OIDC, `role-to-assume`, `id-token`. | Use short-lived federated credentials, one identity per environment, never a stored key. |
+| DEPLOY-03 | general | A SHA-256 (Secure Hash Algorithm, 256 bits) digest proves that prod deploys the staged artifact. | n/a |
+| DEPLOY-04 | general idea, specific check | Names AWS OIDC (OpenID Connect), `role-to-assume`, `id-token`. | Use short-lived federated credentials, one identity per environment, never a stored key. |
 | DEPLOY-05 | general | Check the live version after deploy, not only an HTTP status. | n/a |
 | DEPLOY-06 | general idea, specific check | The check names the `if:` key; the fix names `::error::`. | A missing setting fails the deploy loudly; no silent skip. |
 | DEPLOY-07 | general | Use the native step-by-step rollout of the target, with alarms. | n/a |
@@ -128,7 +134,7 @@ I read each rule text, check and fix. A rule is general when its text (rule, che
 | RELEASE-01 | general idea, specific check | Names JS tools (Changesets, release-please, semantic-release). | Use one release tool per repo. |
 | RELEASE-02 | general idea, specific check | Names `git tag` flags and `workflow_dispatch`. | Release tags are annotated and made on a commit of the main branch. |
 | RELEASE-03 | general idea, specific check | Uses a GitHub tag ruleset (same idea as PROTECT-02). | Release tags are protected from edits. |
-| RELEASE-04 | general idea, specific check | Names `GITHUB_TOKEN`, PAT, GitHub App token. | The release job uses a scoped, non-personal credential. |
+| RELEASE-04 | general idea, specific check | Names `GITHUB_TOKEN`, PAT (personal access token), GitHub App token. | The release job uses a scoped, non-personal credential. |
 | RELEASE-05 | general idea, specific check | Closed list of GitHub triggers. | A release runs only from the main branch or a manual start. |
 | RELEASE-06 | general idea, specific check | Names GitHub releases, Changesets, release-please. | Each release produces release notes or a changelog. |
 
