@@ -30,16 +30,20 @@ jobs:
           persist-credentials: false
       - name: Detect changes
         id: filter
-        uses: dorny/paths-filter@0123456789abcdef0123456789abcdef01234567 # v3.0.2
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          predicate-quantifier: every
           filters: |
             code:
-              - '!docs/**'
+              - '**'
               - '!**/*.md'
+              - '!docs/**'
             lockfile:
               - 'pnpm-lock.yaml'
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -57,6 +61,8 @@ jobs:
         run: pnpm lint
   typecheck:
     name: Typecheck
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -74,6 +80,8 @@ jobs:
         run: pnpm typecheck
   test:
     name: Test (node ${{ matrix.node }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -95,6 +103,8 @@ jobs:
         run: pnpm test
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -115,6 +125,7 @@ jobs:
         with:
           name: dist
           path: dist
+          retention-days: 1
   audit:
     name: Audit
     needs: changes
