@@ -1,0 +1,8 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`builds the report 1`] = `
+{
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "title": "daily",
+}
+`;

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: assert-01-no-assertion
+context:
+  scaffold_script: scaffold.sh

@@ -9,7 +9,19 @@ This skill helps write and judge runnable tests: fast, isolated, safe to run in 
 
 ## Modes
 
-No mode file exists yet. Each later ticket adds the link to its mode file here.
+- `/testing review`: judge existing tests against the rule catalogue, report by severity, then fix only the approved findings. See [review.md](review.md) and the review flow below.
+
+No other mode file exists yet. Each later ticket adds the link to its mode file here.
+
+## Review flow
+
+For `/testing review`, follow these steps in order:
+
+1. Scope. Take the files in scope: the paths the user names, else the changed files (`git diff --name-only` against the default branch, plus the working-tree changes) that are test files by name alone (a path part is `test`, `tests` or `__tests__`, or the file name matches `*.test.<ext>`, `*.spec.<ext>`, `test_*` or `*_test.<ext>`). This step reads no intake output. When no file is found, stop and ask the user which files to review.
+2. Intake. Run the intake script (see "Rules file") with the repo root and the files. Exit code 0 and exit code 1 both print the JSON, and you continue (exit code 1 with the JSON on stdout means that `rules.error` is set: this is a fallback, not a failed command). Exit code 1 with no JSON is a failed command: report the output and stop. Exit code 2 is a usage error: report the message, run no check and stop.
+3. General. Load [general.md](general.md). It is always loaded.
+4. Entries. For each distinct `entries` value other than `general`, load `entries/<value>.md` when that file exists. When it does not exist, or when every file is `general`, use the general guidance only.
+5. Review. Load [review.md](review.md) and follow it.
 
 ## Rules file
 
@@ -27,4 +39,7 @@ It prints one JSON object with the keys `rules` and `detected`. The `rules` obje
 
 ## Modules
 
+- [general.md](general.md): the always-loaded general file. It holds the rule catalogue and the rule text of each checked rule id.
+- [review.md](review.md): the review mode steps, the report contract and the fix flow.
+- [scripts/grade_testing_report.py](scripts/grade_testing_report.py): the report grader. It checks a review report against the report contract, the rule ids and the severities.
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the rules file, holds the rule catalogue (`CATALOG`: each rule id with its severity) and uses no network.
