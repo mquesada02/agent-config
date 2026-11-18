@@ -12,8 +12,8 @@ The skill has 74 rule ids. I sorted each id into one group.
 
 | Group | Count |
 |---|---|
-| general | 13 |
-| general idea, specific check | 58 |
+| general | 7 |
+| general idea, specific check | 64 |
 | specific | 3 |
 | Total | 74 |
 
@@ -21,7 +21,7 @@ Counts per file: COST 8, DEPLOY 10, GRAPH 7, MAINT 3, MONO 2, NAME 9, PROTECT 8,
 
 Findings:
 - Most rules hold a general idea. Their Check and Fix name GitHub Actions keys (`needs:`, `permissions:`, `environment:`, `concurrency`), GitHub settings (rulesets, environments) or Node tools (npm, pnpm, Changesets, Vitest). A fallback can reuse the idea and drop the check.
-- The 13 general rules sit in build-once and deploy safety, job design, script size and naming intent. Their rule text names no CI system and no language.
+- The 7 general rules sit in build-once and deploy safety and in naming intent. Their rule text names no CI system and no language.
 - The 3 specific rules only exist because of one tool: the pnpm filter (MONO-02), the stacking of classic branch protection and rulesets (PROTECT-06), and the read of GitHub required checks before a rename (NAME-09).
 - Rules that name AWS (DEPLOY-04, ROLLBACK-03, ROLLBACK-05) are not tied to a language or a CI system. They name AWS tools in the rule text, so they are in the middle group. DEPLOY-07 is in general: it says "native rollout of the target" and AWS names are only examples.
 
@@ -61,8 +61,8 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 
 | Rule id | Group | Reason | General idea |
 |---|---|---|---|
-| GRAPH-01 | general | One job per independent check, run in parallel. | n/a |
-| GRAPH-02 | general | A dependency edge exists only for a real dependency. | n/a |
+| GRAPH-01 | general idea, specific check | Names the `needs:` key. | One job per independent check, run in parallel. |
+| GRAPH-02 | general idea, specific check | Names the `needs:` key. | A dependency edge exists only for a real dependency. |
 | GRAPH-03 | general idea, specific check | Reads Node `engines`, `.nvmrc`, `os` in package.json. | The test matrix covers only the versions and systems that the project promises. |
 | GRAPH-04 | general idea, specific check | Uses `fail-fast` and a `github.event_name` expression. | Fail fast on a PR; let every leg finish on main. |
 | GRAPH-05 | general idea, specific check | Names Vitest, Playwright and Jest sharding. | Shard the test job when its measured time passes a limit, and merge the reports. |
@@ -73,8 +73,8 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 
 | Rule id | Group | Reason | General idea |
 |---|---|---|---|
-| MAINT-01 | general | Long inline scripts move to a repo script that runs locally. | n/a |
-| MAINT-02 | general | Keep step comments short; put long reasons in the docs. | n/a |
+| MAINT-01 | general idea, specific check | Names the `run:` key and a step. | Long inline scripts move to a repo script that runs locally. |
+| MAINT-02 | general idea, specific check | Names a step, the unit of a GitHub Actions job. | Keep pipeline comments short; put long reasons in the docs. |
 | MAINT-03 | general idea, specific check | Names reusable workflows and composite actions. | Share copied pipeline code through the shared-template feature of the CI system. |
 
 ## MONO (monorepo.md)
@@ -91,7 +91,7 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | NAME-01 | general idea, specific check | Names the workflow `name:` key. | Every pipeline has a human name. |
 | NAME-02 | general idea, specific check | Fixes `.github/workflows/ci.yml` and `name: CI`. | One CI pipeline with a fixed name; other pipelines named by purpose. |
 | NAME-03 | general idea, specific check | Job ids in kebab-case. | Job ids follow one case style and name one purpose. |
-| NAME-04 | general | A job name states one purpose; split a multi-task job. | n/a |
+| NAME-04 | general idea, specific check | Names the job `name:` key. | A job name states one purpose; split a multi-task job. |
 | NAME-05 | general idea, specific check | Uses `${{ matrix.* }}` in job names. | A matrix job name shows each varying value. |
 | NAME-06 | general idea, specific check | Names the `run:` step `name:` key. | Every script step has a name. |
 | NAME-07 | general | A step name is a short imperative phrase with no ids or versions. | n/a |
@@ -137,7 +137,7 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | Rule id | Group | Reason | General idea |
 |---|---|---|---|
 | ROLLBACK-01 | general idea, specific check | Uses `workflow_dispatch`, `github.ref_type`. | A rollback is a manual action on a chosen tag; the version comes from the ref, not free text. |
-| ROLLBACK-02 | general | A rollback never builds; it reuses the stored artifact and keeps all deploy checks. | n/a |
+| ROLLBACK-02 | general idea, specific check | Names the `deploy.yml` workflow file. | A rollback never builds; it reuses the stored artifact and keeps all deploy checks. |
 | ROLLBACK-03 | general idea, specific check | Names S3, Lambda versions, `upload-artifact`. | Keep rollback artifacts in storage that outlives CI artifact retention. |
 | ROLLBACK-04 | general idea, specific check | Uses `max-parallel: 1` and `needs`. | Roll back several prod targets one at a time. |
 | ROLLBACK-05 | general idea, specific check | Names CloudFormation, ECS, CodeDeploy flags. | Do not turn off the native automatic rollback of the target. |
@@ -164,20 +164,20 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 |---|---|---|---|---|
 | cost.md | 8 | 0 | 8 | 0 |
 | deploy.md | 10 | 6 | 4 | 0 |
-| job-graph.md | 7 | 2 | 5 | 0 |
-| maintainability.md | 3 | 2 | 1 | 0 |
+| job-graph.md | 7 | 0 | 7 | 0 |
+| maintainability.md | 3 | 0 | 3 | 0 |
 | monorepo.md | 2 | 0 | 1 | 1 |
-| naming.md | 9 | 2 | 6 | 1 |
+| naming.md | 9 | 1 | 7 | 1 |
 | protect.md | 8 | 0 | 7 | 1 |
 | publish.md | 5 | 0 | 5 | 0 |
 | release.md | 6 | 0 | 6 | 0 |
-| rollback.md | 6 | 1 | 5 | 0 |
+| rollback.md | 6 | 0 | 6 | 0 |
 | security.md | 10 | 0 | 10 | 0 |
-| Total | 74 | 13 | 58 | 3 |
+| Total | 74 | 7 | 64 | 3 |
 
 ## Files read
 
-Rule files, all under `/home/mquesada/orca/workspaces/.claude/cicd-general-research/skills/cicd-pipelines/rules/`:
+Rule files, all under `skills/cicd-pipelines/rules/`:
 - cost.md
 - deploy.md
 - job-graph.md
