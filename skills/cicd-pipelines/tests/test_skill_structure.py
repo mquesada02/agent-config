@@ -861,6 +861,11 @@ class Router(unittest.TestCase):
         self.assertIn("create", description)
         self.assertIn("review", description)
 
+    def test_the_description_names_the_cd_kinds_and_the_protection_requests(self):
+        description = self.meta["description"].lower()
+        for word in ("deploy", "release", "rollback", "npm publish", "branch protection", "rulesets", "environments"):
+            self.assertIn(word, description)
+
     def test_the_router_links_every_module_that_exists(self):
         for module in module_files():
             self.assertIn(module, self.text, f"SKILL.md does not point to {module}")

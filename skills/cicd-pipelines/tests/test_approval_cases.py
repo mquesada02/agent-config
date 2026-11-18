@@ -527,6 +527,15 @@ class ProtectionApprovalCases(unittest.TestCase):
             self.assertIn("Write row 1 (PROTECT-01), write 1 of 1? Reply `yes` or `no`.", question)
             self.assertIn("```diff", question)
 
+    def test_the_history_diff_shows_the_whole_proposed_ruleset(self):
+        for name in PROTECT_CASES:
+            with open(case_path(name, "history.jsonl"), encoding="utf-8") as handle:
+                question = json.loads(handle.read().splitlines()[3])["message"]["content"][0]["text"]
+            with open(case_path(name, "repo", "rows", "row1.json"), encoding="utf-8") as handle:
+                proposed = json.load(handle)["proposed"]
+            for rule in proposed["rules"]:
+                self.assertIn('"type": "%s"' % rule["type"], question, name)
+
     def test_the_grader_files_of_each_case(self):
         for name, wanted in PROTECT_GRADERS.items():
             found = {os.path.basename(p) for p in glob.glob(case_path(name, "graders", "*.md"))}

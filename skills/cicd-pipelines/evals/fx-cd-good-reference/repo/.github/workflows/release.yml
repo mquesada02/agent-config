@@ -1,0 +1,48 @@
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      # id-token: write lets npm publish with trusted publishing (OIDC).
+      id-token: write
+    steps:
+      - name: Make the release App token
+        id: app
+        uses: actions/create-github-app-token@0123456789abcdef0123456789abcdef01234567 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - name: Check out the repo
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0123456789abcdef0123456789abcdef01234567 # v6.1.1
+      - name: Set up Node
+        uses: actions/setup-node@0123456789abcdef0123456789abcdef01234567 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Open the version PR or publish
+        uses: changesets/action@0123456789abcdef0123456789abcdef01234567 # v2.1.2
+        with:
+          publish: pnpm run release
+          createGithubReleases: true
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}

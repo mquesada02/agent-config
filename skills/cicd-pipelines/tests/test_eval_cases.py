@@ -99,7 +99,10 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
                       "protect-03-env-accepts-any-branch", "protect-04-prod-no-reviewers")
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
-CD_CASE_COUNT = 45  # the 41 earlier CD cases and the four `create-cd-*` create cases
+CD_CASE_COUNT = 55  # the 45 earlier CD cases and the ten `fx-cd-*` candidates (the trigger cases are not counted)
+FULL_SHA_PIN = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d"
+UNPINNED_CASE = "fx-cd-tag-unpinned"
+UNPINNED_USES = "aws-actions/example-workflows/.github/workflows/ci.yml@v2"
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
                    "section-graph", "section-approve"}
 
@@ -1244,6 +1247,14 @@ class RecordedIntakeProtect08(RecordedIntakeProtect, unittest.TestCase):
         self.assertEqual(self.intake["environments"]["value"], PROTECT_GOOD["environments"])
 
 
+def repo_texts(repo):
+    """Map of path to text for every file under a fixture repo folder, the hidden .github folder included.
+
+    os.walk, not glob: glob skips hidden folders, so the workflow files were never checked."""
+    return {os.path.join(folder, fname): read(os.path.join(folder, fname))
+            for folder, _dirs, names in os.walk(repo) for fname in names}
+
+
 class CdFixtures(unittest.TestCase):
     """Fixtures of every CD case that has a fixture keep private names out (the CD part of NewFixtures)."""
     OWNERS = ("actions", "pnpm", "dorny", "aws-actions", "changesets", "hashicorp")
@@ -1253,10 +1264,7 @@ class CdFixtures(unittest.TestCase):
         cls.cases = [n for n in case_names() if n.startswith(CD_PREFIXES) or n == "clean-cd"]
         cls.texts = {}
         for name in cls.cases:
-            base = os.path.join(case_dir(name), "repo")
-            for path in glob.glob(os.path.join(base, "**", "*"), recursive=True):
-                if os.path.isfile(path):
-                    cls.texts[path] = read(path)
+            cls.texts.update(repo_texts(os.path.join(case_dir(name), "repo")))
 
     def test_the_cd_cases_exist(self):
         self.assertEqual(len(self.cases), CD_CASE_COUNT)
@@ -1280,7 +1288,9 @@ class CdFixtures(unittest.TestCase):
     def test_every_external_uses_has_a_full_sha_and_a_version_comment(self):
         for path, text in self.texts.items():
             for line in re.findall(r"uses:\s*(?!\./)(\S.*)", text):
-                self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d", path)
+                if line == UNPINNED_USES and f"{os.sep}{UNPINNED_CASE}{os.sep}" in path:
+                    continue  # the one mutable pin that fx-cd-tag-unpinned exists to hold (SEC-01)
+                self.assertRegex(line, FULL_SHA_PIN, path)
 
     def test_every_package_name_starts_with_example(self):
         for path, text in self.texts.items():
@@ -1292,6 +1302,187 @@ class CdFixtures(unittest.TestCase):
             if path.endswith(".yml"):
                 self.assertNotIn("version_url=http", text, path)
                 self.assertNotRegex(text, r"VERSION_URL:\s*(?!\$\{\{)\S", path)
+
+
+CANDIDATE_CASES = {
+    "fx-cd-no-timeout": (["DEPLOY-09"], []),
+    "fx-cd-no-concurrency": (["COST-02"], []),
+    "fx-cd-rebuild-per-env": (["DEPLOY-01"], []),
+    "fx-cd-prod-from-push": (["DEPLOY-02", "PROTECT-04"], []),
+    "fx-cd-role-in-yaml": (["DEPLOY-04"], []),
+    "fx-cd-tag-unpinned": (["SEC-01"], []),
+    "fx-cd-rollback-by-input": (["ROLLBACK-01", "ROLLBACK-02"], []),
+    "fx-cd-silent-skip": (["DEPLOY-06"], []),
+    "fx-cd-publish-no-guard": (["RELEASE-02", "RELEASE-05", "PUBLISH-04"], []),
+}
+GOOD_REFERENCE = "fx-cd-good-reference"
+# The candidates that start from the good deploy files of deploy-02 (the publish case starts from release-05).
+DEPLOY_BASED = [n for n in CANDIDATE_CASES if n != "fx-cd-publish-no-guard"]
+ALL_CANDIDATES = list(CANDIDATE_CASES) + [GOOD_REFERENCE]
+WITH_DEPLOY = DEPLOY_BASED + [GOOD_REFERENCE]
+SECTION_FILES = {f"{name}.md" for name in SECTION_GRADERS}
+
+
+class CandidateCases(unittest.TestCase):
+    """The ten fx-cd candidates of the sample catalog: nine bad fixtures and one good reference."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.deploys = {n: workflow_text(n, "deploy.yml") for n in WITH_DEPLOY}
+        cls.rollbacks = {n: workflow_text(n, "rollback.yml") for n in WITH_DEPLOY}
+        cls.good_deploy = workflow_text("deploy-02-tag-run-staging-record", "deploy.yml")
+        cls.good_rollback = workflow_text("protect-04-prod-no-reviewers", "rollback.yml")
+
+    def test_the_candidates_are_exactly_these_with_their_lists(self):
+        names = {n for n in case_names() if n.startswith("fx-cd-")}
+        self.assertEqual(names, set(CANDIDATE_CASES) | {GOOD_REFERENCE})
+        for name, lists in CANDIDATE_CASES.items():
+            self.assertEqual(expect_lists(name), lists, name)
+
+    def test_the_good_reference_expects_nothing_and_forbids_what_clean_cd_forbids(self):
+        self.assertEqual(expect_lists(GOOD_REFERENCE), ([], expect_lists("clean-cd")[1]))
+
+    def test_every_candidate_has_the_review_prompt_and_the_report_graders(self):
+        for name in ALL_CANDIDATES:
+            expect, forbid = expect_lists(name)
+            wanted = SECTION_FILES | {"no-edit.md", "no-write.md", "no-shell-write.md", "fix-quality.md"}
+            wanted |= {f"expect-{i}.md" for i in expect} | {f"forbid-{i}.md" for i in forbid}
+            self.assertEqual(grader_files(name), wanted, name)
+            prompt = read(os.path.join(case_dir(name), "prompt.md"))
+            self.assertIn("Review our CI and CD setup in this repo.", prompt)
+
+    def test_the_deploy_based_candidates_keep_the_good_ci_and_package_files(self):
+        base = os.path.join(EVALS, "deploy-02-tag-run-staging-record", "repo")
+        for name in DEPLOY_BASED:
+            for rel in (".github/workflows/ci.yml", "package.json", "pnpm-lock.yaml", "scripts/check-staged.sh"):
+                self.assertEqual(read(os.path.join(case_dir(name), "repo", rel)), read(os.path.join(base, rel)),
+                                 (name, rel))
+
+    def test_no_timeout_has_no_timeout_in_the_cd_workflows(self):
+        self.assertNotIn("timeout-minutes", self.deploys["fx-cd-no-timeout"])
+        self.assertNotIn("timeout-minutes", self.rollbacks["fx-cd-no-timeout"])
+        self.assertIn("id-token:", self.deploys["fx-cd-no-timeout"])
+
+    def test_no_concurrency_has_no_deploy_group_and_keeps_the_rest(self):
+        text = self.deploys["fx-cd-no-concurrency"]
+        self.assertNotIn("concurrency:", text)
+        self.assertEqual(text.count("timeout-minutes"), self.good_deploy.count("timeout-minutes"))
+
+    def test_rebuild_per_env_installs_and_builds_in_each_of_the_three_stage_jobs(self):
+        text = self.deploys["fx-cd-rebuild-per-env"]
+        for job in ("deploy-dev", "deploy-staging", "deploy-prod"):
+            body = run_text(job_text(text, job))
+            self.assertIn("pnpm install --frozen-lockfile", body, job)
+            self.assertIn("pnpm build", body, job)
+        self.assertNotIn("pnpm build", run_text(job_text(text, "package")))
+
+    def test_prod_from_push_deploys_prod_without_a_tag_or_a_staging_check(self):
+        job = job_text(self.deploys["fx-cd-prod-from-push"], "deploy-prod")
+        self.assertIn("environment: prod", job)
+        self.assertNotIn("check-staged", job)
+        self.assertNotIn("ref_type", job)
+        self.assertNotIn("deploy-staging", job)
+
+    def test_role_in_yaml_types_a_role_arn_for_each_stage(self):
+        text = self.deploys["fx-cd-role-in-yaml"]
+        arns = re.findall(r"role-to-assume: (arn:aws:iam::\d{12}:role/\S+)", text)
+        self.assertEqual(len(arns), 3)
+        self.assertIn("vars.AWS_ROLE_ARTIFACTS", text)
+
+    def test_tag_unpinned_has_one_mutable_pin_and_every_other_external_uses_is_a_full_sha(self):
+        mutable = []
+        for path in glob.glob(os.path.join(case_dir("fx-cd-tag-unpinned"), "repo", ".github", "workflows", "*.yml")):
+            for line in re.findall(r"uses:\s*(?!\./)(\S.*)", read(path)):
+                if not re.match(FULL_SHA_PIN, line):
+                    mutable.append(line)
+        self.assertEqual(mutable, [UNPINNED_USES])
+
+    def test_rollback_by_input_takes_a_text_version_and_builds(self):
+        text = self.rollbacks["fx-cd-rollback-by-input"]
+        self.assertRegex(text, r"(?m)^      version:\n(?:        .*\n)*?        type: string")
+        self.assertIn("ref: ${{ inputs.version }}", text)
+        self.assertIn("pnpm build", run_text(text))
+        self.assertNotIn("ref_type", text)
+
+    def test_silent_skip_skips_on_an_empty_setting_and_exits_with_success(self):
+        script = read(os.path.join(case_dir("fx-cd-silent-skip"), "repo", "scripts", "deploy-lambda.sh"))
+        self.assertRegex(script, r'if \[ -z "\$function_name" \]; then\n(?:.*\n)*?  exit 0\nfi')
+        self.assertIn("vars.FUNCTION_NAME != ''", job_text(self.deploys["fx-cd-silent-skip"], "deploy-dev"))
+
+    def test_publish_no_guard_publishes_on_a_tag_push_with_no_main_check_and_no_published_version_check(self):
+        text = workflow_text("fx-cd-publish-no-guard", "release.yml")
+        self.assertRegex(text, r"(?m)^    tags: \['v\*'\]")
+        self.assertIn("git tag -a", run_text(text))
+        self.assertIn("npm publish", run_text(text))
+        for absent in ("merge-base", "npm view", "changesets/action"):
+            self.assertNotIn(absent, text)
+
+    def test_the_good_reference_is_the_clean_flow_plus_a_record_job_that_runs_after_a_failure(self):
+        text = self.deploys[GOOD_REFERENCE]
+        clean = workflow_text("clean-cd", "deploy.yml")
+        self.assertTrue(text.startswith(clean.rstrip("\n") + "\n  record:\n"))
+        job = job_text(text, "record")
+        self.assertIn("!cancelled()", job)
+        self.assertIn("needs.deploy-prod.result", job)
+        self.assertIn("timeout-minutes", job)
+        self.assertEqual(self.rollbacks[GOOD_REFERENCE], workflow_text("clean-cd", "rollback.yml"))
+
+
+class ProdFromPushIntake(RecordedIntakeChecks, unittest.TestCase):
+    CASE = "fx-cd-prod-from-push"
+
+    def test_prod_has_no_reviewers_and_the_other_environments_are_detected(self):
+        environments = {e["name"]: e for e in self.intake["environments"]["value"]}
+        self.assertFalse(environments["prod"]["reviewers"])
+        self.assertEqual(self.intake["environments"]["status"], "detected")
+
+    def test_the_intake_is_the_one_of_the_protect_cases(self):
+        protect = read(os.path.join(case_dir("protect-04-prod-no-reviewers"), "repo", "intake.json"))
+        self.assertEqual(read(os.path.join(case_dir(self.CASE), "repo", "intake.json")), protect)
+
+
+TRIGGER_CD_CASES = {
+    "trigger-cd-protection": "Set up branch protection for this repo.",
+    "trigger-cd-deploy": "Add a deploy workflow for this repo.",
+    "trigger-cd-release": "Release this package.",
+}
+
+
+class TriggerCdCases(unittest.TestCase):
+    """The three CD trigger cases: a CD request that names no skill, graded by `tool_used: Skill`."""
+
+    def test_the_cases_exist_and_ask_for_their_request(self):
+        found = {n for n in case_names() if n.startswith("trigger-cd-")}
+        self.assertEqual(found, set(TRIGGER_CD_CASES))
+        for name, line in TRIGGER_CD_CASES.items():
+            prompt = read(os.path.join(case_dir(name), "prompt.md"))
+            self.assertTrue(prompt.rstrip("\n").endswith("\n" + line), name)
+            self.assertEqual(frontmatter(os.path.join(case_dir(name), "prompt.md")),
+                             frontmatter(os.path.join(case_dir("trigger-edit-workflow"), "prompt.md")), name)
+
+    def test_the_prompt_names_neither_the_skill_nor_a_rule(self):
+        for name in TRIGGER_CD_CASES:
+            prompt = read(os.path.join(case_dir(name), "prompt.md"))
+            self.assertNotIn("cicd-pipelines", prompt)
+            self.assertNotRegex(prompt, r"\b(?:[A-Z]+)-\d\d\b")
+
+    def test_each_case_has_one_workflow_file_and_nothing_with_a_url(self):
+        for name in TRIGGER_CD_CASES:
+            repo = os.path.join(case_dir(name), "repo")
+            workflows = os.listdir(os.path.join(repo, ".github", "workflows"))
+            self.assertEqual(workflows, ["ci.yml"], name)
+            for path, text in repo_texts(repo).items():
+                self.assertNotRegex(text, r"https?://", path)
+            package = json.loads(read(os.path.join(repo, "package.json")))
+            self.assertTrue(package["name"].startswith("example-"), name)
+            self.assertIn("build", package["scripts"], name)
+
+    def test_each_case_has_the_empty_lists_and_the_skill_fired_grader_only(self):
+        template = read(os.path.join(case_dir("trigger-edit-workflow"), "graders", "skill-fired.md"))
+        for name in TRIGGER_CD_CASES:
+            self.assertEqual(expect_lists(name), ([], []), name)
+            self.assertEqual(grader_files(name), {"skill-fired.md"}, name)
+            self.assertEqual(read(os.path.join(case_dir(name), "graders", "skill-fired.md")), template, name)
 
 
 class TriggerCase(unittest.TestCase):

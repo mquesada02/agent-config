@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "RELEASE-02",
+    "RELEASE-05",
+    "PUBLISH-04"
+  ],
+  "forbid": []
+}
