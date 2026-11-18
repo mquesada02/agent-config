@@ -75,6 +75,15 @@ class Repo:
         return path
 
 
+    def put(self, path, content=""):
+        """Write any file (text or bytes) at a repo-relative path; the folders are made."""
+        full = os.path.join(self.root, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as handle:
+            handle.write(content if isinstance(content, bytes) else content.encode("utf-8"))
+        return full
+
+
 def run_script(*args):
     return subprocess.run(
         [sys.executable, "-I", SCRIPT, *args],

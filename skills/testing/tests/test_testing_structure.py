@@ -33,6 +33,13 @@ class SkillFilesTest(unittest.TestCase):
     def test_skill_md_names_the_skill(self):
         self.assertIn("\nname: testing\n", read(SKILL_MD).split("\n---\n", 1)[0] + "\n")
 
+    def test_skill_md_names_the_detected_keys_and_the_file_arguments(self):
+        text = read(SKILL_MD)
+        for key in ("languages", "entries", "facts"):
+            with self.subTest(key):
+                self.assertIn(f"`{key}`", text)
+        self.assertIn("intake.py <repo root> [file ...]", text)
+
     def test_every_file_the_router_links_exists(self):
         links = [link for link in LINK.findall(read(SKILL_MD)) if not re.match(r"^[a-z]+:", link)]
         self.assertIn("scripts/intake.py", links)
