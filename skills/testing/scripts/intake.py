@@ -270,7 +270,10 @@ def safe(value, depth=1):
 
 
 def read_text(path):
-    """The text of a file, or None when it cannot be read or decoded."""
+    """The text of a file, or None when it is not a regular file or cannot be read or decoded.
+    A named pipe or a device is never opened: that could block forever."""
+    if not os.path.isfile(path):
+        return None
     try:
         with open(path, encoding="utf-8-sig") as handle:
             return handle.read()

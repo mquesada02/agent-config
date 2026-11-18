@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import unittest
 
@@ -192,6 +193,30 @@ class RustFactsTest(DetectCase):
             self.assert_fact(facts["libraries"][key], None, "unknown")
         self.assert_fact(facts["libraries"]["commit_regressions"], None, "unknown")
         self.assert_fact(facts["libraries"]["commit_snapshots"], None, "unknown")
+
+
+@unittest.skipUnless(hasattr(os, "mkfifo"), "needs named pipes")
+class SpecialFilesTest(DetectCase):
+    def run_with_timeout(self):
+        done = subprocess.run(
+            [sys.executable, "-I", helper.SCRIPT, self.repo.root],
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)["detected"]["facts"]
+
+    def test_named_pipe_test_file_does_not_hang_the_typescript_scan(self):
+        self.repo.put("package.json", PKG_VITEST)
+        os.mkfifo(os.path.join(self.repo.root, "a.test.js"))
+        facts = self.run_with_timeout()
+        self.assert_fact(facts["typescript"]["layout"]["test_paths"], ["."], "detected")
+
+    def test_named_pipe_rust_file_does_not_hang_the_rust_scan(self):
+        self.repo.put("Cargo.toml", CARGO)
+        os.makedirs(os.path.join(self.repo.root, "src"))
+        os.mkfifo(os.path.join(self.repo.root, "src", "x.rs"))
+        facts = self.run_with_timeout()
+        self.assert_fact(facts["rust"]["layout"]["test_paths"], [], "detected")
 
 
 class TypeScriptFactsTest(DetectCase):
