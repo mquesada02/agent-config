@@ -321,7 +321,7 @@ def find_manifests(repo):
 
 
 def valid_root(value):
-    if not isinstance(value, str):
+    if not isinstance(value, str) or "\x00" in value:
         return None
     root = posixpath.normpath(value)
     if root.startswith("/") or root == ".." or root.startswith("../"):

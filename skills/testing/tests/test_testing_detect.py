@@ -407,6 +407,12 @@ class LanguagesAndRoutingTest(DetectCase):
         self.rules_file(("rust", "../x"), ("rust", "/abs"), ("go", "."))
         self.assertEqual(self.detect("a.rs")["languages"], [lang("rust", ".", "Cargo.toml")])
 
+    def test_rules_root_with_a_nul_character_is_ignored(self):
+        for name in ("rust", "typescript"):
+            with self.subTest(name):
+                self.repo.write("```toml\n[[languages]]\nname = \"" + name + "\"\nroot = \"a\\u0000b\"\n```\n")
+                self.assertEqual(self.detect("a.rs")["languages"], [])
+
     def test_rules_error_skips_the_rules_roots(self):
         self.repo.put("Cargo.toml", CARGO)
         self.repo.put("web/package.json", PKG_VITEST)
