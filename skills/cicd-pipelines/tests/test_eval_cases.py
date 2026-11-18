@@ -100,6 +100,7 @@ PROTECT_LOCK_CASES = ("protect-01-no-main-ruleset", "protect-02-no-tag-ruleset",
 # The CD cases that have a fixture are selected by name. Each CD ticket adds its prefix cases and raises the count.
 CD_PREFIXES = ("deploy-", "rollback-", "release-", "publish-", "protect-", "fx-cd-", "create-cd-")
 CD_CASE_COUNT = 55  # the 45 earlier CD cases and the ten `fx-cd-*` candidates (the trigger cases are not counted)
+FULL_SHA_PIN = r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d"
 UNPINNED_CASE = "fx-cd-tag-unpinned"
 UNPINNED_USES = "aws-actions/example-workflows/.github/workflows/ci.yml@v2"
 SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "section-tools",
@@ -1246,6 +1247,14 @@ class RecordedIntakeProtect08(RecordedIntakeProtect, unittest.TestCase):
         self.assertEqual(self.intake["environments"]["value"], PROTECT_GOOD["environments"])
 
 
+def repo_texts(repo):
+    """Map of path to text for every file under a fixture repo folder, the hidden .github folder included.
+
+    os.walk, not glob: glob skips hidden folders, so the workflow files were never checked."""
+    return {os.path.join(folder, fname): read(os.path.join(folder, fname))
+            for folder, _dirs, names in os.walk(repo) for fname in names}
+
+
 class CdFixtures(unittest.TestCase):
     """Fixtures of every CD case that has a fixture keep private names out (the CD part of NewFixtures)."""
     OWNERS = ("actions", "pnpm", "dorny", "aws-actions", "changesets", "hashicorp")
@@ -1255,10 +1264,7 @@ class CdFixtures(unittest.TestCase):
         cls.cases = [n for n in case_names() if n.startswith(CD_PREFIXES) or n == "clean-cd"]
         cls.texts = {}
         for name in cls.cases:
-            base = os.path.join(case_dir(name), "repo")
-            for folder, _dirs, names in os.walk(base):
-                for fname in names:
-                    cls.texts[os.path.join(folder, fname)] = read(os.path.join(folder, fname))
+            cls.texts.update(repo_texts(os.path.join(case_dir(name), "repo")))
 
     def test_the_cd_cases_exist(self):
         self.assertEqual(len(self.cases), CD_CASE_COUNT)
@@ -1284,7 +1290,7 @@ class CdFixtures(unittest.TestCase):
             for line in re.findall(r"uses:\s*(?!\./)(\S.*)", text):
                 if line == UNPINNED_USES and f"{os.sep}{UNPINNED_CASE}{os.sep}" in path:
                     continue  # the one mutable pin that fx-cd-tag-unpinned exists to hold (SEC-01)
-                self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d", path)
+                self.assertRegex(line, FULL_SHA_PIN, path)
 
     def test_every_package_name_starts_with_example(self):
         for path, text in self.texts.items():
@@ -1312,7 +1318,9 @@ CANDIDATE_CASES = {
 GOOD_REFERENCE = "fx-cd-good-reference"
 # The candidates that start from the good deploy files of deploy-02 (the publish case starts from release-05).
 DEPLOY_BASED = [n for n in CANDIDATE_CASES if n != "fx-cd-publish-no-guard"]
-SECTION_FILES = {f"{name}.md" for name in sorted(SECTION_GRADERS)}
+ALL_CANDIDATES = list(CANDIDATE_CASES) + [GOOD_REFERENCE]
+WITH_DEPLOY = DEPLOY_BASED + [GOOD_REFERENCE]
+SECTION_FILES = {f"{name}.md" for name in SECTION_GRADERS}
 
 
 class CandidateCases(unittest.TestCase):
@@ -1320,8 +1328,8 @@ class CandidateCases(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.deploys = {n: workflow_text(n, "deploy.yml") for n in DEPLOY_BASED + [GOOD_REFERENCE]}
-        cls.rollbacks = {n: workflow_text(n, "rollback.yml") for n in DEPLOY_BASED + [GOOD_REFERENCE]}
+        cls.deploys = {n: workflow_text(n, "deploy.yml") for n in WITH_DEPLOY}
+        cls.rollbacks = {n: workflow_text(n, "rollback.yml") for n in WITH_DEPLOY}
         cls.good_deploy = workflow_text("deploy-02-tag-run-staging-record", "deploy.yml")
         cls.good_rollback = workflow_text("protect-04-prod-no-reviewers", "rollback.yml")
 
@@ -1335,7 +1343,7 @@ class CandidateCases(unittest.TestCase):
         self.assertEqual(expect_lists(GOOD_REFERENCE), ([], expect_lists("clean-cd")[1]))
 
     def test_every_candidate_has_the_review_prompt_and_the_report_graders(self):
-        for name in list(CANDIDATE_CASES) + [GOOD_REFERENCE]:
+        for name in ALL_CANDIDATES:
             expect, forbid = expect_lists(name)
             wanted = SECTION_FILES | {"no-edit.md", "no-write.md", "no-shell-write.md", "fix-quality.md"}
             wanted |= {f"expect-{i}.md" for i in expect} | {f"forbid-{i}.md" for i in forbid}
@@ -1385,10 +1393,9 @@ class CandidateCases(unittest.TestCase):
         mutable = []
         for path in glob.glob(os.path.join(case_dir("fx-cd-tag-unpinned"), "repo", ".github", "workflows", "*.yml")):
             for line in re.findall(r"uses:\s*(?!\./)(\S.*)", read(path)):
-                if not re.match(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d", line):
+                if not re.match(FULL_SHA_PIN, line):
                     mutable.append(line)
         self.assertEqual(mutable, [UNPINNED_USES])
-        self.assertRegex(UNPINNED_USES, r"@v\d+$")
 
     def test_rollback_by_input_takes_a_text_version_and_builds(self):
         text = self.rollbacks["fx-cd-rollback-by-input"]
@@ -1464,11 +1471,11 @@ class TriggerCdCases(unittest.TestCase):
             repo = os.path.join(case_dir(name), "repo")
             workflows = os.listdir(os.path.join(repo, ".github", "workflows"))
             self.assertEqual(workflows, ["ci.yml"], name)
-            for folder, _dirs, names in os.walk(repo):
-                for fname in names:
-                    self.assertNotRegex(read(os.path.join(folder, fname)), r"https?://", (name, fname))
-            self.assertTrue(json.loads(read(os.path.join(repo, "package.json")))["name"].startswith("example-"), name)
-            self.assertIn("build", json.loads(read(os.path.join(repo, "package.json")))["scripts"], name)
+            for path, text in repo_texts(repo).items():
+                self.assertNotRegex(text, r"https?://", path)
+            package = json.loads(read(os.path.join(repo, "package.json")))
+            self.assertTrue(package["name"].startswith("example-"), name)
+            self.assertIn("build", package["scripts"], name)
 
     def test_each_case_has_the_empty_lists_and_the_skill_fired_grader_only(self):
         template = read(os.path.join(case_dir("trigger-edit-workflow"), "graders", "skill-fired.md"))

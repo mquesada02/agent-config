@@ -160,9 +160,9 @@ claude plugin eval skills/cicd-pipelines --case '<glob>' --no-publish -j 2 --run
 | PROTECT | `protect-0*` | The review run above. The glob leaves out `protect-approve-*`. |
 | Candidates | `fx-cd-*` | The review run above. |
 | Clean CD | `clean-cd` | The review run above. |
-| Triggers | `trigger-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
+| Triggers | `trigger-cd-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | Protection approval | `protect-approve-*` | The command of "Protection approval cases". |
-| Create | `create-*` | The command of "Create cases". |
+| Create | `create-cd-*` | The command of "Create cases", with this `--case` glob. |
 
 After each review run, grade it: `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. After the create run, also run `scripts/grade_create_results.py`. Both read the result file and the kept traces.
 
