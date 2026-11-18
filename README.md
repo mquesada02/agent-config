@@ -49,6 +49,9 @@ The `.gitignore` file ignores everything and then allows these files:
 | `skills/sql/graders/*` | The `sql` skill grader commands, which score the eval output |
 | `skills/sql/tests/*` | The `sql` skill unit tests and their fixtures. The declared test command runs them |
 | `skills/sql/evals/**` | The `sql` skill eval cases, their fixture repos and the run procedure. The evals run by hand, outside the test command. The `results/` folder is ignored |
+| `skills/testing/*.md` | The `testing` skill: the router (`SKILL.md`) and its Markdown modules |
+| `skills/testing/scripts/*` | The `testing` skill scripts (Python 3.11 or newer, for `tomllib`) |
+| `skills/testing/tests/*` | The `testing` skill unit tests. The declared test command runs them |
 | `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` | This file and the license texts |
 
 Everything else stays local. This includes session logs, credentials, caches,
