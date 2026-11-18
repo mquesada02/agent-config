@@ -158,7 +158,9 @@ def grade(text):
     has_section = index["flag section"] is not None
     if any_flag and not has_section:
         fail("flag-section", "a row has the flag mark, but there is no flag section")
-    if has_section and not any_flag:
+    created = index["title"] is not None and lines[index["title"]].strip().endswith("(created)")
+    # a created report lists the prerequisites that create does not make, with no PROTECT row
+    if has_section and not any_flag and not created:
         fail("flag-section", "there is a flag section, but no row has the flag mark")
 
     # lock-note: the note exists exactly when a row has the lock mark (its place is part of the section order)

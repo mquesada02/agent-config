@@ -139,6 +139,18 @@ class GradeReport(unittest.TestCase):
         text = make_report(required=[row("NAME-06")], flag_section=True)
         self.assertFailsCheck(text, "flag-section")
 
+    def test_a_created_report_passes_with_a_section_and_no_flag_row(self):
+        text = make_report(required=[row("NAME-06")], flag_section=True)
+        created = text.replace("# cicd-pipelines review: all workflows",
+                               "# cicd-pipelines review: .github/workflows/ci.yml (created)", 1)
+        self.assertPasses(created)
+
+    def test_a_created_report_still_fails_a_flag_without_the_section(self):
+        text = self.full(flag_section=False)
+        created = text.replace("# cicd-pipelines review: all workflows",
+                               "# cicd-pipelines review: .github/workflows/ci.yml (created)", 1)
+        self.assertFailsCheck(created, "flag-section")
+
     # ----- the lock mark and its note
     def test_a_lock_row_with_the_note_passes(self):
         self.assertPasses(make_report(required=[row("PROTECT-02", lock=True)]))
