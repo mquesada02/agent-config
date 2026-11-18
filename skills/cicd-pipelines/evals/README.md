@@ -38,7 +38,7 @@ Each folder holds one case:
 | `expect.json` | `expect`: rule ids that must appear. `forbid`: rule ids that must not appear. |
 | `graders/*.md` | The in-run graders (plugin eval has no custom-code graders). |
 
-Review cases: `name-01-...` to `name-09-...` (one bad fixture for each naming rule), `graph-01-...` to `graph-07-...` and `maint-01-...` to `maint-03-...` (one bad fixture for each job graph and maintainability rule), `cost-01-...` to `cost-08-...` and `mono-01-...` to `mono-02-...` (one bad fixture for each cost and monorepo rule), `fx-sequential-quality`, `fx-suite-list`, `fx-duplicate-build`, `fx-inline-tests`, `fx-no-limits`, `fx-paths-required` and `clean` (it forbids every critical and required rule id). GRAPH-05 is a measured rule, and the eval sandbox has no run history, so it has two cases. `graph-05-shards-no-history` forbids GRAPH-05: with the sandbox's own unknown history, the review must give no shard finding. `graph-05-shards-with-history` expects GRAPH-05: its prompt gives the review a recorded intake output (`repo/intake.json`, the intake contract with `run_history` detected, a test job median of about 25 minutes, so 4 shards) and tells it not to run the intake script. `maint-03-copied-workflow` names two copies of the workflow in its prompt, because MAINT-03 applies only on request. Trigger case: `trigger-edit-workflow` asks for a workflow edit and does not name the skill.
+Review cases: `name-01-...` to `name-09-...` (one bad fixture for each naming rule), `graph-01-...` to `graph-07-...` and `maint-01-...` to `maint-03-...` (one bad fixture for each job graph and maintainability rule), `cost-01-...` to `cost-08-...` and `mono-01-...` to `mono-02-...` (one bad fixture for each cost and monorepo rule), `fx-sequential-quality`, `fx-suite-list`, `fx-duplicate-build`, `fx-inline-tests`, `fx-no-limits`, `fx-paths-required` and `clean` (it forbids every critical and required rule id). GRAPH-05 is a measured rule, and the eval sandbox has no run history, so it has two cases. `graph-05-shards-no-history` forbids GRAPH-05: with the sandbox's own unknown history, the review must give no shard finding. `graph-05-shards-with-history` expects GRAPH-05: its prompt gives the review a recorded intake output (`repo/intake.json`, the intake contract with `run_history` detected, a test job median of about 25 minutes, so 4 shards) and tells it not to run the intake script. `maint-03-copied-workflow` names two copies of the workflow in its prompt, because MAINT-03 applies only on request. Trigger case: `trigger-edit-workflow` asks for a workflow edit and does not name the skill. The CD trigger cases are `trigger-cd-*` (see "CD trigger cases").
 
 Security cases: `sec-01-...` to `sec-10-...` (one bad fixture for each SEC rule), `fx-token-in-run` (a token written into the git config by a `run:` step, and a checkout that keeps its credentials), `merge-01-zizmor-unpinned` and `tool-01-zizmor-missing`. `fx-sequential-quality` also expects SEC-01 (tag pins) and SEC-10 (an audit step inside the job). The `clean` fixture has a `.github/dependabot.yml`, an `audit` job behind a `changes` job, and a weekly `security-audit.yml`.
 
@@ -122,6 +122,49 @@ PROTECT cases: `protect-01-...` to `protect-08-...` (one case for each PROTECT r
 - `protect-08-repo-wide-role-arn`: the `package` job names no `environment` and reads `vars.AWS_ROLE_ARN`.
 
 The report parts that the PROTECT cases check: the 🔒 mark in the Rule cell (the `expect-<ID>.md` pattern takes `⚑`, `🔒` or both in that order), the lock note (`section-lock-note.md`, in `protect-01` to `protect-04`, whose reports hold a 🔒 row), and the three trigger lines of the job graph sketch (`section-graph-triggers.md`, in all 8 PROTECT cases and in no other case). The `Defaults:` part of the `Intake:` line is checked by `grade_report.py`.
+
+## CD candidate cases
+
+The 10 `fx-cd-*` cases are the multi-rule candidates of the sample catalog. Nine are bad fixtures and one is a good reference. Each one is a review case with the prompt "Review our CI and CD setup in this repo." Except for `fx-cd-publish-no-guard` (which starts from the release files of `release-05-tag-push-trigger`) and `fx-cd-good-reference` (which starts from `clean-cd`), each one is the good deploy fixture (`deploy-02-tag-run-staging-record`) plus the good `rollback.yml` of the ROLLBACK cases, changed only where its defect needs. A case checks only its own lists, so a report may hold other rows.
+
+| Case | Defect | Expects |
+|---|---|---|
+| `fx-cd-no-timeout` | `deploy.yml` and `rollback.yml` have no `timeout-minutes`, and the deploy jobs hold `id-token: write`. | DEPLOY-09 |
+| `fx-cd-no-concurrency` | The deploy jobs have no `concurrency` group. | COST-02 |
+| `fx-cd-rebuild-per-env` | The three stage jobs each install and build. | DEPLOY-01 |
+| `fx-cd-prod-from-push` | Prod deploys on push to main, with no gate on the staging record. A recorded `repo/intake.json` (the 27 facts of the PROTECT cases) shows `prod` with no reviewers, and the prompt tells the review not to run the intake script. | DEPLOY-02, PROTECT-04 |
+| `fx-cd-role-in-yaml` | The three stage jobs type a role ARN with an account id. | DEPLOY-04 |
+| `fx-cd-tag-unpinned` | The called CI workflow is a reusable workflow pinned by the tag `@v2`. It is the one `uses:` line in the CD cases that is not a full-SHA pin: `CdFixtures` skips exactly this line of this case. | SEC-01 |
+| `fx-cd-rollback-by-input` | The rollback takes a free-text `version` input, checks out that ref, installs and builds. | ROLLBACK-01, ROLLBACK-02 |
+| `fx-cd-silent-skip` | `deploy-dev` skips on an empty variable, and the deploy script exits with success on an empty function name. | DEPLOY-06 |
+| `fx-cd-publish-no-guard` | A release workflow on a tag push makes a tag with no main-branch check and runs a plain `npm publish`. | RELEASE-02, RELEASE-05, PUBLISH-04 |
+| `fx-cd-good-reference` | The `clean-cd` flow plus a `record` job that runs with `!cancelled()`, fails unless prod succeeded and uploads a release record. | Nothing. It forbids the ids that `clean-cd` forbids. |
+
+## CD trigger cases
+
+`trigger-cd-protection` ("Set up branch protection for this repo."), `trigger-cd-deploy` ("Add a deploy workflow for this repo.") and `trigger-cd-release` ("Release this package.") measure the CD words of the skill description. Each case is a copy of `trigger-edit-workflow`: a minimal repo (`package.json` with a `build` script, a lockfile and one workflow file, `ci.yml`), no skill named, and the one grader `skill-fired.md` (`tool_used: Skill`).
+
+## Run the CD groups
+
+Run each group by hand, from the repo root. Put the results outside the repo, and never commit them. Use the review run of "Run" for the review groups, and change only `--case`:
+
+```
+claude plugin eval skills/cicd-pipelines --case '<glob>' --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(python3 *scripts/check_pins.py*)" --output-dir <results folder> --json <results folder>/result.json
+```
+
+| Group | `--case` glob | Run commands that differ |
+|---|---|---|
+| DEPLOY | `deploy-*` | The review run above. |
+| ROLLBACK | `rollback-*` | The review run above. |
+| RELEASE and PUBLISH | `release-*` and `publish-*` | The review run above, once for each glob. |
+| PROTECT | `protect-0*` | The review run above. The glob leaves out `protect-approve-*`. |
+| Candidates | `fx-cd-*` | The review run above. |
+| Clean CD | `clean-cd` | The review run above. |
+| Triggers | `trigger-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
+| Protection approval | `protect-approve-*` | The command of "Protection approval cases". |
+| Create | `create-*` | The command of "Create cases". |
+
+After each review run, grade it: `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. After the create run, also run `scripts/grade_create_results.py`. Both read the result file and the kept traces.
 
 ## Approval cases
 

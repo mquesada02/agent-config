@@ -1,0 +1,7 @@
+{
+  "expect": [
+    "DEPLOY-02",
+    "PROTECT-04"
+  ],
+  "forbid": []
+}
