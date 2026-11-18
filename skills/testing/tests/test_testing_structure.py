@@ -128,6 +128,13 @@ def catalogue_rows(text):
     return rows
 
 
+def catalogue_differences(script, table):
+    """The ids that differ between two id-to-severity dicts: missing, extra or another severity."""
+    return sorted(
+        rule_id for rule_id in set(script) | set(table) if script.get(rule_id) != table.get(rule_id)
+    )
+
+
 def entry_violations(text):
     """Lines of an entry file that hold a catalogue id and a severity word, or start a table row."""
     return [
@@ -177,7 +184,14 @@ class CatalogueTableTest(unittest.TestCase):
 
     def test_script_constant_equals_the_table(self):
         table = {row[0]: row[1] for row in self.rows}
-        self.assertEqual(ast.literal_eval(catalog_node()), table)
+        self.assertEqual(catalogue_differences(ast.literal_eval(catalog_node()), table), [])
+
+    def test_comparison_on_samples(self):
+        same = {"RUN-02": "required", "DBL-01": "suggestion"}
+        self.assertEqual(catalogue_differences(same, dict(same)), [])
+        self.assertTrue(catalogue_differences(same, dict(same, **{"RUN-02": "critical"})))
+        self.assertTrue(catalogue_differences(same, {"DBL-01": "suggestion"}))
+        self.assertTrue(catalogue_differences(same, dict(same, **{"PAR-01": "required"})))
 
 
 class IdUseTest(unittest.TestCase):
