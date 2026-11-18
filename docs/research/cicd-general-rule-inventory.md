@@ -12,8 +12,8 @@ The skill has 74 rule ids. I sorted each id into one group.
 
 | Group | Count |
 |---|---|
-| general | 7 |
-| general idea, specific check | 64 |
+| general | 4 |
+| general idea, specific check | 67 |
 | specific | 3 |
 | Total | 74 |
 
@@ -21,7 +21,7 @@ Counts per file: COST 8, DEPLOY 10, GRAPH 7, MAINT 3, MONO 2, NAME 9, PROTECT 8,
 
 Findings:
 - Most rules hold a general idea. Their Check and Fix name GitHub Actions keys (`needs:`, `permissions:`, `environment:`, `concurrency`), GitHub settings (rulesets, environments) or Node tools (npm, pnpm, Changesets, Vitest). A fallback can reuse the idea and drop the check.
-- The 7 general rules sit in build-once and deploy safety and in naming intent. Their rule text names no CI system and no language.
+- The 4 general rules are deploy checks: the digest check, the version check, the native rollout and the preview on a PR. Their rule text names no CI system and no language.
 - The 3 specific rules only exist because of one tool: the pnpm filter (MONO-02), the stacking of classic branch protection and rulesets (PROTECT-06), and the read of GitHub required checks before a rename (NAME-09).
 - Rules that name AWS (DEPLOY-04, ROLLBACK-03, ROLLBACK-05) are not tied to a language or a CI system. They name AWS tools in the rule text, so they are in the middle group. DEPLOY-07 is in general: it says "native rollout of the target" and AWS names are only examples.
 
@@ -46,12 +46,12 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 
 | Rule id | Group | Reason | General idea |
 |---|---|---|---|
-| DEPLOY-01 | general | Build once, deploy the artifact; no tool named. | n/a |
+| DEPLOY-01 | general idea, specific check | The check names `npm ci`, `pnpm install` and `tsc`. | Build once, deploy the artifact; no install or build step in a deploy job. |
 | DEPLOY-02 | general idea, specific check | Uses GitHub `environment:` and deployment records. | Each stage is a separate environment; prod needs a proof of a good earlier stage. |
 | DEPLOY-03 | general | A SHA-256 digest proves that prod deploys the staged artifact. | n/a |
 | DEPLOY-04 | general idea, specific check | Names AWS OIDC, `role-to-assume`, `id-token`. | Use short-lived federated credentials, one identity per environment, never a stored key. |
 | DEPLOY-05 | general | Check the live version after deploy, not only an HTTP status. | n/a |
-| DEPLOY-06 | general | A missing setting fails the deploy loudly; no silent skip. | n/a |
+| DEPLOY-06 | general idea, specific check | The check names the `if:` key; the fix names `::error::`. | A missing setting fails the deploy loudly; no silent skip. |
 | DEPLOY-07 | general | Use the native step-by-step rollout of the target, with alarms. | n/a |
 | DEPLOY-08 | general idea, specific check | Reads `changes` job outputs and `skip-notice` job. | A docs-only change skips the deploy with a visible notice. |
 | DEPLOY-09 | general idea, specific check | Names `timeout-minutes` and the OIDC session. | Every deploy job has a timeout that stays below the credential lifetime. |
@@ -94,7 +94,7 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | NAME-04 | general idea, specific check | Names the job `name:` key. | A job name states one purpose; split a multi-task job. |
 | NAME-05 | general idea, specific check | Uses `${{ matrix.* }}` in job names. | A matrix job name shows each varying value. |
 | NAME-06 | general idea, specific check | Names the `run:` step `name:` key. | Every script step has a name. |
-| NAME-07 | general | A step name is a short imperative phrase with no ids or versions. | n/a |
+| NAME-07 | general idea, specific check | Names a step, the unit of a GitHub Actions job. | A task name is a short imperative phrase with no ids or versions. |
 | NAME-08 | general idea, specific check | Uses `needs:`, `if: always()`, `needs.*.result`. | One aggregate gate job is the only required check. |
 | NAME-09 | specific | Reads GitHub branch protection and rulesets before a rename. | n/a |
 
@@ -163,17 +163,17 @@ I read each rule text, check and fix. A rule is general when its text holds no C
 | File | Ids | general | middle | specific |
 |---|---|---|---|---|
 | cost.md | 8 | 0 | 8 | 0 |
-| deploy.md | 10 | 6 | 4 | 0 |
+| deploy.md | 10 | 4 | 6 | 0 |
 | job-graph.md | 7 | 0 | 7 | 0 |
 | maintainability.md | 3 | 0 | 3 | 0 |
 | monorepo.md | 2 | 0 | 1 | 1 |
-| naming.md | 9 | 1 | 7 | 1 |
+| naming.md | 9 | 0 | 8 | 1 |
 | protect.md | 8 | 0 | 7 | 1 |
 | publish.md | 5 | 0 | 5 | 0 |
 | release.md | 6 | 0 | 6 | 0 |
 | rollback.md | 6 | 0 | 6 | 0 |
 | security.md | 10 | 0 | 10 | 0 |
-| Total | 74 | 7 | 64 | 3 |
+| Total | 74 | 4 | 67 | 3 |
 
 ## Files read
 
