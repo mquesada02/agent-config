@@ -316,7 +316,7 @@ def find_manifests(repo):
             if manifest in names:
                 found[language].append(rel)
     for folders in found.values():
-        folders.sort(key=lambda rel: (0 if rel == "." else rel.count("/") + 1, rel))
+        folders.sort(key=lambda rel: (root_length(rel), rel))
     return found
 
 
@@ -330,7 +330,7 @@ def valid_root(value):
 
 
 def rules_entries(rules):
-    """The valid (name, root) entries of the rules file. None when rules.error is set."""
+    """The valid (name, root) entries of the rules file. An empty list when rules.error is set."""
     if rules["error"] is not None:
         return []
     entries = rules["settings"].get("languages")
@@ -410,7 +410,7 @@ def gitignore_names(repo, root, wanted):
     """(a .gitignore names one of wanted, a .gitignore exists). The .gitignore of the
     language root and of the repo root are both read."""
     exists = named = False
-    folders = dict.fromkeys((os.path.normpath(os.path.join(repo, root)), os.path.normpath(repo)))
+    folders = unique((os.path.normpath(os.path.join(repo, root)), os.path.normpath(repo)))
     for folder in folders:
         path = os.path.join(folder, ".gitignore")
         if not os.path.isfile(path):
@@ -551,8 +551,7 @@ def rust_facts(repo, root):
         else fact("cargo test", "default", "no .config/nextest.toml")
     )
     manifests, root_state, problem = rust_manifests(base)
-    absent = "no Cargo.toml" if root_state == "missing" else problem
-    unreadable = absent or problem
+    unreadable = "no Cargo.toml" if root_state == "missing" else problem
 
     if runner["value"] == "cargo test":
         doc = fact(None, "default", "cargo test runs doc tests")
@@ -591,7 +590,7 @@ def rust_facts(repo, root):
     runner_facts = {"name": runner, **nextest_facts(base), "features": features}
 
     if root_state != "ok":
-        members = fact([], "unknown", absent)
+        members = fact([], "unknown", unreadable)
     else:
         root_data = manifests[0][1]
         workspace = root_data.get("workspace")
@@ -668,7 +667,7 @@ def typescript_facts(repo, root):
         manager = fact(manager_name, "detected", "package.json packageManager")
     else:
         manager = None
-        folders = dict.fromkeys((base, repo))
+        folders = unique((base, repo))
         for lockfile, name in LOCKFILES:
             if any(os.path.isfile(os.path.join(folder, lockfile)) for folder in folders):
                 manager = fact(name, "detected", lockfile)
@@ -720,11 +719,14 @@ def typescript_facts(repo, root):
 
     version = None
     for filename in (".nvmrc", ".node-version"):
-        for folder in dict.fromkeys((base, repo)):
+        for folder in unique((base, repo)):
             lines = [item.strip() for item in (read_text(os.path.join(folder, filename)) or "").splitlines()]
             first = next((item for item in lines if item), None)
-            if version is None and first:
+            if first:
                 version = fact(first, "detected", filename)
+                break
+        if version:
+            break
     engines = pkg.get("engines")
     if version is None and isinstance(engines, dict) and "node" in engines:
         version = fact(safe(engines["node"]), "detected", "package.json engines.node")

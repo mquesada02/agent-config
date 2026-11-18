@@ -260,6 +260,7 @@ class TypeScriptFactsTest(DetectCase):
         self.assert_fact(facts["commands"]["typecheck"], "yarn run type-check", "detected")
         self.assert_fact(facts["runner"]["package_manager"], "yarn", "detected")
         self.assert_fact(facts["layout"]["test_paths"], ["src"], "detected")
+        self.assert_fact(facts["libraries"]["snapshot"], "jest", "detected")
         self.assert_fact(facts["libraries"]["commit_snapshots"], False, "detected")
 
     def test_node_test_by_script_and_by_import(self):
@@ -345,6 +346,10 @@ class TypeScriptFactsTest(DetectCase):
         self.assert_fact(facts["libraries"]["fakes"], [], "unknown")
         self.assert_fact(facts["libraries"]["commit_snapshots"], None, "unknown")
         self.assert_fact(facts["commands"]["typecheck"], None, "default")
+        for key in ("test", "worker_flag", "changed"):
+            self.assert_fact(facts["commands"][key], None, "unknown")
+        self.assert_fact(facts["layout"]["file_pattern"], None, "unknown")
+        self.assert_fact(facts["libraries"]["snapshot"], None, "unknown")
 
 
 class LanguagesAndRoutingTest(DetectCase):

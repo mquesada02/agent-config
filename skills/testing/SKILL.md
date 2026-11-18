@@ -23,7 +23,7 @@ It prints one JSON object with the keys `rules` and `detected`. The `rules` obje
 
 - `languages`: a list of `{name, root, manifest}` for `rust` and `typescript`. The `manifest` is `null` when the root holds none.
 - `entries`: for each `[file ...]` argument, the language entry to load: `rust`, `typescript` or `general`. A path outside the repo root is a usage error (exit code 2).
-- `facts`: for each listed language, the detected test facts. Each fact is `{value, status, source}`. The `status` is `detected`, `default` or `unknown`. Use the facts when the rules file is missing or malformed.
+- `facts`: for each listed language, the detected test facts. Each fact is `{value, status, source}`. The `status` is `detected`, `default` or `unknown`. The script always prints them. Use them when the rules file is missing or malformed.
 
 ## Modules
 
