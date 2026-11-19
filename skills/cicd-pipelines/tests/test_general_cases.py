@@ -39,10 +39,10 @@ DESCRIPTION = ("cicd-pipelines creates or reviews CI/CD: full rules for GitHub A
 TRIGGER_CI_FILE = "trigger-general-ci-file"
 TRIGGER_UNRELATED = "trigger-general-unrelated"
 TRIGGER_CASES = (TRIGGER_CI_FILE, TRIGGER_UNRELATED)
+EDIT_TRIGGER = "trigger-edit-workflow"
 CI_FILE_GRADERS = {"skill-fired.md", "general-line-1.md", "general-bullet.md", "general-last-line.md"}
 UNRELATED_GRADERS = {"no-cicd-reply.md", "no-skill-call.md"}
-TRIGGER_GRADER_FILES = ("general-line-1.md", "general-bullet.md", "general-last-line.md", "no-cicd-reply.md",
-                        "no-skill-call.md")
+TRIGGER_GRADER_FILES = tuple(sorted((CI_FILE_GRADERS | UNRELATED_GRADERS) - {"skill-fired.md"}))
 INTAKE_LINE = ("The recorded intake output for this repo is in `intake.json`: use it as the repo facts and do not "
                "run the intake script.")
 GO_GITLAB = "general-review-go-gitlab"
@@ -293,7 +293,7 @@ class ModeChoiceText(unittest.TestCase):
     def test_the_description_is_the_text_of_the_general_spec(self):
         description = frontmatter(os.path.join(SKILL, "SKILL.md"))["description"]
         self.assertEqual(description, DESCRIPTION)
-        self.assertEqual(len(description), 399)
+        self.assertEqual(len(description), 399)  # the length of the spec text; the skill limit is 400
 
 
 class GeneralModeSection(unittest.TestCase):
@@ -390,20 +390,20 @@ class TriggerGeneralCases(unittest.TestCase):
         self.assertEqual({n for n in case_names() if n.startswith("trigger-general-")}, set(TRIGGER_CASES))
 
     def test_each_case_has_its_files_and_the_empty_expect_lists(self):
+        scaffold = read(os.path.join(case_dir(EDIT_TRIGGER), "scaffold.sh"))
         for name in TRIGGER_CASES:
             for part in ("prompt.md", "case.yaml", "expect.json", "scaffold.sh", "repo", "graders"):
                 self.assertTrue(os.path.exists(os.path.join(case_dir(name), part)), f"{name} has no {part}")
             self.assertEqual(expect_lists(name), ([], []), name)
-            self.assertEqual(read(os.path.join(case_dir(name), "scaffold.sh")),
-                             read(os.path.join(case_dir("trigger-edit-workflow"), "scaffold.sh")), name)
+            self.assertEqual(read(os.path.join(case_dir(name), "scaffold.sh")), scaffold, name)
 
     def test_the_prompts_name_neither_the_skill_nor_a_rule_and_use_the_front_matter_of_the_edit_trigger(self):
+        template = frontmatter(os.path.join(case_dir(EDIT_TRIGGER), "prompt.md"))
         for name in TRIGGER_CASES:
             prompt = read(os.path.join(case_dir(name), "prompt.md"))
             self.assertNotIn("cicd-pipelines", prompt, name)
             self.assertNotRegex(prompt, r"\b[A-Z]+-\d\d\b", name)
-            self.assertEqual(frontmatter(os.path.join(case_dir(name), "prompt.md")),
-                             frontmatter(os.path.join(case_dir("trigger-edit-workflow"), "prompt.md")), name)
+            self.assertEqual(frontmatter(os.path.join(case_dir(name), "prompt.md")), template, name)
 
     def test_the_ci_file_case_asks_for_a_gitlab_file_edit_and_points_to_the_recorded_intake(self):
         lines = prompt_lines(TRIGGER_CI_FILE)
@@ -431,7 +431,7 @@ class TriggerGeneralCases(unittest.TestCase):
             self.assertFalse({"general-report.md", "section-summary.md"} & grader_files(name), name)
 
     def test_skill_fired_is_the_file_of_the_edit_trigger_and_sets_no_call_count(self):
-        template = read(os.path.join(case_dir("trigger-edit-workflow"), "graders", "skill-fired.md"))
+        template = read(os.path.join(case_dir(EDIT_TRIGGER), "graders", "skill-fired.md"))
         self.assertEqual(read(os.path.join(graders(TRIGGER_CI_FILE), "skill-fired.md")), template)
         meta = frontmatter(os.path.join(graders(TRIGGER_CI_FILE), "skill-fired.md"))
         self.assertNotIn("min", meta)
