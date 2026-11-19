@@ -2,7 +2,7 @@
 
 `/testing write` writes runnable tests for a change, runs them and reports. Run the steps in this order. Never skip a step and never reorder them. Write never asks the user a question and never waits for a plan approval. Every input state maps to one defined path, and every product file that gets no test is named in the report with its reason (see "Report contract").
 
-`<skill folder>` is the folder of this skill. The flow in [SKILL.md](SKILL.md) has already found the product files and run the intake script. Its output is the input of this module. The general file ([general.md](general.md)) is loaded.
+The flow in [SKILL.md](SKILL.md) has already found the product files and run the intake script. Its output is the input of this module. The general file ([general.md](general.md)) is loaded.
 
 Write edits no product file. It adds test cases, and in an existing test file it adds only test cases, helpers and import lines and changes no existing test case.
 
@@ -70,7 +70,7 @@ A test case is shown as executed when the output names it, or when the output gi
 The size of a test case is what "Size and group of a test case" in [general.md](general.md) gives: the smallest size among the readable groups that select its file. Write cannot move the file: the test location is the user-named path. Write does not choose the file by group. An unreadable group never counts. A group that selects only by a name filter selects test cases, not files.
 
 - A readable group selects the user-named path: the wanted size is the size of that group (the smallest, when several select it). Write writes the test cases to fit it, with the double rule of `## Kinds of tests` in [general.md](general.md), so that review gives no `GRP-01` for them. The Reason cell says `size of group <name>`.
-- No readable group selects it: the wanted size comes from `## Kinds of tests` in [general.md](general.md), and the Reason cell says why the Group is `none`. Review can report `GRP-01` there. That is the defined exception to the rule that review gives no required finding for written tests. It holds when the language has no group, every group is unreadable, the rules file is missing or malformed, or the path is outside every group. Review checks no `GRP-01` where [general.md](general.md) says it is not checked.
+- No readable group selects it: the wanted size comes from `## Kinds of tests` in [general.md](general.md), and the Reason cell says why the Group is `none`. Review can report `GRP-01` there. That is the one defined case where review can report `GRP-01` for a written test. It holds when the language has no group, every group is unreadable, the rules file is missing or malformed, or the path is outside every group. Review checks no `GRP-01` where [general.md](general.md) says it is not checked.
 - The Group and Size cells hold what review's sizing gives for the file as written: the smallest-size readable group that selects it, else Group `none` and the wanted size.
 - Write never writes a test case that needs more than medium. A large group size is only the Size cell value that review gives.
 

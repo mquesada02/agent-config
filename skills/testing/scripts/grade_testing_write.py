@@ -220,7 +220,7 @@ def check_report(text):
                 fail("tables", f"{path}: the Size cell {cells[3]!r} is not one of {', '.join(SIZES)}")
         commands = [line.strip() for line in body if line.strip().startswith("Command:")]
         results = [line.strip() for line in body if line.strip().startswith("Run result:")]
-        if len(commands) != 1 or commands[0] in ("Command:", "Command: "):
+        if len(commands) != 1 or commands[0] == "Command:":
             fail("command", f"{path}: needs exactly one Command: <command> line, found {len(commands)}")
         if len(results) != 1:
             fail("run result", f"{path}: needs exactly one Run result line, found {len(results)}")

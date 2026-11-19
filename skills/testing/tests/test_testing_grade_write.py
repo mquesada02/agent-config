@@ -107,9 +107,8 @@ class ReportCheckTest(WriteGraderCase):
 
     def test_a_missing_or_double_command_or_run_result_fails(self):
         self.assert_fail("command", report(file_section(command=None)))
-        double = file_section() + ""
-        self.assert_fail("command", report(double.replace("Run result: pass", "Command: x\nRun result: pass")))
-        self.assert_fail("run result", report(file_section(command=None).replace("\n\n", "\n\n", 1) + ""))
+        self.assert_fail("command", report(file_section().replace("Run result: pass", "Command: x\nRun result: pass")))
+        self.assert_fail("run result", report(file_section(command=None)))
         self.assert_fail("run result", report(file_section().replace("Run result: pass", "Run result: pass\nRun result: pass")))
 
     def test_a_run_result_with_no_valid_form_fails(self):

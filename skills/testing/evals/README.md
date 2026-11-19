@@ -31,7 +31,7 @@ Grade a write case on its kept workspace and its saved final message. The report
 python3 skills/testing/scripts/grade_testing_write.py <report file> --repo <kept workspace> --expect skills/testing/evals/<case>/expect-write.json --before skills/testing/evals/<case>/repo
 ```
 
-Then grade a saved final message with the report grader:
+Grade a saved review report with the report grader:
 
 ```
 python3 skills/testing/scripts/grade_testing_report.py <report file>

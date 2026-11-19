@@ -11,7 +11,6 @@ This skill helps write and judge runnable tests: fast, isolated, safe to run in 
 
 - `/testing setup`: detect the repo test facts, ask a short interview and write the repo rules file. See [setup.md](setup.md) and the setup flow below.
 - `/testing review`: judge existing tests against the rule catalogue, report by severity, then fix only the approved findings. See [review.md](review.md) and the review flow below.
-
 - `/testing write`: write runnable tests for a change, run them and report. See [write.md](write.md) and the write flow below.
 
 ## Setup flow
