@@ -93,6 +93,7 @@ class CatalogUseTest(unittest.TestCase):
 
 GENERAL_MD = os.path.join(helper.SKILL, "general.md")
 REVIEW_MD = os.path.join(helper.SKILL, "review.md")
+SETUP_MD = os.path.join(helper.SKILL, "setup.md")
 ENTRIES = os.path.join(helper.SKILL, "entries")
 EVALS = os.path.join(helper.SKILL, "evals")
 ANY_ID = re.compile(r"\b[A-Z]+-\d{2}\b")
@@ -162,7 +163,7 @@ def entry_files():
 
 
 def skill_text_files():
-    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD] + entry_files()
+    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD] + entry_files()
     scripts = os.path.join(helper.SKILL, "scripts")
     paths += [os.path.join(scripts, n) for n in sorted(os.listdir(scripts)) if n.endswith(".py")]
     return paths
@@ -201,7 +202,7 @@ class CatalogueTableTest(unittest.TestCase):
 class IdUseTest(unittest.TestCase):
     def test_every_id_that_a_file_names_is_in_the_catalogue(self):
         catalogue = {row[0] for row in catalogue_rows(read(GENERAL_MD))}
-        for path in [SKILL_MD, GENERAL_MD, REVIEW_MD] + entry_files():
+        for path in [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD] + entry_files():
             for found in sorted(set(ANY_ID.findall(read(path)))):
                 with self.subTest(path=os.path.basename(path), id=found):
                     self.assertIn(found, catalogue)
@@ -240,6 +241,38 @@ class RouterFlowTest(unittest.TestCase):
         for name in ("general.md", "review.md", "scripts/grade_testing_report.py"):
             with self.subTest(name):
                 self.assertIn(name, links)
+
+
+SETUP_STEPS = (
+    "## Step 1: Detect", "## Step 2: Interview", "## Step 3: Unknown ids", "## Step 4: Draft",
+    "## Step 5: Approve and write", "## Step 6: Check", "## Step 7: Report",
+)
+SETUP_EXPECT_KEYS = {"set", "unset", "allow_missing", "contains", "absent"}
+
+
+class SetupModeTest(unittest.TestCase):
+    def test_skill_md_links_the_setup_file_and_it_exists(self):
+        self.assertIn("setup.md", LINK.findall(read(SKILL_MD)))
+        self.assertTrue(os.path.isfile(SETUP_MD))
+
+    def test_skill_md_links_the_setup_grader(self):
+        self.assertIn("scripts/grade_testing_setup.py", LINK.findall(read(SKILL_MD)))
+
+    def test_skill_md_has_a_setup_flow_section(self):
+        self.assertIn("## Setup flow", read(SKILL_MD).splitlines())
+
+    def test_setup_md_has_the_seven_steps_in_order(self):
+        headings = [line for line in read(SETUP_MD).splitlines() if line.startswith("## Step ")]
+        self.assertEqual(tuple(headings), SETUP_STEPS)
+
+    def test_every_setup_case_has_an_expectation_file_with_known_keys(self):
+        cases = [n for n in sorted(os.listdir(EVALS)) if n.startswith("setup-") and os.path.isdir(os.path.join(EVALS, n))]
+        self.assertTrue(cases)
+        for case in cases:
+            with self.subTest(case):
+                data = json.loads(read(os.path.join(EVALS, case, "expect-setup.json")))
+                self.assertIsInstance(data, dict)
+                self.assertLessEqual(set(data), SETUP_EXPECT_KEYS)
 
 
 class EntryAndTextRulesTest(unittest.TestCase):

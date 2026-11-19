@@ -9,9 +9,17 @@ This skill helps write and judge runnable tests: fast, isolated, safe to run in 
 
 ## Modes
 
+- `/testing setup`: detect the repo test facts, ask a short interview and write the repo rules file. See [setup.md](setup.md) and the setup flow below.
 - `/testing review`: judge existing tests against the rule catalogue, report by severity, then fix only the approved findings. See [review.md](review.md) and the review flow below.
 
-No other mode file exists yet. Each later ticket adds the link to its mode file here.
+Write mode has no mode file yet. Each later ticket adds the link to its mode file here.
+
+## Setup flow
+
+For `/testing setup`, follow these steps in order:
+
+1. Load [general.md](general.md). It is always loaded. Its catalogue table lists the rule ids that the interview offers.
+2. Load [setup.md](setup.md) and follow it. It runs the intake script itself (see "Rules file"), so this flow step runs no intake. It loads no language entry.
 
 ## Review flow
 
@@ -40,6 +48,8 @@ It prints one JSON object with the keys `rules` and `detected`. The `rules` obje
 ## Modules
 
 - [general.md](general.md): the always-loaded general file. It holds the rule catalogue and the rule text of each checked rule id.
+- [setup.md](setup.md): the setup mode steps, the interview and the layout of the rules file.
 - [review.md](review.md): the review mode steps, the report contract and the fix flow.
 - [scripts/grade_testing_report.py](scripts/grade_testing_report.py): the report grader. It checks a review report against the report contract, the rule ids and the severities.
+- [scripts/grade_testing_setup.py](scripts/grade_testing_setup.py): the setup grader. It checks a written rules file through the intake script (intake clean, approved values changed, other values and prose kept, skipped keys unset).
 - [scripts/intake.py](scripts/intake.py): the intake script. It reads the rules file, holds the rule catalogue (`CATALOG`: each rule id with its severity) and uses no network.

@@ -1,0 +1,15 @@
+{
+  "set": {
+    "groups": [],
+    "commands.typescript.test": "npx vitest run",
+    "runner.typescript.package_manager": "npm"
+  },
+  "unset": [
+    "limits",
+    "rules"
+  ],
+  "absent": [
+    "## Disabled rules",
+    "## Conventions"
+  ]
+}

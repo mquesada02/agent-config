@@ -1,0 +1,20 @@
+{
+  "set": {
+    "runner.typescript.package_manager": "pnpm",
+    "groups": [
+      {
+        "name": "unit",
+        "language": "typescript",
+        "size": "small",
+        "command": "pnpm exec vitest run"
+      }
+    ]
+  },
+  "contains": [
+    "- RUN-05: slow CI hardware",
+    "- Keep tests small."
+  ],
+  "absent": [
+    "RUN-02"
+  ]
+}

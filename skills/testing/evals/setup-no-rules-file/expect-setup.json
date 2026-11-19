@@ -1,0 +1,26 @@
+{
+  "set": {
+    "groups": [
+      {
+        "name": "unit",
+        "language": "typescript",
+        "size": "small",
+        "command": "npx vitest run"
+      }
+    ],
+    "rules.disabled": [
+      "RUN-05"
+    ],
+    "commands.typescript.test": "npx vitest run"
+  },
+  "unset": [
+    "limits"
+  ],
+  "contains": [
+    "- RUN-05: slow CI hardware",
+    "- Keep tests small."
+  ],
+  "absent": [
+    "FOO-99"
+  ]
+}
