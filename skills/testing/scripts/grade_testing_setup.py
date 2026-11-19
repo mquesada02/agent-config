@@ -36,8 +36,8 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 INTAKE = os.path.join(HERE, "intake.py")
 RULES_FILE = os.path.join("docs", "agents", "testing.md")
-EXPECT_KEYS = {"set", "unset", "allow_missing", "contains", "absent"}
 LIST_KEYS = ("unset", "allow_missing", "contains", "absent")
+EXPECT_KEYS = {"set", *LIST_KEYS}
 TOML_OPEN = re.compile(r"^```toml(?:\s.*)?$")
 FENCE_CLOSE = re.compile(r"^```\s*$")
 
@@ -133,10 +133,8 @@ def grade(repo, expect, before):
     failures = []
     data, code, stderr = run_intake(repo)
     path = os.path.join(repo, RULES_FILE)
-    text = ""
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8-sig") as handle:
-            text = handle.read()
+    lines = read_lines(path) if os.path.isfile(path) else [""]
+    text = "\n".join(lines)
     problems = []
     if data is None:
         problems.append(f"intake.py exit code {code}, no JSON: {stderr}")
@@ -163,7 +161,7 @@ def grade(repo, expect, before):
         return failures
 
     settings = data["rules"]["settings"]
-    prose, _ = split_blocks([line.removesuffix("\r") for line in text.split("\n")])
+    prose, _ = split_blocks(lines)
     for dotted, value in expect.get("set", {}).items():
         found, held = lookup(settings, dotted)
         if not found:
