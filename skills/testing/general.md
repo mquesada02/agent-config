@@ -25,6 +25,67 @@ The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists th
 | RUN-05 | suggestion | An ignored or skipped test has no reason. |
 | DBL-01 | suggestion | A mock asserts call order where a fake would do. |
 
+## Sizes and groups
+
+A test case has a size. The size tells what the test case may use and how long it may take.
+
+- Small: no I/O, no network, no sleep. At most `small_ms` (default 100 ms).
+- Medium: local I/O and loopback network only. At most `medium_ms` (default 1000 ms).
+- Large: no limit. A large test case lives only in its own group.
+
+The limits come from `rules.settings.limits`, else from `detected.facts.<language>.limits`. `RUN-02` applies at every size. A group of the rules file has a `name`, a `language`, a `size` and a `command`. These groups are not the nextest `test_groups` fact, which limits concurrency.
+
+### Test cases and scope
+
+A test case is one test function or one case in a test file. The files in scope are the files that step 1 of the review flow takes. The in-scope test cases are the test cases of those files. Review checks the in-scope test cases. The size is per test case. The language root of a language is the `root` of its `[[languages]]` entry, else the root of its detected language. The language of a file is its `detected.entries` value (`general` has no group).
+
+### Size and group of a test case
+
+The size of a test case is the `size` of the group whose `command` selects it. Only the groups of the language of the test case's file count. A test case that several readable groups select takes the smallest size.
+
+A group selector is **readable** when the command, apart from the runner and its fixed flags, uses only:
+
+- no selector: it selects every test case of the language root;
+- path or glob operands: they select every test case in the files they match, and a directory operand selects every test case in the files below it. Several operands select the union;
+- a name filter: a substring or a pattern on the test name, or a module path. Several name filters select the union;
+- a project or package flag whose root the runner config names: it selects every test case under that root.
+
+Path operands and a name filter together select the intersection. Fixed flags do not change which tests run: worker count, reporter, color and output options. Any other selector or flag makes the group **unreadable**: a tag or attribute filter, a boolean expression of filters (with and, or or not), an exclude or ignore flag, an environment variable or a wrapper script.
+
+A group with a missing `size`, or a `size` that is not `small`, `medium` or `large`, is unreadable. A runner list command may decide membership only when a loaded language entry names that command as confirmed. When that command cannot start, exits with an error or runs longer than 10 minutes, the group is unreadable.
+
+An unreadable group leaves its tests unchecked:
+
+- A test case that no readable group selects, while an unreadable group of its language exists, is **unsized**. `GRP-01`, `RUN-03` and `RUN-04` skip it.
+- A test case that a readable group selects takes the smallest size among the readable groups. An unreadable group might also select it. The `Not checked:` line says so.
+- A test case that no group selects, when its language has at least one group and every such group is readable, is a `GRP-01` finding. `RUN-03` and `RUN-04` skip it.
+
+A language with no group (none in `rules.settings.groups`, none in `detected.facts`) has no sizes. `GRP-01`, `RUN-03` and `RUN-04` are not checked for it, and it gets no `GRP-01` finding. A large test case needs no extra rule: when a smaller group also selects it, the smallest size makes it small, and `GRP-01`, `RUN-03` and `RUN-04` apply.
+
+## Doubles and seams
+
+A seam is a point where behavior can be swapped without editing the code under test: a function argument, an injected dependency, a trait or interface, a module boundary, the clock, the file system or the network at the system boundary.
+
+- Tests go through the public interface. Put a double at a system boundary, not between two internal functions.
+- Prefer, in this order: a real collaborator, a fake, a stub, a mock.
+- Use a mock only to prove an outbound side effect that has no readable state.
+- Keep a fake honest: test it, or share a contract test with the real code.
+
+`DBL-01` is the rule for mocks that assert call order.
+
+## Parallel safety
+
+A test is safe to run in parallel when it owns all state that it touches.
+
+- Use a unique temp directory. Do not write into the working directory.
+- Use port 0 or a free port. Never a fixed port (`PAR-01`).
+- Do not read or write global or static state, a fixed file path or an environment variable that another test uses (`PAR-02`).
+- Do not rely on the order of tests or on the output of another test.
+
+## Flakiness
+
+A flaky test gives a different result for the same code. Common causes: sleeps and wall-clock waits (`RUN-02`), shared state (`PAR-02`), test order, the clock, randomness, fixed ports and temp paths (`PAR-01`), network (`RUN-03`), threads and unordered collections. Find the cause. Do not hide it with a retry (`RUN-01`).
+
 ## Rules
 
 Review checks an id only when this section holds a subsection for it. A catalogue id without a subsection is not checked yet.
@@ -60,3 +121,67 @@ Review checks an id only when this section holds a subsection for it. A catalogu
 **Not a finding when**: the run still fails on a test that passes only after a retry. For example, nextest `retries` together with `flaky-result = "fail"` hides nothing. A retry inside the code under test (a retry policy that the test checks) is not a retry of the test.
 
 **Fix**: remove the retry and find the cause of the flaky test (shared state, a real clock, a fixed port, an ordering assumption). When the retry must stay for a known outside cause, set the runner so that a test that passes only after a retry still fails the run.
+
+### RUN-02
+
+**Finding when**: a fixed-duration wait in test code: a sleep, a timer wait, a poll loop that sleeps a fixed step, or a loop that spins until the wall clock passes a time. The sleep call is the finding, even when the loop ends early. This holds at every size. A sleep inside the code under test that no fake clock controls is not test code. It is not a `RUN-02` finding, and the slow test shows in `RUN-04`.
+
+**Not a finding when**: time is fake or paused. Also not a finding: a call that blocks on the event itself (a channel receive, a join, an awaited promise, a wait helper of the test framework that polls inside the framework), and a sleep inside code under test that a fake clock controls.
+
+**Fix**: fake or pause time, or wait for the event.
+
+### RUN-03
+
+**Finding when**: a small test uses the network in any way, loopback included. Or a medium test connects to a host other than `localhost`, `127.0.0.1` or `::1`. A large test is not checked.
+
+**Not a finding when**: the test is large. Also not a finding: a fake server that runs inside the process and opens no socket, and loopback in a medium test.
+
+**Fix**: use an in-process fake, or move the test to a medium group (loopback only) or to a large group.
+
+### RUN-04
+
+**Finding when**: the timed run gives a duration for a sized test case that is strictly over the limit of its size: over `small_ms` for a small test case, over `medium_ms` for a medium test case. See "Timed run" in [review.md](review.md).
+
+**Not a finding when**: the duration is at or under the limit, or the test case is large or unsized.
+
+**Fix**: fake the slow I/O or time, shrink the work, or move the test to a group of a larger size.
+
+### RUN-05
+
+**Finding when**: a test is ignored or skipped (a skip or ignore marker, or a conditional skip whose condition is a constant such as a literal `true`) and the marker or the line above holds no reason text. A platform or environment condition is not constant.
+
+**Not a finding when**: the marker has a reason. Also not a finding: a pending-test placeholder that is not a skip.
+
+**Fix**: give the reason, or fix or delete the test.
+
+### PAR-01
+
+**Finding when**: a test uses a literal port number (also one held in a constant or an environment default) to bind, to listen, to start a server, or to connect as a client to a server that the same test starts.
+
+**Not a finding when**: the port is 0, or a free port taken at run time. Also not a finding: a port in a URL to a non-local host.
+
+**Fix**: use port 0 or a free port.
+
+### PAR-02
+
+**Finding when**: two tests share state: a global or static variable that a test writes, a file at a fixed path, a change to the working directory or a write into it, an environment variable set without a restore, or a shared database name.
+
+**Not a finding when**: each test creates and removes its own state (for example a unique temp directory), or the shared value is a read-only constant.
+
+**Fix**: give each test its own state.
+
+### GRP-01
+
+**Finding when**: a test case that no group selects, when its language has at least one group and every such group is readable (see "Size and group of a test case"). Also a finding: a test case in a small group that uses I/O (file system, child process, database) or a sleep, in the test or in the code under test that it calls. Network use is not a `GRP-01` case; `RUN-03` covers it. Both cases are one `GRP-01` row, and its Where cell lists the places of both.
+
+**Not a finding when**: the file is a helper or fixture file with no test case. Also not a finding: I/O in a test case of a medium or large group, and a sleep that fake or paused time controls.
+
+**Fix**: add the test case to a group (or fix the group command), or fake the I/O or the sleep, or move the test case to a medium group.
+
+### DBL-01
+
+**Finding when**: a test asserts the order of calls on a mock (a sequence or in-order check) where a fake or a state check would show the same behavior.
+
+**Not a finding when**: the order is the behavior, for example an ordered outbound side effect that has no readable state.
+
+**Fix**: use a fake and assert on state, or drop the order check.
