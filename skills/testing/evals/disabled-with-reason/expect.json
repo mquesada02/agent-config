@@ -1,0 +1,6 @@
+{
+  "expect": [],
+  "forbid": [
+    "ASSERT-01"
+  ]
+}

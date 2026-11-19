@@ -1,0 +1,5 @@
+---
+max_turns: 20
+allowed_tools: [Read, Glob, Grep, Skill, Bash]
+---
+Review the tests in tests/price.test.ts and their runner config.

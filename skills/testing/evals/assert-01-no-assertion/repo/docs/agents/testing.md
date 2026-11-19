@@ -1,0 +1,28 @@
+# Testing rules
+
+```toml
+[[languages]]
+name = "typescript"
+root = "."
+
+[commands.typescript]
+test = "npx vitest run"
+
+[[groups]]
+name = "unit"
+language = "typescript"
+size = "small"
+command = "npx vitest run"
+
+[runner.typescript]
+name = "vitest"
+
+[layout.typescript]
+test_paths = ["tests"]
+
+[libraries.typescript]
+fakes = "vitest"
+```
+
+## Reasons
+
