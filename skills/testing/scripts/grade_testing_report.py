@@ -33,6 +33,7 @@ NOTES = [
     ("b", ("No reason line, checked anyway: ",)),
     ("c", ("Unknown ids in rules.disabled, ignored: ",)),
     ("d", ("Detected for this run: ", "Rules file error: ")),
+    ("e", ("Not checked: ",)),
 ]
 ID_LIST_NOTES = ("a", "b", "c")
 
@@ -186,7 +187,7 @@ def grade(text, catalog):
         if names.count(name) > 1:
             fail("notes", f"note line ({name}) appears more than once")
     if names != sorted(names):
-        fail("notes", "the note lines are not in the order (a), (b), (c), (d)")
+        fail("notes", "the note lines are not in the order " + ", ".join(f"({name})" for name, _ in NOTES))
     placed = {}
     for name, prefix, stripped in note_lines:
         if name in ID_LIST_NOTES:

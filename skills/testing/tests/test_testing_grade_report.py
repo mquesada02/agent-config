@@ -67,6 +67,27 @@ class ValidReportTest(GradeCase):
         notes = "Rules file error: expected a value (line 4). Every setting is detected for this run. Run /testing setup.\n"
         self.assert_pass(ZERO + "\n" + notes)
 
+    def test_not_checked_line_after_the_fallback_line_passes(self):
+        notes = (
+            "Detected for this run: groups. Run /testing setup to record them.\n"
+            "Not checked: GRP-01, RUN-03, RUN-04 (no groups in the rules file and none detected).\n"
+        )
+        self.assert_pass(report(notes=notes))
+
+    def test_not_checked_line_may_hold_several_entries_and_name_an_id_that_has_a_row(self):
+        notes = (
+            "Not checked: GRP-01, RUN-03, RUN-04 (selector of group slow unreadable); "
+            "RUN-04 (no per-test duration in the output (exit code 1)).\n"
+        )
+        self.assert_pass(report(notes=notes, required="| 2 | RUN-04 | a.test.ts:1 | Slow. | Fake time. |\n"))
+
+    def test_not_checked_line_may_name_an_id_that_a_disabled_line_also_names(self):
+        notes = (
+            "No reason line, checked anyway: RUN-04.\n"
+            "Not checked: RUN-04 (command includes an update mode).\n"
+        )
+        self.assert_pass(report(notes=notes))
+
     def test_where_cell_may_hold_several_places_and_a_range(self):
         rows = "| 1 | ASSERT-01 | a.test.ts:3, b.test.ts:4-6 | No assertion. | Add one. |\n"
         self.assert_pass(report(critical=rows, required="", suggestion="", result="**Result: 1 critical, 0 required, 0 suggestions.**"))
@@ -148,6 +169,25 @@ class BrokenReportTest(GradeCase):
 
     def test_where_cell_without_a_place(self):
         self.assert_fail(report(critical="| 1 | ASSERT-01 | a.test.ts | x | y |\n"), "where")
+
+    def test_not_checked_line_twice(self):
+        notes = "Not checked: RUN-04 (a).\nNot checked: RUN-03 (b).\n"
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_not_checked_line_before_the_fallback_line(self):
+        notes = (
+            "Not checked: RUN-04 (a).\n"
+            "Detected for this run: groups. Run /testing setup to record them.\n"
+        )
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_not_checked_line_before_a_disabled_line(self):
+        notes = "Not checked: RUN-04 (a).\nDisabled (reason recorded, not checked): RUN-02.\n"
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_order_failure_message_names_all_five_lines(self):
+        notes = "Not checked: RUN-04 (a).\nDisabled (reason recorded, not checked): RUN-02.\n"
+        self.assertIn("(a), (b), (c), (d), (e)", self.assert_fail(report(notes=notes), "notes"))
 
     def test_note_line_twice(self):
         notes = "Disabled (reason recorded, not checked): RUN-02.\nDisabled (reason recorded, not checked): RUN-03.\n"

@@ -1,4 +1,5 @@
 import ast
+import functools
 import json
 import os
 import re
@@ -102,7 +103,10 @@ TDD = re.compile(
 )
 ADAPTED_LINE = re.compile(r"^Adapted from .+ \(MIT\)\.$")
 ROUTER_MARKERS = ("Scope", "Intake", "General", "Entries", "Review")
-CRITICAL_TEXT_IDS = ("ASSERT-01", "ASSERT-02", "ASSERT-03", "RUN-01")
+RULE_TEXT_IDS = (
+    "ASSERT-01", "ASSERT-02", "ASSERT-03", "RUN-01",
+    "RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01",
+)
 RULE_LABELS = ("**Finding when**", "**Not a finding when**", "**Fix**")
 CASE_ENTRIES = ("case.yaml", "expect.json", "prompt.md", "scaffold.sh", "repo", "graders")
 
@@ -207,9 +211,9 @@ class IdUseTest(unittest.TestCase):
 
 
 class RuleTextTest(unittest.TestCase):
-    def test_critical_ids_have_a_subsection_with_the_three_labels(self):
+    def test_listed_ids_have_a_subsection_with_the_three_labels(self):
         rules = section(read(GENERAL_MD), "## Rules")
-        for rule_id in CRITICAL_TEXT_IDS:
+        for rule_id in RULE_TEXT_IDS:
             with self.subTest(rule_id):
                 self.assertIn(f"### {rule_id}", rules)
                 start = rules.index(f"### {rule_id}")
@@ -314,6 +318,50 @@ class EvalCaseTest(unittest.TestCase):
 
     def test_evals_readme_exists(self):
         self.assertTrue(os.path.isfile(os.path.join(EVALS, "README.md")))
+
+
+RUNNABLE_IDS = RULE_TEXT_IDS[4:]
+RUNNABLE_SECTIONS = ("## Sizes and groups", "## Doubles and seams", "## Parallel safety", "## Flakiness")
+CASE_TICKS = re.compile(r"`([a-z0-9-]+)`")
+
+
+@functools.lru_cache(maxsize=None)
+def case_expectations():
+    """case name -> parsed expect.json of every eval case (read once)."""
+    names = sorted(n for n in os.listdir(EVALS) if os.path.isdir(os.path.join(EVALS, n)))
+    return {n: json.loads(read(os.path.join(EVALS, n, "expect.json"))) for n in names}
+
+
+class RunnableRulesTest(unittest.TestCase):
+    def test_general_sections_exist_in_order_between_catalogue_and_rules(self):
+        headings = [line for line in read(GENERAL_MD).splitlines() if line.startswith("## ")]
+        positions = [headings.index(h) for h in ("## Catalogue",) + RUNNABLE_SECTIONS + ("## Rules",)]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_review_md_states_the_not_checked_prefix_and_the_timed_run(self):
+        text = read(REVIEW_MD)
+        self.assertIn("`Not checked: <entry>[; <entry>...].`", text)
+        self.assertIn("## Timed run", text)
+
+    def test_every_runnable_id_is_expected_by_a_case_and_grp_01_by_two(self):
+        expected = [rule_id for data in case_expectations().values() for rule_id in data["expect"]]
+        for rule_id in RUNNABLE_IDS:
+            with self.subTest(rule_id):
+                self.assertGreaterEqual(expected.count(rule_id), 2 if rule_id == "GRP-01" else 1)
+
+    def test_no_groups_case_forbids_the_three_size_ids(self):
+        data = case_expectations()["no-groups"]
+        self.assertEqual(data["expect"], [])
+        self.assertEqual(sorted(data["forbid"]), ["GRP-01", "RUN-03", "RUN-04"])
+
+    def test_medium_loopback_case_forbids_run_03(self):
+        self.assertIn("RUN-03", case_expectations()["run-03-medium-loopback"]["forbid"])
+
+    def test_readme_lists_every_case_folder_as_a_backticked_name(self):
+        listed = set(CASE_TICKS.findall(read(os.path.join(EVALS, "README.md"))))
+        for case in case_expectations():
+            with self.subTest(case):
+                self.assertIn(case, listed)
 
 
 if __name__ == "__main__":
