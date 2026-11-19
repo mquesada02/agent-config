@@ -4,7 +4,7 @@
 Usage: grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]
 
 REPORT is a path, or - for stdin. The grader reads the Rule cell of each table row
-(never prose). It passes when every --expect token is found and no --forbid token is found.
+(never prose): the second cell of a table whose header starts with a `#` column, else the first cell. It passes when every --expect token is found and no --forbid token is found.
 Output: one line "FAIL <kind>:<id>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 """
@@ -23,16 +23,24 @@ def read_report(path):
 
 
 def rule_tokens(text):
-    """The Rule cell of each table row, without the flag mark. The header and separator rows are skipped."""
+    """The Rule cell of each table row, without the flag mark. The header and separator rows are skipped.
+
+    A table is a run of lines that start with `|`, and its first row is the header. The Rule cell is the second
+    cell when the first header cell is `#` (the normal report), else the first cell (the general reply)."""
     tokens = set()
+    rule_at = None  # the index of the Rule cell in the table that is being read; None before its header row
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
+            rule_at = None
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if len(cells) < 2 or cells[0] == "#" or set(cells[0]) <= set("-: "):
+        if rule_at is None:
+            rule_at = 1 if cells[0] == "#" else 0
             continue
-        tokens.add(cells[1].replace(FLAG, "").replace(LOCK, "").strip())
+        if len(cells) <= rule_at or set(cells[0]) <= set("-: "):
+            continue
+        tokens.add(cells[rule_at].replace(FLAG, "").replace(LOCK, "").strip())
     return tokens
 
 

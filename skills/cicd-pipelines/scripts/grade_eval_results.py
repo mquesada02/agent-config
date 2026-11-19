@@ -4,7 +4,8 @@
 Usage: grade_eval_results.py RESULT.json [--evals DIR]
 
 Plugin eval has no custom-code graders, so this script runs grade_report.py and grade_rule_ids.py on the
-final message of each with-arm run of each review case (a case that has the section-summary grader). The
+final message of each with-arm run of each review case (a case that has the section-summary grader or the
+general-report grader). The
 final message is the `result` field of the last line of the run's trace (`tracePath` in the result), and
 the trace exists only when the eval ran with --keep-temp. The expect and forbid lists come from
 DIR/<case>/expect.json (default DIR: the evals folder beside the scripts folder).
@@ -18,7 +19,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REVIEW_MARKER = "section-summary"
+REVIEW_MARKERS = ("section-summary", "general-report")
 
 
 def final_message(trace_path):
@@ -59,7 +60,7 @@ def review_runs(result_path):
         graders = case.get("graders", [])
         require(isinstance(graders, list) and all(isinstance(g, dict) for g in graders),
                 f"{case['name']}: `graders` is not a list of objects")
-        if REVIEW_MARKER not in [g.get("name") for g in graders]:
+        if not any(g.get("name") in REVIEW_MARKERS for g in graders):
             continue
         arms = case.get("arms", {})
         runs = arms.get("with", []) if isinstance(arms, dict) else None

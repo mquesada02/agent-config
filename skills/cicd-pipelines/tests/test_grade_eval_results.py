@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from report_fixtures import make_report, row, run_script
+from report_fixtures import general_row, make_general_report, make_report, row, run_script
 
 SCRIPT = "grade_eval_results.py"
 
@@ -18,13 +18,13 @@ class GradeEvalResults(unittest.TestCase):
         self.evals = os.path.join(self.tmp.name, "evals")
         self.cases = []
 
-    def add_case(self, name, expect, forbid, reports, review=True, without=None):
+    def add_case(self, name, expect, forbid, reports, review=True, without=None, marker="section-summary"):
         """Write expect.json and one trace for each report. `reports` is a list of texts (None: no trace file)."""
         case_dir = os.path.join(self.evals, name)
         os.makedirs(case_dir)
         with open(os.path.join(case_dir, "expect.json"), "w", encoding="utf-8") as handle:
             json.dump({"expect": expect, "forbid": forbid}, handle)
-        names = ["section-summary", "no-edit"] if review else ["skill-fired"]
+        names = [*([marker] if isinstance(marker, str) else marker), "no-edit"] if review else ["skill-fired"]
         case = {"name": name, "graders": [{"name": n} for n in names],
                 "arms": {"with": self.runs(name, "with", reports), "without": self.runs(name, "without", without or [])}}
         self.cases.append(case)
@@ -89,6 +89,34 @@ class GradeEvalResults(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAIL name-04-x#1 trace:", out)
         self.assertIn("--keep-temp", out)
+
+    def test_a_case_with_the_general_marker_is_graded(self):
+        good = make_general_report(required=[general_row("GEN-02")])
+        self.add_case("general-review-x", ["GEN-02"], [], [good], marker="general-report")
+        code, out, _ = self.grade()
+        self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), out)
+        self.assertIn("general-review-x#1: PASS", out)
+
+    def test_a_wrong_general_reply_fails_with_the_case_and_the_check(self):
+        bad = make_general_report(required=[general_row("GEN-02")], last="")
+        self.add_case("general-review-x", ["GEN-02"], [], [bad], marker="general-report")
+        code, out, _ = self.grade()
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL general-review-x#1 general-last-line:", out)
+
+    def test_a_missing_general_id_fails(self):
+        self.add_case("general-review-x", ["GEN-05"], [], [make_general_report(required=[general_row("GEN-02")])],
+                      marker="general-report")
+        code, out, _ = self.grade()
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL general-review-x#1 expect:GEN-05:", out)
+
+    def test_a_case_with_both_markers_is_graded_once(self):
+        good = make_general_report(required=[general_row("GEN-02")])
+        self.add_case("general-review-x", ["GEN-02"], [], [good], marker=["section-summary", "general-report"])
+        code, out, _ = self.grade()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("general-review-x#1: PASS"), 1)
 
     def test_a_case_without_the_section_graders_is_skipped(self):
         self.add_case("trigger-x", [], [], ["not a report"], review=False)

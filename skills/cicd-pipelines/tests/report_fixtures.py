@@ -70,6 +70,46 @@ def make_report(critical=(), required=(), suggestion=(), summary=None, tools=Non
     return "\n".join(lines)
 
 
+GENERAL_HEADER = "| Rule | Where | Problem | Fix |"
+GENERAL_SEPARATOR = "|---|---|---|---|"
+GENERAL_LAST = "The skill edits no file in general mode."
+
+
+def general_row(rule, where="repo"):
+    return (rule, where, "A problem.", "A fix.")
+
+
+def make_general_report(critical=(), required=(), suggestion=(), normal=None, line1=None, title=None,
+                        summary=None, intake=None, header=None, last=None, approve=False):
+    """Build a valid general review reply. Keyword arguments switch one point of the form off or change it.
+
+    `normal` is a normal report (text) that follows the general part. For line1, title, summary, intake,
+    header and last, None gives the valid line and "" leaves the line out."""
+    groups = {"critical": list(critical), "required": list(required), "suggestion": list(suggestion)}
+    first = ("General guidance: this repo uses Rust, which the skill does not cover. "
+             "The advice comes from the cited sources, with no rule check.") if line1 is None else line1
+    lines = [first, ""] if first else []
+    head = "# cicd-pipelines general review: all CI files" if title is None else title
+    lines += [head, ""] if head else []
+    count = summary if summary is not None else (
+        f"**Result: {len(groups['critical'])} critical, {len(groups['required'])} required, "
+        f"{len(groups['suggestion'])} suggestions.**")
+    lines += [count, ""] if count else []
+    info = "Intake: Rust, GitHub Actions. Defaults: none." if intake is None else intake
+    lines += [info, ""] if info else []
+    for severity in ("critical", "required", "suggestion"):
+        rows = groups[severity]
+        if rows:
+            lines += [HEADINGS[severity], "", header or GENERAL_HEADER, GENERAL_SEPARATOR]
+            lines += [f"| {' | '.join(r)} |" for r in rows] + [""]
+    if approve:
+        lines += ["## Approve", "", APPROVE_FINDINGS, ""]
+    lines += [GENERAL_LAST if last is None else last, ""] if last != "" else []
+    if normal is not None:
+        lines += [normal]
+    return "\n".join(lines)
+
+
 def run_script(name, args, stdin=None):
     """Run a script of the skill through its command line. Returns (exit code, stdout, stderr)."""
     proc = subprocess.run([sys.executable, "-I", os.path.join(SCRIPTS, name)] + args,

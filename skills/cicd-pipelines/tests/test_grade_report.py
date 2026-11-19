@@ -1,8 +1,8 @@
 import os
 import unittest
 
-from report_fixtures import (APPROVE_FINDINGS, APPROVE_ZERO, TOOLS_OK, TempReport, make_report,
-                             row, run_script)
+from report_fixtures import (APPROVE_FINDINGS, APPROVE_ZERO, TOOLS_OK, TempReport, general_row,
+                             make_general_report, make_report, row, run_script)
 
 SCRIPT = "grade_report.py"
 
@@ -243,6 +243,120 @@ class GradeReport(unittest.TestCase):
         code, _, err = run_script(SCRIPT, [os.path.join("no", "such", "report.md")])
         self.assertEqual(code, 2)
         self.assertTrue(err.strip())
+
+
+class GradeGeneralReport(unittest.TestCase):
+    """The general review form: line 1 starts with `General guidance:`."""
+
+    def grade(self, text):
+        report = TempReport(text)
+        self.addCleanup(report.cleanup)
+        return run_script(SCRIPT, [report.path])
+
+    def assertPasses(self, text):
+        code, out, _ = self.grade(text)
+        self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), out)
+
+    def assertFailsCheck(self, text, check):
+        code, out, _ = self.grade(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL {check}:", out)
+        self.assertEqual(out.strip().splitlines()[-1], "FAIL")
+
+    def full_general(self, **kwargs):
+        return make_general_report(critical=[general_row("GEN-01")],
+                                   required=[general_row("GEN-02", "ci.yml:3"), general_row("GEN-03")],
+                                   suggestion=[general_row("GEN-04")], **kwargs)
+
+    def assertFailsOnly(self, text, check):
+        self.assertFailsCheck(text, check)
+        _, out, _ = self.grade(text)
+        self.assertEqual([line for line in out.splitlines() if line.startswith("FAIL ") and line != "FAIL"],
+                         [line for line in out.splitlines() if line.startswith(f"FAIL {check}:")], out)
+
+    # ----- valid replies
+    def test_a_general_reply_passes(self):
+        self.assertPasses(self.full_general())
+
+    def test_a_general_reply_with_no_finding_passes(self):
+        self.assertPasses(make_general_report())
+
+    def test_a_mixed_reply_passes(self):
+        normal = make_report(required=[row("NAME-04")])
+        self.assertPasses(make_general_report(required=[general_row("GEN-02")], normal=normal))
+
+    # ----- the general-form check
+    def test_a_missing_title_fails(self):
+        self.assertFailsOnly(self.full_general(title=""), "general-title")
+
+    def test_a_title_with_no_scope_fails(self):
+        self.assertFailsOnly(self.full_general(title="# cicd-pipelines general review: "), "general-title")
+
+    def test_a_missing_result_line_fails(self):
+        self.assertFailsOnly(self.full_general(summary="Result: some findings."), "general-result")
+
+    def test_a_missing_intake_line_fails(self):
+        self.assertFailsOnly(self.full_general(intake="Defaults: none."), "general-intake")
+
+    def test_an_intake_line_without_defaults_fails(self):
+        self.assertFailsOnly(self.full_general(intake="Intake: Rust, GitHub Actions."), "general-intake")
+
+    def test_a_table_with_a_number_column_fails_the_columns_check(self):
+        text = self.full_general(header="| # | Rule | Where | Problem | Fix |")
+        code, out, _ = self.grade(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL general-columns:", out)
+
+    def test_a_row_with_a_rule_id_that_is_not_a_gen_id_fails(self):
+        text = make_general_report(required=[general_row("NAME-04")])
+        self.assertFailsOnly(text, "general-rule")
+
+    def test_a_row_with_two_ids_fails(self):
+        text = make_general_report(required=[general_row("GEN-01, GEN-02")])
+        self.assertFailsOnly(text, "general-rule")
+
+    def test_an_empty_rule_cell_fails(self):
+        text = make_general_report(required=[general_row(""), general_row("GEN-02")])
+        self.assertFailsOnly(text, "general-rule")
+
+    def test_a_rule_cell_of_only_dashes_fails(self):
+        text = make_general_report(required=[general_row("---")])
+        self.assertFailsOnly(text, "general-rule")
+
+    def test_a_mark_in_the_rule_cell_fails(self):
+        text = make_general_report(required=[general_row("GEN-01 ⚑")])
+        self.assertFailsOnly(text, "general-rule")
+
+    def test_an_approve_section_in_the_general_part_fails(self):
+        self.assertFailsOnly(self.full_general(approve=True), "general-approve")
+
+    def test_a_wrong_last_line_fails(self):
+        self.assertFailsOnly(self.full_general(last="The skill edits a file."), "general-last-line")
+
+    def test_text_after_the_last_line_fails(self):
+        self.assertFailsOnly(self.full_general(normal="Some more text."), "general-last-line")
+
+    def test_a_missing_last_line_fails(self):
+        self.assertFailsOnly(self.full_general(last=""), "general-last-line")
+
+    # ----- the mode
+    def test_a_normal_title_after_the_general_part_is_graded_by_the_existing_check(self):
+        normal = make_report(required=[row("NAME-04")], intake=False)
+        self.assertFailsCheck(make_general_report(required=[general_row("GEN-02")], normal=normal), "sections")
+
+    def test_a_mixed_reply_keeps_approve_as_the_last_section_of_the_normal_part(self):
+        normal = make_report(required=[row("NAME-04")], approve="Wrong text.")
+        self.assertFailsCheck(make_general_report(required=[general_row("GEN-02")], normal=normal), "approve")
+
+    def test_a_general_title_under_another_line_1_fails_the_existing_check(self):
+        self.assertFailsCheck(self.full_general(line1="A reply that starts in another way."), "sections")
+
+    def test_a_leading_blank_line_is_not_a_general_reply(self):
+        self.assertFailsCheck("\n" + self.full_general(), "sections")
+
+    def test_a_normal_report_does_not_run_the_general_check(self):
+        _, out, _ = self.grade(make_report(required=[row("NAME-04")]))
+        self.assertNotIn("general-", out)
 
 
 if __name__ == "__main__":
