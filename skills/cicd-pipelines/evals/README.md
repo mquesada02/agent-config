@@ -74,8 +74,9 @@ The intake script prints 29 facts: the 16 CI facts, 12 CD facts and the `stack` 
 | `release_tag_pattern` | one glob: `v*`, `[0-9]*` or `*@*` | `v*`, status `default` |
 | `provenance` | true only for a public package of a public repo | `false`, status `default` when the visibility is not readable |
 | `deploy_history` | the last 10 successful runs of `deploy.yml` (any ref), with the median of each job | `null`, status `unknown` |
+| `stack` | `{languages, ci_systems}`: a list of `{item, file}` for each | `{"languages": [], "ci_systems": []}`, status `unknown` (status `detected` when at least one item is found) |
 
-The `stack` fact comes after the table above. Its value is `{languages, ci_systems}`: each entry is `{item, file}`, the detected item and the file that showed it. Languages come from manifest files at the repo root and up to 2 folder levels below it (the folders `node_modules`, `.git`, `vendor` and `target` are skipped). CI systems come from CI files at the repo root only. When no item is found, the review uses `{"languages": [], "ci_systems": []}` and the status is `unknown`. The status is `detected` when at least one item is found. The recorded value of each case is the output of the script on the `repo` folder of the case, with `intake.json` left out.
+The `stack` fact is the last key. Its value is `{languages, ci_systems}`: each entry is `{item, file}`, the detected item and the file that showed it. Languages come from manifest files at the repo root and up to 2 folder levels below it (the folders `node_modules`, `.git`, `vendor` and `target` are skipped). CI systems come from CI files at the repo root only. When no item is found, the review uses `{"languages": [], "ci_systems": []}` and the status is `unknown`. The status is `detected` when at least one item is found. The recorded value of each case is the output of the script on the `repo` folder of the case, with `intake.json` left out.
 
 `deploy_history` reads `deploy.yml` only. `run_history` still reads `ci.yml` on the default branch only, and `required_checks` is unchanged.
 
