@@ -5,10 +5,9 @@ Usage: grade_eval_results.py RESULT.json [--evals DIR]
 
 Plugin eval has no custom-code graders, so this script runs grade_report.py and grade_rule_ids.py on the
 final message of each with-arm run of each review case (a case that has the section-summary grader or the
-general-report grader). The
-final message is the `result` field of the last line of the run's trace (`tracePath` in the result), and
-the trace exists only when the eval ran with --keep-temp. The expect and forbid lists come from
-DIR/<case>/expect.json (default DIR: the evals folder beside the scripts folder).
+general-report grader). The final message is the `result` field of the last line of the run's trace
+(`tracePath` in the result), and the trace exists only when the eval ran with --keep-temp. The expect and
+forbid lists come from DIR/<case>/expect.json (default DIR: the evals folder beside the scripts folder).
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failed check, one line "<case>#<n>: PASS|FAIL"
 for each run, then PASS or FAIL. Exit code: 0 pass, 1 fail, 2 usage error or unreadable result.
 """

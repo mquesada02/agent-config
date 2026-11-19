@@ -8,7 +8,7 @@ flag-section, lock-note, defaults, approve, tools (a bullet for each tool: its v
 A reply whose line 1 starts with "General guidance:" is a general reply (the fallback form). Its general part
 (up to a normal report title, if one follows) gets the checks general-title, general-result, general-intake,
 general-columns, general-rule, general-approve and general-last-line. A normal report that follows it (a mixed
-repo) gets the checks above.
+repo) gets the checks of the normal form, listed at the top.
 Output: one line "FAIL <check>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 """
@@ -35,7 +35,7 @@ GENERAL_PREFIX = "General guidance:"
 GENERAL_TITLE = re.compile(r"^# cicd-pipelines general review: \S")
 GENERAL_COLUMNS = ["Rule", "Where", "Problem", "Fix"]
 GENERAL_LAST = "The skill edits no file in general mode."
-GEN_ID = re.compile(r"^GEN-[0-9]+$")
+GENERAL_ID = re.compile(r"^GEN-[0-9]+$")
 SEPARATOR_CELL = re.compile(r"^:?-+:?$")
 # Every section marker, in contract order: (name, test on a stripped line).
 MARKERS = [
@@ -257,7 +257,7 @@ def grade_general(lines):
         if header != GENERAL_COLUMNS:
             fail("general-columns", f"the table columns are not {GENERAL_COLUMNS}")
         for cells in rows:
-            if not GEN_ID.match(cells[0]):
+            if not GENERAL_ID.match(cells[0]):
                 fail("general-rule", f"the Rule cell {cells[:1]} is not one GEN id")
     if APPROVE_HEADING in stripped:
         fail("general-approve", "the general part has a ## Approve section")

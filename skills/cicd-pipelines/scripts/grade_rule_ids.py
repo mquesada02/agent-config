@@ -4,7 +4,8 @@
 Usage: grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]
 
 REPORT is a path, or - for stdin. The grader reads the Rule cell of each table row
-(never prose): the second cell of a table whose header starts with a `#` column, else the first cell. It passes when every --expect token is found and no --forbid token is found.
+(never prose): the second cell of a table whose header starts with a `#` column, else the first cell.
+It passes when every --expect token is found and no --forbid token is found.
 Output: one line "FAIL <kind>:<id>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 """
