@@ -247,10 +247,9 @@ class ModeChoiceText(unittest.TestCase):
             'For an uncovered part, follow "General mode" in [create.md](create.md) and ask no CD question.'), bullet)
 
     def test_the_mode_choice_applies_general_mode_to_a_create_request(self):
-        section = PICK_SECTION
-        self.assertIn("general mode applies to a review, to a create request and to another edit.", section)
-        self.assertNotIn("a create request keeps the create text below", section)
-        self.assertIn('follow "general mode" in [create.md](create.md)', section)
+        self.assertIn("general mode applies to a review, to a create request and to another edit.", PICK_SECTION)
+        self.assertNotIn("a create request keeps the create text below", PICK_SECTION)
+        self.assertIn('follow "general mode" in [create.md](create.md)', PICK_SECTION)
 
     def test_the_modules_entry_of_create_md_names_the_general_mode_section(self):
         entry = [l for l in SKILL_MD.splitlines() if l.startswith("- [create.md]")][0]

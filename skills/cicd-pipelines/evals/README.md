@@ -238,7 +238,7 @@ python3 skills/cicd-pipelines/scripts/grade_create_results.py <results folder>/r
 
 ## General cases
 
-The general-mode cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md` and in `create.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` (29 facts, with the `stack` fact set: detected languages and CI systems, or empty lists with the status `unknown` for the empty repo of the create case), and its prompt tells the run to use that file and not to run the intake script. Every fixture is synthetic.
+The general-mode cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md` and in `create.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` with 29 facts and the `stack` fact set. The `stack` fact lists the detected languages and CI systems. For the empty repo of the create case, it holds empty lists and the status `unknown`. The prompt of each case tells the run to use that file and not to run the intake script. Every fixture is synthetic. The create case has 40 turns and allows the `Write` and `Edit` tools, as the `create-` cases do, so that a write by the skill shows and fails a no-write grader.
 
 | Case | Repo | What it checks |
 |---|---|---|
