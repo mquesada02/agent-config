@@ -11,7 +11,7 @@ PREFIXES = {
     "naming": "NAME", "job-graph": "GRAPH", "cost": "COST",
     "security": "SEC", "monorepo": "MONO", "maintainability": "MAINT", "deploy": "DEPLOY",
     "rollback": "ROLLBACK", "release": "RELEASE", "publish": "PUBLISH",
-    "protect": "PROTECT",
+    "protect": "PROTECT", "general": "GEN",
 }
 LEVELS = ("critical", "required", "suggestion")
 
@@ -69,17 +69,22 @@ def rule_entries(path):
     for block in re.split(r"^### ", read(path), flags=re.M)[1:]:
         heading, _, body = block.partition("\n")
         fields = {}
-        for match in re.finditer(r"^- \*\*(\w+):\*\* (.*(?:\n(?!- \*\*|### ).*)*)", body, re.M):
+        for match in re.finditer(r"^- \*\*(\w+):\*\* (.*(?:\n(?!- \*\*|### |## ).*)*)", body, re.M):
             fields[match.group(1)] = match.group(2).strip()
         entries.append((heading.strip(), fields))
     return entries
 
 
 def all_rules():
-    """List of (rule file name, id, fields) for every rule entry."""
+    """List of (rule file name, id, fields) for every covered-stack rule entry (the general file is skipped)."""
     return [(name, rule_id, fields)
-            for name, path in rule_files().items()
+            for name, path in rule_files().items() if name != "general"
             for rule_id, fields in rule_entries(path)]
+
+
+def general_rules():
+    """List of (rule file name, id, fields) for every GEN rule entry."""
+    return [("general", rule_id, fields) for rule_id, fields in rule_entries(rule_files()["general"])]
 
 
 def level(fields):
