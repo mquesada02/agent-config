@@ -1,6 +1,6 @@
 # General rules (GEN-*)
 
-Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any language and any CI system. They use no key, tool or action name of one platform. Each rule names its source or says `skill rule`, and its `From` field lists the skill rules that hold the same idea. This file is the single source of truth for these rules.
+Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any language and any CI system. They use no key, tool or action name of one platform. The sources are DORA (DevOps Research and Assessment), OWASP (Open Worldwide Application Security Project), SLSA (Supply-chain Levels for Software Artifacts), the OpenSSF (Open Source Security Foundation) guides and NIST SSDF (National Institute of Standards and Technology Secure Software Development Framework). Each rule names its source or says `skill rule`, and its `From` field lists the skill rules that hold the same idea. This file is the single source of truth for these rules.
 
 - Every GEN rule is a judgement check. No script checks it. The rules give advice only, and no GEN rule tells the skill to write a file.
 - The first word of the Severity bullet is the level (`critical`, `required` or `suggestion`). The level of a GEN rule is the most severe level among the skill rules in its `From` field.
@@ -35,17 +35,17 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 
 ### GEN-04
 - **Severity:** required
-- **Rule:** A slow test job is split into shards, or into parallel suites of about 2 minutes or more each, when its measured run time passes a limit, and the reports are merged. The number of test workers never exceeds the CPU (central processing unit) count of the runner.
+- **Rule:** A test job that runs longer than 10 minutes, by its measured run time, is split into shards. Independent suites run as parallel jobs of about 2 minutes or more each. The reports of the shards are merged. The number of test workers never exceeds the CPU (central processing unit) count of the runner.
 - **Check:** judgement
-- **Fix:** Measure the run time of the test job first. Split it only when the time is high, merge the reports, and set the worker count to the CPU count of the runner or lower.
+- **Fix:** Measure the run time of the test job first. Split it only when the time is above 10 minutes, merge the reports, and set the worker count to the CPU count of the runner or lower.
 - **Source:** skill rule
 - **From:** GRAPH-05, GRAPH-07, COST-06
 
 ### GEN-05
 - **Severity:** required
-- **Rule:** One aggregate job, which waits for all other jobs and accepts a skipped job as a pass, is the only required check of the pipeline.
+- **Rule:** One gate job, which waits for all other jobs and accepts a skipped job as a pass, is the only required check of the pipeline.
 - **Check:** judgement
-- **Fix:** Add one final gate job that depends on all required jobs and fails when one of them failed. Require only this job in the branch rules.
+- **Fix:** Add one gate job that depends on all required jobs and fails when one of them failed. Require only this job in the branch rules.
 - **Source:** skill rule
 - **From:** NAME-08
 
@@ -93,7 +93,7 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 - **Severity:** required
 - **Rule:** A change that touches unrelated files skips the work that it does not affect, with a visible notice and with a gate that accepts the skip. On a pull request in a monorepo, the pipeline runs only the affected packages. On the main branch, it runs all of them. A change that touches only docs skips the deploy with a visible notice.
 - **Check:** judgement
-- **Fix:** Add a change-detection step in the pipeline that decides which work to run. Make the final gate accept the skipped jobs, and print a notice when a deploy is skipped.
+- **Fix:** Add a change-detection step in the pipeline that decides which work to run. Make the gate job accept the skipped jobs, and print a notice when a deploy is skipped.
 - **Source:** skill rule
 - **From:** COST-03, MONO-01, DEPLOY-08
 
@@ -201,9 +201,9 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 
 ### GEN-24
 - **Severity:** required
-- **Rule:** A pipeline that deploys or publishes uses a short-lived federated identity. Each environment has its own identity, and no long-lived key is stored in the CI system.
+- **Rule:** A pipeline that deploys or publishes uses a short-lived federated identity. Each environment has its own identity, and no long-lived key is stored in the CI system. A job gets the identity only when it runs no install and no build.
 - **Check:** judgement
-- **Fix:** Set up federated trust between the CI system and the target. Create one identity for each environment, and delete each stored long-lived key.
+- **Fix:** Set up federated trust between the CI system and the target. Create one identity for each environment, delete each stored long-lived key, and give the identity only to jobs that run no install and no build.
 - **Source:** OWASP CICD-SEC-6
 - **From:** DEPLOY-04, PUBLISH-01
 
@@ -217,9 +217,9 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 
 ### GEN-26
 - **Severity:** required
-- **Rule:** The release job uses a credential of narrow scope that belongs to a machine identity. It does not use the personal token of a developer.
+- **Rule:** The release job uses a credential of narrow scope that belongs to a machine identity. It does not use the personal token of a developer. The credentials of an app identity are kept in an environment, and the job names that environment.
 - **Check:** judgement
-- **Fix:** Replace the personal token with the built-in token of the pipeline or with a token of an app identity, and grant it only the scopes that the release needs.
+- **Fix:** Replace the personal token with the built-in token of the pipeline or with a token of an app identity, keep the app credentials in an environment, and grant the token only the scopes that the release needs.
 - **Source:** OWASP CICD-SEC-2
 - **From:** RELEASE-04
 
@@ -335,7 +335,7 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 - **Severity:** required
 - **Rule:** The default branch needs a pull request and one required check. It allows no force push and no bypass of its rules, not even for an administrator.
 - **Check:** judgement
-- **Fix:** Set branch rules that require a pull request and the aggregate check, block force pushes, and remove each bypass.
+- **Fix:** Set branch rules that require a pull request and the gate job, block force pushes, and remove each bypass.
 - **Source:** OWASP CICD-SEC-1; OpenSSF SCM Best Practices
 - **From:** PROTECT-01, PROTECT-05
 

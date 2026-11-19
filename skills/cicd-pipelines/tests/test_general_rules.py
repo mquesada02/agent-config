@@ -1,10 +1,11 @@
 """Structure tests of rules/general.md (the neutral GEN rules) and of the helpers that read it."""
+import functools
 import os
 import re
 import tempfile
 import unittest
 
-from skill_files import LEVELS, RULES, all_rules, general_rules, level, read, rule_entries, rule_files
+from skill_files import LEVELS, PREFIXES, RULES, all_rules, general_rules, level, read, rule_entries, rule_files
 
 GENERAL = os.path.join(RULES, "general.md")
 TOPICS = ["Pipeline stages", "Triggers per event", "Caching", "Secrets and permissions", "Pinning",
@@ -20,10 +21,11 @@ WRITE_PHRASES = ("write a file", "write the file", "create a file", "create the 
                  "write a workflow file", "create a workflow file", "edit a workflow file")
 
 
+@functools.lru_cache(maxsize=None)
 def sections():
-    """The `## ` sections of general.md: a list of (heading, body text)."""
+    """The `## ` sections of general.md: a tuple of (heading, body text)."""
     parts = re.split(r"^## ", read(GENERAL), flags=re.M)[1:]
-    return [(part.partition("\n")[0].strip(), part.partition("\n")[2]) for part in parts]
+    return tuple((part.partition("\n")[0].strip(), part.partition("\n")[2]) for part in parts)
 
 
 def topic_rules():
@@ -31,10 +33,16 @@ def topic_rules():
     return {heading: re.findall(r"^### (GEN-\d\d)\b", body, re.M) for heading, body in sections()}
 
 
+@functools.lru_cache(maxsize=None)
 def sources():
-    """The `## Sources` items as a list of (name, URL)."""
+    """The `## Sources` items as a tuple of (name, URL)."""
     body = dict(sections())["Sources"]
-    return re.findall(r"^- (.+?): (https://\S+)$", body, re.M)
+    return tuple(re.findall(r"^- (.+?): (https://\S+)$", body, re.M))
+
+
+def from_ids(fields):
+    """The ids of the skill rules in the From field of a GEN rule."""
+    return [i.strip() for i in fields["From"].split(",")]
 
 
 def source_names():
@@ -43,9 +51,9 @@ def source_names():
 
 def source_items(value):
     """The items of a Source value, each as a (listed name, section id) pair."""
-    items = []
+    names, items = source_names(), []
     for item in value.split("; "):
-        matches = [n for n in source_names() if item == n or item.startswith(n + " ")]
+        matches = [n for n in names if item == n or item.startswith(n + " ")]
         items.append((max(matches, key=len) if matches else None, item))
     return items
 
@@ -69,12 +77,13 @@ class GeneralRuleFileForm(unittest.TestCase):
         self.assertEqual(ids, [f"GEN-{n:02d}" for n in range(1, len(ids) + 1)])
 
     def test_every_rule_has_its_six_fields_in_order(self):
-        text = read(GENERAL)
         for _, rule_id, fields in self.entries:
             for field in FIELDS:
                 self.assertTrue(fields.get(field), f"{rule_id} has no {field}")
-            block = re.search(rf"^### {rule_id}\n(.*?)(?=^### |^## |\Z)", text, re.S | re.M).group(1)
-            self.assertEqual(re.findall(r"^- \*\*(\w+):\*\*", block, re.M), FIELDS, rule_id)
+        for heading, body in sections():
+            for block in re.split(r"^### ", body, flags=re.M)[1:]:
+                rule_id, _, text = block.partition("\n")
+                self.assertEqual(re.findall(r"^- \*\*(\w+):\*\*", text, re.M), FIELDS, rule_id)
 
     def test_the_check_of_every_rule_is_judgement(self):
         for _, rule_id, fields in self.entries:
@@ -83,17 +92,13 @@ class GeneralRuleFileForm(unittest.TestCase):
     def test_the_severity_is_the_most_severe_level_of_the_from_rules(self):
         for _, rule_id, fields in self.entries:
             self.assertIn(level(fields), LEVELS, rule_id)
-            wanted = max((level(self.known[i]) for i in self.from_ids(fields)), key=RANK.get)
+            wanted = max((level(self.known[i]) for i in from_ids(fields)), key=RANK.get)
             self.assertEqual(level(fields), wanted, rule_id)
-
-    @staticmethod
-    def from_ids(fields):
-        return [i.strip() for i in fields["From"].split(",")]
 
     def test_every_from_id_exists_and_the_from_ids_cover_every_rule_but_the_three_specific_ones(self):
         used = set()
         for _, rule_id, fields in self.entries:
-            for from_id in self.from_ids(fields):
+            for from_id in from_ids(fields):
                 self.assertIn(from_id, self.known, f"{rule_id} names {from_id}")
                 used.add(from_id)
         self.assertEqual(used, set(self.known) - EXCLUDED)
@@ -143,7 +148,6 @@ class GeneralRuleFileForm(unittest.TestCase):
 
 class GeneralRuleHelpers(unittest.TestCase):
     def test_the_general_file_has_the_gen_prefix_and_all_rules_skips_it(self):
-        from skill_files import PREFIXES
         self.assertEqual(PREFIXES["general"], "GEN")
         self.assertIn("general", rule_files())
         self.assertFalse([i for _, i, _ in all_rules() if i.startswith("GEN-")])
