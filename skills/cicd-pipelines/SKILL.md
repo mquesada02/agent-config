@@ -13,20 +13,33 @@ Before you pick a branch, run the intake script on the repo as one plain command
 
 ## Pick the branch
 
+First choose the mode from the `stack` fact of the intake. The covered stack is Node/TypeScript in GitHub Actions. A repo has a covered part when all 3 conditions hold: the `languages` list holds Node/TypeScript or is empty, the `ci_systems` list holds GitHub Actions or is empty, and at least one of the two lists is not empty. Each other detected language and each other detected CI system is an uncovered part.
+
+- Only the covered stack: the normal flow, as the branches below say.
+- Only uncovered parts: general mode.
+- A mixed repo (a covered part and one or more uncovered parts): the normal flow for the covered part, and general mode for each uncovered part.
+- General mode applies to a review and to another edit. A create request keeps the Create text below.
+- Repo files decide when the `stack` fact has the status `detected`. When it is `unknown`, the stack that the request names decides. When it is `unknown` and the request names no stack, ask the user one question: which language and which CI system.
+- A clash is a request that names a language when the fact holds other languages and not that one, or that names a CI system when the fact holds other CI systems and not that one. On a clash, ask the user one question before you go on.
+- A request that names a language or a CI system when the matching list of the fact is empty fills that list. It is not a clash. The covered-part test then uses the filled lists. For example, a Node/TypeScript repo with no CI file and a request for GitLab CI has no covered part.
+- A request that names one detected part of a mixed repo is not a clash. It limits the reply to that part.
+- In general mode, follow "General mode" in [review.md](review.md). Make no edit and write no file.
+
 Read the whole branch file with the Read tool, never only a part of it with a search: the parts that you need are at its end too.
 
 - **Review** (the user asks to review or check CI): follow [review.md](review.md). When the user replies to a review report with a selection (`all`, `none`, a list or a range), follow "Fix on approval" in [review.md](review.md).
 - **Create** (the user asks for a new CI workflow, CD workflows or both): follow [create.md](create.md). It asks the CD questions when they are open, picks the templates, fills them from the intake facts and ends with a self-review report.
-- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and [rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md) when the repo has a deploy workflow, and [rules/release.md](rules/release.md), [rules/publish.md](rules/publish.md) and [rules/protect.md](rules/protect.md) under their own load rules (see "Loading by need"), and keep your edit consistent with them. Do not review the whole repo.
+- **Another edit** of a workflow file: read [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md), and also [rules/monorepo.md](rules/monorepo.md) when the intake finds a monorepo, and [rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md) when the repo has a deploy workflow, and [rules/release.md](rules/release.md), [rules/publish.md](rules/publish.md) and [rules/protect.md](rules/protect.md) under their own load rules (see "Loading by need"), and keep your edit consistent with them. Do not review the whole repo. In general mode (see the mode choice above) the reply has line 1 of the general review ("General mode" in [review.md](review.md)), then the GEN rules that apply to the asked change as a bulleted list (`- GEN-NN: one line of advice`), then the last line of the general review. The skill makes no edit and runs no rule check. In a mixed repo, the rule applies to the part that the asked file belongs to: a workflow file of GitHub Actions in a Node/TypeScript repo keeps the normal rules, and any other CI file gets this general reply. A request that touches both parts gets the general reply first, then the normal flow.
 
 ## Loading by need
 
-The CI rule files (naming, job graph, cost, security and maintainability) load always. They apply to the CD workflow files too. The monorepo file loads only for a monorepo. Each CD rule file loads only when its rule below holds, and only when the file exists in `rules/`:
+The CI rule files (naming, job graph, cost, security and maintainability) load always in the normal flow. They apply to the CD workflow files too. The monorepo file loads only for a monorepo. Each CD rule file loads only when its rule below holds, and only when the file exists in `rules/`:
 
 - `DEPLOY` and `ROLLBACK` ([rules/deploy.md](rules/deploy.md) and [rules/rollback.md](rules/rollback.md)): when the request names a deploy or a rollback, or the repo has a deploy workflow (the `existing_workflows` fact lists `deploy.yml`, or the `deploy_targets` fact has a value).
 - `RELEASE` ([rules/release.md](rules/release.md)): when the request names a release, or the repo has a release tool or tag-driven releases: the `release_tool` fact has a value, the `existing_workflows` fact lists `release.yml`, or the `release_tag_pattern` fact has the status `detected` (a tag of a version shape exists).
 - `PUBLISH` ([rules/publish.md](rules/publish.md)): when the intake finds a published package (the `package_kind` fact).
 - `PROTECT` ([rules/protect.md](rules/protect.md)): with any CD rule file, or when the request is about branch protection, rulesets or environments.
+- `GEN` ([rules/general.md](rules/general.md)): in general mode only. When the repo has no covered part, load no other rule file. A mixed repo loads the covered rule files as above, and also the GEN file for the uncovered parts.
 
 ## Modules
 
@@ -52,4 +65,4 @@ The CI rule files (naming, job graph, cost, security and maintainability) load a
 - [rules/release.md](rules/release.md): RELEASE-01 to RELEASE-06 (one release tool, annotated tags on main, the tag ruleset, the release token and actor, the triggers, release notes). Load it by the RELEASE rule of "Loading by need".
 - [rules/publish.md](rules/publish.md): PUBLISH-01 to PUBLISH-05 (npm trusted publishing, the frozen install with no cache, dependency order, a safe re-run, the `release.yml` name). Load it by the PUBLISH rule of "Loading by need".
 - [rules/protect.md](rules/protect.md): PROTECT-01 to PROTECT-08 (the main ruleset, the tag ruleset, environment policies, prod reviewers, no admin bypass, classic protection that stacks with a ruleset, claimed protections, role ARNs and App keys per environment). Load it by the PROTECT rule of "Loading by need".
-- [rules/general.md](rules/general.md): GEN-01 to GEN-46 (neutral rules for any language and CI system, in 6 topics: pipeline stages, triggers per event, caching, secrets and permissions, pinning, release and deploy safety; each rule cites its source). No mode loads it yet; a later ticket of the fallback effort adds the load.
+- [rules/general.md](rules/general.md): GEN-01 to GEN-46 (neutral rules for any language and CI system, in 6 topics: pipeline stages, triggers per event, caching, secrets and permissions, pinning, release and deploy safety; each rule cites its source). General mode loads it (see "Loading by need").

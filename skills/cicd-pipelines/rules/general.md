@@ -5,7 +5,7 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 - Every GEN rule is a judgement check. No script checks it. The rules give advice only, and no GEN rule tells the skill to write a file.
 - The first word of the Severity bullet is the level (`critical`, `required` or `suggestion`). The level of a GEN rule is the most severe level among the skill rules in its `From` field.
 - A source name in the Source bullet is a name of the `## Sources` list. A section id can follow it.
-- No mode loads this file yet. A later ticket of the effort adds the load.
+- General mode loads this file (see SKILL.md, "Loading by need").
 
 ## Pipeline stages
 
