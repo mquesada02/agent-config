@@ -17,11 +17,16 @@ FACT_NAMES = ("default_branch", "package_manager", "node_version_app", "engines"
 SINGLE_STACK = ("general-review-go-gitlab", "general-review-rust-github")
 GENERAL_REVIEW = (*SINGLE_STACK, "general-review-mixed-node-rust")
 CLASH = "general-clash-rust-node"
-ALL_CASES = (*GENERAL_REVIEW, CLASH)
+CREATE = "general-create-python-empty"
+ALL_CASES = (*GENERAL_REVIEW, CLASH, CREATE)
+CREATE_GRADERS = {"general-line-1.md": ("^General guidance:", "m"),
+                  "general-stage.md": (r"^\s*\d+\.\s.*\bGEN-\d\d\b", "m"),
+                  "general-last-line.md": (r"The skill edits no file in general mode\.\s*$", None)}
 GEN_IDS = {rule_id for _, rule_id, _ in general_rules()}
 SKILL_MD = read(os.path.join(SKILL, "SKILL.md"))
 REVIEW_MD = read(os.path.join(SKILL, "review.md"))
 GENERAL_MD = read(os.path.join(RULES, "general.md"))
+CREATE_MD = read(os.path.join(SKILL, "create.md"))
 ANY_PATHS = (".gitlab-ci.yml", "Jenkinsfile", "Cargo.toml", ".github/workflows/ci.yml", "src/main.rs")
 SHELL_WRITES = ("sed -i s/a/b/ {p}", "echo x > {p}", "tee {p}", "mv a {p}", "cp a {p}", "printf x >> {p}")
 SHELL_READS = ("cat {p}", "ls {p} 2>&1", "grep a {p} > /dev/null")
@@ -66,6 +71,9 @@ class GeneralCaseList(unittest.TestCase):
     def test_the_clash_case_expects_and_forbids_nothing(self):
         self.assertEqual(expect_lists(CLASH), ([], []))
 
+    def test_the_create_case_expects_and_forbids_nothing(self):
+        self.assertEqual(expect_lists(CREATE), ([], []))
+
 
 class GeneralCaseFiles(unittest.TestCase):
     def test_each_case_has_its_files(self):
@@ -73,14 +81,28 @@ class GeneralCaseFiles(unittest.TestCase):
             for part in ("case.yaml", "scaffold.sh", "prompt.md", "expect.json", "repo"):
                 self.assertTrue(os.path.exists(os.path.join(case_dir(name), part)), f"{name}/{part}")
 
-    def test_each_case_has_a_recorded_intake_with_the_29_facts_and_a_detected_stack(self):
+    def test_each_case_has_a_recorded_intake_with_the_29_facts_and_the_stack_fact_of_its_repo(self):
         for name in ALL_CASES:
             with open(os.path.join(case_dir(name), "repo", "intake.json"), encoding="utf-8") as handle:
                 intake = json.load(handle)
             self.assertEqual(sorted(intake), sorted(FACT_NAMES), name)
             for fact, value in intake.items():
                 self.assertEqual(sorted(value), ["source", "status", "value"], f"{name} {fact}")
-            self.assertEqual(intake["stack"]["status"], "detected", name)
+            if name == CREATE:
+                self.assertEqual(intake["stack"]["status"], "unknown", name)
+                self.assertEqual(intake["stack"]["value"], {"languages": [], "ci_systems": []}, name)
+            else:
+                self.assertEqual(intake["stack"]["status"], "detected", name)
+
+    def test_the_create_repo_holds_only_the_recorded_intake(self):
+        self.assertEqual(os.listdir(os.path.join(case_dir(CREATE), "repo")), ["intake.json"])
+
+    def test_the_create_prompt_asks_for_a_python_pipeline_and_allows_writes_so_that_a_write_shows(self):
+        prompt = os.path.join(case_dir(CREATE), "prompt.md")
+        self.assertIn("Create a CI pipeline for our Python project.", read(prompt))
+        meta = frontmatter(prompt)
+        self.assertEqual(meta["max_turns"], "40")
+        self.assertEqual(meta["allowed_tools"], "[Read, Glob, Grep, Skill, Bash, Write, Edit]")
 
     def test_the_prompt_points_to_the_intake_and_names_neither_the_skill_nor_a_rule(self):
         for name in ALL_CASES:
@@ -151,6 +173,28 @@ class GeneralCaseGraders(unittest.TestCase):
         self.assertEqual(grader_files("general-review-mixed-node-rust"),
                          reply | {f"{s}.md" for s in SECTION_GRADERS} | {f"expect-{r}.md" for r in expect})
         self.assertEqual(grader_files(CLASH), base | {"no-fallback.md", "one-question.md"})
+        self.assertEqual(grader_files(CREATE), base | set(CREATE_GRADERS))
+
+    def test_the_create_graders_are_regex_graders_with_the_spec_patterns(self):
+        for file, (pattern, flags) in CREATE_GRADERS.items():
+            meta = frontmatter(os.path.join(graders(CREATE), file))
+            self.assertEqual((meta["type"], meta["pattern"], meta.get("flags")), ("regex", pattern, flags), file)
+            self.assertNotIn("match", meta)
+
+    def test_the_create_graders_accept_a_correct_plan_and_refuse_a_wrong_one(self):
+        line1, stage, last = (re.compile(p, re.M if f else 0) for p, f in CREATE_GRADERS.values())
+        good = ("General guidance: this repo uses Python with no CI system yet, which the skill does not cover. "
+                "The advice comes from the cited sources, with no rule check.\n\n1. Checkout: get the code. Follows GEN-05.\n"
+                "2. Test: run pytest. Follows GEN-05, GEN-17.\n\nThe skill edits no file in general mode.\n")
+        self.assertTrue(line1.search(good))
+        self.assertTrue(stage.search(good))
+        self.assertTrue(last.search(good))
+        self.assertIsNone(stage.search("1. Checkout: get the code.\n"))
+        self.assertIsNone(line1.search("Here is a plan. General guidance: x"))
+        self.assertIsNone(last.search(good + "Then the normal flow follows.\n"))
+
+    def test_the_create_case_has_no_marker_so_the_eval_results_script_skips_it(self):
+        self.assertFalse({"general-report.md", "section-summary.md"} & grader_files(CREATE))
 
     def test_the_mixed_case_section_graders_are_regex_graders(self):
         for section in SECTION_GRADERS:
@@ -195,9 +239,22 @@ class ModeChoiceText(unittest.TestCase):
         self.assertNotIn("**Another edit**", section)
         self.assertNotIn("**Create**", section)
 
-    def test_the_create_bullet_is_unchanged(self):
+    def test_the_create_bullet_keeps_its_first_sentence_and_ends_with_the_general_mode_sentence(self):
         self.assertIn("- **Create** (the user asks for a new CI workflow, CD workflows or both): follow [create.md](create.md).",
                       SKILL_MD)
+        bullet = [l for l in SKILL_MD.splitlines() if l.startswith("- **Create**")][0]
+        self.assertTrue(bullet.endswith(
+            'For an uncovered part, follow "General mode" in [create.md](create.md) and ask no CD question.'), bullet)
+
+    def test_the_mode_choice_applies_general_mode_to_a_create_request(self):
+        section = PICK_SECTION
+        self.assertIn("general mode applies to a review, to a create request and to another edit.", section)
+        self.assertNotIn("a create request keeps the create text below", section)
+        self.assertIn('follow "general mode" in [create.md](create.md)', section)
+
+    def test_the_modules_entry_of_create_md_names_the_general_mode_section(self):
+        entry = [l for l in SKILL_MD.splitlines() if l.startswith("- [create.md]")][0]
+        self.assertIn("the general-mode section", entry)
 
     def test_another_edit_has_the_general_mode_rule(self):
         bullet = lowered_slice(SKILL_MD, "- **another edit**", "## loading by need")
@@ -255,6 +312,49 @@ class GeneralModeSection(unittest.TestCase):
         section = GENERAL_SECTION + lowered_slice(SKILL_MD, "## pick the branch", "## modules")
         for word in ("interim", "command -v", "temporary", "load every rule file", "branch protection change needed"):
             self.assertNotIn(word, section)
+
+
+CREATE_SECTION = lowered_slice(CREATE_MD, "## general mode", "## fill table")
+
+
+class CreateGeneralModeSection(unittest.TestCase):
+    def test_the_section_sits_between_steps_and_fill_table(self):
+        low = CREATE_MD.lower()
+        self.assertLess(low.index("## steps"), low.index("## general mode"))
+        self.assertLess(low.index("## general mode"), low.index("## fill table"))
+
+    def test_the_section_holds_the_reply_contract_in_order(self):
+        order = ["line 1 of the general review", "a numbered plan", "follows gen-nn.", "one or more gen ids",
+                 "the last line of the general part", "the skill edits no file in general mode."]
+        positions = [CREATE_SECTION.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_section_says_what_it_does_not_do(self):
+        for words in ("write no file", "ask no ci, cd or both question", "no deploy target question",
+                      "no template", "no actionlint", "no `## approve`", "no table"):
+            self.assertIn(words, CREATE_SECTION)
+
+    def test_the_section_loads_the_general_rule_file_and_no_other_rule_file_for_a_repo_with_no_covered_part(self):
+        for words in ("[rules/general.md](rules/general.md)", "no covered part", "load no other rule file",
+                      "a mixed repo", "covered part loads its own rule files"):
+            self.assertIn(words, CREATE_SECTION)
+
+    def test_the_section_orders_a_mixed_repo_and_limits_a_request_that_names_one_part(self):
+        for words in ("general plan first", "normal create flow follows in full", "limits the reply to that part",
+                      "only when the named part is uncovered", "only when the named part is covered"):
+            self.assertIn(words, CREATE_SECTION)
+
+    def test_the_section_says_when_the_unknown_stack_question_is_skipped(self):
+        self.assertIn("names the language", CREATE_SECTION)
+        self.assertIn("skip the unknown-stack question", CREATE_SECTION)
+
+    def test_the_section_avoids_the_words_that_the_tests_ban(self):
+        for word in ("interim", "command -v", "temporary", "load every rule file", "uses:"):
+            self.assertNotIn(word, CREATE_SECTION)
+
+    def test_the_seven_numbered_steps_stay_in_the_steps_section(self):
+        steps = lowered_slice(CREATE_MD, "## steps", "## general mode")
+        self.assertEqual(len(re.findall(r"(?m)^\d+\. ", steps)), 7)
 
 
 if __name__ == "__main__":

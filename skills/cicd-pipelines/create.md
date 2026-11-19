@@ -34,6 +34,24 @@ Ask before step 1, and ask nothing else. A CI-only request asks no question.
    - For each written file, a heading `### <path>` and the file text in a fenced `yaml` block (a `bash` block for a shell script). The block holds the whole file, line by line, exactly as written: never a summary, an outline, a list of jobs, comments in place of the steps, or a note that the file is on disk. If actionlint is listed as installed but the call fails (for example `command not found`), say so in `## Created`, and the `Tools:` bullet still follows the `installed_tools` fact.
    - The report of the review report contract in [review.md](review.md), starting with the title line `# cicd-pipelines review: .github/workflows/ci.yml (created)` and the `**Result:` line right after it (for a run that writes no `ci.yml`, the title line names the first written file, in the order `deploy.yml`, `release.yml`, `rollback.yml`). Its section 2 names the defaults that the run used. Its job graph section sketches the created jobs, with one line for each trigger of a CD run: push to main (`Deploy`), the final tag (`Deploy`, prod), the dispatch (`Rollback`) and push to main (`Release`). A CD run applies the CD rules to the files that it wrote and raises no PROTECT row: the ⚑ section lists the prerequisites that create does not make (the AWS roles and variables, the artifact bucket, the environments, the release App and its variables, the Changesets config and the `release` script), and the message offers a review for protection. Write no text after the approval line.
 
+## General mode
+
+Use this section when the mode choice of [SKILL.md](SKILL.md) gives general mode for a create request, that is, for a part of the repo that the skill does not cover. The reply gives advice only. The questions, the steps above and the fill table below do not apply to the general part.
+
+- Write no file. Ask no CI, CD or both question and no deploy target question. Use no template, no fill table, no actionlint run and no self-review of files.
+- Read the intake JSON for the repo facts, as the rest of this file does, and load [rules/general.md](rules/general.md) so that each stage names GEN ids that exist. When the repo has no covered part, load no other rule file. In a mixed repo, the covered part loads its own rule files as the steps above say, and the general part uses only the GEN rules.
+- When the `stack` fact has the status `unknown` and the request names the language (for example Python), that language fills the empty list: skip the unknown-stack question of [SKILL.md](SKILL.md) and go on. A clash still gets its one question, as the mode choice says.
+
+The general reply has these parts, in this order:
+
+1. Line 1 of the general review ("General mode" in [review.md](review.md)), with its two variants. A repo with two or more uncovered parts gets one line that names every uncovered part. A request that names only a language, with no CI system known, says that there is no CI system yet. Every variant starts with `General guidance:`.
+2. A numbered plan of the pipeline stages, one stage for each numbered line, in the order that the stages run. Each stage line has the form `N. <stage name>: <one sentence of advice for the repo stack>. Follows GEN-NN.` The `Follows` part lists one or more GEN ids, separated by commas (for example `Follows GEN-05, GEN-17.`). Each stage names at least one GEN id of [rules/general.md](rules/general.md). Write the stage names and the advice in neutral words and with the tools of the repo language (for example `pytest` for Python), with no GitHub Actions key, no named Action and no Node tool unless the repo language is Node.
+3. The last line of the general part: `The skill edits no file in general mode.` In a general-only reply it is the last line of the reply. In a mixed repo the normal create flow follows it, so it is the last line of the general part only.
+
+The plan covers the stages that fit the request. A request for a CI pipeline gets: the triggers and the permissions of the pipeline, a checkout, an install with the cache, a lint, a test and a build. A request that names a release, a publish or a deploy adds a final stage for it, which follows the GEN rules of the topic "Release and deploy safety". Draw the GEN ids from the topics of [rules/general.md](rules/general.md) that apply to the request. The plan has no `## Approve` line, no table and no Required checks line, because there is nothing to approve and no rule check runs.
+
+In a mixed repo, write the general plan first (its line 1, the plan, its last line). Then the normal create flow follows in full for the covered part, with its questions, steps and final message. A request that names one detected part limits the reply to that part: it gets the general plan only when the named part is uncovered, and the normal flow only when the named part is covered.
+
 ## Fill table
 
 | Fact | What changes |
