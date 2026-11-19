@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: run-04-not-checked
+context:
+  scaffold_script: scaffold.sh
