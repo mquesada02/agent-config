@@ -236,6 +236,24 @@ python3 skills/cicd-pipelines/scripts/grade_create_results.py <results folder>/r
 - **Model run.** The model run of these cases belongs to the eval ticket (issue 362), not to the ticket that added them. The unit tests of the cases are in `tests/test_create_cases.py`, and the tests of the two scripts are in `tests/test_check_workflow.py` and `tests/test_grade_create_results.py`.
 - **No session transcript.** A create case has no `history.jsonl`, so a run writes no transcript into the case folder.
 
+## General cases
+
+The general-mode review cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` (29 facts, with the `stack` fact set), and its prompt tells the review to use that file and not to run the intake script. Every fixture is synthetic.
+
+| Case | Repo | What it checks |
+|---|---|---|
+| `general-review-rust-github` | Rust on GitHub Actions | The general review: `General guidance:` on line 1, GEN rows with no `#` column, no `## Approve`. Expects 4 GEN ids. |
+| `general-review-go-gitlab` | Go on GitLab CI | The same form for a CI system that the skill does not cover. Expects 4 GEN ids. |
+| `general-review-mixed-node-rust` | Node/TypeScript and Rust on GitHub Actions | The general part first, then the normal report in full. Expects a GEN id and a normal rule id, and holds the section graders of a normal review. |
+| `general-clash-rust-node` | Rust repo, and the request asks for a Node pipeline | A clash: the reply is one question, with no `General guidance:` line. |
+
+- `general-report.md` (a `regex` grader on `^General guidance:`) marks a general review. `grade_eval_results.py` scores each case that has it, as it scores each case that has `section-summary`. The clash case has no marker, so the script does not score it.
+- An `expect-GEN-NN.md` grader finds the id in the first cell of a row (`^\|\s*GEN-NN\s*\|`), because the general table has no `#` column.
+- The `no-edit.md`, `no-write.md` and `no-shell-write.md` graders of a general case match any path, not only `.github/workflows`, because general mode writes no file.
+- `no-fallback.md` (a `regex` grader with `match: not_contains` on `General guidance:`) is in the clash case and in `clean`: a covered repo must not use the fallback.
+- `one-question.md` is an `llm` judge of the clash case.
+- The tests of these cases are in `tests/test_general_cases.py`.
+
 ## Fix-quality rationale
 
 Plugin eval tells an `llm` judge to answer with one word, keeps only the votes, and shows the judge one input (the last message). So a result file holds no reason for a `fix-quality` fail, and the judge cannot see the workflow. `scripts/judge_fix_quality.py` reads the same result and the kept traces (`--keep-temp`), and asks a haiku judge one question for each table row, with the exact text of the fixture workflow files (`repo/.github`) and the flag section for a row marked with ⚑. It reads the NAME-09 rules and the ⚑ row rule from the case's `graders/fix-quality.md`, so the script and the grader cannot drift. It prints `PASS` or `FAIL` and a reason for each row, then the row and run pass rates. It costs one judge call for each row, so use `--case <glob>` to limit it:

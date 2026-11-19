@@ -4,7 +4,7 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 
 ## Steps
 
-1. Load the rule files by need. Load the CI rule files always: [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md). Load [rules/monorepo.md](rules/monorepo.md) only when the `monorepo` fact of the intake has `monorepo: true`. A single package never loads it. Load each CD rule file that exists in `rules/` only when its load rule of "Loading by need" in [SKILL.md](SKILL.md) holds. The CI rules apply to the CD workflow files too.
+1. Load the rule files by need. Load the CI rule files always: [rules/naming.md](rules/naming.md), [rules/job-graph.md](rules/job-graph.md), [rules/cost.md](rules/cost.md), [rules/security.md](rules/security.md) and [rules/maintainability.md](rules/maintainability.md). Load [rules/monorepo.md](rules/monorepo.md) only when the `monorepo` fact of the intake has `monorepo: true`. A single package never loads it. Load each CD rule file that exists in `rules/` only when its load rule of "Loading by need" in [SKILL.md](SKILL.md) holds. The CI rules apply to the CD workflow files too. In a repo with no covered part, load no covered rule file: follow "General mode" below.
 2. Read the intake JSON (see [SKILL.md](SKILL.md)). It holds every repo fact: do not read `package.json`, the lockfile or the settings yourself, and run no other shell command than the tools of [tools.md](tools.md) that the intake says are on PATH (step 6) and the pin check of [tools.md](tools.md) ("Check the pins"), which you run only when a workflow has a `uses:` line pinned to a 40-character SHA. The fix flow has its own commands (see "Fix on approval"). Use the Read, Glob and Grep tools for the workflow files. Name every default and every unknown fact in section 2 of the report (see "Intake facts" below).
 3. Take the required checks from the `required_checks` fact (see "Required checks" below). Do this before you propose a rename or a split.
 4. Take the tool status from the `installed_tools` fact (see "Tool status" below). The install hints are in [tools.md](tools.md).
@@ -12,6 +12,25 @@ Review the GitHub Actions workflows of a repo against the rules and write a repo
 6. Run the installed tools: for each of `actionlint` and `zizmor` whose `installed_tools` entry has `installed: true`, run it as [tools.md](tools.md) says and merge its findings into the findings of step 5 (see "Merging the output" in tools.md). A tool that is not on PATH is not run, and the review continues with the skill's own rules.
 7. Write the report as your final message. Use the report contract below.
 8. Stop. Make no edit to any file, not even a workflow, before the user approves. When the user replies to the approval line, follow "Fix on approval". Write branch protection, rulesets and environments only through `scripts/protect_write.py --apply`, after the 2-step approval of the protection step in "Fix on approval".
+
+## General mode
+
+Use this section when the mode choice of [SKILL.md](SKILL.md) gives general mode for a review. The reply gives advice only, and it edits no file. Each finding is one GEN rule of [rules/general.md](rules/general.md), judged by reading the repo files. The skill runs no tool and no check script for these findings.
+
+The general reply has these parts, in this order:
+
+1. Line 1 names the fallback and says where the advice comes from, for example `General guidance: this repo uses Rust and GitLab CI, which the skill does not cover. The advice comes from the cited sources, with no rule check.` When the request names only a language and no CI system is known, the line says that there is no CI system yet, for example `General guidance: this repo uses Python with no CI system yet, which the skill does not cover. The advice comes from the cited sources, with no rule check.` A repo with two or more uncovered parts gets one general part, and its line 1 names every uncovered part.
+2. The title `# cicd-pipelines general review: <scope>`, where the scope is a path or `all CI files`.
+3. The line `**Result: N critical, N required, N suggestions.**`, as in the normal report.
+4. The `Intake:` line. It lists the `stack` fact and the other facts that you used, and it ends with `Defaults:` followed by each default that the review used, or `Defaults: none.`, as in the normal report.
+5. One table for each severity that has a finding, in the order `## Critical`, `## Required`, `## Suggestions`. The header is `| Rule | Where | Problem | Fix |`. There is no `#` column, because there is nothing to approve. The Rule cell is one GEN id. The Where cell is a `file:line`, or `repo` for a finding that is not tied to one line. Each row is one rule at one severity, and the severity comes from the rule.
+6. The last line of the general part: `The skill edits no file in general mode.`
+
+The general reply has no Required checks line, no Tools part, no Admin steps, no job graph and no `## Approve`.
+
+In a mixed repo, write the general part first, then the normal report in full. So `## Approve` stays the last section of the reply, and it numbers only the normal rows. The general part and the normal report each have their own Result line and their own `Intake:` line. A request that names one detected part limits the reply to that part.
+
+Step 8 of "Steps" and "Fix on approval" apply to the normal part only. A general-only review has no approval step, and a reply to it edits no file.
 
 ## Intake facts
 
