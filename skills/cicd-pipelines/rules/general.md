@@ -145,7 +145,7 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 - **Severity:** required
 - **Rule:** A pipeline that has privileged credentials, such as a release or a deploy pipeline, does not save a cache. A cache that an untrusted run wrote cannot reach a privileged run.
 - **Check:** judgement
-- **Fix:** Turn off the cache save in each privileged pipeline. Restore a cache only when an unprivileged run on a protected branch wrote it.
+- **Fix:** Turn off the cache save in each privileged pipeline.
 - **Source:** skill rule
 - **From:** SEC-09
 
@@ -360,7 +360,7 @@ Neutral rules for CI/CD (Continuous Integration and Continuous Delivery) in any 
 - **Rule:** A deploy to production needs a human approval. The author of the change cannot give that approval.
 - **Check:** judgement
 - **Fix:** Set required reviewers on the production environment, and turn on the setting that stops an author from approving the own change.
-- **Source:** DORA; OWASP CICD-SEC-1
+- **Source:** skill rule
 - **From:** PROTECT-04
 
 ### GEN-44
