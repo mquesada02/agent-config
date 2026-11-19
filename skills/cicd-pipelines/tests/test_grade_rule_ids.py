@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from report_fixtures import TempReport, make_report, row, run_script
+from report_fixtures import TempReport, general_row, make_general_report, make_report, row, run_script
 
 SCRIPT = "grade_rule_ids.py"
 
@@ -94,6 +94,38 @@ class GradeRuleIds(unittest.TestCase):
         text = make_report(suggestion=[row("obfuscation")])
         code, _, _ = self.grade(text, "--expect", "obfuscation")
         self.assertEqual(code, 0)
+
+    def test_a_general_reply_finds_its_ids_in_the_first_cell(self):
+        text = make_general_report(required=[general_row("GEN-02"), general_row("GEN-03")])
+        code, out, _ = self.grade(text, "--expect", "GEN-02", "GEN-03")
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def test_a_general_reply_gives_no_token_for_its_header_or_its_other_cells(self):
+        text = make_general_report(required=[general_row("GEN-02", "ci.yml:3")])
+        code, out, _ = self.grade(text, "--forbid", "Rule", "Where", "repo", "ci.yml:3", "A problem.")
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def test_a_forbidden_gen_id_fails(self):
+        text = make_general_report(required=[general_row("GEN-02")])
+        code, out, _ = self.grade(text, "--forbid", "GEN-02")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL forbid:GEN-02:", out)
+
+    def test_a_mixed_reply_finds_both_kinds_of_id(self):
+        normal = make_report(required=[row("NAME-04")])
+        text = make_general_report(required=[general_row("GEN-02")], normal=normal)
+        code, out, _ = self.grade(text, "--expect", "GEN-02", "NAME-04", "--forbid", "Rule", "Where")
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def test_a_normal_table_still_reads_the_second_cell(self):
+        text = make_report(required=[row("NAME-04")])
+        code, out, _ = self.grade(text, "--forbid", "1", "Rule")
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def test_a_row_with_too_few_cells_gives_no_token(self):
+        text = "| # | Rule | Where |\n|---|---|---|\n| 1 |\n"
+        code, out, _ = self.grade(text, "--forbid", "1")
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
 
     def test_an_unreadable_report_is_a_usage_error(self):
         code, _, err = run_script(SCRIPT, [os.path.join("no", "such", "report.md")])

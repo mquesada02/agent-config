@@ -5,6 +5,10 @@ Usage: grade_report.py REPORT
 
 REPORT is a path, or - for stdin. Checks: summary, sections, tables, numbering, counts, unique,
 flag-section, lock-note, defaults, approve, tools (a bullet for each tool: its version when on PATH, an install hint when not).
+A reply whose line 1 starts with "General guidance:" is a general reply (the fallback form). Its general part
+(up to a normal report title, if one follows) gets the checks general-title, general-result, general-intake,
+general-columns, general-rule, general-approve and general-last-line. A normal report that follows it (a mixed
+repo) gets the checks of the normal form, listed at the top.
 Output: one line "FAIL <check>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
 """
@@ -27,6 +31,12 @@ APPROVE_FINDINGS = "Reply with the findings to fix: `all`, `none`, a list such a
 APPROVE_ZERO = "There is nothing to approve."
 TOOLS = ("actionlint", "zizmor")
 RULE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
+GENERAL_PREFIX = "General guidance:"
+GENERAL_TITLE = re.compile(r"^# cicd-pipelines general review: \S")
+GENERAL_COLUMNS = ["Rule", "Where", "Problem", "Fix"]
+GENERAL_LAST = "The skill edits no file in general mode."
+GENERAL_ID = re.compile(r"^GEN-[0-9]+$")
+SEPARATOR_CELL = re.compile(r"^:?-+:?$")
 # Every section marker, in contract order: (name, test on a stripped line).
 MARKERS = [
     ("title", lambda s: bool(TITLE.match(s))),
@@ -209,6 +219,69 @@ def grade(text):
     return failures
 
 
+def tables(lines):
+    """Each table of the lines as (header cells, data rows): a table is a run of lines that start with `|`.
+    Its first row is the header, and a separator row (every cell is dashes, with optional colons) is skipped.
+    An empty first cell is not a separator: that row is a data row."""
+    found, current = [], None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            current = None
+            continue
+        cells = split_row(stripped)
+        if current is None:
+            current = (cells, [])
+            found.append(current)
+        elif not all(SEPARATOR_CELL.match(cell) for cell in cells):
+            current[1].append(cells)
+    return found
+
+
+def grade_general(lines):
+    """The failure lines of the general part of a general reply (the form of the general review)."""
+    failures = []
+
+    def fail(check, message):
+        failures.append(f"FAIL {check}: {message}")
+
+    stripped = [line.strip() for line in lines]
+    if not any(GENERAL_TITLE.match(s) for s in stripped):
+        fail("general-title", "no title like # cicd-pipelines general review: <scope>")
+    if not any(SUMMARY.match(s) for s in stripped):
+        fail("general-result", "no line like **Result: N critical, N required, N suggestions.**")
+    intake = next((s for s in stripped if s.startswith("Intake:")), None)
+    if intake is None or "Defaults:" not in intake:
+        fail("general-intake", "no Intake: line with a Defaults: part")
+    for header, rows in tables(lines):
+        if header != GENERAL_COLUMNS:
+            fail("general-columns", f"the table columns are not {GENERAL_COLUMNS}")
+        for cells in rows:
+            if not GENERAL_ID.match(cells[0]):
+                fail("general-rule", f"the Rule cell {cells[:1]} is not one GEN id")
+    if APPROVE_HEADING in stripped:
+        fail("general-approve", "the general part has a ## Approve section")
+    last = next((s for s in reversed(stripped) if s), "")
+    if last != GENERAL_LAST:
+        fail("general-last-line", f"the last line of the general part is not: {GENERAL_LAST}")
+    return failures
+
+
+def grade_reply(text):
+    """A reply whose line 1 starts with `General guidance:` is graded in two parts: the general part with the
+    general-form check, and the normal report after it (a mixed repo), if any, with the existing check.
+    Any other reply goes through the existing check."""
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith(GENERAL_PREFIX):
+        return grade(text)
+    normal_at = first_index(lines, lambda s: bool(TITLE.match(s)))
+    general = lines if normal_at is None else lines[:normal_at]
+    failures = grade_general(general)
+    if normal_at is not None:
+        failures += grade("\n".join(lines[normal_at:]))
+    return failures
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("report")
@@ -218,7 +291,7 @@ def main(argv):
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read the report: {error}", file=sys.stderr)
         return 2
-    failures = grade(text)
+    failures = grade_reply(text)
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))
     return 1 if failures else 0
 
