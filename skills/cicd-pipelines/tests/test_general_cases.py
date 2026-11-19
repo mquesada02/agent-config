@@ -14,8 +14,14 @@ FACT_NAMES = ("default_branch", "package_manager", "node_version_app", "engines"
               "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools", "aws_variables",
               "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history", "stack")
 
-GENERAL_REVIEW = ("general-review-go-gitlab", "general-review-mixed-node-rust", "general-review-rust-github")
+SINGLE_STACK = ("general-review-go-gitlab", "general-review-rust-github")
+GENERAL_REVIEW = (*SINGLE_STACK, "general-review-mixed-node-rust")
 CLASH = "general-clash-rust-node"
+ALL_CASES = (*GENERAL_REVIEW, CLASH)
+GEN_IDS = {rule_id for _, rule_id, _ in general_rules()}
+SKILL_MD = read(os.path.join(SKILL, "SKILL.md"))
+REVIEW_MD = read(os.path.join(SKILL, "review.md"))
+GENERAL_MD = read(os.path.join(RULES, "general.md"))
 ANY_PATHS = (".gitlab-ci.yml", "Jenkinsfile", "Cargo.toml", ".github/workflows/ci.yml", "src/main.rs")
 SHELL_WRITES = ("sed -i s/a/b/ {p}", "echo x > {p}", "tee {p}", "mv a {p}", "cp a {p}", "printf x >> {p}")
 SHELL_READS = ("cat {p}", "ls {p} 2>&1", "grep a {p} > /dev/null")
@@ -25,7 +31,7 @@ GEN_ROW = r"^\|\s*{rule}\s*\|"
 def topic_of(rule_id):
     """The `## ` heading of general.md that holds the rule."""
     heading = None
-    for line in read(os.path.join(RULES, "general.md")).splitlines():
+    for line in GENERAL_MD.splitlines():
         if line.startswith("## "):
             heading = line[3:].strip()
         elif line.strip() == f"### {rule_id}":
@@ -39,23 +45,21 @@ def graders(name):
 
 class GeneralCaseList(unittest.TestCase):
     def test_the_general_cases_are_exactly_these(self):
-        self.assertEqual({n for n in case_names() if n.startswith("general-")}, {*GENERAL_REVIEW, CLASH})
+        self.assertEqual({n for n in case_names() if n.startswith("general-")}, set(ALL_CASES))
 
     def test_the_two_single_stack_cases_expect_3_or_4_gen_ids_from_2_topics_and_forbid_nothing(self):
-        ids = {r for _, r, _ in general_rules()}
-        for name in ("general-review-go-gitlab", "general-review-rust-github"):
+        for name in SINGLE_STACK:
             expect, forbid = expect_lists(name)
             self.assertIn(len(expect), (3, 4), name)
             self.assertEqual(len(set(expect)), len(expect), name)
-            self.assertTrue(set(expect) <= ids, name)
+            self.assertTrue(set(expect) <= GEN_IDS, name)
             self.assertGreaterEqual(len({topic_of(r) for r in expect}), 2, name)
             self.assertEqual(forbid, [], name)
 
     def test_the_mixed_case_expects_gen_ids_and_normal_ids(self):
         expect, forbid = expect_lists("general-review-mixed-node-rust")
-        ids = {r for _, r, _ in general_rules()}
-        self.assertTrue(set(expect) & ids)
-        self.assertTrue([r for r in expect if r not in ids])
+        self.assertTrue(set(expect) & GEN_IDS)
+        self.assertTrue([r for r in expect if r not in GEN_IDS])
         self.assertEqual(len(set(expect)), len(expect))
         self.assertEqual(forbid, [])
 
@@ -65,12 +69,12 @@ class GeneralCaseList(unittest.TestCase):
 
 class GeneralCaseFiles(unittest.TestCase):
     def test_each_case_has_its_files(self):
-        for name in (*GENERAL_REVIEW, CLASH):
+        for name in ALL_CASES:
             for part in ("case.yaml", "scaffold.sh", "prompt.md", "expect.json", "repo"):
                 self.assertTrue(os.path.exists(os.path.join(case_dir(name), part)), f"{name}/{part}")
 
     def test_each_case_has_a_recorded_intake_with_the_29_facts_and_a_detected_stack(self):
-        for name in (*GENERAL_REVIEW, CLASH):
+        for name in ALL_CASES:
             with open(os.path.join(case_dir(name), "repo", "intake.json"), encoding="utf-8") as handle:
                 intake = json.load(handle)
             self.assertEqual(sorted(intake), sorted(FACT_NAMES), name)
@@ -79,7 +83,7 @@ class GeneralCaseFiles(unittest.TestCase):
             self.assertEqual(intake["stack"]["status"], "detected", name)
 
     def test_the_prompt_points_to_the_intake_and_names_neither_the_skill_nor_a_rule(self):
-        for name in (*GENERAL_REVIEW, CLASH):
+        for name in ALL_CASES:
             prompt = read(os.path.join(case_dir(name), "prompt.md"))
             self.assertIn("intake.json", prompt, name)
             self.assertIn("do not run the intake script", prompt, name)
@@ -111,42 +115,41 @@ class GeneralFixtureFaults(unittest.TestCase):
 
 class GeneralCaseGraders(unittest.TestCase):
     def test_the_no_edit_graders_match_any_path(self):
-        for name in (*GENERAL_REVIEW, CLASH):
+        for name in ALL_CASES:
             for file, tool in NO_EDIT_GRADERS.items():
                 meta = frontmatter(os.path.join(graders(name), file))
                 self.assertEqual((meta["type"], meta["tool"], meta["min"], meta["max"]), ("tool_used", tool, "0", "0"))
                 pattern = re.compile(meta["input_match"])
-                for path in ANY_PATHS:
-                    if tool == "Bash":
+                if tool == "Bash":
+                    for path in ANY_PATHS:
                         for command in SHELL_WRITES:
                             self.assertTrue(pattern.search(command.format(p=path)), f"{name} {file} {command}")
-                    else:
-                        self.assertTrue(pattern.search(json.dumps({"file_path": path})), f"{name} {file} {path}")
-                if tool == "Bash":
                     for command in SHELL_READS:
                         self.assertFalse(pattern.search(command.format(p=ANY_PATHS[0])), f"{name} {file} {command}")
+                else:
+                    for path in ANY_PATHS:
+                        self.assertTrue(pattern.search(json.dumps({"file_path": path})), f"{name} {file} {path}")
 
     def test_the_review_cases_have_the_marker_grader_and_one_expect_grader_for_each_id(self):
-        ids = {r for _, r, _ in general_rules()}
         for name in GENERAL_REVIEW:
             marker = frontmatter(os.path.join(graders(name), "general-report.md"))
             self.assertEqual((marker["type"], marker["pattern"], marker["flags"]), ("regex", "^General guidance:", "m"))
             expect, _ = expect_lists(name)
             for rule in expect:
                 meta = frontmatter(os.path.join(graders(name), f"expect-{rule}.md"))
-                want = GEN_ROW.format(rule=rule) if rule in ids else row_pattern(rule)
+                want = GEN_ROW.format(rule=rule) if rule in GEN_IDS else row_pattern(rule)
                 self.assertEqual((meta["type"], meta["pattern"], meta["flags"]), ("regex", want, "m"), f"{name} {rule}")
                 self.assertNotIn("match", meta)
 
     def test_the_grader_sets(self):
         base = set(NO_EDIT_GRADERS)
-        for name in ("general-review-go-gitlab", "general-review-rust-github"):
+        reply = base | {"general-report.md"}
+        for name in SINGLE_STACK:
             expect, _ = expect_lists(name)
-            self.assertEqual(grader_files(name), base | {"general-report.md"} | {f"expect-{r}.md" for r in expect}, name)
+            self.assertEqual(grader_files(name), reply | {f"expect-{r}.md" for r in expect}, name)
         expect, _ = expect_lists("general-review-mixed-node-rust")
         self.assertEqual(grader_files("general-review-mixed-node-rust"),
-                         base | {"general-report.md"} | {f"{s}.md" for s in SECTION_GRADERS}
-                         | {f"expect-{r}.md" for r in expect})
+                         reply | {f"{s}.md" for s in SECTION_GRADERS} | {f"expect-{r}.md" for r in expect})
         self.assertEqual(grader_files(CLASH), base | {"no-fallback.md", "one-question.md"})
 
     def test_the_mixed_case_section_graders_are_regex_graders(self):
@@ -168,20 +171,19 @@ class GeneralCaseGraders(unittest.TestCase):
         self.assertEqual(extra_graders("clean"), {"no-fallback.md"})
 
 
-SKILL_MD = read(os.path.join(SKILL, "SKILL.md"))
-REVIEW_MD = read(os.path.join(SKILL, "review.md"))
-GENERAL_MD = read(os.path.join(RULES, "general.md"))
-
-
-def part(text, start, end=None):
+def lowered_slice(text, start, end=None):
     low = text.lower()
     begin = low.index(start)
     return low[begin:low.index(end, begin + 1) if end else None]
 
 
+GENERAL_SECTION = lowered_slice(REVIEW_MD, "## general mode", "## intake facts")
+PICK_SECTION = lowered_slice(SKILL_MD, "## pick the branch", "## loading by need")
+
+
 class ModeChoiceText(unittest.TestCase):
     def test_pick_the_branch_has_the_mode_choice_before_the_review_bullet(self):
-        section = part(SKILL_MD, "## pick the branch", "## loading by need")
+        section = PICK_SECTION
         self.assertLess(section.index("general mode"), section.index("**review**"))
         for words in ("uncovered", "mixed repo", "clash", "fills", "the covered-part test", "one question",
                       "names one detected part", "limits the reply", "`unknown`", "which language and which ci system"):
@@ -198,12 +200,12 @@ class ModeChoiceText(unittest.TestCase):
                       SKILL_MD)
 
     def test_another_edit_has_the_general_mode_rule(self):
-        bullet = part(SKILL_MD, "- **another edit**", "## loading by need")
+        bullet = lowered_slice(SKILL_MD, "- **another edit**", "## loading by need")
         for words in ("general mode", "line 1", "`- gen-nn:", "makes no edit", "runs no rule check", "mixed repo"):
             self.assertIn(words, bullet)
 
     def test_loading_by_need_loads_only_the_gen_file_for_a_repo_with_no_covered_part(self):
-        section = part(SKILL_MD, "## loading by need", "## modules")
+        section = lowered_slice(SKILL_MD, "## loading by need", "## modules")
         for words in ("[rules/general.md](rules/general.md)", "no covered part", "no other rule file",
                       "mixed repo", "uncovered"):
             self.assertIn(words, section)
@@ -229,7 +231,7 @@ class GeneralModeSection(unittest.TestCase):
         self.assertLess(low.index("## general mode"), low.index("## intake facts"))
 
     def test_the_section_holds_the_reply_contract_in_order(self):
-        section = part(REVIEW_MD, "## general mode", "## intake facts")
+        section = GENERAL_SECTION
         order = ["general guidance:", "# cicd-pipelines general review: <scope>", "**result: n critical",
                  "`intake:` line", "`defaults:`", "`## critical`", "`| rule | where | problem | fix |`",
                  "`repo`", "the skill edits no file in general mode."]
@@ -241,16 +243,16 @@ class GeneralModeSection(unittest.TestCase):
             self.assertIn(words, section)
 
     def test_step_1_loads_no_covered_rule_file_for_a_repo_with_no_covered_part(self):
-        step = part(REVIEW_MD, "1. load the rule files by need", "2. read the intake json")
+        step = lowered_slice(REVIEW_MD, "1. load the rule files by need", "2. read the intake json")
         self.assertIn("no covered part", step)
         self.assertIn("load no covered rule file", step)
 
     def test_the_approval_steps_apply_to_the_normal_part_only(self):
-        section = part(REVIEW_MD, "## general mode", "## intake facts")
+        section = GENERAL_SECTION
         self.assertIn("normal part only", section)
 
     def test_the_new_text_avoids_the_words_that_the_review_tests_ban(self):
-        section = part(REVIEW_MD, "## general mode", "## intake facts") + part(SKILL_MD, "## pick the branch", "## modules")
+        section = GENERAL_SECTION + lowered_slice(SKILL_MD, "## pick the branch", "## modules")
         for word in ("interim", "command -v", "temporary", "load every rule file", "branch protection change needed"):
             self.assertNotIn(word, section)
 

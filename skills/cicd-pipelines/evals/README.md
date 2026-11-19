@@ -238,7 +238,7 @@ python3 skills/cicd-pipelines/scripts/grade_create_results.py <results folder>/r
 
 ## General cases
 
-The general-mode review cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md`). Each holds a recorded `repo/intake.json` (29 facts, with the `stack` fact set), and its prompt tells the review to use that file and not to run the intake script. Every fixture is synthetic.
+The general-mode review cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` (29 facts, with the `stack` fact set), and its prompt tells the review to use that file and not to run the intake script. Every fixture is synthetic.
 
 | Case | Repo | What it checks |
 |---|---|---|

@@ -20,7 +20,7 @@ First choose the mode from the `stack` fact of the intake. The covered stack is 
 - A mixed repo (a covered part and one or more uncovered parts): the normal flow for the covered part, and general mode for each uncovered part.
 - General mode applies to a review and to another edit. A create request keeps the Create text below.
 - Repo files decide when the `stack` fact has the status `detected`. When it is `unknown`, the stack that the request names decides. When it is `unknown` and the request names no stack, ask the user one question: which language and which CI system.
-- A clash is a request that names a language when the fact holds other languages and not that one, or that names a CI system when the fact holds other CI systems and not that one. On a clash, ask the user one question before you go on.
+- A clash is a request that names a language when the fact holds other languages and not that one. It is also a request that names a CI system when the fact holds other CI systems and not that one. On a clash, ask the user one question before you go on.
 - A request that names a language or a CI system when the matching list of the fact is empty fills that list. It is not a clash. The covered-part test then uses the filled lists. For example, a Node/TypeScript repo with no CI file and a request for GitLab CI has no covered part.
 - A request that names one detected part of a mixed repo is not a clash. It limits the reply to that part.
 - In general mode, follow "General mode" in [review.md](review.md). Make no edit and write no file.
