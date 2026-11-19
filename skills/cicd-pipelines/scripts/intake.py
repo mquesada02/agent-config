@@ -762,8 +762,8 @@ def regular_file(path):
     return os.path.isfile(path) and not os.path.islink(path)
 
 
-def manifests(repo):
-    """The manifest files of the repo as (depth, relative path), from the root down to 2 folder levels."""
+def repo_files(repo):
+    """The regular files of the repo as (depth, relative path), from the root down to 2 folder levels."""
     found = []
 
     def walk(folder, depth):
@@ -772,12 +772,9 @@ def manifests(repo):
         except OSError:
             return
         for entry in entries:
-            relative = os.path.relpath(entry.path, repo).replace(os.sep, "/")
-            if entry.is_symlink():
-                continue
-            if entry.is_file():
-                found.append((depth, relative))
-            elif entry.is_dir() and depth < STACK_DEPTH and entry.name not in STACK_SKIPPED:
+            if entry.is_file(follow_symlinks=False):
+                found.append((depth, os.path.relpath(entry.path, repo).replace(os.sep, "/")))
+            elif entry.is_dir(follow_symlinks=False) and depth < STACK_DEPTH and entry.name not in STACK_SKIPPED:
                 walk(entry.path, depth + 1)
 
     walk(repo, 0)
@@ -786,13 +783,14 @@ def manifests(repo):
 
 def stack(repo):
     languages = []
-    files = manifests(repo)
+    files = repo_files(repo)
     for item, names in STACK_LANGUAGES:
         matches = [(depth, path) for depth, path in files
                    if any(fnmatch.fnmatchcase(path.rsplit("/", 1)[-1], name) for name in names)]
         if matches:
             languages.append({"item": item, "file": min(matches)[1]})
     ci_systems = []
+    # Own scan, not the `workflows` of collect(): a symbolic link is not a workflow file here.
     workflows = sorted(os.path.relpath(path, repo).replace(os.sep, "/")
                        for pattern in ("*.yml", "*.yaml")
                        for path in glob.glob(os.path.join(repo, ".github", "workflows", pattern))
