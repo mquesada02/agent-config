@@ -25,7 +25,7 @@ FACTS = ["default_branch", "package_manager", "node_version_app", "engines", "sc
          "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
          "existing_workflows", "installed_tools", "supported_node_majors",
          "environments", "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools", "aws_variables",
-         "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history"]
+         "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history", "stack"]
 SECTIONS = ["approve", "checks", "graph", "intake", "summary", "tools"]
 
 
@@ -98,7 +98,7 @@ class Files(unittest.TestCase):
 
 
 class RecordedIntake(unittest.TestCase):
-    def test_the_file_holds_the_28_facts_in_order_with_their_three_keys(self):
+    def test_the_file_holds_the_29_facts_in_order_with_their_three_keys(self):
         for name in ALL_CASES:
             intake = load(name, "repo", "intake.json")
             self.assertEqual(list(intake), FACTS, name)

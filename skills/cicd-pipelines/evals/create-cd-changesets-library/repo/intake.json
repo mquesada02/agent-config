@@ -207,5 +207,18 @@
     "value": null,
     "status": "unknown",
     "source": "no GitHub remote"
+  },
+  "stack": {
+    "value": {
+      "languages": [
+        {
+          "item": "Node/TypeScript",
+          "file": "package.json"
+        }
+      ],
+      "ci_systems": []
+    },
+    "status": "detected",
+    "source": "manifest files and CI files"
   }
 }

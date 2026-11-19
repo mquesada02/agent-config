@@ -3,12 +3,14 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from report_fixtures import make_report, row
-from skill_files import EVALS, all_rules, frontmatter, level, read
+from skill_files import EVALS, SKILL, all_rules, frontmatter, level, read
 
 NO_EDIT_GRADERS = {"no-edit.md": "Edit", "no-write.md": "Write", "no-shell-write.md": "Bash"}
 COST_MONO_CASES = {
@@ -400,13 +402,13 @@ class RecordedIntakeChecks:
              "existing_workflows", "installed_tools", "supported_node_majors",
              "environments", "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools",
              "aws_variables", "release_tool", "publish_target", "release_tag_pattern", "provenance",
-             "deploy_history")
+             "deploy_history", "stack")
 
     def setUp(self):
         with open(os.path.join(case_dir(self.CASE), "repo", "intake.json"), encoding="utf-8") as handle:
             self.intake = json.load(handle)
 
-    def test_the_file_holds_the_27_intake_facts_with_their_three_keys(self):
+    def test_the_file_holds_the_28_intake_facts_with_their_three_keys(self):
         self.assertEqual(sorted(self.intake), sorted(self.FACTS))
         for name, fact in self.intake.items():
             self.assertEqual(sorted(fact), ["source", "status", "value"], name)
@@ -1439,6 +1441,22 @@ class ProdFromPushIntake(RecordedIntakeChecks, unittest.TestCase):
     def test_the_intake_is_the_one_of_the_protect_cases(self):
         protect = read(os.path.join(case_dir("protect-04-prod-no-reviewers"), "repo", "intake.json"))
         self.assertEqual(read(os.path.join(case_dir(self.CASE), "repo", "intake.json")), protect)
+
+
+class RecordedStackFacts(unittest.TestCase):
+    def test_each_recorded_stack_fact_is_what_the_intake_script_finds_in_the_repo_folder(self):
+        paths = sorted(glob.glob(os.path.join(EVALS, "*", "repo", "intake.json")))
+        self.assertTrue(paths)
+        for path in paths:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = os.path.join(tmp, "repo")
+                shutil.copytree(os.path.dirname(path), repo, ignore=shutil.ignore_patterns("intake.json"))
+                proc = subprocess.run([sys.executable, "-I", os.path.join(SKILL, "scripts", "intake.py"), repo],
+                                      capture_output=True, text=True, env=dict(os.environ, CICD_PIPELINES_OFFLINE="1"))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            with open(path, encoding="utf-8") as handle:
+                recorded = json.load(handle)
+            self.assertEqual(recorded["stack"], json.loads(proc.stdout)["stack"], path)
 
 
 TRIGGER_CD_CASES = {

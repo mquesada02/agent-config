@@ -246,5 +246,23 @@
     "value": null,
     "status": "unknown",
     "source": "no deploy history recorded for the eval"
+  },
+  "stack": {
+    "value": {
+      "languages": [
+        {
+          "item": "Node/TypeScript",
+          "file": "package.json"
+        }
+      ],
+      "ci_systems": [
+        {
+          "item": "GitHub Actions",
+          "file": ".github/workflows/ci.yml"
+        }
+      ]
+    },
+    "status": "detected",
+    "source": "manifest files and CI files"
   }
 }

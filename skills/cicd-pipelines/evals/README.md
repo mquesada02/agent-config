@@ -58,7 +58,7 @@ Every fixture is synthetic. No text comes from a private repo.
 
 ## CD intake facts
 
-The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `value`, `status` and `source`. A recorded `repo/intake.json` holds the 12 CD facts too (27 facts in a file that has no `scripts`, 28 in one that has). The 12 keys come after `supported_node_majors`, in this order. The value of each is the real output of the script on the case fixture (a copy outside any git repo, offline), so with no GitHub remote the facts that need `gh` hold their defaults. The default of each fact is the value that the review uses when the fact is unknown:
+The intake script prints 29 facts: the 16 CI facts, 12 CD facts and the `stack` fact. Each has `value`, `status` and `source`. A recorded `repo/intake.json` holds the 12 CD facts and the `stack` fact too (28 facts in a file that has no `scripts`, 29 in one that has). The 12 CD keys come after `supported_node_majors`, in this order, and `stack` comes last, after `deploy_history`. The value of each is the real output of the script on the case fixture (a copy outside any git repo, offline), so with no GitHub remote the facts that need `gh` hold their defaults. The default of each fact is the value that the review uses when the fact is unknown:
 
 | Fact | Value | Default |
 |---|---|---|
@@ -74,6 +74,9 @@ The intake script prints 28 facts: the 16 CI facts and 12 CD facts. Each has `va
 | `release_tag_pattern` | one glob: `v*`, `[0-9]*` or `*@*` | `v*`, status `default` |
 | `provenance` | true only for a public package of a public repo | `false`, status `default` when the visibility is not readable |
 | `deploy_history` | the last 10 successful runs of `deploy.yml` (any ref), with the median of each job | `null`, status `unknown` |
+| `stack` | `{languages, ci_systems}`: a list of `{item, file}` for each | `{"languages": [], "ci_systems": []}`, status `unknown` (status `detected` when at least one item is found) |
+
+The `stack` fact is the last key. Its value is `{languages, ci_systems}`: each entry is `{item, file}`, the detected item and the file that showed it. Languages come from manifest files at the repo root and up to 2 folder levels below it (the folders `node_modules`, `.git`, `vendor` and `target` are skipped). CI systems come from CI files at the repo root only. When no item is found, the review uses `{"languages": [], "ci_systems": []}` and the status is `unknown`. The status is `detected` when at least one item is found. The recorded value of each case is the output of the script on the `repo` folder of the case, with `intake.json` left out.
 
 `deploy_history` reads `deploy.yml` only. `run_history` still reads `ci.yml` on the default branch only, and `required_checks` is unchanged.
 
@@ -100,7 +103,7 @@ RELEASE and PUBLISH cases: `release-01-...` to `release-06-...` and `publish-01-
 
 - `release-01-two-release-tools`: `package.json` also holds `semantic-release`.
 - `release-02-lightweight-tag`: a step makes the tag with `git tag` and no `-a`.
-- `release-03-no-tag-ruleset`: the good files, and a recorded `repo/intake.json` (27 facts) whose `rulesets` fact is detected and holds only a branch ruleset. Its prompt tells the review not to run the intake script.
+- `release-03-no-tag-ruleset`: the good files, and a recorded `repo/intake.json` (28 facts) whose `rulesets` fact is detected and holds only a branch ruleset. Its prompt tells the review not to run the intake script.
 - `release-04-pat-token`: the checkout and `changesets/action` use `secrets.RELEASE_PAT` and no App token.
 - `release-05-tag-push-trigger`: the release workflow runs on `push: tags:`.
 - `release-06-no-release-notes`: `"changelog": false` in the Changesets config and `createGithubReleases: false` on the `changesets/action` step.
@@ -110,7 +113,7 @@ RELEASE and PUBLISH cases: `release-01-...` to `release-06-...` and `publish-01-
 - `publish-04-no-published-version-check`: a plain `npm publish` step with no `npm view` check.
 - `publish-05-publish-workflow-renamed`: the good release job lives in `publish.yml` and the repo has no `release.yml`. The report row of PUBLISH-05 gets the ⚑ mark, and the ⚑ section holds the npm admin step.
 
-PROTECT cases: `protect-01-...` to `protect-08-...` (one case for each PROTECT rule). Each one is a copy of the good DEPLOY workflow fixture (`deploy-02-tag-run-staging-record`: `ci.yml`, `deploy.yml`, the two scripts, `package.json` and the lockfile) plus the good `rollback.yml` of the ROLLBACK cases, and a recorded `repo/intake.json` of the 27 facts. The recorded intake holds the good state of every fact that a PROTECT rule reads (`environments` with `artifacts`, `dev`, `staging` and `prod`, each with `branch_policy: custom` and `admin_bypass: false`, and `reviewers: true` for `prod`; `rulesets` with an active branch ruleset and an active tag ruleset; `classic_protection` not protected; `required_checks` of `CI passed`; a plan that allows reviewers; `release_tag_pattern` `v*`; all `detected`), and a case changes only the fact of its own rule. The prompt tells the review not to run the intake script. The cases hold no `release.yml`, so the job graph sketch has three trigger lines. A case checks only its own expect list, so a report may also hold the row of another rule.
+PROTECT cases: `protect-01-...` to `protect-08-...` (one case for each PROTECT rule). Each one is a copy of the good DEPLOY workflow fixture (`deploy-02-tag-run-staging-record`: `ci.yml`, `deploy.yml`, the two scripts, `package.json` and the lockfile) plus the good `rollback.yml` of the ROLLBACK cases, and a recorded `repo/intake.json` of the 28 facts. The recorded intake holds the good state of every fact that a PROTECT rule reads (`environments` with `artifacts`, `dev`, `staging` and `prod`, each with `branch_policy: custom` and `admin_bypass: false`, and `reviewers: true` for `prod`; `rulesets` with an active branch ruleset and an active tag ruleset; `classic_protection` not protected; `required_checks` of `CI passed`; a plan that allows reviewers; `release_tag_pattern` `v*`; all `detected`), and a case changes only the fact of its own rule. The prompt tells the review not to run the intake script. The cases hold no `release.yml`, so the job graph sketch has three trigger lines. A case checks only its own expect list, so a report may also hold the row of another rule.
 
 - `protect-01-no-main-ruleset`: `rulesets` has only a tag ruleset, and the classic rule is protected (so the Fix holds the classic deletion, a ⚑ step).
 - `protect-02-no-tag-ruleset`: `rulesets` has only a branch ruleset.
@@ -132,7 +135,7 @@ The 10 `fx-cd-*` cases are the multi-rule candidates of the sample catalog. Nine
 | `fx-cd-no-timeout` | `deploy.yml` and `rollback.yml` have no `timeout-minutes`, and the deploy jobs hold `id-token: write`. | DEPLOY-09 |
 | `fx-cd-no-concurrency` | The deploy jobs have no `concurrency` group. | COST-02 |
 | `fx-cd-rebuild-per-env` | The three stage jobs each install and build. | DEPLOY-01 |
-| `fx-cd-prod-from-push` | Prod deploys on push to main, with no gate on the staging record. A recorded `repo/intake.json` (the 27 facts of the PROTECT cases) shows `prod` with no reviewers, and the prompt tells the review not to run the intake script. | DEPLOY-02, PROTECT-04 |
+| `fx-cd-prod-from-push` | Prod deploys on push to main, with no gate on the staging record. A recorded `repo/intake.json` (the 28 facts of the PROTECT cases) shows `prod` with no reviewers, and the prompt tells the review not to run the intake script. | DEPLOY-02, PROTECT-04 |
 | `fx-cd-role-in-yaml` | The three stage jobs type a role ARN with an account id. | DEPLOY-04 |
 | `fx-cd-tag-unpinned` | The called CI workflow is a reusable workflow pinned by the tag `@v2`. It is the one `uses:` line in the CD cases that is not a full-SHA pin: `CdFixtures` skips exactly this line of this case. | SEC-01 |
 | `fx-cd-rollback-by-input` | The rollback takes a free-text `version` input, checks out that ref, installs and builds. | ROLLBACK-01, ROLLBACK-02 |
@@ -198,7 +201,7 @@ claude plugin eval skills/cicd-pipelines --case 'protect-approve-*' --no-publish
 
 ## Create cases
 
-`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps for CI. `create-cd-lambda-app`, `create-cd-changesets-library`, `create-cd-monorepo-publish` and `create-cd-terraform` test the create steps for CI and CD. Each CI case asks "Create CI for this repo.", and each CD case asks "Create CI and CD for this repo." and names the deploy target. Each case gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 28 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
+`create-npm-app`, `create-pnpm-library`, `create-pnpm-turbo-monorepo`, `create-playwright-app` and `create-no-lockfile` test the create steps for CI. `create-cd-lambda-app`, `create-cd-changesets-library`, `create-cd-monorepo-publish` and `create-cd-terraform` test the create steps for CI and CD. Each CI case asks "Create CI for this repo.", and each CD case asks "Create CI and CD for this repo." and names the deploy target. Each case gives a synthetic fixture with no `ci.yml` and a recorded `repo/intake.json` (all 29 facts, `scripts` included, and `installed_tools` that says actionlint is installed). The prompt tells the model not to run the intake script. The `expect.json` of a writing case has `expect: []`, `forbid` with every critical and required id of the `clean` case, and `asserts`: an object from each path that the final message shows in `## Created` to the assertion list of `scripts/check_workflow.py` for that file.
 
 | Case | Fixture | What it proves |
 |---|---|---|

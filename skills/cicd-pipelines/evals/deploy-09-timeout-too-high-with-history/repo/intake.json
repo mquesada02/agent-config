@@ -214,5 +214,23 @@
     },
     "status": "detected",
     "source": "last 10 successful runs of deploy.yml (recorded for the eval)"
+  },
+  "stack": {
+    "value": {
+      "languages": [
+        {
+          "item": "Node/TypeScript",
+          "file": "package.json"
+        }
+      ],
+      "ci_systems": [
+        {
+          "item": "GitHub Actions",
+          "file": ".github/workflows/ci.yml"
+        }
+      ]
+    },
+    "status": "detected",
+    "source": "manifest files and CI files"
   }
 }

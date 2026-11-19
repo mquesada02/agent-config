@@ -11,6 +11,7 @@ Environment: CICD_PIPELINES_NODE_SCHEDULE=<path> reads a local copy of the Node 
 CICD_PIPELINES_OFFLINE=1 uses the dated offline list (the json block of tools.md) with no network.
 """
 import datetime
+import fnmatch
 import glob
 import http.client
 import json
@@ -34,6 +35,27 @@ CONFIGS = (("vitest.config.", "vitest"), ("jest.config.", "jest"), ("playwright.
 STANDARD = ("ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04", "windows-latest", "windows-2025", "windows-2022",
             "macos-latest", "macos-15", "macos-14")
 TOOLS = (("actionlint", "-version"), ("zizmor", "--version"), ("pinact", "--version"))
+STACK_DEPTH = 2
+STACK_SKIPPED = ("node_modules", ".git", "vendor", "target")
+STACK_LANGUAGES = (
+    ("Node/TypeScript", ("package.json",)),
+    ("Rust", ("Cargo.toml",)),
+    ("Python", ("pyproject.toml", "setup.py", "requirements.txt")),
+    ("Go", ("go.mod",)),
+    ("JVM", ("pom.xml", "build.gradle", "build.gradle.kts")),
+    ("Ruby", ("Gemfile",)),
+    ("PHP", ("composer.json",)),
+    (".NET", ("*.csproj", "*.sln")),
+)
+STACK_CI = (
+    ("GitHub Actions", None),
+    ("GitLab CI", ".gitlab-ci.yml"),
+    ("Jenkins", "Jenkinsfile"),
+    ("CircleCI", ".circleci/config.yml"),
+    ("Azure Pipelines", "azure-pipelines.yml"),
+    ("Bitbucket Pipelines", "bitbucket-pipelines.yml"),
+    ("Travis CI", ".travis.yml"),
+)
 REMOTE = re.compile(r"^(?:https?://|ssh://)?(?:[^@/]+@)?github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$")
 
 
@@ -736,6 +758,53 @@ def installed_tools():
     return fact(tools, "detected", "PATH: " + ", ".join(name for name, _ in TOOLS))
 
 
+def regular_file(path):
+    return os.path.isfile(path) and not os.path.islink(path)
+
+
+def repo_files(repo):
+    """The regular files of the repo as (depth, relative path), from the root down to 2 folder levels."""
+    found = []
+
+    def walk(folder, depth):
+        try:
+            entries = sorted(os.scandir(folder), key=lambda entry: entry.name)
+        except OSError:
+            return
+        for entry in entries:
+            if entry.is_file(follow_symlinks=False):
+                found.append((depth, os.path.relpath(entry.path, repo).replace(os.sep, "/")))
+            elif entry.is_dir(follow_symlinks=False) and depth < STACK_DEPTH and entry.name not in STACK_SKIPPED:
+                walk(entry.path, depth + 1)
+
+    walk(repo, 0)
+    return found
+
+
+def stack(repo):
+    languages = []
+    files = repo_files(repo)
+    for item, names in STACK_LANGUAGES:
+        matches = [(depth, path) for depth, path in files
+                   if any(fnmatch.fnmatchcase(path.rsplit("/", 1)[-1], name) for name in names)]
+        if matches:
+            languages.append({"item": item, "file": min(matches)[1]})
+    ci_systems = []
+    # Own scan, not the `workflows` of collect(): a symbolic link is not a workflow file here.
+    workflows = sorted(os.path.relpath(path, repo).replace(os.sep, "/")
+                       for pattern in ("*.yml", "*.yaml")
+                       for path in glob.glob(os.path.join(repo, ".github", "workflows", pattern))
+                       if regular_file(path))
+    for item, path in STACK_CI:
+        if path is None and workflows:
+            ci_systems.append({"item": item, "file": workflows[0]})
+        elif path is not None and regular_file(os.path.join(repo, path)):
+            ci_systems.append({"item": item, "file": path})
+    value = {"languages": languages, "ci_systems": ci_systems}
+    status = "detected" if languages or ci_systems else "unknown"
+    return fact(value, status, "manifest files and CI files")
+
+
 def collect(repo):
     identity = github_identity(repo)
     info_path = f"repos/{identity[0]}/{identity[1]}" if identity else None
@@ -779,6 +848,7 @@ def collect(repo):
         "release_tag_pattern": release_tag_pattern(repo),
         "provenance": provenance(seen, packages),
         "deploy_history": workflow_history(identity, "deploy.yml"),
+        "stack": stack(repo),
     }
 
 
