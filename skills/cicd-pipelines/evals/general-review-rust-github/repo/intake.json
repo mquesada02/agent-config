@@ -1,0 +1,211 @@
+{
+  "default_branch": {
+    "value": "main",
+    "status": "default",
+    "source": "no default branch found (no gh answer, no origin HEAD)"
+  },
+  "package_manager": {
+    "value": {
+      "manager": null,
+      "lockfile": null
+    },
+    "status": "unknown",
+    "source": "no packageManager field and no lockfile"
+  },
+  "node_version_app": {
+    "value": "26",
+    "status": "default",
+    "source": "newest LTS of supported_node_majors (no .nvmrc, .node-version or engines.node)"
+  },
+  "engines": {
+    "value": [],
+    "status": "unknown",
+    "source": "package.json of each package"
+  },
+  "scripts": {
+    "value": [],
+    "status": "unknown",
+    "source": "package.json of each package"
+  },
+  "package_kind": {
+    "value": [],
+    "status": "unknown",
+    "source": "package.json of each package"
+  },
+  "os_claims": {
+    "value": [
+      "linux"
+    ],
+    "status": "default",
+    "source": "no os field in any package.json"
+  },
+  "test_runners": {
+    "value": [],
+    "status": "unknown",
+    "source": "no test runner dependency or config file (no test job)"
+  },
+  "monorepo": {
+    "value": {
+      "monorepo": false,
+      "tool": null
+    },
+    "status": "detected",
+    "source": "no pnpm-workspace.yaml and no workspaces field"
+  },
+  "visibility": {
+    "value": "private",
+    "status": "default",
+    "source": "repository visibility not readable (private, 2 vCPU assumed)"
+  },
+  "runner_labels": {
+    "value": [
+      {
+        "label": "ubuntu-24.04",
+        "kind": "standard",
+        "vcpus": 2,
+        "status": "detected",
+        "source": ".github/workflows/ci.yml"
+      }
+    ],
+    "status": "detected",
+    "source": ".github/workflows runs-on values"
+  },
+  "required_checks": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "run_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "existing_workflows": {
+    "value": [
+      ".github/workflows/ci.yml"
+    ],
+    "status": "detected",
+    "source": ".github/workflows"
+  },
+  "installed_tools": {
+    "value": {
+      "actionlint": {
+        "installed": false,
+        "version": null
+      },
+      "zizmor": {
+        "installed": false,
+        "version": null
+      },
+      "pinact": {
+        "installed": false,
+        "version": null
+      }
+    },
+    "status": "detected",
+    "source": "PATH: actionlint, zizmor, pinact"
+  },
+  "supported_node_majors": {
+    "value": {
+      "majors": [
+        22,
+        24,
+        26
+      ],
+      "newest_lts": 26
+    },
+    "status": "default",
+    "source": "offline list tools.md dated 2026-11-09"
+  },
+  "environments": {
+    "value": [],
+    "status": "default",
+    "source": "no GitHub remote (treated as none)"
+  },
+  "plan": {
+    "value": {
+      "visibility": "private",
+      "plan": null,
+      "reviewers_available": true
+    },
+    "status": "default",
+    "source": "visibility not readable (private assumed): reviewers are proposed; a private repo may need GitHub Enterprise"
+  },
+  "rulesets": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "classic_protection": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "deploy_targets": {
+    "value": [],
+    "status": "default",
+    "source": "no workflow step shows a deploy target (none)"
+  },
+  "iac_tools": {
+    "value": [],
+    "status": "default",
+    "source": "no workflow step shows an IaC tool (none)"
+  },
+  "aws_variables": {
+    "value": {
+      "role": [
+        "vars.AWS_ROLE_<ENV>"
+      ],
+      "region": [
+        "vars.AWS_REGION"
+      ]
+    },
+    "status": "default",
+    "source": "no vars.* name found for: role vars.AWS_ROLE_<ENV>, region vars.AWS_REGION; these are placeholders, replace them with the repo's own variable names"
+  },
+  "release_tool": {
+    "value": [],
+    "status": "default",
+    "source": "no release tool file or dependency (none, so create adds Changesets)"
+  },
+  "publish_target": {
+    "value": [
+      "npmjs"
+    ],
+    "status": "default",
+    "source": "no published package (npmjs)"
+  },
+  "release_tag_pattern": {
+    "value": "v*",
+    "status": "default",
+    "source": "git tag --list failed (v*)"
+  },
+  "provenance": {
+    "value": false,
+    "status": "default",
+    "source": "visibility not readable (provenance not automatic)"
+  },
+  "deploy_history": {
+    "value": null,
+    "status": "unknown",
+    "source": "no GitHub remote"
+  },
+  "stack": {
+    "value": {
+      "languages": [
+        {
+          "item": "Rust",
+          "file": "Cargo.toml"
+        }
+      ],
+      "ci_systems": [
+        {
+          "item": "GitHub Actions",
+          "file": ".github/workflows/ci.yml"
+        }
+      ]
+    },
+    "status": "detected",
+    "source": "manifest files and CI files"
+  }
+}

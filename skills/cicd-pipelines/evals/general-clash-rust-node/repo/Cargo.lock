@@ -1,0 +1,6 @@
+# synthetic lock file
+version = 3
+
+[[package]]
+name = "example-tool"
+version = "0.1.0"

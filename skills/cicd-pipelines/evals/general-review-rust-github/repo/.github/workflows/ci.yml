@@ -1,0 +1,12 @@
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: cargo test --locked

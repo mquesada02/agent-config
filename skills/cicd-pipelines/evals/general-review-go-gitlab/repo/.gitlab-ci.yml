@@ -1,0 +1,13 @@
+image: golang:1.23
+stages:
+  - all
+all:
+  stage: all
+  script:
+    - go vet ./...
+    - go test ./...
+    - go build -o app ./cmd/app
+    - eval "notify-team --message $CI_COMMIT_MESSAGE"
+    - export AWS_ACCESS_KEY_ID="$DEPLOY_ACCESS_KEY_ID"
+    - export AWS_SECRET_ACCESS_KEY="$DEPLOY_SECRET_ACCESS_KEY"
+    - aws s3 cp app "s3://example-artifacts/$CI_COMMIT_REF_NAME/app"

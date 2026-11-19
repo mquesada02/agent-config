@@ -111,6 +111,8 @@ SECTION_GRADERS = {"section-summary", "section-intake", "section-checks", "secti
 
 def extra_graders(name):
     """The grader files that a case holds besides the expect, forbid, no-edit, section and judge ones."""
+    if name == "clean":
+        return {"no-fallback.md"}
     if not name.startswith("protect-"):
         return set()
     return {"section-graph-triggers.md"} | ({"section-lock-note.md"} if name in PROTECT_LOCK_CASES else set())
@@ -182,7 +184,8 @@ def expect_lists(name):
 
 
 def review_cases():
-    return [n for n in case_names() if not n.startswith(("trigger-", "approve-", "create-", "protect-approve-"))]
+    return [n for n in case_names()
+            if not n.startswith(("trigger-", "approve-", "create-", "protect-approve-", "general-"))]
 
 
 def grader_files(name):
@@ -209,7 +212,7 @@ class EveryCase(unittest.TestCase):
 
     def test_every_case_but_a_create_case_holds_a_workflow_fixture(self):
         for name in case_names():
-            if name.startswith("create-"):
+            if name.startswith(("create-", "general-")):
                 continue
             found = glob.glob(os.path.join(case_dir(name), "repo", ".github", "workflows", "*.yml"))
             self.assertTrue(found, f"{name} has no workflow fixture")
