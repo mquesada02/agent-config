@@ -238,7 +238,7 @@ python3 skills/cicd-pipelines/scripts/grade_create_results.py <results folder>/r
 
 ## General cases
 
-The general-mode review cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` (29 facts, with the `stack` fact set), and its prompt tells the review to use that file and not to run the intake script. Every fixture is synthetic.
+The general-mode cases check the fallback for a repo with an uncovered part (see "General mode" in `review.md` and in `create.md`). `GEN` is the id prefix of the general rules in `rules/general.md`. Each holds a recorded `repo/intake.json` with 29 facts and the `stack` fact set. The `stack` fact lists the detected languages and CI systems. For the empty repo of the create case, it holds empty lists and the status `unknown`. The prompt of each case tells the run to use that file and not to run the intake script. Every fixture is synthetic. The create case has 40 turns and allows the `Write` and `Edit` tools, as the `create-` cases do, so that a write by the skill shows and fails a no-write grader.
 
 | Case | Repo | What it checks |
 |---|---|---|
@@ -246,8 +246,10 @@ The general-mode review cases check the fallback for a repo with an uncovered pa
 | `general-review-go-gitlab` | Go on GitLab CI | The same form for a CI system that the skill does not cover. Expects 4 GEN ids. |
 | `general-review-mixed-node-rust` | Node/TypeScript and Rust on GitHub Actions | The general part first, then the normal report in full. Expects a GEN id and a normal rule id, and holds the section graders of a normal review. |
 | `general-clash-rust-node` | Rust repo, and the request asks for a Node pipeline | A clash: the reply is one question, with no `General guidance:` line. |
+| `general-create-python-empty` | Empty repo (only `intake.json`), and the request asks for a Python pipeline | The general create plan: `General guidance:` on line 1, a numbered stage plan where each stage names a GEN id, and the last line `The skill edits no file in general mode.` No file is written. |
 
-- `general-report.md` (a `regex` grader on `^General guidance:`) marks a general review. `grade_eval_results.py` scores each case that has it, as it scores each case that has `section-summary`. The clash case has no marker, so the script does not score it.
+- `general-report.md` (a `regex` grader on `^General guidance:`) marks a general review. `grade_eval_results.py` scores each case that has it, as it scores each case that has `section-summary`. The clash case and the create case have no marker, so the script does not score them: their replies are not reports.
+- The create case has 3 `regex` graders: `general-line-1.md` (`^General guidance:`), `general-stage.md` (a numbered line that names a GEN id) and `general-last-line.md` (the last line of the reply). A model run judges the rest of the plan.
 - An `expect-GEN-NN.md` grader finds the id in the first cell of a row (`^\|\s*GEN-NN\s*\|`), because the general table has no `#` column.
 - The `no-edit.md`, `no-write.md` and `no-shell-write.md` graders of a general case match any path, not only `.github/workflows`, because general mode writes no file.
 - `no-fallback.md` (a `regex` grader with `match: not_contains` on `General guidance:`) is in the clash case and in `clean`: a covered repo must not use the fallback.
