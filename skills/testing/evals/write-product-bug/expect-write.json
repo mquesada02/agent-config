@@ -1,0 +1,8 @@
+{
+  "tests": ["tests/discount.test.js"],
+  "product": ["src/discount.js"],
+  "grouped": { "tests/discount.test.js": false },
+  "fallback": "none",
+  "result": { "tests/discount.test.js": "fail" },
+  "bugs": ["applies a percent discount"]
+}

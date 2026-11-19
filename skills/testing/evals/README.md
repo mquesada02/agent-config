@@ -25,6 +25,12 @@ python3 skills/testing/scripts/grade_testing_setup.py --repo <kept workspace> --
 
 The first acceptance criterion of the setup ticket ("no missing section") means "no missing section except the expected gap": a `commands.<language>` entry for a language whose test command detection cannot find. The setup fixtures all have a detected test command, so no case hits the gap. Pass the gap to the grader with `allow_missing` when you add such a case.
 
+Grade a write case on its kept workspace and its saved final message. The report is the file that holds the final message. `--before` is the fixture repo as it was before the run:
+
+```
+python3 skills/testing/scripts/grade_testing_write.py <report file> --repo <kept workspace> --expect skills/testing/evals/<case>/expect-write.json --before skills/testing/evals/<case>/repo
+```
+
 Then grade a saved final message with the report grader:
 
 ```
@@ -37,10 +43,11 @@ Each folder holds one case:
 
 | File | Purpose |
 |---|---|
-| `prompt.md` | The prompt and the run limits. It never names the skill. The review prompts never name a rule. The setup prompts give rule ids (the interview answers), and the `allowed_tools` of their front matter include `Write` and `Edit` (the `--allow-tools` list of the run command holds Bash patterns only). |
+| `prompt.md` | The prompt and the run limits. It never names the skill. The review prompts never name a rule. The setup prompts give rule ids (the interview answers), and the `allowed_tools` of their front matter include `Write` and `Edit` (the `--allow-tools` list of the run command holds Bash patterns only). The `allowed_tools` of the write prompts include `Write` and `Edit` too: write creates the test file. |
 | `case.yaml` | The case name and its `scaffold.sh`. The `approve-*` cases also name `history.jsonl`, a recorded report that the prompt replies to. |
 | `scaffold.sh`, `repo/` | The synthetic fixture repo, copied into the workspace. |
-| `expect.json` | `expect`: rule ids that must appear. `forbid`: rule ids that must not appear. The setup cases hold two empty lists. |
+| `expect.json` | `expect`: rule ids that must appear. `forbid`: rule ids that must not appear. The setup cases and the write cases hold two empty lists. |
+| `expect-write.json` | Write cases only. The expectation of `grade_testing_write.py`, with the keys `tests` (required), `product`, `existing`, `grouped`, `fallback`, `error_line`, `result`, `bugs` and `command_contains`. |
 | `expect-setup.json` | Setup cases only. The expectation of `grade_testing_setup.py`, with the keys `set`, `unset`, `allow_missing`, `contains` and `absent`. |
 | `graders/*.md` | The in-run graders (plugin eval has no custom-code graders). |
 
@@ -64,5 +71,11 @@ Each folder holds one case:
 | `setup-skip-all` | The same repo, every question skipped. Setup still writes the six required sections: `groups = []`, no `limits`, no `rules`, no prose section. |
 | `setup-no-language` | A repo with no Rust or TypeScript manifest. Setup writes the six sections with `languages = []`, `groups = []` and empty tables, and says that no language was detected. |
 | `setup-rerun` | A repo with a rules file that has prose, a reason line and two recorded values that differ from detection. The reply approves one row only: that value and the new group change, and every other value, the prose and the reason line stay. The id that is already recorded and the id with no reason are dropped. |
+| `write-grouped` | A rules file with a recorded group that selects the named test path. The tests are written at that path, hold an assertion and run `pass` with the worker flag of the runner, the Group cell names the group, and no question is asked. |
+| `write-product-bug` | A planted bug against documented behavior. The test stays with the documented value, the report lists it in `## Found bugs` with the README or the doc comment as the Source, the run result is `fail`, and the product file is unchanged. |
+| `write-no-runner` | No test command is known. The run result is `not run` with a reason and the command is `none`. |
+| `write-no-rules-file` | The fallback line is written once and `/testing setup` is named once. |
+| `write-malformed-rules-file` | The rules file error is named once with its line. |
+| `write-go-mod` | A repo with only a `go.mod`. Write uses the general file only (no entry is read), places the tests at the named path, and reports `not run` because no command is known. |
 
 Not covered by a case in this ticket: the reply `none`, and a reply after a report with zero rows. The grammar text of `review.md` states them.
