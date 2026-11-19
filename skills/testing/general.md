@@ -6,7 +6,7 @@ Severities are fixed per rule. Critical: the test can give a false result (it pa
 
 ## Catalogue
 
-The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match.
+The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match. An id has rule text only when `## Rules` holds a subsection for it (`RS-01` and `TS-01` have none yet).
 
 | Id | Severity | Rule |
 |---|---|---|
@@ -37,7 +37,7 @@ The limits come from `rules.settings.limits`, else from `detected.facts.<languag
 
 ### Test cases and scope
 
-A test case is one test function or one case in a test file. The files in scope are the files that step 1 of the review flow takes. The in-scope test cases are the test cases of those files. Review checks the in-scope test cases. The size is per test case. The language root of a language is the `root` of its `[[languages]]` entry, else the root of its detected language. The language of a file is its `detected.entries` value (`general` has no group).
+A test case is one test function or one case in a test file. The files in scope are the files that step 1 of the review flow takes. The in-scope test cases are the test cases of those files. Review checks the in-scope test cases. The size is per test case. The language root of a language is the `root` of its `[[languages]]` entry, else the root of its detected language. The language of a file is its `detected.entries` value. The value `general` has no group, so its test cases have no sizes.
 
 ### Size and group of a test case
 

@@ -13,7 +13,7 @@ claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --s
 - `--no-publish` keeps the cases and the report private.
 - `-j 2` keeps the CPU load low.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace.
-- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest`, so their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason, and no grader forbids that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
+- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
 - `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Move them to a dated backup folder under `/tmp` when you are done. Never delete them recursively.
 - Add `--case <glob>` to run one case.
 

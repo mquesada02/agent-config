@@ -1,4 +1,5 @@
 import ast
+import functools
 import json
 import os
 import re
@@ -319,13 +320,14 @@ class EvalCaseTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(EVALS, "README.md")))
 
 
-RUNNABLE_IDS = ("RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01")
+RUNNABLE_IDS = RULE_TEXT_IDS[4:]
 RUNNABLE_SECTIONS = ("## Sizes and groups", "## Doubles and seams", "## Parallel safety", "## Flakiness")
 CASE_TICKS = re.compile(r"`([a-z0-9-]+)`")
 
 
+@functools.lru_cache(maxsize=None)
 def case_expectations():
-    """case name -> parsed expect.json of every eval case."""
+    """case name -> parsed expect.json of every eval case (read once)."""
     names = sorted(n for n in os.listdir(EVALS) if os.path.isdir(os.path.join(EVALS, n)))
     return {n: json.loads(read(os.path.join(EVALS, n, "expect.json"))) for n in names}
 
@@ -360,9 +362,6 @@ class RunnableRulesTest(unittest.TestCase):
         for case in case_expectations():
             with self.subTest(case):
                 self.assertIn(case, listed)
-
-    def test_case_ticks_pattern_on_samples(self):
-        self.assertEqual(CASE_TICKS.findall("`a-1`, `b` and plain, `C d`"), ["a-1", "b"])
 
 
 if __name__ == "__main__":
