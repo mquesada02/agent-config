@@ -12,7 +12,7 @@ KEYS = [
     "test_runners", "monorepo", "visibility", "runner_labels", "required_checks", "run_history",
     "existing_workflows", "installed_tools", "supported_node_majors",
     "environments", "plan", "rulesets", "classic_protection", "deploy_targets", "iac_tools", "aws_variables",
-    "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history",
+    "release_tool", "publish_target", "release_tag_pattern", "provenance", "deploy_history", "stack",
 ]
 REPO = "repos/acme/widget"
 PROTECTION = "repos/acme/widget/branches/main/protection/required_status_checks"
@@ -50,7 +50,7 @@ class IntakeCase(unittest.TestCase):
 
 
 class Shape(IntakeCase):
-    def test_the_output_has_the_28_facts_in_order_each_with_value_status_and_source(self):
+    def test_the_output_has_the_29_facts_in_order_each_with_value_status_and_source(self):
         facts = self.facts({"package.json": {"name": "a"}})
         self.assertEqual(list(facts), KEYS)
         for key, fact in facts.items():
@@ -1020,6 +1020,106 @@ class UnreadableCdFacts(IntakeCase):
         self.assertEqual(facts["plan"]["status"], "default")
         for name in ("rulesets", "classic_protection", "deploy_history"):
             self.assertFact(facts[name], None, "unknown")
+
+
+class Stack(IntakeCase):
+    def stack(self, files, links=()):
+        """The `stack` fact of a repo with `files`, after `links` (pairs of target and link path) are made."""
+        path = self.box.repo(files)
+        for target, name in links:
+            os.makedirs(os.path.dirname(os.path.join(path, name)), exist_ok=True)
+            os.symlink(target, os.path.join(path, name))
+        return self.box.facts(path)["stack"]
+
+    def assertStack(self, fact, languages, ci_systems, status):
+        self.assertEqual(fact["value"], {
+            "languages": [{"item": item, "file": file} for item, file in languages],
+            "ci_systems": [{"item": item, "file": file} for item, file in ci_systems],
+        })
+        self.assertEqual(fact["status"], status)
+        self.assertTrue(fact["source"])
+
+    def test_node_typescript_with_no_ci_file(self):
+        self.assertStack(self.stack({"package.json": {}}), [("Node/TypeScript", "package.json")], [], "detected")
+
+    def test_node_typescript_on_gitlab_ci(self):
+        fact = self.stack({"package.json": {}, ".gitlab-ci.yml": "stages: []\n"})
+        self.assertStack(fact, [("Node/TypeScript", "package.json")], [("GitLab CI", ".gitlab-ci.yml")], "detected")
+
+    def test_rust_on_github_actions(self):
+        fact = self.stack({"Cargo.toml": "", ".github/workflows/ci.yml": WORKFLOW.format(label="ubuntu-24.04")})
+        self.assertStack(fact, [("Rust", "Cargo.toml")], [("GitHub Actions", ".github/workflows/ci.yml")], "detected")
+
+    def test_go_on_gitlab_ci(self):
+        fact = self.stack({"go.mod": "", ".gitlab-ci.yml": ""})
+        self.assertStack(fact, [("Go", "go.mod")], [("GitLab CI", ".gitlab-ci.yml")], "detected")
+
+    def test_a_mixed_repo_lists_both_languages_in_table_order(self):
+        fact = self.stack({"Cargo.toml": "", "package.json": {}})
+        self.assertStack(fact, [("Node/TypeScript", "package.json"), ("Rust", "Cargo.toml")], [], "detected")
+
+    def test_node_typescript_on_github_actions(self):
+        fact = self.stack({"package.json": {}, ".github/workflows/ci.yml": WORKFLOW.format(label="ubuntu-24.04")})
+        self.assertStack(fact, [("Node/TypeScript", "package.json")],
+                         [("GitHub Actions", ".github/workflows/ci.yml")], "detected")
+
+    def test_an_empty_repo_is_unknown_with_two_empty_lists(self):
+        self.assertStack(self.stack({}), [], [], "unknown")
+
+    def test_a_manifest_at_depth_2_is_found_and_at_depth_3_is_not(self):
+        self.assertStack(self.stack({"a/b/go.mod": ""}), [("Go", "a/b/go.mod")], [], "detected")
+        self.assertStack(self.stack({"a/b/c/go.mod": ""}), [], [], "unknown")
+
+    def test_a_skipped_folder_hides_its_manifest(self):
+        for folder in ("node_modules", "vendor", "target", ".git"):
+            self.assertStack(self.stack({f"{folder}/Cargo.toml": ""}), [], [], "unknown")
+
+    def test_a_symbolic_link_to_a_folder_is_not_entered(self):
+        path = self.box.repo({"a/b/c/package.json": {}})
+        os.symlink(os.path.join(path, "a", "b", "c"), os.path.join(path, "linked"))
+        self.assertStack(self.box.facts(path)["stack"], [], [], "unknown")
+
+    def test_a_symbolic_link_is_not_a_manifest_or_a_ci_file(self):
+        fact = self.stack({"other.txt": ""}, links=[("other.txt", "package.json"), ("other.txt", ".github/workflows/ci.yml")])
+        self.assertStack(fact, [], [], "unknown")
+
+    def test_a_csproj_file_gives_dot_net(self):
+        self.assertStack(self.stack({"src/App.csproj": ""}), [(".NET", "src/App.csproj")], [], "detected")
+
+    def test_the_entry_names_the_shallowest_file_and_a_tie_the_first_path(self):
+        fact = self.stack({"a/b/pyproject.toml": "", "requirements.txt": "", "z/setup.py": "", "m/setup.py": ""})
+        self.assertStack(fact, [("Python", "requirements.txt")], [], "detected")
+        fact = self.stack({"z/Gemfile": "", "m/Gemfile": ""})
+        self.assertStack(fact, [("Ruby", "m/Gemfile")], [], "detected")
+
+    def test_file_names_match_exactly_with_their_case(self):
+        self.assertStack(self.stack({"gemfile": ""}), [], [], "unknown")
+
+    def test_each_table_row_is_detected(self):
+        fact = self.stack({"pom.xml": "", "composer.json": "", "Jenkinsfile": "", ".circleci/config.yml": "",
+                           "azure-pipelines.yml": "", "bitbucket-pipelines.yml": "", ".travis.yml": "",
+                           ".gitlab-ci.yml": "", ".github/workflows/b.yaml": "", ".github/workflows/a.yml": ""})
+        self.assertStack(
+            fact, [("JVM", "pom.xml"), ("PHP", "composer.json")],
+            [("GitHub Actions", ".github/workflows/a.yml"), ("GitLab CI", ".gitlab-ci.yml"),
+             ("Jenkins", "Jenkinsfile"), ("CircleCI", ".circleci/config.yml"),
+             ("Azure Pipelines", "azure-pipelines.yml"), ("Bitbucket Pipelines", "bitbucket-pipelines.yml"),
+             ("Travis CI", ".travis.yml")], "detected")
+
+    def test_a_ci_file_in_a_sub_folder_is_not_detected(self):
+        self.assertStack(self.stack({"sub/.gitlab-ci.yml": ""}), [], [], "unknown")
+
+    def test_a_yaml_workflow_is_detected_and_a_folder_named_yml_is_not(self):
+        fact = self.stack({".github/workflows/ci.yaml": "", ".github/workflows/x.yml/keep.txt": ""})
+        self.assertStack(fact, [], [("GitHub Actions", ".github/workflows/ci.yaml")], "detected")
+
+    def test_the_existing_workflows_fact_does_not_change(self):
+        path = self.box.repo({"other.txt": ""})
+        os.makedirs(os.path.join(path, ".github", "workflows"))
+        os.symlink(os.path.join(path, "other.txt"), os.path.join(path, ".github", "workflows", "ci.yml"))
+        facts = self.box.facts(path)
+        self.assertEqual(facts["existing_workflows"]["value"], [".github/workflows/ci.yml"])
+        self.assertStack(facts["stack"], [], [], "unknown")
 
 
 if __name__ == "__main__":
