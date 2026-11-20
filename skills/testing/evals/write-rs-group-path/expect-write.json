@@ -1,0 +1,19 @@
+{
+  "tests": [
+    "tests/it.rs"
+  ],
+  "product": [
+    "src/text.rs"
+  ],
+  "existing": [
+    "tests/it.rs"
+  ],
+  "grouped": {
+    "tests/it.rs": true
+  },
+  "fallback": "none",
+  "result": {
+    "tests/it.rs": "pass"
+  },
+  "command_contains": "-j 2"
+}

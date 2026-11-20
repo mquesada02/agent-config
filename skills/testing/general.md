@@ -6,7 +6,7 @@ Severities are fixed per rule. Critical: the test can give a false result (it pa
 
 ## Catalogue
 
-The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match. An id has rule text only when `## Rules` holds a subsection for it (`RS-01` and `TS-01` have none yet).
+The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match. An id has rule text only when `## Rules` holds a subsection for it (`TS-01` has none yet).
 
 | Id | Severity | Rule |
 |---|---|---|
@@ -52,7 +52,7 @@ A group selector is **readable** when the command, apart from the runner and its
 
 Path operands and a name filter together select the intersection. Fixed flags do not change which tests run: worker count, reporter, color and output options. Any other selector or flag makes the group **unreadable**: a tag or attribute filter, a boolean expression of filters (with and, or or not), an exclude or ignore flag, an environment variable or a wrapper script.
 
-A group with a missing `size`, or a `size` that is not `small`, `medium` or `large`, is unreadable. A runner list command may decide membership only when a loaded language entry names that command as confirmed. When that command cannot start, exits with an error or runs longer than 10 minutes, the group is unreadable.
+A loaded language entry may name further selector forms as readable. A group with a missing `size`, or a `size` that is not `small`, `medium` or `large`, is unreadable. A runner list command may decide membership only when a loaded language entry names that command as confirmed. When that command cannot start, exits with an error or runs longer than 10 minutes, the group is unreadable.
 
 An unreadable group leaves its tests unchecked:
 
@@ -232,3 +232,17 @@ Review checks an id only when this section holds a subsection for it. A catalogu
 **Not a finding when**: the order is the behavior, for example an ordered outbound side effect that has no readable state.
 
 **Fix**: use a fake and assert on state, or drop the order check.
+
+### RS-01
+
+**Finding when**: `RS-01` is checked when at least one in-scope file has the `entries` value `rust`. It gives one row in all. For each Rust language root it is a finding when all three hold:
+
+1. The Rust runner is nextest: the `name` key of the rules-file table `[runner.rust]`, else `detected.facts.rust.runner.name`. When both are absent, the runner is not nextest.
+2. Some crate under the root has doc tests: a `src/lib.rs` whose `[lib]` has no `doctest = false`, and a fenced code block in a `///` or `//!` comment of a `.rs` file under that crate's `src/` that rustdoc compiles (see the Rust entry for the exact reading).
+3. The doc tests are not run. With at least one Rust group in the language, no group command runs doc tests (the doc command does not matter). With no Rust group, the effective doc command is null or an empty string. The effective doc command is the recorded `commands.rust.doc` string, else `detected.facts.rust.commands.doc`; a missing recorded key is not a finding when detection supplies the command. A group counts whatever its crate scope. A group command runs doc tests when it is a `cargo test` command that has `--doc` or has no token of the unreadable selector class and no `--test` flag (see the group selector table of the Rust entry); a `cargo nextest` command never does.
+
+A Rust group command that starts with neither `cargo test` nor `cargo nextest` is not decided. It counts as neither running nor not running doc tests, `RS-01` is not reported for that language, and `Not checked:` gets the entry `RS-01 (group <name> command is not a cargo command)`. Write that entry only when conditions 1 and 2 hold and no decided group command runs doc tests. The `Where` cell lists the places that exist: the rules-file line of the `doc` key and the line of the first Rust `[[groups]]` table. When neither exists, it lists `<root>/Cargo.toml:1` of each failing root.
+
+**Not a finding when**: the runner is not nextest; no crate under the root has doc tests; no group exists and the effective doc command is non-empty; or some group command runs doc tests.
+
+**Fix**: record `commands.rust.doc` as `cargo test --doc` and, when the language has a group, add a group whose command runs it.

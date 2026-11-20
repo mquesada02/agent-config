@@ -10,7 +10,7 @@ import helper_testing_rules as helper
 GRADER = os.path.join(helper.SKILL, "scripts", "grade_testing_write.py")
 NEEDS_TOMLLIB = unittest.skipUnless(sys.version_info >= (3, 11), "the grouped check needs Python 3.11 (tomllib)")
 HEADER = "| Test | Point | Kind | Size | Group | Reason |\n|---|---|---|---|---|---|\n"
-SCOPE_NOTE = "No group: typescript. Tests are placed at the named path.\n"
+SCOPE_NOTE = "No group: typescript. Tests are placed at the named or derived path.\n"
 
 
 def file_section(path="tests/a.test.js", rows=None, command="node --test --test-concurrency=2 tests/a.test.js",
@@ -181,9 +181,14 @@ class ReportCheckTest(WriteGraderCase):
         self.assert_fail("notes", report(notes=SCOPE_NOTE + SCOPE_NOTE))
 
     def test_the_setup_command_is_named_only_in_the_fallback_line_and_once(self):
-        self.assert_fail("notes", report(notes=SCOPE_NOTE.replace("named path.", "named path. Run /testing setup.")))
+        self.assert_fail("notes", report(notes=SCOPE_NOTE.replace("derived path.", "derived path. Run /testing setup.")))
         twice = "Detected for this run: x. Run /testing setup. Run /testing setup.\n"
         self.assert_fail("notes", report(notes=twice + SCOPE_NOTE))
+
+    def test_the_no_group_line_names_the_named_or_derived_path(self):
+        self.assert_pass(report(notes="No group: typescript. Tests are placed at the named or derived path.\n"))
+        self.assert_fail("notes", report(notes="No group: typescript. Tests are placed at the named path.\n"))
+        self.assert_fail("notes", report(notes=SCOPE_NOTE.replace("derived path.", "derived path. Extra text.")))
 
     def test_the_no_group_line_matches_the_none_cells(self):
         self.assert_fail("notes", report(notes=""))
@@ -368,6 +373,56 @@ class UsageErrorTest(WriteGraderCase):
             with self.subTest(name):
                 expect = self.scratch_file(text, "expect.json")
                 self.assert_usage_error(self.run_grader(report(), ["--repo", folder, "--expect", expect]))
+
+
+@NEEDS_TOMLLIB
+class RustGroupModelTest(WriteGraderCase):
+    """The grouped check for `.rs` files: `--test <target>` selects files, other selectors skip a group."""
+    FILES = ("tests/foo.rs", "tests/it.rs", "tests/it/main.rs", "tests/it/a.rs")
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self._scratch.name, "repo")
+        for name in self.FILES:
+            path = os.path.join(self.repo, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("assert_eq!(1, 1);\n")
+        os.makedirs(os.path.join(self.repo, "docs", "agents"))
+
+    def selects(self, command, path):
+        rules = f"# Rules\n\n```toml\n[[groups]]\nname = \"g\"\nlanguage = \"rust\"\nsize = \"small\"\ncommand = {json.dumps(command)}\n```\n"
+        with open(os.path.join(self.repo, "docs", "agents", "testing.md"), "w", encoding="utf-8") as handle:
+            handle.write(rules)
+        text = report(file_section(path=path, group="g"), scope="src/foo.rs", notes="")
+        expect = self.scratch_file(json.dumps({"tests": [path], "grouped": {path: True}}), "expect.json")
+        done = self.run_grader(text, ["--repo", self.repo, "--expect", expect])
+        self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
+        return done.returncode == 0
+
+    def test_a_group_with_no_selector_selects_the_derived_path(self):
+        self.assertTrue(self.selects("cargo nextest run", "tests/foo.rs"))
+
+    def test_a_test_flag_selects_the_files_of_its_target(self):
+        for command in ("cargo nextest run --test it", "cargo nextest run --test=it"):
+            for path in ("tests/it.rs", "tests/it/main.rs", "tests/it/a.rs"):
+                with self.subTest(command=command, path=path):
+                    self.assertTrue(self.selects(command, path))
+            with self.subTest(command=command, path="tests/foo.rs"):
+                self.assertFalse(self.selects(command, "tests/foo.rs"))
+
+    def test_the_value_of_a_flag_is_not_a_name_filter(self):
+        self.assertTrue(self.selects("cargo nextest run --profile ci -j 2", "tests/foo.rs"))
+        self.assertTrue(self.selects("CI=true cargo test --no-fail-fast -- --test-threads=2", "tests/foo.rs"))
+
+    def test_a_group_with_a_selector_that_is_not_a_test_target_selects_no_file(self):
+        for command in (
+            "cargo nextest run slow_", "cargo test -- --skip slow_", "cargo nextest run -p other",
+            "cargo nextest run --package other", "cargo nextest run --lib", "cargo test --doc",
+            "cargo nextest run -E 'test(x)'", "cargo nextest run --test it slow_",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/it.rs"))
 
 
 if __name__ == "__main__":

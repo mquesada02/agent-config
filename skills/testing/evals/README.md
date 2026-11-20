@@ -7,13 +7,14 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
 - `-j 2` keeps the CPU load low.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace.
 - `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
+- The Rust cases (`rs-*` and `write-rs-*`) need `cargo` and `cargo-nextest` on the machine. The fixtures that run use std-only crates with a hand-written `Cargo.lock`, so they need no crate registry. Their scaffold commits the files, so that the timed run leaves `git status --porcelain` unchanged. The cases `rs-assert-03-insta-update` and `rs-run-02-tokio-sleep` use `insta` or `tokio`: they are static-only (graded by reading, no run, no registry).
 - `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Move them to a dated backup folder under `/tmp` when you are done. Never delete them recursively.
 - Add `--case <glob>` to run one case.
 
@@ -77,5 +78,19 @@ Each folder holds one case:
 | `write-no-rules-file` | The fallback line is written once and `/testing setup` is named once. |
 | `write-malformed-rules-file` | The rules file error is named once with its line. |
 | `write-go-mod` | A repo with only a `go.mod`. Write uses the general file only (no entry is read), places the tests at the named path, and reports `not run` because no command is known. |
+| `rs-01-doc-tests-skipped` | Nextest is the runner, a library has doc tests, a doc command is recorded and no group runs doc tests: review gives one `RS-01` row. |
+| `rs-01-doc-group-present` | The same repo with a group whose command is `cargo test --doc`: no `RS-01` row. |
+| `rs-assert-03-insta-update` | The single-run command sets `INSTA_UPDATE=always` and the snapshot holds a timestamp: `ASSERT-03`. Static-only. |
+| `rs-run-01-retries` | The nextest profile has `retries` and no `flaky-result`: `RUN-01`. |
+| `rs-run-01-flaky-fail` | The nextest profile has `retries` with `flaky-result = "fail"`: no `RUN-01` row. |
+| `rs-run-02-tokio-sleep` | A `#[tokio::test]` that sleeps on the real clock: `RUN-02`. Static-only. |
+| `rs-run-04-nextest-durations` | A slow test case in a small group: the timed run reads the nextest `PASS [` duration line and gives `RUN-04`. |
+| `rs-run-04-cargo-test-not-checked` | The runner is `cargo test`: no `RUN-04` row, and the entry `RUN-04 (no per-test duration in the output` is in the `Not checked:` line. |
+| `rs-par-02-env-var` | A test sets an environment variable without a restore: `PAR-02`. |
+| `rs-grp-01-list-decides` | A nextest group with a filterset is unreadable for the general file: `cargo nextest list` decides its membership, no `Not checked:` entry names the group, and the unselected test case gives `GRP-01`. |
+| `write-rs-derived-path` | A workspace member crate with a library and a group with no selector. The prompt names no test path. The tests go to `<member>/tests/<stem>.rs`, the Group cell names the group, the command holds `-j 2` and the result is `pass`. |
+| `write-rs-group-path` | The groups are `--test missing` and `--test it`. The derived path is selected by no group, so the tests are added to the existing `tests/it.rs`, and `tests/<stem>.rs` is not written. |
+| `write-rs-no-group` | The only group has an exclude flag, so it never counts. The tests go to the derived path, the report has the `No group:` note and Group `none`. |
+| `write-rs-binary-only` | A crate with only `src/main.rs`: the report has `Not written: src/main.rs (no test location is known)` and a Result line of zeros. Its `expect-write.json` holds the `tests` key for the structure test only, so grade it with its in-run graders, not with `grade_testing_write.py`. |
 
 Not covered by a case in this ticket: the reply `none`, and a reply after a report with zero rows. The grammar text of `review.md` states them.

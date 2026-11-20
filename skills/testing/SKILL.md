@@ -57,6 +57,7 @@ It prints one JSON object with the keys `rules` and `detected`. The `rules` obje
 ## Modules
 
 - [general.md](general.md): the always-loaded general file. It holds the rule catalogue, the rule text of each checked rule id, and three sections of rule text without an id (kinds of tests, test points, design topics).
+- [entries/rust.md](entries/rust.md): the Rust entry. It holds the Rust commands, the group selector table, the confirmed runner facts, the layout and path derivation, the library how-to, and the how-to and check details of each rule id.
 - [setup.md](setup.md): the setup mode steps, the interview and the layout of the rules file.
 - [review.md](review.md): the review mode steps, the report contract and the fix flow.
 - [write.md](write.md): the write mode steps, the report contract and the rules for run results, sizes, libraries, test location and test wrong or product wrong.

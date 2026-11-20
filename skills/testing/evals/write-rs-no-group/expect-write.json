@@ -1,0 +1,16 @@
+{
+  "tests": [
+    "tests/text.rs"
+  ],
+  "product": [
+    "src/text.rs"
+  ],
+  "grouped": {
+    "tests/text.rs": false
+  },
+  "fallback": "none",
+  "result": {
+    "tests/text.rs": "pass"
+  },
+  "command_contains": "--test-threads=2"
+}

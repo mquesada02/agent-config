@@ -25,18 +25,18 @@ A product file gets no test, and is reported as not written, when no test locati
 
 ## Step 3: Write
 
-Put each test at its test location (see "Test location"). Add test cases. In an existing test file (a user-named path can name one) add test cases, helpers and import lines, and change no existing test case. Edit no product file. Write a stored snapshot by hand from the source of the expected value, never from a run output. Never use an update mode.
+Put each test at its test location (see "Test location"). Add test cases. In an existing test file (the test location can name one) add test cases, helpers and import lines, and change no existing test case. Edit no product file. Write a stored snapshot by hand from the source of the expected value, never from a run output. Never use an update mode.
 
 ## Step 4: Self-check
 
-Read each new test case against every rule text of [general.md](general.md): `## Rules`, `## Kinds of tests`, `## Test points`, `## Design topics`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", and `GRP-01` for a user-named path that no readable group selects.
+Read each new test case against every rule text of [general.md](general.md): `## Rules`, `## Kinds of tests`, `## Test points`, `## Design topics`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", `GRP-01` for a test location that no readable group selects, and `RS-01` (a repository setting, not a test-case rule).
 
 ## Step 5: Run
 
 Run the new test files. Step 6 may run again, with the same rules.
 
 - The command is the `commands.<language>.test` setting, else the detected fact.
-- Build it as steps 2 to 4 of "Timed run" in [review.md](review.md) say: append the new test file paths when the runner takes paths, set 2 workers with the worker flag, use no watch command and no update mode.
+- Build it as steps 2 to 4 of "Timed run" in [review.md](review.md) say, with the files that write wrote to as the in-scope test files to narrow to: set 2 workers with the worker flag, use no watch command and no update mode.
 - Set the environment variable `CI=true` and stop a run that lasts more than 10 minutes, as step 5 of "Timed run" says. Write does not run `git status`, because it writes files on purpose.
 - The run is one per language. The result of each file follows "Run result rule", so it is never `pass` for tests that did not run.
 - The run result of a file is that of the last run that completed. When a re-run cannot complete, the fix loop ends and the Reason of the test says so.
@@ -67,10 +67,10 @@ A test case is shown as executed when the output names it, or when the output gi
 
 ## Group and size
 
-The size of a test case is what "Size and group of a test case" in [general.md](general.md) gives: the smallest size among the readable groups that select its file. Write cannot move the file: the test location is the user-named path. Write does not choose the file by group. An unreadable group never counts. A group that selects only by a name filter selects test cases, not files.
+The size of a test case is what "Size and group of a test case" in [general.md](general.md) gives: the smallest size among the readable groups that select its file. Write cannot move the file: the test location is the one that "Test location" gives. An unreadable group never counts. A group that selects only by a name filter selects test cases, not files.
 
-- A readable group selects the user-named path: the wanted size is the size of that group (the smallest, when several select it). Write writes the test cases to fit it, with the double rule of `## Kinds of tests` in [general.md](general.md), so that review gives no `GRP-01` for them. The Reason cell says `size of group <name>`.
-- No readable group selects it: the wanted size comes from `## Kinds of tests` in [general.md](general.md), and the Reason cell says why the Group is `none`. Review can report `GRP-01` there. That is the one defined case where review can report `GRP-01` for a written test. It holds when the language has no group, every group is unreadable, the rules file is missing or malformed, or the path is outside every group. Review checks no `GRP-01` where [general.md](general.md) says it is not checked.
+- A readable group selects the test location: the wanted size is the size of that group (the smallest, when several select it). Write writes the test cases to fit it, with the double rule of `## Kinds of tests` in [general.md](general.md), so that review gives no `GRP-01` for them. The Reason cell says `size of group <name>`.
+- No readable group selects it: the wanted size comes from `## Kinds of tests` in [general.md](general.md), and the Reason cell says why the Group is `none`. Review can report `GRP-01` there. That is the one defined case where review can report `GRP-01` for a written test. It holds when the language has no group, every group is unreadable, the rules file is missing or malformed, or the test location is outside every group. Review checks no `GRP-01` where [general.md](general.md) says it is not checked.
 - The Group and Size cells hold what review's sizing gives for the file as written: the smallest-size readable group that selects it, else Group `none` and the wanted size.
 - Write never writes a test case that needs more than medium. A large group size is only the Size cell value that review gives.
 
@@ -84,12 +84,17 @@ Follow the `libraries` and `layout.setup_files` settings of the language (proper
 
 ## Test location
 
-A test location is the path of a separate test file, relative to the repo root. In this version a test location is only a test path that the user names. Use it as it is, for the product file that it is paired with:
+A test location is the path of a separate test file, relative to the repo root. Every product file has exactly one of these states. The first state that applies decides:
 
-- With one product file in scope, the named path belongs to that file.
-- With several product files, a named test path belongs to the product file whose stem its file name starts with, when exactly one product file matches. Else it belongs to none and is ignored.
+1. The user names a path. The test location is that path, for the product file that it is paired with. It is never replaced; the group is only reported.
+   - With one product file in scope, the named path belongs to that file.
+   - With several product files, a named test path belongs to the product file whose stem its file name starts with, when exactly one product file matches. Else it belongs to none and is ignored.
+2. The loaded entry derives no path for the product file. There is no test location (reason `no test location is known`), whatever the groups say. Language entries derive paths under their `layout` how-to.
+3. The path that a loaded entry derives is selected by a recorded group that applies and is readable (read as if the file existed). The test location is the derived path.
+4. The derived path is selected by no group, and the loaded entry finds a path that a recorded group selects. The test location is that path, and write adds its test cases to that existing file, edits no other file and changes no existing test case.
+5. The derived path is selected by no group, and no group path exists. The test location is the derived path, with Group `none` (see "Group and size").
 
-A product file with no test location is not written (reason `no test location is known`). The language entries add path derivation under their `layout` how-to. Until they land, write derives no path. An inline test module in the product file is never a location, because write edits no product file.
+A derived path belongs to its own product file. When the file of a derived path already exists, write adds its test cases to it and changes no existing test case. An inline test module in the product file is never a location, because write edits no product file.
 
 ## Criterion for test wrong or product wrong
 
@@ -110,14 +115,14 @@ The report is your final message. It has these parts, in this order.
 2. The line `**Result: N files, N pass, N fail, N not run, N bugs.**` The counts are test files by run result, and found bugs. An empty scope and a failed intake have all zeros.
 3. The note lines, each at most once, in this order. The empty-scope report has only the line `No product file in scope. Name the files to test.` The failed-intake report has only the line `Intake failed: <message>.` Neither has a file section or another note. Otherwise:
    - The fallback line, with the same text and conditions as note line (d) in [review.md](review.md). It is the only line that holds `/testing setup`.
-   - The line `No group: <languages>. Tests are placed at the named path.` The languages are each entry value (`rust`, `typescript` or `general`) that has a test with Group `none`.
+   - The line `No group: <languages>. Tests are placed at the named or derived path.` The languages are each entry value (`rust`, `typescript` or `general`) that has a test with Group `none`.
    - One line `Not written: <path> (<reason>).` for each product file that gets no test, in the order of the files. A report whose every product file is not written has no file section and a Result line of zeros.
 4. One section per test file, `## File: <path>`, in the order of the files. It holds the table with the header `| Test | Point | Kind | Size | Group | Reason |`, then the line `Command: ...`, then the line `Run result: ...`.
    - One table row for each new test case. `Kind` is `unit`, `integration`, `property` or `snapshot`. `Size` is `small`, `medium` or `large`. `Group` is a group name or `none`.
    - The `Point` cell names the public interface or the system boundary that the test goes through.
    - In the Reason cell, the one-line why comes first, then `; wanted <size>` or the no-group explanation when "Group and size" requires it.
    - The `Command` line is `Command: <command as run, with the worker flag>`. A known command that was not started is `Command: <command>`. A command that started and was then stopped is written as run. `Command: none` means no command is known. `CI=true` is not part of the line.
-   - The `Run result` line is `Run result: pass`, `Run result: fail (<names>)` or `Run result: not run (<reason>)`. The files of a language share one command. The result is per file ("Run result rule"). A name of a failing existing test case has the suffix ` (existing)`. Names are separated by a comma and a space. When the command is a wrapper that runs as it is (step 2 of "Timed run" in [review.md](review.md)), only in-scope test cases are kept, so no existing test case is listed.
+   - The `Run result` line is `Run result: pass`, `Run result: fail (<names>)` or `Run result: not run (<reason>)`. The files of a language share one command. The result is per file ("Run result rule"). A name of a failing existing test case has the suffix ` (existing)`. Names are separated by a comma and a space. When the command runs as it is (step 2 of "Timed run" in [review.md](review.md)), only in-scope test cases are kept, so no existing test case is listed.
    - A test is matched by its file path and its name, so two files may hold the same name.
 5. The section `## Found bugs`, only when a test is a found bug. Its header is `| File | Test | Where | Expected | Source |`. `Where` is the `file:line` of the failing assertion, else the call under test in the test file when the product code failed with an error, panic or crash. `Expected` is the expected value as the assertion writes it. Then the section `## Kept failing`, only when a test is kept failing. Its header is `| File | Test | Reason |`. Both come after the file sections, in this order.
    - Every test in them is a row of a file table and is named in the `fail` run result of that file. The one exception is a Kept failing row whose Test is `(file)`: it has no row in a file table and is named by its File cell in the `fail` run result of that file.

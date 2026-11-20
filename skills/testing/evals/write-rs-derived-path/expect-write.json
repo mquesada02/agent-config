@@ -1,0 +1,16 @@
+{
+  "tests": [
+    "crates/calc/tests/stats.rs"
+  ],
+  "product": [
+    "crates/calc/src/stats.rs"
+  ],
+  "grouped": {
+    "crates/calc/tests/stats.rs": true
+  },
+  "fallback": "none",
+  "result": {
+    "crates/calc/tests/stats.rs": "pass"
+  },
+  "command_contains": "-j 2"
+}
