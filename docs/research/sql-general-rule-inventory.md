@@ -1,0 +1,76 @@
+# Which `sql` skill rules are general to any SQL engine
+
+Ticket 914, map 912. Read-only inventory of the current rules.
+
+## Method
+
+Sources: `skills/sql/dialects/postgres.md` (`PG-*` and `PLAN-*` rules), `skills/sql/style.md` (style keys, no ids) and `skills/sql/SKILL.md` (context only).
+
+Test for "general": the rule text and its check name no PostgreSQL-only syntax, function, type, catalog or tool, and no postgres.js or pg detail. Generic SQL words (SELECT, JOIN, index, transaction) do not count as specific.
+
+Groups:
+
+- general: the rule and its check hold for any SQL engine.
+- general idea, specific check: the idea holds for any engine. The check uses PostgreSQL syntax or a PostgreSQL feature, or a postgres.js or pg detail.
+- specific: PostgreSQL only.
+
+Line numbers are the line of the rule heading.
+
+## Table
+
+| Rule id | Source file (line) | Group | Reason |
+|---|---|---|---|
+| PG-01 | dialects/postgres.md:9 | general | Join fan-out under COUNT, SUM or AVG. Uses only standard SQL. |
+| PG-02 | dialects/postgres.md:30 | general | NOT IN over a nullable column. Standard three-valued logic. The fix uses NOT EXISTS. |
+| PG-03 | dialects/postgres.md:51 | general idea, specific check | The check relies on cross-type operators of PostgreSQL. The fix uses the `5::int` cast syntax. |
+| PG-04 | dialects/postgres.md:72 | general | DISTINCT that hides a join fan-out. Uses only standard SQL. |
+| PG-05 | dialects/postgres.md:93 | general | A function on a column blocks a plain index. The check names no engine feature. The fix says "expression index"; other engines use another name for the same thing. |
+| PG-06 | dialects/postgres.md:114 | general idea, specific check | The check names `ILIKE`. The fix names a trigram index. Both are PostgreSQL only. |
+| PG-07 | dialects/postgres.md:135 | general | OR across different columns. The fix uses UNION. The example uses a `$1` placeholder only. |
+| PG-08 | dialects/postgres.md:156 | general idea, specific check | The check fires only in a postgres.js template, and not in a `.sql` file. |
+| PG-09 | dialects/postgres.md:177 | general | Correlated subquery in the select list. The fix uses a grouped join, a lateral join and `coalesce`. All are standard SQL. |
+| PG-10 | dialects/postgres.md:198 | general | A large literal OFFSET. The fix uses keyset pagination. The example uses a `$1` placeholder only. LIMIT and OFFSET exist in several engines, but not in all. |
+| PLAN-01 | dialects/postgres.md:225 | general idea, specific check | The check reads PostgreSQL plan fields (`Plan Rows`, `Actual Loops`). The fix names `ANALYZE` and extended statistics. |
+| PLAN-02 | dialects/postgres.md:246 | general idea, specific check | The check reads the `Seq Scan` node and `Rows Removed by Filter`. The fix names a partial index. |
+| PLAN-03 | dialects/postgres.md:267 | general idea, specific check | The check reads `Sort Method`, `Hash Batches` and `Temp Written Blocks`. The fix names `work_mem`. |
+| PLAN-04 | dialects/postgres.md:288 | general idea, specific check | The check reads the `Nested Loop` node and `Parent Relationship`. |
+| PLAN-05 | dialects/postgres.md:313 | general idea, specific check | The check reads `Shared Hit Blocks` and `Shared Read Blocks`. The fix names `shared_buffers`. |
+
+Every `PLAN-*` rule also needs `EXPLAIN (ANALYZE, BUFFERS)` JSON output and `scripts/plan_findings.py` (dialects/postgres.md:221). No `PLAN-*` rule is in the "general" group.
+
+## Style items without ids
+
+`style.md` has no rule ids. These items have no id:
+
+| Label | Source file (line) | Group | Reason |
+|---|---|---|---|
+| Choose the style (five keys, rules file, measurer) | style.md:5-14 | general | Picks values for the keys. Names no PostgreSQL feature. |
+| `keyword_case` | style.md:58 | general idea, specific check | The keyword list (style.md:18) holds `ILIKE`, `RETURNING`, `CONFLICT`, `DO NOTHING`. These are PostgreSQL words. The rule itself is general. |
+| `indent` | style.md:59 | general | Space or tab unit. |
+| `clause_per_line` | style.md:60-69 | general idea, specific check | The clause words (style.md:20) hold `RETURNING`. The text names `ON CONFLICT` and `FOR UPDATE`. The layout idea is general. |
+| `comma` | style.md:70 | general | Trailing or leading comma. |
+| `alias_as` | style.md:71 | general | Write `AS` or not. |
+| Default style and example | style.md:16-52 | general idea, specific check | The SQL example is standard. The JS example uses a postgres.js `sql` tagged template. |
+| Template layout | style.md:73-80 | specific | It describes `${...}` interpolation in a postgres.js template, with fragments and keyword interpolations. |
+
+The measurer and extractor (`scripts/measure_style.py`, `--tags`, `--receivers`) tie to postgres.js and `pg` (style.md:11). This does not change the style rules above.
+
+## Counts
+
+Rule ids:
+
+| Group | Count | Rule ids |
+|---|---|---|
+| general | 7 | PG-01, PG-02, PG-04, PG-05, PG-07, PG-09, PG-10 |
+| general idea, specific check | 8 | PG-03, PG-06, PG-08, PLAN-01, PLAN-02, PLAN-03, PLAN-04, PLAN-05 |
+| specific | 0 | none |
+| Total | 15 | 10 `PG-*` and 5 `PLAN-*` |
+
+Style items without ids (not in the totals above): 8 items. 4 are general, 3 are general idea with specific check, 1 is specific.
+
+## Judgement calls
+
+- PG-05: "expression index" is a PostgreSQL name. It is a naming difference, so the rule stays general.
+- PG-07 and PG-10: the `$1` placeholder is only in the example and the fix. The check does not use it. The rules stay general.
+- PG-09: `LATERAL` is standard SQL, so it does not count as PostgreSQL only.
+- PG-02: the `facts` action is a tool of this skill, not a PostgreSQL catalog name. The rule stays general.
