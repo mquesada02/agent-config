@@ -78,8 +78,7 @@ RUST_UNREADABLE = (
     "-E", "--filterset", "--exclude", "--skip", "--exact", "--ignored", "--include-ignored", "--run-ignored",
 )
 RUST_VALUE_FLAGS = (
-    "-p", "--package", "--test", "--skip", "-j", "--test-threads", "-P", "--profile", "-E", "--filterset",
-    "-F", "--features", "--retries", "--target", "--manifest-path",
+    "-j", "--test-threads", "-P", "--profile", "-F", "--features", "--retries", "--target", "--manifest-path",
 )
 ASSERTION = re.compile(r"\b(assert|expect|should)|\bt\.(Error|Errorf|Fatal|Fatalf)\(", re.IGNORECASE)
 

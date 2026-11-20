@@ -1,6 +1,6 @@
 # Rust entry
 
-This file is loaded for a file whose `detected.entries` value is `rust`, after [general.md](../general.md). It holds how-to and check details only. The rule text, the severities and the report contract live in the general file, in [review.md](../review.md) and in [write.md](../write.md). The library facts below come from [docs/research/testing-rust.md](../../../docs/research/testing-rust.md); they are research facts, not decisions of the Rust docs.
+This file is loaded for a file whose `detected.entries` value is `rust`, after [general.md](../general.md). It holds how-to and check details only. The rule text, the severities and the report contract live in the general file, in [review.md](../review.md) and in [write.md](../write.md). The library facts below come from [docs/research/testing-rust.md](../../../docs/research/testing-rust.md); they are research facts, not settings of the repo rules file.
 
 ## Detection notes
 
@@ -23,7 +23,7 @@ The single-run forms are `cargo nextest run` and `cargo test`. The doc command i
 
 ### Group selector table
 
-Read a group command as tokens. Skip leading `NAME=value` assignments. A flag with a value reads the same in the forms `--flag value` and `--flag=value`. Each token has one class.
+Read a group command as tokens. Skip leading `NAME=value` assignments. A flag with a value reads the same in the forms `--flag value` and `--flag=value`. Each token belongs to one class. A group can hold tokens of several classes.
 
 | Class | Tokens | Review reads it as | Write: can the group select a file |
 |---|---|---|---|
