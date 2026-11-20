@@ -97,6 +97,29 @@ def disabled_entries(settings):
     return unique(candidates), unique(unknown)
 
 
+def lowercase_path_entry(entry):
+    """A `<folder>=<engine>` string with its engine part in lowercase (other values as they are)."""
+    if not isinstance(entry, str) or "=" not in entry:
+        return entry
+    folder, _, engine = entry.rpartition("=")
+    return f"{folder}={engine.lower()}"
+
+
+def lowercase_engines(settings):
+    """Report the `[engine]` name and the engine of each `paths` entry in lowercase.
+
+    The reader does not check the section: a value of another form is returned as it is."""
+    engine = settings.get("engine")
+    if not isinstance(engine, dict):
+        return
+    engine = dict(engine)
+    if isinstance(engine.get("name"), str):
+        engine["name"] = engine["name"].lower()
+    if isinstance(engine.get("paths"), list):
+        engine["paths"] = [lowercase_path_entry(entry) for entry in engine["paths"]]
+    settings["engine"] = engine
+
+
 def read_rules(repo):
     path = os.path.join(repo, RULES_FILE)
     try:
@@ -129,6 +152,7 @@ def read_rules(repo):
 
     missing = []
     settings = dict(parsed)
+    lowercase_engines(settings)
     for name in SECTIONS:
         if not isinstance(settings.get(name), dict):
             settings.pop(name, None)
