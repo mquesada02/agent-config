@@ -15,7 +15,9 @@ is required. The other keys are optional, and an absent key means no check:
   existing         test files that existed before: each non-blank line of the --before copy must
                    appear in the written file, in the same order
   grouped          an object from a test file path to true or false (a recorded group selects the
-                   file and its Group cells name one, or its Group cells are none)
+                   file and its Group cells name one, or its Group cells are none). For a `.rs`
+                   file a `--test <target>` flag selects the files of that target, and a group
+                   with a crate flag, a doc flag, an unreadable selector or a name filter selects none)
   fallback         none, detected or error
   error_line       the line number that the Rules file error line must name (needed with error)
   result           an object from a test file path to the expected run result word
@@ -43,7 +45,7 @@ RESULT = re.compile(
 )
 EMPTY_SCOPE = "No product file in scope. Name the files to test."
 FAILED_INTAKE = re.compile(r"^Intake failed: \S.*\.$")
-NO_GROUP = re.compile(r"^No group: (rust|typescript|general)(?:, (?:rust|typescript|general))*\. Tests are placed at the named path\.$")
+NO_GROUP = re.compile(r"^No group: (rust|typescript|general)(?:, (?:rust|typescript|general))*\. Tests are placed at the named or derived path\.$")
 NOT_WRITTEN = re.compile(
     r"^Not written: (\S+) \((no test location is known|no test point|"
     r"no test case has a source for its expected value)\)\.$"
@@ -70,6 +72,14 @@ LANGUAGES = {
 NAME_FLAGS = (
     "-t", "-k", "-g", "-p", "--grep", "--filter", "--test-name-pattern", "--testNamePattern",
     "--package", "--project", "--exact", "--skip",
+)
+RUST_UNREADABLE = (
+    "--lib", "--bin", "--bins", "--tests", "--example", "--examples", "--bench", "--benches", "--all-targets",
+    "-E", "--filterset", "--exclude", "--skip", "--exact", "--ignored", "--include-ignored", "--run-ignored",
+)
+RUST_VALUE_FLAGS = (
+    "-p", "--package", "--test", "--skip", "-j", "--test-threads", "-P", "--profile", "-E", "--filterset",
+    "-F", "--features", "--retries", "--target", "--manifest-path",
 )
 ASSERTION = re.compile(r"\b(assert|expect|should)|\bt\.(Error|Errorf|Fatal|Fatalf)\(", re.IGNORECASE)
 
@@ -387,6 +397,55 @@ def toml_groups(repo):
     return groups if isinstance(groups, list) else None
 
 
+def rust_group_selects(command, path):
+    """Whether a Rust group command selects a file for write (the Write rule of the Rust entry).
+
+    A group selects a file when it has no crate scope, doc flag, unreadable selector or name filter,
+    and it has no --test target or one of its targets holds the file."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+    if tokens[:1] != ["cargo"]:
+        return False
+    words = tokens[1:]
+    if words[:1] == ["nextest"]:
+        words = words[2:]
+    elif words[:1] == ["test"]:
+        words = words[1:]
+    else:
+        return False
+    flat = []
+    for token in words:
+        if token.startswith("--") and "=" in token:
+            flat.extend(token.split("=", 1))
+        else:
+            flat.append(token)
+    targets = []
+    index = 0
+    while index < len(flat):
+        token = flat[index]
+        if token == "--":
+            index += 1
+        elif token in ("-p", "--package", "--doc") or token in RUST_UNREADABLE:
+            return False
+        elif token == "--test":
+            if index + 1 < len(flat):
+                targets.append(flat[index + 1])
+            index += 2
+        elif token in RUST_VALUE_FLAGS:
+            index += 2
+        elif token.startswith("-"):
+            index += 1
+        else:
+            return False
+    return not targets or any(
+        re.search(r"(^|/)tests/" + re.escape(target) + r"(\.rs$|/)", path) for target in targets
+    )
+
+
 def selecting_groups(groups, path):
     """Names of the recorded groups that select a file. A name filter or a project flag skips a group."""
     language = LANGUAGES.get(os.path.splitext(path)[1])
@@ -395,6 +454,10 @@ def selecting_groups(groups, path):
         if not isinstance(group, dict) or not isinstance(group.get("name"), str):
             continue
         if group.get("language") != language or not isinstance(group.get("command"), str):
+            continue
+        if language == "rust":
+            if rust_group_selects(group["command"], path):
+                names.append(group["name"])
             continue
         try:
             tokens = shlex.split(group["command"])

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: write-rs-binary-only
+context:
+  scaffold_script: scaffold.sh

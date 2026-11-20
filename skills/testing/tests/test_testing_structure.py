@@ -107,7 +107,7 @@ ADAPTED_LINE = re.compile(r"^Adapted from .+ \(MIT\)\.$")
 ROUTER_MARKERS = ("Scope", "Intake", "General", "Entries", "Review")
 RULE_TEXT_IDS = (
     "ASSERT-01", "ASSERT-02", "ASSERT-03", "RUN-01",
-    "RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01",
+    "RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01", "RS-01",
 )
 RULE_LABELS = ("**Finding when**", "**Not a finding when**", "**Fix**")
 CASE_ENTRIES = ("case.yaml", "expect.json", "prompt.md", "scaffold.sh", "repo", "graders")
@@ -440,6 +440,112 @@ class RunnableRulesTest(unittest.TestCase):
         for case in case_expectations():
             with self.subTest(case):
                 self.assertIn(case, listed)
+
+
+RUST_ENTRY = os.path.join(ENTRIES, "rust.md")
+RUST_SECTIONS = (
+    "## Detection notes", "## Commands", "## Runner facts", "## Layout", "## Libraries", "## Rules",
+    "## Design how-to",
+)
+RUST_LABELS = ("**How to write**", "**Check details**")
+NEXTEST_LIST_PAGE = "https://nexte.st/docs/listing/"
+NEXTEST_RUNNING_PAGE = "https://nexte.st/docs/running/"
+CARGO_TEST_PAGE = "https://doc.rust-lang.org/cargo/commands/cargo-test.html"
+
+
+def subsection(lines, heading):
+    start = lines.index(heading)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("### ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+class RustEntryTest(unittest.TestCase):
+    def setUp(self):
+        self.assertTrue(os.path.isfile(RUST_ENTRY), "skills/testing/entries/rust.md does not exist")
+        self.text = read(RUST_ENTRY)
+
+    def test_the_entry_has_the_seven_sections_in_order(self):
+        headings = [line for line in self.text.splitlines() if line.startswith("## ")]
+        self.assertEqual(tuple(headings), RUST_SECTIONS)
+
+    def test_the_entry_has_a_subsection_with_both_labels_for_every_rule_text_id(self):
+        rules = section(self.text, "## Rules")
+        for rule_id in RULE_TEXT_IDS:
+            with self.subTest(rule_id):
+                self.assertIn(f"### {rule_id}", rules)
+                body = subsection(rules, f"### {rule_id}")
+                positions = [body.find(label) for label in RUST_LABELS]
+                self.assertNotIn(-1, positions)
+                self.assertEqual(positions, sorted(positions))
+
+    def test_the_entry_has_no_rule_subsection_for_an_id_without_rule_text(self):
+        headings = [line[4:].strip() for line in section(self.text, "## Rules") if line.startswith("### ")]
+        self.assertEqual(sorted(headings), sorted(RULE_TEXT_IDS))
+
+    def test_general_md_holds_the_rs_01_rule_text_and_the_catalogue_note(self):
+        general = read(GENERAL_MD)
+        body = subsection(section(general, "## Rules"), "### RS-01")
+        finding = body.split("**Not a finding when**")[0]
+        self.assertIn("nextest", finding)
+        self.assertIn("doc", finding)
+        note = next(line for line in general.splitlines() if line.startswith("The script constant `CATALOG`"))
+        self.assertIn("`TS-01` has none yet", note)
+        self.assertNotIn("RS-01", note)
+
+    def test_every_runner_fact_is_confirmed_with_a_link_or_unconfirmed_and_unused(self):
+        facts = [line for line in section(self.text, "## Runner facts") if line.startswith("- ")]
+        self.assertTrue(facts)
+        for line in facts:
+            with self.subTest(line[:60]):
+                body = line[2:]
+                self.assertTrue(
+                    (body.startswith("Confirmed:") and "https://" in body) or body.startswith("Unconfirmed, not used:")
+                )
+
+    def test_the_list_fact_and_the_two_narrowing_facts_link_their_pages(self):
+        facts = [line[2:] for line in section(self.text, "## Runner facts") if line.startswith("- ")]
+        listing = [f for f in facts if f.startswith("Confirmed: `cargo nextest list`") or f.startswith("Confirmed: cargo nextest list")]
+        self.assertEqual(len(listing), 1)
+        self.assertIn(NEXTEST_LIST_PAGE, listing[0])
+        narrowing = [f for f in facts if f.startswith("Confirmed: Narrowing flags")]
+        self.assertEqual(len(narrowing), 2)
+        self.assertEqual(sum(CARGO_TEST_PAGE in f for f in narrowing), 1)
+        self.assertEqual(sum(NEXTEST_RUNNING_PAGE in f for f in narrowing), 1)
+
+    def test_an_unconfirmed_fact_is_not_used_outside_the_runner_facts_section(self):
+        outside = "\n".join(
+            line for heading in RUST_SECTIONS if heading != "## Runner facts" for line in section(self.text, heading)
+        )
+        self.assertNotIn("--report-time", outside)
+        self.assertNotIn("cargo test -- --list", outside)
+
+    def test_skill_md_links_the_entry_and_step_4_still_loads_entries_by_value(self):
+        text = read(SKILL_MD)
+        self.assertIn("entries/rust.md", LINK.findall(text))
+        review_flow = "\n".join(section(text, "## Review flow"))
+        self.assertIn("`entries/<value>.md`", review_flow)
+
+    def test_the_narrowing_and_placement_phrases_are_in_the_right_files(self):
+        review, write = read(REVIEW_MD), read(WRITE_MD)
+        self.assertEqual(review.count("arguments that a loaded entry names"), 1)
+        self.assertEqual(write.count("arguments that a loaded entry names"), 0)
+        self.assertEqual(write.count("path that a loaded entry derives"), 1)
+        self.assertEqual(write.count("a path that a recorded group selects"), 1)
+        for gone in ("Until they land", "the test location is the user-named path", "Write does not choose the file by group"):
+            with self.subTest(gone):
+                self.assertNotIn(gone, write)
+        step_4 = "\n".join(section(write, "## Step 4: Self-check"))
+        self.assertIn("RS-01", step_4)
+        self.assertIn("`No group: <languages>. Tests are placed at the named or derived path.`", write)
+
+    def test_the_rust_eval_cases_expect_and_forbid_rs_01_and_forbid_run_04_under_cargo_test(self):
+        cases = case_expectations()
+        self.assertEqual(sum("RS-01" in data["expect"] for data in cases.values()), 1)
+        self.assertEqual(sum("RS-01" in data["forbid"] for data in cases.values()), 1)
+        self.assertIn("RUN-04", cases["rs-run-04-cargo-test-not-checked"]["forbid"])
+        for name in ("write-rs-derived-path", "write-rs-group-path", "write-rs-no-group", "write-rs-binary-only"):
+            with self.subTest(name):
+                self.assertIn(name, cases)
 
 
 if __name__ == "__main__":
