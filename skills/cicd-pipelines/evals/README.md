@@ -147,6 +147,15 @@ The 10 `fx-cd-*` cases are the multi-rule candidates of the sample catalog. Nine
 
 `trigger-cd-protection` ("Set up branch protection for this repo."), `trigger-cd-deploy` ("Add a deploy workflow for this repo.") and `trigger-cd-release` ("Release this package.") measure the CD words of the skill description. Each case is a copy of `trigger-edit-workflow`: a minimal repo (`package.json` with a `build` script, a lockfile and one workflow file, `ci.yml`), no skill named, and the one grader `skill-fired.md` (`tool_used: Skill`).
 
+## General trigger cases
+
+`trigger-general-ci-file` and `trigger-general-unrelated` measure the general words of the skill description. Both name no skill and allow only `Read`, `Glob`, `Grep` and `Skill`, as the other trigger cases do. A trigger case measures a model choice, so one run can fail and the next can pass.
+
+- `trigger-general-ci-file` asks for an edit of a `.gitlab-ci.yml` file ("In .gitlab-ci.yml, add a job `lint` that runs `golangci-lint run`."). Its repo is a copy of the repo of `general-review-go-gitlab` (a Go repo on GitLab CI, with a recorded `intake.json`, so it has no covered part). The trigger cases cannot run the intake script, so the second line of the prompt tells the run to use `intake.json`. The skill must fire and give the "Another edit" reply of the general mode: `skill-fired.md`, `general-line-1.md` (`^General guidance:`), `general-bullet.md` (a bullet with a GEN id) and `general-last-line.md` (the last line `The skill edits no file in general mode.`).
+- `trigger-general-unrelated` asks to fix a SQL query ("Fix the query in queries/orders.sql: it counts each order twice."). Its repo is one SQL file. The skill must stay silent: `no-cicd-reply.md` (a `regex` grader with `match: not_contains` on a `# cicd-pipelines` title and a `General guidance:` line) and `no-skill-call.md` (a `tool_used` grader on the `Skill` tool, with `max: 0`).
+
+Neither case has a marker grader, so `grade_eval_results.py` does not score them.
+
 ## Run the CD groups
 
 Run each group by hand, from the repo root. Put the results outside the repo, and never commit them. Use the review run of "Run" for the review groups, and change only `--case`:
@@ -164,6 +173,7 @@ claude plugin eval skills/cicd-pipelines --case '<glob>' --no-publish -j 2 --run
 | Candidates | `fx-cd-*` | The review run above. |
 | Clean CD | `clean-cd` | The review run above. |
 | Triggers | `trigger-cd-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
+| General triggers | `trigger-general-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | Protection approval | `protect-approve-*` | The command of "Protection approval cases". |
 | Create | `create-cd-*` | The command of "Create cases", with this `--case` glob. |
 
@@ -271,6 +281,7 @@ python3 skills/cicd-pipelines/scripts/judge_fix_quality.py <results folder>/resu
 - `no-edit.md`, `no-write.md`, `no-shell-write.md`: `tool_used` graders with `min: 0` and `max: 0`. The skill must not edit a workflow before approval.
 - `fix-quality.md`: an `llm` judge of the fix text. It judges the finding rows one row at a time, on the last message only. It is `arm: with-only`, so it is reported and not scored. Plugin eval reads graders only from the case folder, so every case holds the same copy, and `tests/test_fix_quality_grader.py` fails when a copy differs. To change the text, write one copy and copy it over all the others. To read why a run failed, see "Fix-quality rationale".
 - `skill-fired.md` (trigger case): `tool_used: Skill`. Under `--ablation with-without` it is an indicator of the with-arm, not part of the score.
+- `general-line-1.md`, `general-bullet.md`, `general-last-line.md` (`trigger-general-ci-file`) and `no-cicd-reply.md`, `no-skill-call.md` (`trigger-general-unrelated`): see "General trigger cases". `no-skill-call.md` is a `tool_used` grader with `max: 0` and `arm: with-only`. Under `--ablation with-without` it is an indicator of the with-arm, as `skill-fired.md` is.
 - `actionlint-ran.md`, `actionlint-after-edit.md`, `no-actionlint.md`, `diff-in-message.md`, `gh-api-no-write.md`, `diff-scope.md` (approval cases): see "Approval cases". `diff-scope.md` is an `llm` judge with `arm: with-only`, so it is reported and not scored.
 - `wrote-ci.md`, `actionlint-after-write.md`, `wrote-<file>.md`, `no-write-<file>.md`, `no-edit-<file>.md`, `unchanged-<file>.md`, `no-write-github.md`, `names-COST-05.md` (create cases): see "Create cases".
 - `scripts/grade_create_results.py`: runs `check_workflow.py` and the real actionlint on the files that each create run shows in the final message. See "Create cases".

@@ -861,6 +861,11 @@ class Router(unittest.TestCase):
         self.assertIn("create", description)
         self.assertIn("review", description)
 
+    def test_the_description_names_the_other_ci_files_and_the_general_advice(self):
+        description = self.meta["description"]
+        for text in (".gitlab-ci.yml", "Jenkinsfile", "general advice for other stacks"):
+            self.assertIn(text, description)
+
     def test_the_description_names_the_cd_kinds_and_the_protection_requests(self):
         description = self.meta["description"].lower()
         for word in ("deploy", "release", "rollback", "npm publish", "branch protection", "rulesets", "environments"):

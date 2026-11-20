@@ -31,6 +31,21 @@ ANY_PATHS = (".gitlab-ci.yml", "Jenkinsfile", "Cargo.toml", ".github/workflows/c
 SHELL_WRITES = ("sed -i s/a/b/ {p}", "echo x > {p}", "tee {p}", "mv a {p}", "cp a {p}", "printf x >> {p}")
 SHELL_READS = ("cat {p}", "ls {p} 2>&1", "grep a {p} > /dev/null")
 GEN_ROW = r"^\|\s*{rule}\s*\|"
+DESCRIPTION = ("cicd-pipelines creates or reviews CI/CD: full rules for GitHub Actions in Node/TypeScript repos "
+               "(deploy, release, rollback, npm publish, branch protection, rulesets, environments), general advice "
+               "for other stacks. Use it to create, review, deploy, release or publish, to answer its question "
+               "(yes, no, approval), and before you write or edit CI files (.github/workflows, .gitlab-ci.yml, "
+               "Jenkinsfile).")
+TRIGGER_CI_FILE = "trigger-general-ci-file"
+TRIGGER_UNRELATED = "trigger-general-unrelated"
+TRIGGER_CASES = (TRIGGER_CI_FILE, TRIGGER_UNRELATED)
+EDIT_TRIGGER = "trigger-edit-workflow"
+CI_FILE_GRADERS = {"skill-fired.md", "general-line-1.md", "general-bullet.md", "general-last-line.md"}
+UNRELATED_GRADERS = {"no-cicd-reply.md", "no-skill-call.md"}
+TRIGGER_GRADER_FILES = tuple(sorted((CI_FILE_GRADERS | UNRELATED_GRADERS) - {"skill-fired.md"}))
+INTAKE_LINE = ("The recorded intake output for this repo is in `intake.json`: use it as the repo facts and do not "
+               "run the intake script.")
+GO_GITLAB = "general-review-go-gitlab"
 
 
 def topic_of(rule_id):
@@ -275,9 +290,10 @@ class ModeChoiceText(unittest.TestCase):
         self.assertNotIn("No mode loads", GENERAL_MD)
         self.assertIn("- General mode loads this file (see SKILL.md, \"Loading by need\").", GENERAL_MD)
 
-    def test_the_description_is_unchanged(self):
-        self.assertIn("description: cicd-pipelines creates or reviews GitHub Actions CI and CD for Node/TypeScript repos",
-                      SKILL_MD)
+    def test_the_description_is_the_text_of_the_general_spec(self):
+        description = frontmatter(os.path.join(SKILL, "SKILL.md"))["description"]
+        self.assertEqual(description, DESCRIPTION)
+        self.assertEqual(len(description), 399)  # the length of the spec text; the skill limit is 400
 
 
 class GeneralModeSection(unittest.TestCase):
@@ -354,6 +370,119 @@ class CreateGeneralModeSection(unittest.TestCase):
     def test_the_seven_numbered_steps_stay_in_the_steps_section(self):
         steps = lowered_slice(CREATE_MD, "## steps", "## general mode")
         self.assertEqual(len(re.findall(r"(?m)^\d+\. ", steps)), 7)
+
+
+def repo_files(name):
+    base = os.path.join(case_dir(name), "repo")
+    return sorted(os.path.relpath(os.path.join(root, f), base)
+                  for root, _, files in os.walk(base) for f in files)
+
+
+def prompt_lines(name):
+    return read(os.path.join(case_dir(name), "prompt.md")).splitlines()
+
+
+class TriggerGeneralCases(unittest.TestCase):
+    """The two trigger cases of the general mode: the skill must fire for a CI file of another CI system, and not for
+    an unrelated ask."""
+
+    def test_the_cases_are_exactly_these_two(self):
+        self.assertEqual({n for n in case_names() if n.startswith("trigger-general-")}, set(TRIGGER_CASES))
+
+    def test_each_case_has_its_files_and_the_empty_expect_lists(self):
+        scaffold = read(os.path.join(case_dir(EDIT_TRIGGER), "scaffold.sh"))
+        for name in TRIGGER_CASES:
+            for part in ("prompt.md", "case.yaml", "expect.json", "scaffold.sh", "repo", "graders"):
+                self.assertTrue(os.path.exists(os.path.join(case_dir(name), part)), f"{name} has no {part}")
+            self.assertEqual(expect_lists(name), ([], []), name)
+            self.assertEqual(read(os.path.join(case_dir(name), "scaffold.sh")), scaffold, name)
+
+    def test_the_prompts_name_neither_the_skill_nor_a_rule_and_use_the_front_matter_of_the_edit_trigger(self):
+        template = frontmatter(os.path.join(case_dir(EDIT_TRIGGER), "prompt.md"))
+        for name in TRIGGER_CASES:
+            prompt = read(os.path.join(case_dir(name), "prompt.md"))
+            self.assertNotIn("cicd-pipelines", prompt, name)
+            self.assertNotRegex(prompt, r"\b[A-Z]+-\d\d\b", name)
+            self.assertEqual(frontmatter(os.path.join(case_dir(name), "prompt.md")), template, name)
+
+    def test_the_ci_file_case_asks_for_a_gitlab_file_edit_and_points_to_the_recorded_intake(self):
+        lines = prompt_lines(TRIGGER_CI_FILE)
+        self.assertIn(".gitlab-ci.yml", lines[-2])
+        self.assertEqual(lines[-1], INTAKE_LINE)
+        self.assertEqual(lines[-1], prompt_lines(GO_GITLAB)[-1])
+
+    def test_the_ci_file_repo_is_the_go_gitlab_repo_with_no_github_folder(self):
+        self.assertEqual(repo_files(TRIGGER_CI_FILE),
+                         [".gitlab-ci.yml", "cmd/app/main.go", "go.mod", "intake.json"])
+        self.assertEqual(repo_files(TRIGGER_CI_FILE), repo_files(GO_GITLAB))
+        for file in repo_files(TRIGGER_CI_FILE):
+            self.assertEqual(read(os.path.join(case_dir(TRIGGER_CI_FILE), "repo", file)),
+                             read(os.path.join(case_dir(GO_GITLAB), "repo", file)), file)
+
+    def test_the_unrelated_repo_holds_one_sql_file_and_the_prompt_is_an_unrelated_ask(self):
+        self.assertEqual(repo_files(TRIGGER_UNRELATED), [os.path.join("queries", "orders.sql")])
+        self.assertEqual(prompt_lines(TRIGGER_UNRELATED)[-1],
+                         "Fix the query in queries/orders.sql: it counts each order twice.")
+
+    def test_the_grader_sets(self):
+        self.assertEqual(grader_files(TRIGGER_CI_FILE), CI_FILE_GRADERS)
+        self.assertEqual(grader_files(TRIGGER_UNRELATED), UNRELATED_GRADERS)
+        for name in TRIGGER_CASES:
+            self.assertFalse({"general-report.md", "section-summary.md"} & grader_files(name), name)
+
+    def test_skill_fired_is_the_file_of_the_edit_trigger_and_sets_no_call_count(self):
+        template = read(os.path.join(case_dir(EDIT_TRIGGER), "graders", "skill-fired.md"))
+        self.assertEqual(read(os.path.join(graders(TRIGGER_CI_FILE), "skill-fired.md")), template)
+        meta = frontmatter(os.path.join(graders(TRIGGER_CI_FILE), "skill-fired.md"))
+        self.assertNotIn("min", meta)
+        self.assertNotIn("max", meta)
+
+    def test_the_ci_file_regex_graders_have_the_spec_patterns(self):
+        want = {"general-line-1.md": ("^General guidance:", "m"),
+                "general-bullet.md": (r"^\s*[-*]\s.*\bGEN-\d\d\b", "m"),
+                "general-last-line.md": (r"The skill edits no file in general mode\.\s*$", None)}
+        for file, (pattern, flags) in want.items():
+            meta = frontmatter(os.path.join(graders(TRIGGER_CI_FILE), file))
+            self.assertEqual((meta["type"], meta["pattern"], meta.get("flags")), ("regex", pattern, flags), file)
+            self.assertNotIn("match", meta)
+
+    def test_the_ci_file_graders_accept_a_correct_reply_and_refuse_a_wrong_one(self):
+        line1, bullet, last = (re.compile(p, re.M if f else 0) for p, f in (
+            ("^General guidance:", "m"), (r"^\s*[-*]\s.*\bGEN-\d\d\b", "m"),
+            (r"The skill edits no file in general mode\.\s*$", None)))
+        good = ("General guidance: this repo uses Go and GitLab CI, which the skill does not cover. The advice comes "
+                "from the cited sources, with no rule check.\n\n- GEN-05: run the lint stage on every change.\n\n"
+                "The skill edits no file in general mode.\n")
+        self.assertTrue(line1.search(good) and bullet.search(good) and last.search(good))
+        self.assertIsNone(line1.search("I will add the job.\n"))
+        self.assertIsNone(bullet.search("1. GEN-05: run the lint stage.\n"))
+        self.assertIsNone(bullet.search("- Run the lint stage.\n"))
+        self.assertIsNone(last.search(good + "Done.\n"))
+
+    def test_the_unrelated_graders(self):
+        reply = frontmatter(os.path.join(graders(TRIGGER_UNRELATED), "no-cicd-reply.md"))
+        self.assertEqual((reply["type"], reply["pattern"], reply["flags"], reply["match"]),
+                         ("regex", "^# cicd-pipelines|General guidance:", "m", "not_contains"))
+        found = re.compile(reply["pattern"], re.M)
+        self.assertTrue(found.search("# cicd-pipelines general review: repo\n"))
+        self.assertTrue(found.search("General guidance: this repo\n"))
+        self.assertIsNone(found.search("The join repeats each order. Use a distinct count.\n"))
+        call = frontmatter(os.path.join(graders(TRIGGER_UNRELATED), "no-skill-call.md"))
+        fired = frontmatter(os.path.join(graders(TRIGGER_CI_FILE), "skill-fired.md"))
+        self.assertEqual((call["type"], call["tool"], call["arm"], call["min"], call["max"]),
+                         ("tool_used", "Skill", "with-only", "0", "0"))
+        self.assertEqual(call["input_match"], fired["input_match"])
+        self.assertTrue(re.search(call["input_match"], '{"skill": "cicd-pipelines"}'))
+        self.assertTrue(re.search(call["input_match"], '{"skill": "plugin:cicd-pipelines"}'))
+        self.assertFalse(re.search(call["input_match"], '{"skill": "other-skill"}'))
+
+    def test_the_readme_names_each_new_case_of_the_effort_and_each_new_trigger_grader(self):
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        for name in (*ALL_CASES, *TRIGGER_CASES):
+            self.assertIn(f"`{name}`", text, name)
+        for file in ("no-fallback.md", *TRIGGER_GRADER_FILES):
+            self.assertIn(f"`{file}`", text, file)
+        self.assertRegex(text, r"(?m)^\| General triggers \| `trigger-general-\*` \|")
 
 
 if __name__ == "__main__":

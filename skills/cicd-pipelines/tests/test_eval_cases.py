@@ -212,7 +212,7 @@ class EveryCase(unittest.TestCase):
 
     def test_every_case_but_a_create_case_holds_a_workflow_fixture(self):
         for name in case_names():
-            if name.startswith(("create-", "general-")):
+            if name.startswith(("create-", "general-", "trigger-general-")):
                 continue
             found = glob.glob(os.path.join(case_dir(name), "repo", ".github", "workflows", "*.yml"))
             self.assertTrue(found, f"{name} has no workflow fixture")
