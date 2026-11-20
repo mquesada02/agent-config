@@ -1,6 +1,6 @@
 # General rules
 
-This file is always loaded. It holds every rule id of the skill with its severity, and the rule text of each id that review checks. Language entries (`entries/<language>.md`) hold only how-to and check details. They name ids, but they hold no severity and no rule line.
+This file is always loaded. It holds every rule id of the skill with its severity, and the rule text of each id that review checks. It also holds three sections of rule text that have no id: `## Kinds of tests`, `## Test points` and `## Design topics`. Write follows them. Language entries (`entries/<language>.md`) hold only how-to and check details. They name ids, but they hold no severity and no rule line.
 
 Severities are fixed per rule. Critical: the test can give a false result (it passes when the code is broken, or it fails at random). Required: the test breaks a runnable property (speed, isolation, parallel safety, grouping). Suggestion: style and maintainability.
 
@@ -86,9 +86,56 @@ A test is safe to run in parallel when it owns all state that it touches.
 
 A flaky test gives a different result for the same code. Common causes: sleeps and wall-clock waits (`RUN-02`), shared state (`PAR-02`), test order, the clock, randomness, fixed ports and temp paths (`PAR-01`), network (`RUN-03`), threads and unordered collections. Find the cause. Do not hide it with a retry (`RUN-01`).
 
+## Kinds of tests
+
+A test has one of four kinds.
+
+- Unit: it checks pure logic, with no I/O.
+- Integration: it checks a boundary between parts, or local I/O.
+- Property: it checks an invariant of the contract for many inputs.
+- Snapshot: it checks a structured output against a stored value.
+
+Pick the kind from the change. The first line that fits wins:
+
+1. An invariant of the contract that holds for many inputs: property.
+2. A structured output that a stored value shows: snapshot.
+3. A boundary between parts, or local I/O: integration.
+4. Else, pure logic: unit.
+
+The kind and the size are separate choices. Choose the kind first. The size depends on what the test case uses, as `## Sizes and groups` says.
+
+- Write only small or medium test cases: small uses no I/O, no network and no sleep, and medium uses local I/O or loopback network.
+- Replace any other use (a sleep, a non-loopback network, a child process, a database or another service) with a double or a fake clock, as `## Doubles and seams` says.
+- Doubling a boundary does not change the kind.
+- A `large` group size is only the Size cell value that review gives. The test cases are still small or medium.
+
+## Test points
+
+The test points are the public interface (what a caller can reach) and the system boundaries (the file system, the network, the clock, a process, a database and other services).
+
+- A test goes through a test point. It does not call a function that no caller reaches.
+- A boundary is replaced as `## Doubles and seams` says.
+
+## Design topics
+
+### Level to test at
+
+Test at the lowest level at which the behavior is visible through a test point. Use a higher level only for behavior that spans parts.
+
+### Failure paths and edge cases
+
+For each test point, cover the error returns, the invalid input, and the empty and boundary values that the source of the expected value names. Each case has its own test case.
+
+### Naming and structure
+
+- A test name states the behavior and the condition.
+- One test case checks one behavior.
+- A test case follows the order arrange, act, assert.
+- Helpers and fixtures are shared by name, not by order.
+
 ## Rules
 
-Review checks an id only when this section holds a subsection for it. A catalogue id without a subsection is not checked yet.
+Review checks an id only when this section holds a subsection for it. A catalogue id without a subsection is not checked yet. The sections `## Kinds of tests`, `## Test points` and `## Design topics` hold rule text without an id. Review does not check them.
 
 ### ASSERT-01
 

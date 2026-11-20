@@ -94,6 +94,7 @@ class CatalogUseTest(unittest.TestCase):
 GENERAL_MD = os.path.join(helper.SKILL, "general.md")
 REVIEW_MD = os.path.join(helper.SKILL, "review.md")
 SETUP_MD = os.path.join(helper.SKILL, "setup.md")
+WRITE_MD = os.path.join(helper.SKILL, "write.md")
 ENTRIES = os.path.join(helper.SKILL, "entries")
 EVALS = os.path.join(helper.SKILL, "evals")
 ANY_ID = re.compile(r"\b[A-Z]+-\d{2}\b")
@@ -163,7 +164,7 @@ def entry_files():
 
 
 def skill_text_files():
-    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD] + entry_files()
+    paths = [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD, WRITE_MD] + entry_files()
     scripts = os.path.join(helper.SKILL, "scripts")
     paths += [os.path.join(scripts, n) for n in sorted(os.listdir(scripts)) if n.endswith(".py")]
     return paths
@@ -202,7 +203,7 @@ class CatalogueTableTest(unittest.TestCase):
 class IdUseTest(unittest.TestCase):
     def test_every_id_that_a_file_names_is_in_the_catalogue(self):
         catalogue = {row[0] for row in catalogue_rows(read(GENERAL_MD))}
-        for path in [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD] + entry_files():
+        for path in [SKILL_MD, GENERAL_MD, REVIEW_MD, SETUP_MD, WRITE_MD] + entry_files():
             for found in sorted(set(ANY_ID.findall(read(path)))):
                 with self.subTest(path=os.path.basename(path), id=found):
                     self.assertIn(found, catalogue)
@@ -273,6 +274,50 @@ class SetupModeTest(unittest.TestCase):
                 data = json.loads(read(os.path.join(EVALS, case, "expect-setup.json")))
                 self.assertIsInstance(data, dict)
                 self.assertLessEqual(set(data), SETUP_EXPECT_KEYS)
+
+
+WRITE_MARKERS = ("Scope", "Intake", "General", "Entries", "Write")
+WRITE_STEPS = (
+    "## Step 1: Settings", "## Step 2: Choose", "## Step 3: Write", "## Step 4: Self-check",
+    "## Step 5: Run", "## Step 6: Fix", "## Step 7: Report",
+)
+WRITE_EXPECT_KEYS = {
+    "tests", "product", "existing", "grouped", "fallback", "error_line", "result", "bugs",
+    "command_contains",
+}
+
+
+class WriteModeTest(unittest.TestCase):
+    def test_skill_md_has_the_five_write_steps_in_order(self):
+        steps = re.findall(r"^\d+\. (\w+)\.", "\n".join(section(read(SKILL_MD), "## Write flow")), re.MULTILINE)
+        self.assertEqual(tuple(steps), WRITE_MARKERS)
+
+    def test_skill_md_links_the_write_file_and_grader_and_they_exist(self):
+        links = LINK.findall(read(SKILL_MD))
+        for name in ("write.md", "scripts/grade_testing_write.py"):
+            with self.subTest(name):
+                self.assertIn(name, links)
+                self.assertTrue(os.path.isfile(os.path.join(helper.SKILL, name)))
+
+    def test_write_md_has_the_seven_steps_in_order(self):
+        headings = [line for line in read(WRITE_MD).splitlines() if line.startswith("## Step ")]
+        self.assertEqual(tuple(headings), WRITE_STEPS)
+
+    def test_general_md_has_the_kinds_and_test_points_between_flakiness_and_rules(self):
+        headings = [line for line in read(GENERAL_MD).splitlines() if line.startswith("## ")]
+        order = ("## Flakiness", "## Kinds of tests", "## Test points", "## Rules")
+        positions = [headings.index(h) for h in order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_every_write_case_has_an_expectation_file_with_known_keys(self):
+        cases = [n for n in sorted(os.listdir(EVALS)) if n.startswith("write-") and os.path.isdir(os.path.join(EVALS, n))]
+        self.assertTrue(cases)
+        for case in cases:
+            with self.subTest(case):
+                data = json.loads(read(os.path.join(EVALS, case, "expect-write.json")))
+                self.assertIsInstance(data, dict)
+                self.assertLessEqual(set(data), WRITE_EXPECT_KEYS)
+                self.assertIn("tests", data)
 
 
 class EntryAndTextRulesTest(unittest.TestCase):

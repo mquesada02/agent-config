@@ -1,0 +1,7 @@
+{
+  "tests": ["calc_test.go"],
+  "product": ["calc.go"],
+  "grouped": { "calc_test.go": false },
+  "fallback": "detected",
+  "result": { "calc_test.go": "not run" }
+}

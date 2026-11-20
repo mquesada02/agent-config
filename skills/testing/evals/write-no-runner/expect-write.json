@@ -1,0 +1,6 @@
+{
+  "tests": ["tests/clamp.test.js"],
+  "product": ["src/clamp.js"],
+  "grouped": { "tests/clamp.test.js": false },
+  "result": { "tests/clamp.test.js": "not run" }
+}
