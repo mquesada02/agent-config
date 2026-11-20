@@ -189,6 +189,12 @@ class RulesFileTest(EngineTestCase):
         self.rules('[engine]\nname = " PostgreSQL "\n')
         self.expect(self.detect(), "postgres", "name")
 
+    def test_an_engine_name_in_mixed_case_is_reported_in_lowercase(self):
+        self.rules('[engine]\nname = "SqlServer"\n')
+        self.expect(self.detect(), "sqlserver", "name")
+        self.rules('[engine]\npaths = ["db=OraCle"]\n')
+        self.expect(self.detect("--file", "db/q.sql"), "oracle", "paths")
+
     def test_the_name_wins_over_a_different_request_with_no_question(self):
         self.rules('[engine]\nname = "mysql"\n')
         self.expect(self.detect("--request", "sqlite"), "mysql", "name")

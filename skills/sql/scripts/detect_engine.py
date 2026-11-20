@@ -82,9 +82,9 @@ def clean_folder(folder):
     return posixpath.normpath(folder)
 
 
-def rules_signals(repo, file):
+def rules_signals(root, file):
     """(the `paths` evidence or None, the `name` evidence or None) of the rules file."""
-    settings = rules_file.read_rules(repo)["settings"]
+    settings = rules_file.read_rules(root)["settings"]
     section = settings.get("engine")
     if not isinstance(section, dict):
         return None, None
@@ -160,7 +160,7 @@ def import_entries(root, file):
     if file is None or not file.endswith(JS_EXTENSIONS):
         return []
     text = read_text(os.path.join(root, file))
-    if text is None:
+    if text is None or not any(driver in text for driver in DRIVERS):
         return []
     source = strip_comments(text)
     drivers = set()
@@ -200,6 +200,8 @@ def scheme_entries(root):
         for scheme, engine, pattern in SCHEME_PATTERNS:
             if scheme not in first and pattern.search(text):
                 first[scheme] = (engine, path)
+        if len(first) == len(SCHEMES):
+            break
     return [
         {"signal": "repo", "engine": first[scheme][0], "source": f"scheme {scheme} in {first[scheme][1]}"}
         for scheme, _ in SCHEMES
@@ -220,15 +222,15 @@ def decide(paths_entry, name_entry, imports, repo_entries, request):
         return name_entry["engine"], "name", None
     import_engines = {entry["engine"] for entry in imports}
     repo_engines = {entry["engine"] for entry in repo_entries}
-    repo_signal = label = None
+    repo_signal = repo_signal_name = None
     if len(import_engines) == 1:
-        repo_signal, label = next(iter(import_engines)), "import"
+        repo_signal, repo_signal_name = next(iter(import_engines)), "import"
     elif len(repo_engines) == 1:
-        repo_signal, label = next(iter(repo_engines)), "repo"
+        repo_signal, repo_signal_name = next(iter(repo_engines)), "repo"
     if request and repo_signal and request != repo_signal:
         return None, None, "clash"
     if repo_signal:
-        return repo_signal, label, None
+        return repo_signal, repo_signal_name, None
     if request:
         return request, "request", None
     if len(repo_engines) >= 2:
