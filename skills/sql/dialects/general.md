@@ -74,7 +74,7 @@ Examples use synthetic tables and the portable positional placeholder `?`.
   Good:
 
   ```sql
-  SELECT id FROM stock WHERE qty = CAST(5.0 AS INTEGER)
+  SELECT id FROM stock WHERE qty = 5
   ```
 
 - **Source:** skill rule

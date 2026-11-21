@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import re
@@ -47,6 +48,7 @@ def parse_rules(body):
     return result, order
 
 
+@functools.lru_cache(maxsize=None)
 def general_rules():
     return parse_rules(section(read(GENERAL), "Rules"))
 
@@ -55,6 +57,7 @@ def field(rule, name):
     return dict(rule)[name]
 
 
+@functools.lru_cache(maxsize=None)
 def pg_severities():
     """Severity of every PG-* and PLAN-* rule of the PostgreSQL module."""
     text = read(POSTGRES)
@@ -73,7 +76,10 @@ def sources():
     for line in section(read(GENERAL), "Sources").splitlines():
         if line.startswith("- "):
             match = re.match(r"- \*\*([^*]+):\*\* (https?://\S+?)\.\s", line)
-            result[match.group(1) if match else line] = match.group(2) if match else None
+            if match:
+                result[match.group(1)] = match.group(2)
+            else:
+                result[line] = None
     return result
 
 
@@ -82,7 +88,7 @@ def from_ids(rule):
     return [] if value == "none" else re.findall(r"(?:PG|PLAN)-\d+", value)
 
 
-def reader_disabled_without_reason(candidates, with_reason=False):
+def run_reader_with_disabled(candidates, with_reason=False):
     entries = ", ".join(f'"{c}"' for c in candidates)
     toml = "[rules]\ndisabled = [" + entries + "]\n"
     reasons = "".join(f"\n- {c}: not needed here\n" for c in candidates) if with_reason else ""
@@ -250,11 +256,16 @@ class CatalogueTest(unittest.TestCase):
     def test_the_reader_catalogue_equals_the_gen_ids_of_the_module(self):
         _, order = general_rules()
         candidates = [f"GEN-{n:02d}" for n in range(100)]
-        data = reader_disabled_without_reason(candidates)
+        data = run_reader_with_disabled(candidates)
         self.assertEqual(sorted(data["disabled_without_reason"]), sorted(order))
 
+    def test_a_disabled_gen_id_with_no_reason_is_reported(self):
+        data = run_reader_with_disabled(["GEN-01"])
+        self.assertEqual(data["unknown_ids"], [])
+        self.assertEqual(data["disabled_without_reason"], ["GEN-01"])
+
     def test_a_disabled_gen_id_with_a_reason_is_not_unknown(self):
-        data = reader_disabled_without_reason(["GEN-01"], with_reason=True)
+        data = run_reader_with_disabled(["GEN-01"], with_reason=True)
         self.assertEqual(data["unknown_ids"], [])
         self.assertEqual(data["disabled_without_reason"], [])
         self.assertIsNone(data["error"])
