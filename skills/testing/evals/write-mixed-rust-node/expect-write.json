@@ -1,0 +1,15 @@
+{
+  "tests": [
+    "tests/calc.rs",
+    "web/src/stats.test.js"
+  ],
+  "product": [
+    "src/calc.rs",
+    "web/src/stats.js"
+  ],
+  "fallback": "none",
+  "result": {
+    "tests/calc.rs": "pass",
+    "web/src/stats.test.js": "pass"
+  }
+}

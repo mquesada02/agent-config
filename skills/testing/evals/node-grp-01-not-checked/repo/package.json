@@ -1,0 +1,8 @@
+{
+  "name": "fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "unit": "node --test && echo done"
+  }
+}

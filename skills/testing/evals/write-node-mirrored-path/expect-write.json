@@ -1,0 +1,16 @@
+{
+  "tests": [
+    "tests/slug.test.js"
+  ],
+  "product": [
+    "src/slug.js"
+  ],
+  "grouped": {
+    "tests/slug.test.js": true
+  },
+  "fallback": "none",
+  "result": {
+    "tests/slug.test.js": "pass"
+  },
+  "command_contains": "--test-concurrency=2"
+}

@@ -6,22 +6,22 @@ name = "typescript"
 root = "."
 
 [commands.typescript]
-test = "npx jest"
+test = "npx mocha"
 
 [[groups]]
 name = "unit"
 language = "typescript"
 size = "small"
-command = "npx jest"
+command = "npx mocha"
 
 [runner.typescript]
-name = "jest"
+name = "mocha"
 
 [layout.typescript]
 test_paths = ["src"]
 
 [libraries.typescript]
-fakes = "jest"
+fakes = "mocha"
 ```
 
 ## Reasons

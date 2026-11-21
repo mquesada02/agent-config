@@ -1,0 +1,19 @@
+{
+  "tests": [
+    "src/stats.test.js"
+  ],
+  "product": [
+    "src/stats.js"
+  ],
+  "existing": [
+    "src/stats.test.js"
+  ],
+  "grouped": {
+    "src/stats.test.js": true
+  },
+  "fallback": "none",
+  "result": {
+    "src/stats.test.js": "pass"
+  },
+  "command_contains": "--test-concurrency=2"
+}

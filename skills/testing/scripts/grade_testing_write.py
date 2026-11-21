@@ -516,6 +516,152 @@ def vitest_below(directory, path):
     return directory in ("", ".") or path == directory or path.startswith(directory + "/")
 
 
+JEST_EXEC = (["npx", "jest"], ["pnpm", "exec", "jest"], ["yarn", "jest"], ["bunx", "jest"])
+JEST_FIXED_FLAGS = (
+    "--ci", "--runInBand", "-i", "--verbose", "--json", "--silent", "--coverage", "--passWithNoTests",
+    "--watchman", "--no-watchman", "--cache", "--no-cache", "--runTestsByPath",
+)
+JEST_FIXED_VALUE_FLAGS = ("--maxWorkers", "-w", "--outputFile", "--reporters")
+JEST_UPDATE_MODES = ("-u", "--updateSnapshot", "--updateSnapshot=true")
+
+
+def flat_tokens(words):
+    """Split a `--flag=value` word into two tokens; keep every other word."""
+    flat = []
+    for token in words:
+        if token.startswith("-") and "=" in token:
+            flat.extend(token.split("=", 1))
+        else:
+            flat.append(token)
+    return flat
+
+
+def command_words(command, exec_forms):
+    """The words after the exec form of a command (leading NAME=value words dropped), or None."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+    return next((tokens[len(prefix):] for prefix in exec_forms if tokens[:len(prefix)] == prefix), None)
+
+
+def jest_group_selects(command, path):
+    """Whether a plain Jest group command selects a file for write (the write column of the TypeScript entry).
+
+    Returns None when the command is not an exec form of Jest, so the caller keeps the old reading."""
+    words = command_words(command, JEST_EXEC)
+    if words is None:
+        return None
+    if any(word in JEST_UPDATE_MODES for word in words):
+        return False
+    flat = flat_tokens(words)
+    patterns, operands, by_path = [], [], "--runTestsByPath" in flat
+    index = 0
+    while index < len(flat):
+        token = flat[index]
+        if token == "--updateSnapshot":
+            index += 2
+        elif token == "--testPathPatterns":
+            if index + 1 >= len(flat):
+                return False
+            patterns.append(flat[index + 1])
+            index += 2
+        elif token in JEST_FIXED_VALUE_FLAGS:
+            index += 2
+        elif token in JEST_FIXED_FLAGS:
+            index += 1
+        elif token.startswith("-"):
+            return False
+        else:
+            operands.append(token)
+            index += 1
+    selectors = [(pattern, False) for pattern in patterns] + [(operand, by_path) for operand in operands]
+    if not selectors:
+        return True
+    for selector, equal in selectors:
+        if selector.startswith(("^", "/")) and not equal:
+            return False
+    for selector, equal in selectors:
+        if equal:
+            if (selector[2:] if selector.startswith("./") else selector) == path:
+                return True
+        else:
+            try:
+                if re.search(selector, path):
+                    return True
+            except re.error:
+                return False
+    return False
+
+
+NODE_FIXED_FLAGS = (
+    "--test", "--test-force-exit", "--no-warnings", "--experimental-test-coverage",
+)
+NODE_FIXED_VALUE_FLAGS = (
+    "--test-concurrency", "--test-reporter", "--test-reporter-destination", "--test-timeout",
+    "--test-isolation", "--import", "--require", "-r", "--env-file",
+)
+
+
+def glob_regex(pattern):
+    """A regular expression for a glob: `**` crosses folders, `*` and `?` do not cross `/`."""
+    out, index = "", 0
+    while index < len(pattern):
+        char = pattern[index]
+        if pattern.startswith("**/", index):
+            out += "(?:.*/)?"
+            index += 3
+        elif pattern.startswith("**", index):
+            out += ".*"
+            index += 2
+        elif char == "*":
+            out += "[^/]*"
+            index += 1
+        elif char == "?":
+            out += "[^/]"
+            index += 1
+        else:
+            out += re.escape(char)
+            index += 1
+    return "^" + out + "$"
+
+
+def node_group_selects(command, path):
+    """Whether a plain `node --test` group command selects a file for write (the write column of the TypeScript entry).
+
+    Returns None when the command is not a `node` command with a `--test` token, so the caller keeps the old reading."""
+    words = command_words(command, (["node"],))
+    if words is None or "--test" not in words:
+        return None
+    flat = flat_tokens(words)
+    operands = []
+    index = 0
+    while index < len(flat):
+        token = flat[index]
+        if token in NODE_FIXED_VALUE_FLAGS:
+            index += 2
+        elif token in NODE_FIXED_FLAGS:
+            index += 1
+        elif token.startswith("-"):
+            return False
+        else:
+            operands.append(token)
+            index += 1
+    if not operands:
+        return True
+    for operand in operands:
+        operand = operand[2:] if operand.startswith("./") else operand
+        if (
+            path == operand
+            or path.startswith(operand.rstrip("/") + "/")
+            or re.search(glob_regex(operand), path)
+        ):
+            return True
+    return False
+
+
 def selecting_groups(groups, path):
     """Names of the recorded groups that select a file. A name filter or a project flag skips a group."""
     language = LANGUAGES.get(os.path.splitext(path)[1])
@@ -529,9 +675,13 @@ def selecting_groups(groups, path):
             if rust_group_selects(group["command"], path):
                 names.append(group["name"])
             continue
-        vitest = vitest_group_selects(group["command"], path)
-        if vitest is not None:
-            if vitest:
+        selected = None
+        for reader in (vitest_group_selects, jest_group_selects, node_group_selects):
+            selected = reader(group["command"], path)
+            if selected is not None:
+                break
+        if selected is not None:
+            if selected:
                 names.append(group["name"])
             continue
         try:

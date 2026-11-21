@@ -1,0 +1,10 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "test": "jest --watch"
+  },
+  "devDependencies": {
+    "jest": "30.5.2"
+  }
+}
