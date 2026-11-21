@@ -1,6 +1,6 @@
 # Format module
 
-This module formats SQL with the repo's safe formatter tool when the tool is safe for the input, and with the written style otherwise. This holds for PostgreSQL files (the engine step of the router gives `postgres`, also when no engine signal shows). A fallback file (any other engine) gets the section General part: it runs no formatter and no extractor, and it edits no file.
+This module formats SQL with the repo's safe formatter tool when the tool is safe for the input, and with the written style otherwise. This holds for PostgreSQL files. For the router, a PostgreSQL file is a file whose engine step gives `postgres`, also when no engine signal shows. A fallback file (any other engine) gets the section General part: it runs no formatter and no extractor, and it edits no file.
 
 ## Target
 
