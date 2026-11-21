@@ -35,12 +35,18 @@ def mixed(general_text=None, pg=PG_REPORT):
     return (general_text if general_text is not None else general()) + "\n".join(pg) + "\n"
 
 
-class GeneralPartTest(unittest.TestCase):
+class FailsMixin:
+    MODE = None
+
     def assert_fails(self, text, check):
-        code, out, _ = run(text, "--general")
+        code, out, _ = run(text, self.MODE)
         self.assertEqual(code, 1, out)
         self.assertEqual(out[-1], "FAIL")
         self.assertTrue(any(line.startswith(f"FAIL {check}:") for line in out), out)
+
+
+class GeneralPartTest(FailsMixin, unittest.TestCase):
+    MODE = "--general"
 
     def test_a_good_general_part_passes(self):
         code, out, _ = run(general(), "--general")
@@ -80,12 +86,8 @@ class GeneralPartTest(unittest.TestCase):
         self.assertTrue(any(line.startswith("FAIL sentence:") for line in out))
 
 
-class MixedReplyTest(unittest.TestCase):
-    def assert_fails(self, text, check):
-        code, out, _ = run(text, "--mixed")
-        self.assertEqual(code, 1, out)
-        self.assertEqual(out[-1], "FAIL")
-        self.assertTrue(any(line.startswith(f"FAIL {check}:") for line in out), out)
+class MixedReplyTest(FailsMixin, unittest.TestCase):
+    MODE = "--mixed"
 
     def test_a_good_mixed_reply_passes(self):
         code, out, _ = run(mixed(), "--mixed")

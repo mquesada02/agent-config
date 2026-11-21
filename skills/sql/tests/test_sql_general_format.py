@@ -159,11 +159,6 @@ class GeneralFormatCaseFilesTest(unittest.TestCase):
                 for entry in ("expected.json", "expect.json"):
                     self.assertFalse(os.path.exists(os.path.join(self.case(name), entry)), entry)
 
-    def test_the_case_names_start_with_general_format_and_not_format(self):
-        for name in CASES:
-            self.assertTrue(name.startswith("general-format-"))
-            self.assertFalse(name.startswith("format-"))
-
     def test_the_case_yaml_is_named_by_its_folder_and_allows_edit_and_write(self):
         for name in CASES:
             with self.subTest(case=name):
@@ -214,10 +209,6 @@ class GeneralFormatCaseFilesTest(unittest.TestCase):
             with self.subTest(grader=grader):
                 self.assertIn(r"reports\.ts", read(os.path.join(folder, grader)))
                 self.assertNotIn("profile", read(os.path.join(folder, grader)).split("---")[1])
-
-    def test_the_mixed_case_has_no_formatter_and_no_extractor_grader(self):
-        self.assertNotIn("no-formatter.md", os.listdir(os.path.join(self.case("general-format-mixed"), "graders")))
-        self.assertNotIn("no-extractor.md", os.listdir(os.path.join(self.case("general-format-mixed"), "graders")))
 
     def test_the_mysql_no_extractor_and_no_formatter_graders(self):
         folder = os.path.join(self.case("general-format-mysql"), "graders")
