@@ -456,7 +456,7 @@ class VitestGroupModelTest(GroupModelBase):
     """The grouped check for TypeScript groups that are an exec form of Vitest (Table 2, write column)."""
 
     def test_a_group_with_no_selector_selects_every_file(self):
-        for command in ("npx vitest run","pnpm exec vitest run", "yarn vitest run", "bunx vitest run", "npx vitest --run"):
+        for command in ("npx vitest run", "pnpm exec vitest run", "yarn vitest run", "bunx vitest run", "npx vitest --run"):
             with self.subTest(command):
                 self.assertTrue(self.selects(command, "tests/a.test.ts"))
 

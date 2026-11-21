@@ -284,7 +284,7 @@ Examples:
 
 ### Jest
 
-Test location for write (Table J3). The rows are the rows of Vitest Table 3, with the Jest parts below. A test file is a path that matches the effective `testMatch` (default `**/__tests__/**/*.?([mc])[jt]s?(x)` and `**/?(*.)+(spec|test).?([mc])[jt]s?(x)`) or `testRegex`, is in `roots`, and has no `testPathIgnorePatterns` match (default `/node_modules/`); with `projects`, any project counts. The first row that applies decides.
+Test location for write (Table J3). The rows are the rows of the Vitest Layout table above, with the Jest parts below. A test file is a path that matches the effective `testMatch` (default `**/__tests__/**/*.?([mc])[jt]s?(x)` and `**/?(*.)+(spec|test).?([mc])[jt]s?(x)`) or `testRegex`, is in `roots`, and has no `testPathIgnorePatterns` match (default `/node_modules/`); with `projects`, any project counts. The first row that applies decides.
 
 | # | State of `P` | Derived path |
 |---|---|---|
@@ -307,7 +307,7 @@ Examples:
 
 ### node:test
 
-Test location for write (Table N3). The rows are the rows of Vitest Table 3, with the `node:test` parts below. A test file is a path that matches a default name pattern (`<name>.test.<ext>`, `<name>-test.<ext>`, `<name>_test.<ext>`, `test-<name>.<ext>`, `test.<ext>`, or any file below a folder named `test`) or a glob operand of the recorded test command. The first row that applies decides.
+Test location for write (Table N3). The rows are the rows of the Vitest Layout table above, with the `node:test` parts below. A test file is a path that matches a default name pattern (`<name>.test.<ext>`, `<name>-test.<ext>`, `<name>_test.<ext>`, `test-<name>.<ext>`, `test.<ext>`, or any file below a folder named `test`) or a glob operand of the recorded test command. The first row that applies decides.
 
 | # | State of `P` | Derived path |
 |---|---|---|

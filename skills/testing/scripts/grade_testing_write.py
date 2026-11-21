@@ -603,7 +603,6 @@ NODE_FIXED_VALUE_FLAGS = (
     "--test-concurrency", "--test-reporter", "--test-reporter-destination", "--test-timeout",
     "--test-isolation", "--import", "--require", "-r", "--env-file",
 )
-NODE_NAME_FLAGS = ("--test-name-pattern", "--test-skip-pattern")
 
 
 def glob_regex(pattern):
@@ -633,15 +632,10 @@ def node_group_selects(command, path):
     """Whether a plain `node --test` group command selects a file for write (the write column of the TypeScript entry).
 
     Returns None when the command is not a `node` command with a `--test` token, so the caller keeps the old reading."""
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
+    words = command_words(command, (["node"],))
+    if words is None or "--test" not in words:
         return None
-    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-        tokens = tokens[1:]
-    if tokens[:1] != ["node"] or "--test" not in tokens:
-        return None
-    flat = flat_tokens(tokens[1:])
+    flat = flat_tokens(words)
     operands = []
     index = 0
     while index < len(flat):
@@ -681,15 +675,11 @@ def selecting_groups(groups, path):
             if rust_group_selects(group["command"], path):
                 names.append(group["name"])
             continue
-        selected = next(
-            (
-                result
-                for reader in (vitest_group_selects, jest_group_selects, node_group_selects)
-                for result in [reader(group["command"], path)]
-                if result is not None
-            ),
-            None,
-        )
+        selected = None
+        for reader in (vitest_group_selects, jest_group_selects, node_group_selects):
+            selected = reader(group["command"], path)
+            if selected is not None:
+                break
         if selected is not None:
             if selected:
                 names.append(group["name"])
