@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: general-format-mysql
+description: Format reply for a MySQL repo (a `mysql2` driver import in the file). The skill does not cover MySQL, so the reply is a general part that lists the style points. The run uses no formatter, no extractor and no database, and edits no file.
+tags: [format, general]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    Run `/sql format src/reports.ts` on the file `src/reports.ts` (it is in the current folder, and the current folder is the repo root). Do not change any file by hand.

@@ -10,7 +10,7 @@ PostgreSQL is the only engine with full rules. For every other engine the skill 
 ## Modes
 
 - `/sql setup`: load [setup.md](setup.md).
-- `/sql format`: load [format.md](format.md) and [style.md](style.md).
+- `/sql format`: run the engine step for each target file, then load [format.md](format.md) and [style.md](style.md).
 - `/sql optimize`: run the engine step for each file, then load [optimize.md](optimize.md). Load [db-access.md](db-access.md) only when the run reaches the `## Database path` section of `optimize.md`.
 
 ## No mode
@@ -38,7 +38,7 @@ python3 <skill folder>/scripts/rules_file.py <repo root>
 It prints one JSON object with the keys `found`, `settings`, `missing_sections`, `disabled_without_reason`, `unknown_ids` and `error`. Act on it in this order:
 
 1. `error` is set: stop the skill. Show the parse error message and its line, and ask the user to fix the file.
-2. `found` is false: there is no rules file. Every section falls back as in step 3, and you suggest `/sql setup` once. Format and optimize then run tag detection and formatter detection for that run only.
+2. `found` is false: there is no rules file. Every section falls back as in step 3, and you suggest `/sql setup` once. Format and optimize then run tag detection and formatter detection for that run only. This holds for PostgreSQL files only: a fallback file runs no tag detection and no formatter detection.
 3. Each missing section falls back for that part only, and you name it once: `style` uses the repo majority, `formatter` uses detection, `sources` (the tags and the receivers) uses detection for that run, and `rules` means no disabled rules.
 4. Each id in `disabled_without_reason` stays enabled, because it has no reason line (`- PG-10: <reason>` in the prose outside the TOML block). Name it once.
 5. Each id in `unknown_ids` is ignored. Name it once.
@@ -46,7 +46,7 @@ It prints one JSON object with the keys `found`, `settings`, `missing_sections`,
 
 ## Engine step
 
-`/sql optimize` runs the engine step once for each file that it judges, before the router picks the modules of that file. The engine step is this command (`--file` is the target file, relative to the repo root or absolute):
+`/sql optimize` and `/sql format` run the engine step once for each file that they judge, before the router picks the modules of that file. The engine step is this command (`--file` is the target file, relative to the repo root or absolute):
 
 ```
 python3 <skill folder>/scripts/detect_engine.py <repo root> --file <path> [--request <engine name>]
@@ -93,7 +93,7 @@ A mode picks the source modules that a PostgreSQL file needs (a JS/TS file can l
 | [optimize.md](optimize.md) | `/sql optimize` |
 | [db-access.md](db-access.md) | `/sql optimize` needs a database |
 | [style.md](style.md) | the style applies (format, or the model-invoked path) |
-| `scripts/detect_engine.py` (the engine step) | `/sql optimize`, once for each file: it decides the engine, and with a fallback engine the first line of the reply is the fallback sentence |
+| `scripts/detect_engine.py` (the engine step) | `/sql optimize` and `/sql format`, once for each file: it decides the engine, and with a fallback engine the first line of the reply is the fallback sentence |
 | [dialects/postgres.md](dialects/postgres.md) | the engine step gives `postgres` (the `PG-*` rules and plan reading) |
 | [dialects/general.md](dialects/general.md) | the engine step gives any other engine (the `GEN-*` rules of the general fallback; the file is read as text, with no extractor and no source module) |
 | [sources/sql-files.md](sources/sql-files.md) | the SQL is in a `.sql` file |

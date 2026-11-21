@@ -82,9 +82,13 @@ class RouterEngineStepTest(unittest.TestCase):
         line = next(l for l in self.text.splitlines() if l.startswith("- `/sql optimize`"))
         self.assertIn("engine step", line)
 
-    def test_the_format_entry_is_not_changed(self):
+    def test_the_format_entry_names_the_engine_step(self):
+        # Replaces the pin of ticket 923 ("the format entry is not changed"): ticket 924 adds the engine step.
         line = next(l for l in self.text.splitlines() if l.startswith("- `/sql format`"))
-        self.assertEqual(line, "- `/sql format`: load [format.md](format.md) and [style.md](style.md).")
+        self.assertEqual(
+            line,
+            "- `/sql format`: run the engine step for each target file, then load [format.md](format.md) "
+            "and [style.md](style.md).")
 
 
 class OptimizeGeneralPartTest(unittest.TestCase):

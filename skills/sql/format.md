@@ -1,6 +1,6 @@
 # Format module
 
-This module formats SQL with the repo's safe formatter tool when the tool is safe for the input, and with the written style otherwise.
+This module formats SQL with the repo's safe formatter tool when the tool is safe for the input, and with the written style otherwise. This holds for PostgreSQL files. For the router, a PostgreSQL file is a file whose engine step gives `postgres`, also when no engine signal shows. A fallback file (any other engine) gets the section General part: it runs no formatter and no extractor, and it edits no file.
 
 ## Target
 
@@ -11,7 +11,7 @@ Format only what the developer points at.
 - A diff is every statement that holds a changed line of `git diff -U0 HEAD -- <file>`. A pure deletion hunk touches no statement. An untracked file has no diff. For both, ask for a file or query target.
 - When no target is named, ask which one.
 
-Find each statement with the extractor of the source module (`scripts/extract.py`). Its output gives each statement a `start_line`, an `end_line`, a `tag` and its interpolations. Never change a line outside the target statements.
+For a PostgreSQL file, find each statement with the extractor of the source module (`scripts/extract.py`). For a fallback file, read the file as text and find the statements yourself, as the router says (no extractor, no source module). A diff target always names one file (the diff is of that file), so the scope of the general title and the path of its bullets are that file. For pasted SQL, the path is `query`. The extractor output gives each statement a `start_line`, an `end_line`, a `tag` and its interpolations. Never change a line outside the target statements.
 
 ## Style
 
@@ -96,3 +96,26 @@ The tool path uses two scripts. The detector picks the tool. The runner runs it,
    - `ok` is true: copy the output file over the target file with `cp`. When the shell cannot write the target file, print the output file with `cat` and write that text to the target file with the Write tool. Do not edit the text.
    - `ok` is false: the written style takes over for every statement of that run. The report names the `check` and the `reason`.
 5. After the tool run, run the extractor again for the statements that go to the written style and that are not `pg` statements: they keep their order and their count, but their lines may have moved. Then apply the written style to them, as the Write section says. Apply it to the `pg` statements as the `pg statements` section says.
+
+## General part
+
+A fallback file (the engine step gives an engine other than `postgres`) gets the general part. It is advice only. The skill reads the file as text, runs no formatter and no extractor, loads no source module, makes no database call and edits no file. The Style, Write, `pg statements`, Report and Safe tool path sections above apply to PostgreSQL files only.
+
+The general part has these parts, in this order:
+
+1. Line 1: the fallback sentence of the router, exactly as the router gives it.
+2. Line 2: the title `# sql format (general): <scope>`. The scope is the path of the file that the user named, or the words `the query`. In a reply with both kinds of file, the title names the fallback files only, separated by `, `.
+3. Zero or more lines that start with `Note:`. A `Note:` line is the place for text that does not fit a bullet: the `/sql setup` suggestion when there is no rules file, and the name of a style value that is not allowed. In a reply with a PostgreSQL part, the `/sql setup` suggestion is not a `Note:` line, because item 5 of the Report section already gives it once. A `Note:` line about a style value that is not allowed stays in the general part.
+4. One bullet for each style point, in the form `- <path>:<line>: <style point>`. For pasted SQL the path is `query` and the line counts from 1 in the pasted SQL.
+5. The last line: `The skill edits no file in general mode.`
+
+A target with no departure from the style, or a fallback target with no SQL statement, gives no bullet. The general part is then the fallback sentence, the title, the `Note:` lines and the last line.
+
+Style points. Judge each target statement against the style, and give a bullet for each style key that the statement departs from:
+
+- The style comes from the `[style]` section of the rules file, and a missing key uses the default style. This section overrides steps 2 and 3 of the Choose the style section of `style.md` for a fallback file: the measurer does not run, because it reads PostgreSQL source forms. The default style values are `keyword_case` upper, `indent` 2 spaces, `clause_per_line` true, `comma` trailing and `alias_as` true. A value that is not allowed is named once in a `Note:` line and treated as missing, as `style.md` says.
+- Only these five style keys apply: `keyword_case`, `indent`, `clause_per_line`, `comma` and `alias_as`. The template layout never applies, and the skill reports no style point for text inside `${...}`.
+- `keyword_case` judges only the words of the `Keywords:` list of `style.md` that are standard SQL: that list without `ILIKE`, `CONFLICT`, `DO NOTHING` and `RETURNING`. `clause_per_line` judges the clause words of `style.md` without `RETURNING`.
+- A bullet names one style key and one statement. Its line is the first line where that statement departs from the key. A statement that departs from several keys gets one bullet for each key. The style point text holds the key, its value and the change, for example `keyword_case upper: write select as SELECT`.
+
+When a run has both kinds of file, the reply is the general part first, and then the PostgreSQL format report in full and unchanged. The PostgreSQL part has no new title and no Result line (a format reply has no Result line in either part), and it keeps every item of its Report section. A reply with fallback files only has the general part and nothing else.
