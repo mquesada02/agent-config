@@ -391,6 +391,17 @@ def prose_edits(file, rules, block):
     return [(position, 0, bullets, 0)], appended, skipped
 
 
+def fresh_expected(settings):
+    """The settings that a new toml block must read back as: the defaults, the proposal, and `engine` only when proposed."""
+    expected = {}
+    for section in SETTING_SECTIONS:
+        expected[section] = dict(DEFAULTS[section])
+        expected[section].update(settings.get(section, {}))
+    if ENGINE in settings:
+        expected[ENGINE] = dict(settings[ENGINE])
+    return expected
+
+
 def plan_rules(repo, settings, rules):
     path = os.path.join(repo, rules_file.RULES_FILE)
     raw = read_raw(path)
@@ -399,12 +410,7 @@ def plan_rules(repo, settings, rules):
         old_text, bom = "", False
         result["appended"] = list(dict.fromkeys(rules))
         new_text = new_rules_text(settings, result["appended"])
-        expected = {}
-        for section in SETTING_SECTIONS:
-            expected[section] = dict(DEFAULTS[section])
-            expected[section].update(settings.get(section, {}))
-        if ENGINE in settings:
-            expected[ENGINE] = dict(settings[ENGINE])
+        expected = fresh_expected(settings)
     else:
         read = rules_file.read_rules(repo)
         if read["error"]:
@@ -438,12 +444,7 @@ def plan_rules(repo, settings, rules):
             elif heading is None:
                 added.append(file.make(""))
             edits.append((position, 0, added, 1))
-            expected = {}
-            for section in SETTING_SECTIONS:
-                expected[section] = dict(DEFAULTS[section])
-                expected[section].update(settings.get(section, {}))
-            if ENGINE in settings:
-                expected[ENGINE] = dict(settings[ENGINE])
+            expected = fresh_expected(settings)
         more, result["appended"], result["skipped"] = prose_edits(file, rules, block)
         file.lines = apply_edits(file.lines, edits + more)
         new_text = file.text()
