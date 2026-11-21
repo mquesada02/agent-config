@@ -7,13 +7,13 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(npm test*)" "Bash(npm run*)" "Bash(CI=true npm test*)" "Bash(CI=true npm run*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(npx jest*)" "Bash(CI=true npx jest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(npm test*)" "Bash(npm run*)" "Bash(CI=true npm test*)" "Bash(CI=true npm run*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
 - `-j 2` keeps the CPU load low.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace.
-- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
+- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest` or `jest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
 - The Rust cases (`rs-*` and `write-rs-*`) need `cargo` and `cargo-nextest` on the machine. The fixtures that run use std-only crates with a hand-written `Cargo.lock`, so they need no crate registry. Their scaffold commits the files, so that the timed run leaves `git status --porcelain` unchanged. The cases `rs-assert-03-insta-update` and `rs-run-02-tokio-sleep` use `insta` or `tokio`: they are static-only (graded by reading, no run, no registry).
 - `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Move them to a dated backup folder under `/tmp` when you are done. Never delete them recursively.
 - Add `--case <glob>` to run one case.
@@ -58,7 +58,7 @@ Each folder holds one case:
 | `run-02-real-sleep`, `run-03-real-network`, `run-04-slow-small-test`, `run-05-ignored-no-reason`, `par-01-fixed-port`, `par-02-shared-state`, `grp-01-unselected-test`, `grp-01-small-group-io`, `dbl-01-call-order` | Review finds the planted fault of each runnable id. `grp-01-unselected-test` and `grp-01-small-group-io` are the two cases of `GRP-01`. One fault can fire more than one id (a sleep in a small group fires `RUN-02` and `GRP-01`): the case lists in `expect.json` only its planted id. |
 | `run-03-medium-loopback` | A medium-group test that connects to loopback gives no `RUN-03` row. |
 | `size-smallest-wins` | A slow test case that a small group and a large group both select counts as small, so `RUN-04` finds it. |
-| `unreadable-selector` | A group command that is a wrapper script is unreadable: one `Not checked:` entry for the group and no `GRP-01` finding. |
+| `unreadable-selector` | A group command that is a wrapper script is unreadable: one `Not checked:` entry for the group and no `GRP-01` finding. For a `node:test` repo with a recorded test command, the `TS-01` wrapper entry is also written, on the same single `Not checked:` line (entries are separated by `;`). |
 | `run-04-not-checked` | A test command with a snapshot update flag gives `ASSERT-03` and the entry `RUN-04 (command includes an update mode)`, and no timed run. |
 | `no-groups` | A rules file with no `[[groups]]` gives exactly one `Not checked: GRP-01, RUN-03, RUN-04 (...)` line and no row for those ids. Note line (d) may also appear. |
 | `disabled-no-reason` | A disabled id with no reason line is still checked, and the report says once that it has no reason line. |
@@ -105,7 +105,7 @@ Each folder holds one case:
 | `ts-grp-01-list-decides` | A group with `--exclude` is unreadable for the general file: `vitest list --filesOnly` decides its membership, no `Not checked:` entry names the group, and the unselected test case gives `GRP-01`. |
 | `ts-grp-01-not-checked` | A wrapper group and a `related` group have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. |
 | `ts-par-02-env-var` | A test writes `process.env` without a restore: `PAR-02`; a `vi.stubEnv` test with a restore is clean. |
-| `ts-gate-other-runner` | The recorded runner is `jest`: the Vitest content of the entry does not apply, so there is no `TS-01` row, no `TS-01` entry in `Not checked:` and no reporter flag. |
+| `ts-gate-other-runner` | The recorded runner is `mocha`: the Vitest, Jest and `node:test` content of the entry does not apply, so there is no `TS-01` row, no `TS-01` entry in `Not checked:` and no reporter flag. |
 | `write-ts-derived-path` | A co-located layout and a group with no selector. The prompt names no test path. The tests go to `src/<stem>.test.ts`, the Group cell names the group, the command holds `--maxWorkers=2` and `--reporter=verbose`, `CI=true` is set, and the result is `pass`. |
 | `write-ts-mirrored-path` | The tests live under `tests/`: the tests go to `tests/<stem>.test.ts`. |
 | `write-ts-project-group` | The groups are Vitest projects. The derived path matches the `include` of project `unit`, so the Group cell is `unit` (checked by an in-run grader, because `grade_testing_write.py` cannot read the config). |
@@ -113,9 +113,46 @@ Each folder holds one case:
 | `write-ts-no-path` | A declaration file as the product file: the report has `Not written: types/api.d.ts (no test location is known)` and a Result line of zeros. Its `expect-write.json` holds the `tests` key for the structure test only, so grade it with its in-run graders. |
 | `write-ts-existing-test` | The product file already has a test file beside it: the new test cases go into that file and no second test file is written. |
 | `write-ts-fakes` | The product file uses a timer, `process.env` and an HTTP call: the new test uses fake timers, `vi.stubEnv` with a restore and an MSW request fake, and the run passes in `CI=true` mode. |
-| `write-ts-gate-other-runner` | The recorded runner is `jest`: no test location is known, so the report has `Not written` and the run holds no flag that the Vitest entry adds. Grade it with its in-run graders. |
+| `write-ts-gate-other-runner` | The recorded runner is `mocha`: no test location is known, so the report has `Not written` and the run holds no flag that the entry adds for Vitest, Jest or `node:test`. Grade it with its in-run graders. |
 | `write-mixed-rust-ts` | A Rust root crate and a TypeScript folder `web`: one change touches both languages, both entries are read, and each file's tests run with the command of its own entry. |
+| `jest-01-watch-script` | The recorded test command is `npm test` and the `test` script is `jest --watch`: one `TS-01` row whose Where cell lists both lines. |
+| `jest-01-run-mode` | The single-run command is `npx jest --ci`: no `TS-01` row. |
+| `jest-assert-03-update` | `--updateSnapshot` in the single-run command and a time value in a snapshot: `ASSERT-03`. |
+| `jest-run-01-retry` | A `jest.retryTimes(2)` call: `RUN-01`. |
+| `jest-run-02-fake-timers` | One real sleep gives `RUN-02`; a `jest.useFakeTimers` test beside it is not a finding. |
+| `jest-run-04-json-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--json`, reads the `assertionResults` duration and gives `RUN-04`. |
+| `jest-run-04-wrapper-not-checked` | The test command and the group are a wrapper script: no `RUN-04` row, and the `Not checked:` line names `RUN-04`. |
+| `jest-grp-01-list-decides` | A group with `--testPathIgnorePatterns` is unreadable for the general file: `jest --listTests` decides its membership, no `Not checked:` entry names the group, and the unselected test case gives `GRP-01`. |
+| `jest-grp-01-not-checked` | A wrapper group and a `--watch` group have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. |
+| `jest-assert-forms` | A test with only a call (`ASSERT-01`) and a `mockReturnValue` value that the assertion compares (`ASSERT-02`); a test with `expect.assertions` is clean. |
+| `jest-net-port-skip` | A real `fetch` (`RUN-03`), a literal `listen` port (`PAR-01`), a `test.skip` with no reason (`RUN-05`) and `toHaveBeenNthCalledWith` calls (`DBL-01`); a `jest.spyOn(globalThis, 'fetch')` fake and a `test.todo` are not findings. Static-only. |
+| `jest-par-02-env-var` | A test writes `process.env` without a restore: `PAR-02`; a test with a restore in `afterEach` is clean. |
+| `node-01-watch-script` | The recorded test command is `npm test` and the `test` script is `node --test --watch`: one `TS-01` row whose Where cell lists both lines. |
+| `node-01-run-mode` | The single-run command is `node --test`: no `TS-01` row. |
+| `node-assert-03-update` | `--test-update-snapshots` in the single-run command and a time value in `t.assert.snapshot`: `ASSERT-03`. |
+| `node-run-01-rerun` | `--test-rerun-failures` in the single-run command: `RUN-01`. |
+| `node-run-02-mock-timers` | One real sleep gives `RUN-02`; a `mock.timers` test beside it is not a finding. |
+| `node-run-04-spec-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--test-reporter=spec`, reads the result line with its duration and gives `RUN-04`. |
+| `node-run-04-wrapper-not-checked` | The test command and the group are a wrapper script: no `RUN-04` row, and the `Not checked:` line names `RUN-04`. |
+| `node-grp-01-not-checked` | A wrapper group and a `--test-shard` group (an unreadable selector) have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. The case shows that this entry has no `node:test` list command. |
+| `node-grp-01-readable` | A group with a glob operand is readable: no `Not checked:` entry names it, and a test file that no group selects gives `GRP-01`. |
+| `node-assert-forms` | A test with only a call (`ASSERT-01`) and a `mock.fn` value that the assertion compares (`ASSERT-02`); a test with `t.plan` is clean. |
+| `node-net-port-skip` | A real `fetch` (`RUN-03`), a literal `listen` port (`PAR-01`), a `skip: true` test with no reason (`RUN-05`) and `mock.calls` order assertions (`DBL-01`); a `mock.method(globalThis, 'fetch', ...)` fake and a `todo` test are not findings. Static-only. |
+| `node-par-02-env-var` | A test writes `process.env` without a restore: `PAR-02`; a test with a restore in `afterEach` is clean. |
+| `write-jest-derived-path` | A co-located layout and a group with no selector. The prompt names no test path. The tests go to `src/<stem>.test.js`, the Group cell names the group, the command holds `--ci`, `--maxWorkers=2` and `--json`, `CI=true` is set, and the result is `pass` (an in-run grader checks that each new test case has a result in the JSON output). |
+| `write-jest-project-group` | The groups are Jest projects. The derived path matches the `testMatch` of project `unit`, so the Group cell is `unit` (checked by an in-run grader, because `grade_testing_write.py` cannot read the config). |
+| `write-jest-no-path` | A declaration file as the product file: the report has `Not written: types/api.d.ts (no test location is known)` and a Result line of zeros. Grade it with its in-run graders. |
+| `write-jest-existing-test` | The product file already has a test file beside it: the new test cases go into that file and no second test file is written. |
+| `write-jest-fakes` | The product file uses a timer, `process.env` and an HTTP call: the new test uses fake timers, an environment restore and an in-process request fake, and the run passes in `CI=true` mode. |
+| `write-jest-no-group` | The only group has `--onlyChanged` (an unreadable token), so it never counts. The tests go to the derived path, the report has the `No group:` note and Group `none`. |
+| `write-node-derived-path` | A co-located layout and a group with no selector. The prompt names no test path. The tests go to `src/<stem>.test.js`, the command holds `--test-concurrency=2` and `--test-reporter=spec`, `CI=true` is set, and the result is `pass` (an in-run grader checks that each new test case has a result line). |
+| `write-node-mirrored-path` | The tests live under `tests/`: the tests go to `tests/<stem>.test.js`. |
+| `write-node-no-group` | The only group has `--test-only` (an unreadable token), so it never counts. The tests go to the derived path, the report has the `No group:` note and Group `none`. |
+| `write-node-no-path` | A declaration file as the product file: the report has `Not written: types/api.d.ts (no test location is known)` and a Result line of zeros. Grade it with its in-run graders. |
+| `write-node-existing-test` | The product file already has a test file beside it: the new test cases go into that file and no second test file is written. |
+| `write-node-fakes` | The product file uses a timer, `process.env` and an HTTP call: the new test uses `mock.timers`, an environment restore and a `mock.method` request fake, and the run passes in `CI=true` mode. |
+| `write-mixed-rust-node` | A Rust root crate and a `node:test` folder `web`: one change touches both languages, both entries are read, and each file's tests run with the command of its own entry. |
 
-The `ts-*` and `write-ts-*` cases that run Vitest install it in their scaffold (`npm install`), which needs network access. They need `npm` on the machine. The case `write-mixed-rust-ts` also needs `cargo` and `cargo-nextest`.
+The `ts-*`, `write-ts-*`, `jest-*` and `write-jest-*` cases that run Vitest or Jest install it in their scaffold (`npm install`), which needs network access. They need `npm` on the machine. The `node-*` and `write-node-*` cases use `node --test` and need no install. The cases `write-mixed-rust-ts` and `write-mixed-rust-node` also need `cargo` and `cargo-nextest`.
 
 Not covered by a case in this ticket: the reply `none`, and a reply after a report with zero rows. The grammar text of `review.md` states them.

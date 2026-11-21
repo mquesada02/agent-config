@@ -9,13 +9,13 @@ root = "."
 test = "npm test"
 
 [runner.typescript]
-name = "jest"
+name = "mocha"
 
 [layout.typescript]
 test_paths = ["tests"]
 
 [libraries.typescript]
-fakes = "jest"
+fakes = "mocha"
 ```
 
 ## Reasons

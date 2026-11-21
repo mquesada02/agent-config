@@ -1,0 +1,13 @@
+{
+  "tests": [
+    "src/status.test.js"
+  ],
+  "product": [
+    "src/status.js"
+  ],
+  "fallback": "none",
+  "result": {
+    "src/status.test.js": "pass"
+  },
+  "command_contains": "--test-concurrency=2"
+}

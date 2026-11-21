@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: jest-run-01-retry
+context:
+  scaffold_script: scaffold.sh
