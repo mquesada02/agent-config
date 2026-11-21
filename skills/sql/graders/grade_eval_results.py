@@ -21,6 +21,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The `report` values of expect.json and the grade_report.py flag of each (no `report` key: the PostgreSQL report).
+REPORT_FLAGS = {"general": ["--general"], "mixed": ["--mixed"]}
 
 
 def require(condition, message):
@@ -57,7 +59,7 @@ def load_lists(path):
     for name in ("expect", "forbid"):
         require(is_id_list(lists.get(name)), f"`{name}` is not a list of strings")
     require(lists.get("disabled") is None or is_id_list(lists["disabled"]), "`disabled` is not a list of strings")
-    require(lists.get("report") in (None, "general", "mixed"), "`report` is not `general` or `mixed`")
+    require(lists.get("report") is None or lists["report"] in REPORT_FLAGS, "`report` is not `general` or `mixed`")
     return lists
 
 
@@ -95,7 +97,7 @@ def grade_run(case, number, trace_path, lists):
         return [no_message]
     disabled = lists.get("disabled")
     lines = change_lines
-    report_flag = {"general": ["--general"], "mixed": ["--mixed"]}.get(lists.get("report"), [])
+    report_flag = REPORT_FLAGS.get(lists.get("report"), [])
     lines = lines + run_grader("grade_report.py",
                                ["-", *(["--disabled", *disabled] if disabled is not None else []), *report_flag],
                                message)[1]

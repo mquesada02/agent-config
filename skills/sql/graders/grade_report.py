@@ -20,6 +20,7 @@ Output: one line "FAIL <check>: <message>" for each failed check, then PASS or F
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report (no PASS or FAIL line then).
 """
 import argparse
+import functools
 import os
 import re
 import sys
@@ -71,6 +72,7 @@ def split_row(line):
     return [cell.strip() for cell in UNESCAPED_PIPE.split(line.strip()[1:-1])]
 
 
+@functools.lru_cache(maxsize=None)
 def general_sources():
     """The names of the `## Sources` entries of the general module, and `skill rule`."""
     with open(GENERAL_MODULE, encoding="utf-8") as handle:
