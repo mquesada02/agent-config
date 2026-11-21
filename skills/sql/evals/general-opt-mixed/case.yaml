@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: general-opt-mixed
+description: Optimize report for a repo with two engines (a `postgres` import in one file and a `mysql2` import in the other). The reply is the general part for the MySQL file first, then the PostgreSQL report in full, with `## Approve` last.
+tags: [optimize, static, general]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 25
+  allowed_tools: [Skill, Read, Glob, Grep, Bash]
+  prompt: |
+    Run `/sql optimize src/reports.ts src/profile.ts` on the two files `src/reports.ts` and `src/profile.ts` (they are in the current folder). Do not change any file.

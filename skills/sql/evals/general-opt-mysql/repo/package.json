@@ -1,0 +1,7 @@
+{
+  "name": "general-opt-mysql-fixture",
+  "private": true,
+  "dependencies": {
+    "mysql2": "^3.0.0"
+  }
+}

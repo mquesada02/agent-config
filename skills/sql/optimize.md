@@ -4,6 +4,8 @@
 
 ## Steps
 
+Run the engine step of the router for each file that the user points at. For SQL pasted in the message, run it once with no file. Steps 2 to 5 below run for each PostgreSQL file (the engine step gives `postgres`, also when no engine signal shows). A fallback file (any other engine) runs none of steps 2 to 5. It follows the section General part. Step 1 and step 6 apply to both kinds of file. When a run has both kinds, the reply is the general part first and then the PostgreSQL report in full, as the section General part says.
+
 1. Take the repo rules: run the reader of the router's rules file step. A rule that is disabled with a reason is not checked. Name the other results as the `Note:` lines below.
 2. Pick the source modules by the file form (the router's source module rule: for a JS/TS file, by the `source` of its statements). Run the extractor once and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
 3. Apply every enabled rule of [dialects/postgres.md](dialects/postgres.md) (the `PG-*` rules) to each statement. For a postgres.js template, also apply the `PGJS-*` rules of [sources/postgres-js.md](sources/postgres-js.md). For a `pg` statement, also apply the `PGN-*` rules of [sources/pg.md](sources/pg.md). A `dynamic` statement gets only `PGN-01`: the `PG-*` rules and `PGN-02` to `PGN-06` skip it.
@@ -22,7 +24,7 @@ One finding is one row. A rule id has at most one row in the whole report. When 
 
 ## Report
 
-The final message is the report and nothing else. Write no text before the title line and no text after the Approve line. Write no summary, no list of the statements that you checked, and no prose between the parts. Put anything else that the user must know in a line that starts with `Note:`, placed after the summary line and before the first table.
+The final message is the report and nothing else. In a PostgreSQL report, write no text before the title line and no text after the Approve line. A general part (the section General part) has one line before its title, the fallback sentence, and a reply with both kinds of file has the general part before the PostgreSQL title. Write no summary, no list of the statements that you checked, and no prose between the parts. Put anything else that the user must know in a line that starts with `Note:`, placed after the summary line and before the first table.
 
 The report has these parts, in this order:
 
@@ -55,6 +57,32 @@ Reply with the findings to fix: `all`, `none`, a list such as `1,3,5`, or a rang
 ```
 
 With no finding it is exactly `There is nothing to approve.`
+
+## General part
+
+A fallback file (the engine step gives an engine other than `postgres`) gets the general part. The skill reads the file as text, runs no extractor and loads no source module (the router says so for every file form). It judges the lines that the user points at, else every SQL statement that it finds in the file. It applies every enabled `GEN-*` rule of [dialects/general.md](dialects/general.md) to each statement. A rule that a repo fact needs fires only when the repo shows the fact, as in step 4 of the steps (the repo files only: a fallback file has no catalog). A `GEN-*` rule that the rules file disables with a reason is not checked, and the disabled rules are listed as in the section Rules file results.
+
+The general part has these parts, in this order:
+
+1. Line 1: the fallback sentence of the router, exactly as the router gives it.
+2. Line 2: the title `# sql optimize (general): <scope>`. The scope is the path of the file that the user named, or the words `the query`. In a reply with both kinds of file, each title names the files of its own part, separated by `, `.
+3. The line `**Result: N critical, N required, N suggestions.**`. Each `N` is the row count of that severity. With no finding it is `**Result: 0 critical, 0 required, 0 suggestions.**`, with no table.
+4. The line `Disabled rules: <ids>.`, only when a rule is disabled. It names the disabled `GEN-*` ids only.
+5. Zero or more lines that start with `Note:`. A `Note:` line about the rules file as a whole (no rules file, an unknown id, a disabled id with no reason) appears once in the whole reply, in its first part.
+6. One table for each severity that has a finding, in this order: `## Critical`, `## Required`, `## Suggestions`, each with the same header as the PostgreSQL report.
+7. The last line: `The skill edits no file in general mode.`
+
+The table rules of the section Report hold, with these changes:
+
+- The Rule cell holds the `GEN-*` id and the Source of the rule in parentheses, as the module writes it: the entry name of its `## Sources` list or `skill rule`. For example `GEN-08 (SQLFluff)`, `GEN-11 (OWASP SQL Injection Prevention Cheat Sheet)` or `GEN-01 (skill rule)`. A rule id has at most one row in the whole general part.
+- The Where cell holds one or more places separated by `, `. A place is `<path>:<line>` or `<path>:<line>-<line>`. When one rule fires in several files or at several lines, its one row lists every place. For SQL pasted in the message, the path is `query` and the line counts from 1 in the pasted SQL.
+- The Fix cell gives advice in words. It never holds the capitalised word `Rewrite`.
+
+The general part has no `## Approve` section, no rewrite, no Database path and no `PLAN-*` finding. The skill makes no database call for a fallback file and edits no file.
+
+When a run has both kinds of file, the reply is the general part first, and then the PostgreSQL report in full. Each part has its own title and its own Result line. The PostgreSQL part starts at its own title line `# sql optimize: <scope>`, right after the last line of the general part. The only text before the PostgreSQL title is the general part.
+
+The rule "no prose between the parts" of the section Report holds inside each part. The `Disabled rules:` line of each part names the disabled ids of its own rule family. `## Approve` is the last section of the reply. It covers the PostgreSQL findings only.
 
 ## Rewrites
 
