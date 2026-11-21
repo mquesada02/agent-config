@@ -84,10 +84,11 @@ class SourceModuleAndLayersTest(unittest.TestCase):
     def setUp(self):
         self.text = read(ROUTER)
 
-    def test_the_source_module_sentence_is_reworded_and_keeps_model_invoked(self):
-        body = squash(section(self.text, "Source module"))
-        self.assertNotIn("(you write SQL yourself) does not change", body)
-        self.assertIn("model-invoked", body.lower())
+    def test_the_source_module_section_keeps_the_word_model_invoked(self):
+        self.assertIn("model-invoked", squash(section(self.text, "Source module")).lower())
+
+    def test_the_old_model_invoked_sentence_is_gone_from_the_whole_router(self):
+        self.assertNotIn("(you write SQL yourself) does not change", squash(self.text))
 
     def test_the_layers_row_of_the_engine_step_names_the_model_invoked_path(self):
         row = next(l for l in self.text.splitlines() if l.startswith("| `scripts/detect_engine.py`"))

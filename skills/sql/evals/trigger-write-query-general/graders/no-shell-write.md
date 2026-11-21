@@ -5,4 +5,4 @@ input_match: '\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<!&)>>?(?!&)\s*(?!/dev/nul
 min: 0
 max: 0
 ---
-Passes when no Bash call changes a file. A coarse mirror of the exact no-change grader.
+Passes when no Bash call changes a file. This case has no exact no-change grader, so this check is coarse.

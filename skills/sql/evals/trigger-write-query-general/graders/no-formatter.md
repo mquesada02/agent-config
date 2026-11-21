@@ -5,4 +5,4 @@ input_match: 'prettier|pg_format|pgFormatter|sql-formatter|sqlfluff|eslint'
 min: 0
 max: 0
 ---
-Passes when no Bash call runs a formatter. A fallback file gets advice only.
+Passes when no Bash call runs a formatter. The model-invoked path never runs a formatter.
