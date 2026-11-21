@@ -99,12 +99,19 @@ The `opt-*` cases run `/sql optimize <file>` with no database. Each has `case.ya
 | `opt-rewrite-unproven` | A rewrite with no database: the report calls it unproven and names the missing database diff |
 | `opt-no-rules-file` | No rules file: a `Note:` line suggests `/sql setup`, and the run makes no connection |
 
+The general fallback has two more optimize cases. Their folder names do not start with `opt-`, so the PostgreSQL case-file tests do not scan them (`tests/test_sql_general_optimize.py` checks their files). Their `expect.json` has the extra key `report` (`general` or `mixed`), which makes `grade_eval_results.py` pass `--general` or `--mixed` to grader I. Both cases use synthetic fixtures only:
+
+| Case | What it proves |
+|---|---|
+| `general-opt-mysql` | A repo with `mysql2` and one TypeScript file that imports it: the report is a general part (the fallback sentence on line 1, the title `# sql optimize (general): <scope>`, a `GEN-08` row whose Rule cell is `GEN-08 (SQLFluff)`, no `## Approve`, the last line `The skill edits no file in general mode.`), no `PG-*` row, and no extractor, database call or file edit |
+| `general-opt-mixed` | A repo with `postgres` and `mysql2` and one file of each (the driver imports decide): the reply is the general part for the MySQL file first, then the full PostgreSQL report that starts at its own title, with `## Approve` last. It has a `GEN-08` row in the first part and a `PG-08` row in the second part |
+
 The graders live in `skills/sql/graders/`. Each one takes a report (or a trace) as a path, or `-` for standard input:
 
 - `grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]` (E): the rule ids in the Rule column.
 - `grade_no_change.py TRACE` (F): no file change in the trace of a run.
-- `grade_report.py REPORT [--disabled ID...]` (I): the layout of the report.
-- `grade_eval_results.py RESULT.json [--evals DIR]`: applies E, F and I to every run of every case that has an `expect.json`.
+- `grade_report.py REPORT [--disabled ID...] [--general | --mixed]` (I): the layout of the report. `--general` grades one general part (the fallback form). `--mixed` splits the reply at the PostgreSQL title line `# sql optimize: <scope>`, grades the first part as `--general` and the second part as the PostgreSQL report (the `--disabled` ids that start with `GEN-` go to the first part, the others to the second part).
+- `grade_eval_results.py RESULT.json [--evals DIR]`: applies E, F and I to every run of every case that has an `expect.json`. The optional key `report` of `expect.json` (`general` or `mixed`) selects the report form of grader I. Any other value is an unusable `expect.json` (exit code 2).
 - `grade_db_unchanged.py BEFORE AFTER [--sequences-may-differ]` (G), `grade_refusals.py TRACE --expect KIND[:ARG]...` (H) and `grade_leak_scan.py TRACE --canaries FILE`: see "Database cases".
 - `grade_db_eval_results.py RESULT.json [--evals DIR] [--canaries FILE]`: applies H and the leak scan to every run of every case that has a `db-expect.json`.
 

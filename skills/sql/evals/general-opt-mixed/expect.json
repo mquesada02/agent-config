@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "GEN-08",
+    "PG-08"
+  ],
+  "forbid": [],
+  "report": "mixed"
+}
