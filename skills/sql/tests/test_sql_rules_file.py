@@ -371,6 +371,39 @@ class RulesFileReaderTest(unittest.TestCase):
         self.assertEqual(out["disabled_without_reason"], [])
         self.assertEqual(out["unknown_ids"], [])
 
+    # --- the [engine] section ------------------------------------------
+
+    def test_the_engine_section_is_passed_through_in_settings(self):
+        self.write(doc(FULL_BLOCK + '\n[engine]\nname = "mysql"\npaths = ["db/reporting=sqlite"]\n'))
+        code, out = self.read()
+        self.assertEqual(code, 0)
+        self.assertEqual(out["settings"]["engine"], {"name": "mysql", "paths": ["db/reporting=sqlite"]})
+        self.assertEqual(out["missing_sections"], [])
+
+    def test_a_file_with_no_engine_section_has_the_same_missing_sections_as_before(self):
+        self.write(doc(FULL_BLOCK))
+        code, out = self.read()
+        self.assertNotIn("engine", out["settings"])
+        self.assertEqual(out["missing_sections"], [])
+        self.write(doc('[style]\nkeyword_case = "upper"\n'))
+        code, out = self.read()
+        self.assertEqual(out["missing_sections"], ["formatter", "sources", "rules"])
+        self.assertNotIn("engine", out["missing_sections"])
+
+    def test_the_engine_name_and_the_engines_of_paths_are_lowercase(self):
+        self.write(doc('[engine]\nname = "MySQL"\npaths = ["Db/Reporting=SQLite", "x=PostgreSQL"]\n'))
+        code, out = self.read()
+        self.assertEqual(out["settings"]["engine"]["name"], "mysql")
+        self.assertEqual(out["settings"]["engine"]["paths"], ["Db/Reporting=sqlite", "x=postgresql"])
+
+    def test_a_malformed_engine_value_is_returned_as_it_is(self):
+        self.write(doc('[engine]\nname = 5\npaths = ["no equals sign", 7]\n'))
+        code, out = self.read()
+        self.assertEqual(out["settings"]["engine"], {"name": 5, "paths": ["no equals sign", 7]})
+        self.write(doc('engine = "MySQL"\n'))
+        code, out = self.read()
+        self.assertEqual(out["settings"]["engine"], "MySQL")
+
 
 if __name__ == "__main__":
     unittest.main()
