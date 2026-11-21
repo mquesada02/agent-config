@@ -4,7 +4,8 @@
 Usage: grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]
 
 REPORT is a path, or - for stdin. The grader reads the Rule cell of each table row (never prose).
-It passes when every --expect id is found and no --forbid id is found.
+It passes when every --expect id is found and no --forbid id is found. In a general row the Rule cell is
+`GEN-NN (<Source>)` and its id is the text before the first space.
 Output: one line "FAIL <kind>:<id>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report (no PASS or FAIL line then).
 """
@@ -32,7 +33,8 @@ def rule_ids(text):
         cells = [cell.strip() for cell in UNESCAPED_PIPE.split(stripped.strip("|"))]
         if len(cells) < 2 or cells[0] == "#" or set(cells[0]) <= set("-: "):
             continue
-        found.add(cells[1])
+        # A general row holds `GEN-NN (<Source>)`: its id is the text before the first space. A PostgreSQL id has no space.
+        found.add(cells[1].split(" ", 1)[0])
     return found
 
 

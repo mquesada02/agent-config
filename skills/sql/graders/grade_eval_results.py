@@ -7,7 +7,8 @@ Plugin eval has no custom-code graders, so this script runs grade_rule_ids.py (E
 and grade_report.py (I) on each with-arm run of each case whose folder under DIR has an expect.json (the
 other cases are skipped). The trace of a run (`tracePath` in the result) exists only when the eval ran
 with --keep-temp. The final message is the `result` field of the last line of the trace. expect.json is an
-object with `expect` and `forbid` (lists of rule ids) and an optional `disabled` (a list of rule ids).
+object with `expect` and `forbid` (lists of rule ids), an optional `disabled` (a list of rule ids) and an
+optional `report` (`general` or `mixed`: the report form for grader I; no key means the PostgreSQL report).
 Default DIR: the evals folder beside the graders folder.
 Output: one line "FAIL <case>#<n> <check>: <message>" for each failed check, one line "<case>#<n>: PASS|FAIL"
 for each run (n starts at 1), then PASS or FAIL. Exit code: 0 pass, 1 fail, 2 usage error or unreadable
@@ -56,6 +57,7 @@ def load_lists(path):
     for name in ("expect", "forbid"):
         require(is_id_list(lists.get(name)), f"`{name}` is not a list of strings")
     require(lists.get("disabled") is None or is_id_list(lists["disabled"]), "`disabled` is not a list of strings")
+    require(lists.get("report") in (None, "general", "mixed"), "`report` is not `general` or `mixed`")
     return lists
 
 
@@ -93,7 +95,9 @@ def grade_run(case, number, trace_path, lists):
         return [no_message]
     disabled = lists.get("disabled")
     lines = change_lines
-    lines = lines + run_grader("grade_report.py", ["-", *(["--disabled", *disabled] if disabled is not None else [])],
+    report_flag = {"general": ["--general"], "mixed": ["--mixed"]}.get(lists.get("report"), [])
+    lines = lines + run_grader("grade_report.py",
+                               ["-", *(["--disabled", *disabled] if disabled is not None else []), *report_flag],
                                message)[1]
     lines = lines + run_grader("grade_rule_ids.py", ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]],
                                message)[1]

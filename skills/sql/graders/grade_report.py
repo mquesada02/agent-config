@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
 """Report-layout grader (I) for a `/sql optimize` report (the report contract of optimize.md).
 
-Usage: grade_report.py REPORT [--disabled ID...]
+Usage: grade_report.py REPORT [--disabled ID...] [--general | --mixed]
 
 REPORT is a path, or - for stdin. Checks: title, summary, sections, disabled, tables, rows, numbering,
 counts, unique, where, approve, rewrite. With --disabled, the ids of the `Disabled rules:` line must be
 exactly that set. In every case no table row may hold a disabled id of the line.
+
+With --general the report is one general part (the form of the section General part of optimize.md): the
+fallback sentence, the title `# sql optimize (general): <scope>`, the Result line, GEN rows whose Rule cell
+is `GEN-NN (<Source>)`, no `## Approve` section, no `Rewrite` in a Fix cell, and the last line
+`The skill edits no file in general mode.` With --mixed the report is a general part and then a PostgreSQL
+report: it is split at the first line that matches `# sql optimize: <scope>`, the first part is graded as
+--general and the second part as the PostgreSQL report. With --mixed, the --disabled ids that start with
+`GEN-` go to the general part and the other ids go to the PostgreSQL part (a part with no id gets no
+--disabled check).
+
 Output: one line "FAIL <check>: <message>" for each failed check, then PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable report (no PASS or FAIL line then).
 """
 import argparse
+import os
 import re
 import sys
 
 TITLE = re.compile(r"^# sql optimize: \S")
+GENERAL_TITLE = re.compile(r"^# sql optimize \(general\): \S")
+FALLBACK_SENTENCE = re.compile(
+    r"^General guidance: this repo uses \S.*, which the skill does not cover\. "
+    r"The advice is general, with no database and no rule script\.$")
+GENERAL_LAST_LINE = "The skill edits no file in general mode."
+GENERAL_RULE_CELL = re.compile(r"^(GEN-[0-9]{2}) \((.+)\)$")
+GENERAL_MODULE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dialects", "general.md")
 SUMMARY = re.compile(r"^\*\*Result: ([0-9]{1,9}) critical, ([0-9]{1,9}) required, ([0-9]{1,9}) suggestions?\.\*\*$")
 COLUMNS = ["#", "Rule", "Where", "Problem", "Fix"]
 HEADINGS = {"critical": "## Critical", "required": "## Required", "suggestion": "## Suggestions"}
@@ -53,7 +71,15 @@ def split_row(line):
     return [cell.strip() for cell in UNESCAPED_PIPE.split(line.strip()[1:-1])]
 
 
-def grade(text, disabled_flag):
+def general_sources():
+    """The names of the `## Sources` entries of the general module, and `skill rule`."""
+    with open(GENERAL_MODULE, encoding="utf-8") as handle:
+        text = handle.read()
+    section = text.split("\n## Sources", 1)[-1]
+    return set(re.findall(r"^- \*\*(.+?):\*\*", section, re.M)) | {"skill rule"}
+
+
+def grade(text, disabled_flag, general=False):
     lines = [line.strip() for line in text.splitlines()]
     failures = []
 
@@ -61,14 +87,29 @@ def grade(text, disabled_flag):
         failures.append(f"FAIL {check}: {message}")
 
     non_blank = [i for i, line in enumerate(lines) if line]
+
+    # general part: the fallback sentence is line 1, the last line is fixed, and it is not part of a table
+    offset = 0
+    if general:
+        offset = 1
+        if not non_blank or not FALLBACK_SENTENCE.match(lines[non_blank[0]]):
+            fail("fallback", "the first line is not the fallback sentence")
+        if not non_blank or lines[non_blank[-1]] != GENERAL_LAST_LINE:
+            fail("last", f"the last line is not `{GENERAL_LAST_LINE}`")
+        else:
+            lines = lines[:non_blank[-1]]
+            non_blank = non_blank[:-1]
+
     heading_at = {name: next((i for i, line in enumerate(lines) if line == heading), None)
                   for name, heading in HEADINGS.items()}
     approve_at = next((i for i, line in enumerate(lines) if line == APPROVE_HEADING), None)
 
-    # title: the first non-blank line
-    title_at = non_blank[0] if non_blank else None
-    if title_at is None or not TITLE.match(lines[title_at]):
-        fail("title", "the first line is not `# sql optimize: <scope>`")
+    # title: the first non-blank line (the second line of a general part)
+    title_at = non_blank[offset] if len(non_blank) > offset else None
+    title_form = GENERAL_TITLE if general else TITLE
+    if title_at is None or not title_form.match(lines[title_at]):
+        fail("title", "the title line is not `# sql optimize (general): <scope>`" if general
+             else "the first line is not `# sql optimize: <scope>`")
 
     # summary: the line after the title
     counts = None
@@ -77,12 +118,12 @@ def grade(text, disabled_flag):
         fail("summary", "no line like **Result: N critical, N required, N suggestions.**")
     else:
         counts = dict(zip(SEVERITIES, (int(n) for n in SUMMARY.match(lines[summary_at]).groups())))
-        if len(non_blank) < 2 or summary_at != non_blank[1]:
+        if len(non_blank) < offset + 2 or summary_at != non_blank[offset + 1]:
             fail("sections", "the summary is not the line after the title")
 
-    # sections: every `## ` heading is known, in contract order, Approve last
+    # sections: every `## ` heading is known, in contract order, Approve last (never in a general part)
     headings = [(i, line) for i, line in enumerate(lines) if line.startswith("## ")]
-    allowed = list(HEADINGS.values()) + [APPROVE_HEADING]
+    allowed = list(HEADINGS.values()) + ([] if general else [APPROVE_HEADING])
     for _, line in headings:
         if line not in allowed:
             fail("sections", f"unknown heading: {line}")
@@ -91,7 +132,7 @@ def grade(text, disabled_flag):
         fail("sections", "the tables are not in the order critical, required, suggestions")
     if known and len(known) != len(set(known)):
         fail("sections", "a heading appears twice")
-    if not headings or headings[-1][1] != APPROVE_HEADING:
+    if not general and (not headings or headings[-1][1] != APPROVE_HEADING):
         fail("approve", "the last section is not ## Approve")
 
     # lines between the summary and the first heading: Disabled rules and Note lines only
@@ -162,12 +203,23 @@ def grade(text, disabled_flag):
         fail("numbering", f"the numbers are {numbers}, not 1..{len(numbers)} in table order")
 
     # unique: one rule id in each Rule cell, and each id in one row only
+    # (a general row holds the GEN id and its Source in parentheses, and the Source is one of the module)
     seen = set()
+    sources = general_sources() if general else None
     for cells in all_rows:
         rule = cells[1]
-        if not RULE_ID.match(rule):
+        if general:
+            found = GENERAL_RULE_CELL.match(rule)
+            if not found:
+                fail("unique", f"the Rule cell {rule!r} is not `GEN-NN (<Source>)`")
+                continue
+            rule = found.group(1)
+            if found.group(2) not in sources:
+                fail("unique", f"{rule}: the Source {found.group(2)!r} is not an entry of the general module or `skill rule`")
+        elif not RULE_ID.match(rule):
             fail("unique", f"the Rule cell {rule!r} is not one rule id")
-        elif rule in seen:
+            continue
+        if rule in seen:
             fail("unique", f"{rule} appears in more than one row")
         seen.add(rule)
         if rule in disabled_ids:
@@ -181,16 +233,20 @@ def grade(text, disabled_flag):
                 fail("where", f"{cells[1]}: {place!r} is not <path>:<line> or <path>:<line>-<line>")
 
     # rewrite: a Fix cell with the word Rewrite starts with one of the labels of the module and holds `database diff`
+    # (a general part has no rewrite at all)
     for cells in all_rows:
         fix = cells[4]
         if re.search(r"\bRewrite\b", fix):
+            if general:
+                fail("rewrite", f"{cells[1]}: a general part has no rewrite")
+                continue
             if not fix.startswith(REWRITE_LABELS):
                 fail("rewrite", f"{cells[1]}: the Fix cell does not start with one of the rewrite labels of the module")
             if "database diff" not in fix:
                 fail("rewrite", f"{cells[1]}: the Fix cell does not hold the words `database diff`")
 
     # approve: the text of the contract
-    if approve_at is not None and headings[-1][1] == APPROVE_HEADING:
+    if not general and approve_at is not None and headings[-1][1] == APPROVE_HEADING:
         body = " ".join(line for line in lines[approve_at + 1:] if line)
         expected = APPROVE_FINDINGS if all_rows else APPROVE_ZERO
         if body != expected:
@@ -198,17 +254,40 @@ def grade(text, disabled_flag):
     return failures
 
 
+def grade_mixed(text, disabled_flag):
+    """A general part, then a PostgreSQL report that starts at its own title line."""
+    lines = text.splitlines()
+    split_at = next((i for i, line in enumerate(lines) if TITLE.match(line.strip())), None)
+    if split_at is None:
+        return ["FAIL mixed: no PostgreSQL title line `# sql optimize: <scope>` after the general part"]
+    general_flag = pg_flag = None
+    if disabled_flag is not None:
+        general_ids = [i for i in disabled_flag if i.startswith("GEN-")]
+        pg_ids = [i for i in disabled_flag if not i.startswith("GEN-")]
+        general_flag = general_ids or None
+        pg_flag = pg_ids or None
+    first = "\n".join(lines[:split_at])
+    second = "\n".join(lines[split_at:])
+    return (grade(first, general_flag, general=True) + grade(second, pg_flag))
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("report")
     parser.add_argument("--disabled", nargs="*", default=None, metavar="ID")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--general", action="store_true")
+    mode.add_argument("--mixed", action="store_true")
     args = parser.parse_args(argv)
     try:
         text = read_report(args.report)
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read the report: {error}", file=sys.stderr)
         return 2
-    failures = grade(text, args.disabled)
+    if args.mixed:
+        failures = grade_mixed(text, args.disabled)
+    else:
+        failures = grade(text, args.disabled, general=args.general)
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))
     return 1 if failures else 0
 
