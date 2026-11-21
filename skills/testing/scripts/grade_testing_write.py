@@ -447,9 +447,9 @@ def rust_group_selects(command, path):
 
 VITEST_EXEC = (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"])
 VITEST_SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
-VITEST_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry", "--dir", "-t", "--testNamePattern", "--project", "-p")
 VITEST_FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--update", "-u", "--coverage")
 VITEST_SELECTOR_FLAGS = ("-t", "--testNamePattern", "--project", "-p")
+VITEST_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry", "--dir") + VITEST_SELECTOR_FLAGS
 VITEST_NO_UPDATE = ("none", "false")
 
 

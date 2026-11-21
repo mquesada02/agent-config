@@ -692,7 +692,7 @@ def table_1_row(command, scripts):
 
 def token_classes(command):
     """The set of Table 2 classes of the tokens after vitest and its subcommand."""
-    kind, tokens = read_command(command, {})
+    _, tokens = read_command(command, {})
     flat = []
     for token in tokens:
         flat.extend(token.split("=", 1) if token.startswith("--") and "=" in token else [token])
