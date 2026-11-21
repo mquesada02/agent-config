@@ -1,0 +1,19 @@
+{
+  "tests": [
+    "src/stats.test.ts"
+  ],
+  "product": [
+    "src/stats.ts"
+  ],
+  "existing": [
+    "src/stats.test.ts"
+  ],
+  "grouped": {
+    "src/stats.test.ts": true
+  },
+  "fallback": "none",
+  "result": {
+    "src/stats.test.ts": "pass"
+  },
+  "command_contains": "--maxWorkers=2"
+}

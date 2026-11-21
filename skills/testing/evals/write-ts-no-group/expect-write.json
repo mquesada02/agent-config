@@ -1,0 +1,16 @@
+{
+  "tests": [
+    "src/stats.test.ts"
+  ],
+  "product": [
+    "src/stats.ts"
+  ],
+  "grouped": {
+    "src/stats.test.ts": false
+  },
+  "fallback": "none",
+  "result": {
+    "src/stats.test.ts": "pass"
+  },
+  "command_contains": "--maxWorkers=2"
+}

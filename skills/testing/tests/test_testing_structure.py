@@ -107,8 +107,10 @@ ADAPTED_LINE = re.compile(r"^Adapted from .+ \(MIT\)\.$")
 ROUTER_MARKERS = ("Scope", "Intake", "General", "Entries", "Review")
 RULE_TEXT_IDS = (
     "ASSERT-01", "ASSERT-02", "ASSERT-03", "RUN-01",
-    "RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01", "RS-01",
+    "RUN-02", "RUN-03", "RUN-04", "RUN-05", "PAR-01", "PAR-02", "GRP-01", "DBL-01", "RS-01", "TS-01",
 )
+RUST_RULE_IDS = tuple(rule_id for rule_id in RULE_TEXT_IDS if rule_id != "TS-01")
+TS_RULE_IDS = tuple(rule_id for rule_id in RULE_TEXT_IDS if rule_id != "RS-01")
 RULE_LABELS = ("**Finding when**", "**Not a finding when**", "**Fix**")
 CASE_ENTRIES = ("case.yaml", "expect.json", "prompt.md", "scaffold.sh", "repo", "graders")
 
@@ -470,7 +472,7 @@ class RustEntryTest(unittest.TestCase):
 
     def test_the_entry_has_a_subsection_with_both_labels_for_every_rule_text_id(self):
         rules = section(self.text, "## Rules")
-        for rule_id in RULE_TEXT_IDS:
+        for rule_id in RUST_RULE_IDS:
             with self.subTest(rule_id):
                 self.assertIn(f"### {rule_id}", rules)
                 body = subsection(rules, f"### {rule_id}")
@@ -480,7 +482,7 @@ class RustEntryTest(unittest.TestCase):
 
     def test_the_entry_has_no_rule_subsection_for_an_id_without_rule_text(self):
         headings = [line[4:].strip() for line in section(self.text, "## Rules") if line.startswith("### ")]
-        self.assertEqual(sorted(headings), sorted(RULE_TEXT_IDS))
+        self.assertEqual(sorted(headings), sorted(RUST_RULE_IDS))
 
     def test_general_md_holds_the_rs_01_rule_text_and_the_catalogue_note(self):
         general = read(GENERAL_MD)
@@ -489,7 +491,7 @@ class RustEntryTest(unittest.TestCase):
         self.assertIn("nextest", finding)
         self.assertIn("doc", finding)
         note = next(line for line in general.splitlines() if line.startswith("The script constant `CATALOG`"))
-        self.assertIn("`TS-01` has none yet", note)
+        self.assertNotIn("none yet", note)
         self.assertNotIn("RS-01", note)
 
     def test_every_runner_fact_is_confirmed_with_a_link_or_unconfirmed_and_unused(self):
@@ -546,6 +548,417 @@ class RustEntryTest(unittest.TestCase):
         for name in ("write-rs-derived-path", "write-rs-group-path", "write-rs-no-group", "write-rs-binary-only"):
             with self.subTest(name):
                 self.assertIn(name, cases)
+
+
+TS_ENTRY = os.path.join(ENTRIES, "typescript.md")
+TS_SECTIONS = RUST_SECTIONS
+TS_REVIEW_CASES = (
+    "ts-assert-forms", "ts-net-and-port", "ts-skip-and-order", "ts-01-watch-script", "ts-01-run-mode",
+    "ts-assert-03-update", "ts-run-01-retry", "ts-run-02-fake-timers", "ts-run-04-verbose-durations",
+    "ts-run-04-wrapper-not-checked", "ts-grp-01-list-decides", "ts-grp-01-not-checked", "ts-par-02-env-var",
+    "ts-gate-other-runner",
+)
+TS_WRITE_CASES = (
+    "write-ts-derived-path", "write-ts-mirrored-path", "write-ts-project-group", "write-ts-no-group",
+    "write-ts-no-path", "write-ts-existing-test", "write-ts-fakes", "write-ts-gate-other-runner",
+    "write-mixed-rust-ts",
+)
+VITEST_DOCS = "https://vitest.dev/"
+PRIVATE_NAMES = ("mquesada", "vtxlabs")
+EXAMPLE = re.compile(r"^- Example: .+ => (row (\d+)|class (.+))$")
+GATE_SENTENCE = "The Vitest runner gate:"
+WATCH_FORM_PHRASE = "a form that a loaded entry names as a watch form"
+REPORTER_PHRASE = "reporter argument that a loaded entry names"
+WRAPPER_ENTRY = "`TS-01 (command of <names> is not a plain Vitest command)`"
+TS_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".cjs")
+
+
+def table_rows(lines):
+    """The first cell of each numbered row of the tables in a list of lines."""
+    return [m.group(1) for line in lines for m in [re.match(r"^\| (\d+) \|", line)] if m]
+
+
+def table_classes(lines, first_header):
+    """The first cell of each data row of the table whose header starts with `first_header`."""
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"| {first_header} |"))
+    rows = []
+    for line in lines[start + 2:]:
+        if not line.startswith("|"):
+            break
+        rows.append(line.strip().strip("|").split("|")[0].strip())
+    return rows
+
+
+def example_marks(lines):
+    return [m.group(2) or m.group(3) for line in lines for m in [EXAMPLE.match(line)] if m]
+
+
+def grader_languages():
+    """The `LANGUAGES` dict literal of the write grader, read from its source."""
+    tree = ast.parse(read(os.path.join(helper.SKILL, "scripts", "grade_testing_write.py")))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "LANGUAGES" for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("the write grader has no LANGUAGES constant")
+
+
+COMMAND_EXAMPLE = re.compile(
+    r"^- Example: `([^`]+)`(?: with the script `([^`]+)`| with no such script)? => (?:row (\d+)|class (.+))$"
+)
+EXEC_FORMS = (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"])
+SCRIPT_CALL = re.compile(r"^(?:npm test|npm run (\S+)|pnpm test|pnpm run (\S+)|yarn test|yarn run (\S+)|bun run (\S+))( .*)?$")
+WRAPPER_MARKERS = ("&&", "||", ";", "|", "$(", "`", ">", "<")
+SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
+NAME_VALUE_FLAGS = ("-t", "--testNamePattern")
+PROJECT_FLAGS = ("--project", "-p")
+FIXED_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry")
+FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--update", "-u", "--coverage")
+
+
+def parse_command_example(line):
+    """(command, scripts, mark) of an `Example:` bullet with a command, else None. A script is keyed by its name."""
+    match = COMMAND_EXAMPLE.match(line)
+    if not match:
+        return None
+    command, script, row, klass = match.groups()
+    name = SCRIPT_CALL.match(command)
+    scripts = {}
+    if name and script is not None:
+        scripts[next(g for g in name.groups()[:4] if g) if any(name.groups()[:4]) else "test"] = script
+    return command, scripts, row or klass
+
+
+def strip_assignments(tokens):
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+    return tokens
+
+
+def read_command(command, scripts):
+    """(kind, tokens after vitest) for Table 1 steps 1 to 3; kind is plain or wrapper. For a wrapper the tokens are all words."""
+    tokens = strip_assignments(command.split())
+    from_script = False
+    call = SCRIPT_CALL.match(" ".join(tokens))
+    if call:
+        name = next((g for g in call.groups()[:4] if g), "test")
+        if name not in scripts:
+            return "wrapper", tokens
+        tokens = strip_assignments((scripts[name] + (call.group(5) or "")).split())
+        from_script = True
+        if SCRIPT_CALL.match(" ".join(tokens)):
+            return "wrapper", tokens
+    text = " ".join(tokens)
+    exec_form = next((f for f in EXEC_FORMS if tokens[:len(f)] == f), None)
+    if exec_form is None and from_script and tokens[:1] == ["vitest"]:
+        exec_form = ["vitest"]
+    if exec_form is None or any(marker in text for marker in WRAPPER_MARKERS):
+        return "wrapper", tokens
+    return "plain", tokens[len(exec_form):]
+
+
+def has_update_mode(tokens):
+    for index, token in enumerate(tokens):
+        value = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if token == "-u" or (token == "--update" and value not in ("none", "false")):
+            return True
+        if token.startswith("--update=") and token.split("=", 1)[1] in ("true", "all", "new"):
+            return True
+    return False
+
+
+def table_4_row(command, scripts):
+    kind, tokens = read_command(command, scripts)
+    if kind == "wrapper":
+        return 1
+    subcommand = next((t for t in tokens if t in SUBCOMMANDS), None)
+    if subcommand in ("list", "bench"):
+        return 2
+    if subcommand in ("watch", "dev") or any(t in ("--watch", "-w") or t.startswith("--watch=") for t in tokens):
+        return 3
+    if subcommand == "run" or "--run" in tokens:
+        return 4
+    return 5 if subcommand == "related" else 6
+
+
+def table_1_row(command, scripts):
+    kind, tokens = read_command(command, scripts)
+    if has_update_mode(tokens):
+        return 1
+    if kind == "wrapper":
+        return 2
+    verdict = table_4_row(command, scripts)
+    return {2: 4, 4: 5}.get(verdict, 3)
+
+
+def token_classes(command):
+    """The set of Table 2 classes of the tokens after vitest and its subcommand."""
+    kind, tokens = read_command(command, {})
+    flat = []
+    for token in tokens:
+        flat.extend(token.split("=", 1) if token.startswith("--") and "=" in token else [token])
+    classes, index, seen_subcommand = set(), 0, False
+    while index < len(flat):
+        token = flat[index]
+        if not seen_subcommand and token in SUBCOMMANDS:
+            seen_subcommand = True
+            if token == "related":
+                classes.add("Unreadable")
+        elif token in NAME_VALUE_FLAGS:
+            classes.add("Name filter")
+            index += 1
+        elif token in PROJECT_FLAGS:
+            classes.add("Project")
+            index += 1
+        elif token == "--dir":
+            classes.add("Directory")
+            index += 1
+        elif token in FIXED_VALUE_FLAGS:
+            classes.add("Fixed")
+            index += 1
+        elif token in FIXED_FLAGS:
+            classes.add("Fixed")
+        elif token.startswith("-") or re.search(r":\d+$", token):
+            classes.add("Unreadable")
+        else:
+            classes.add("Path operand")
+        index += 1
+    return classes
+
+
+class TypeScriptEntryTest(unittest.TestCase):
+    def setUp(self):
+        self.assertTrue(os.path.isfile(TS_ENTRY), "skills/testing/entries/typescript.md does not exist")
+        self.text = read(TS_ENTRY)
+
+    def test_the_entry_has_the_seven_sections_in_order(self):
+        headings = [line for line in self.text.splitlines() if line.startswith("## ")]
+        self.assertEqual(tuple(headings), TS_SECTIONS)
+
+    def test_the_entry_has_a_vitest_sub_heading_in_the_runner_sections(self):
+        for heading in ("## Commands", "## Runner facts", "## Layout", "## Design how-to"):
+            with self.subTest(heading):
+                self.assertIn("### Vitest", section(self.text, heading))
+
+    def test_the_entry_has_a_subsection_with_both_labels_for_every_typescript_id_and_none_for_rs_01(self):
+        rules = section(self.text, "## Rules")
+        headings = [line[4:].strip() for line in rules if line.startswith("### ")]
+        self.assertEqual(sorted(headings), sorted(TS_RULE_IDS))
+        self.assertNotIn("RS-01", headings)
+        for rule_id in TS_RULE_IDS:
+            with self.subTest(rule_id):
+                body = subsection(rules, f"### {rule_id}")
+                positions = [body.find(label) for label in RUST_LABELS]
+                self.assertNotIn(-1, positions)
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn("- Vitest:", body)
+
+    def test_table_1_row_5_and_the_ci_text_name_the_worker_cap_and_the_reporter(self):
+        commands = "\n".join(section(self.text, "## Commands"))
+        row_5 = next(line for line in commands.splitlines() if line.startswith("| 5 |"))
+        for option in ("--maxWorkers=2", "--reporter=verbose"):
+            with self.subTest(option):
+                self.assertIn(option, row_5)
+        self.assertIn("The commands run with `CI=true` set", commands)
+        for path in (REVIEW_MD, WRITE_MD):
+            with self.subTest(path):
+                self.assertIn("--reporter=verbose", read(path))
+
+    def test_the_runner_gate_sentence_is_in_the_entry_once(self):
+        self.assertEqual(self.text.count(GATE_SENTENCE), 1)
+        self.assertIn(GATE_SENTENCE, "\n".join(section(self.text, "## Detection notes")))
+
+    def test_every_runner_fact_is_confirmed_with_a_link_or_unconfirmed_and_unused(self):
+        facts = [line for line in section(self.text, "## Runner facts") if line.startswith("- ")]
+        self.assertTrue(facts)
+        for line in facts:
+            with self.subTest(line[:60]):
+                body = line[2:]
+                self.assertTrue(
+                    (body.startswith("Confirmed:") and VITEST_DOCS in body) or body.startswith("Unconfirmed, not used:")
+                )
+
+    def test_the_list_reporter_workers_retry_and_update_facts_link_their_pages(self):
+        facts = {line[2:] for line in section(self.text, "## Runner facts") if line.startswith("- ")}
+        pages = {
+            "Confirmed: `vitest list`": "https://vitest.dev/guide/cli",
+            "Confirmed: Reporters": "https://vitest.dev/guide/reporters",
+            "Confirmed: Options that the group reader names": "https://vitest.dev/config/maxworkers",
+            "Confirmed: `retry`": "https://vitest.dev/config/retry",
+            "Confirmed: `update` modes": "https://vitest.dev/config/update",
+        }
+        for start, page in pages.items():
+            with self.subTest(start):
+                matching = [f for f in facts if f.startswith(start)]
+                self.assertEqual(len(matching), 1)
+                self.assertIn(page, matching[0])
+
+    def test_an_unconfirmed_form_is_not_used_outside_the_runner_facts_section(self):
+        outside = "\n".join(
+            line for heading in TS_SECTIONS if heading != "## Runner facts" for line in section(self.text, heading)
+        )
+        for phrase in ("fail-on-retry", "does not type-check", "no-watch form", "--watch=false is not"):
+            with self.subTest(phrase):
+                self.assertNotIn(phrase, outside)
+
+    def test_the_entry_holds_no_private_name_and_only_vitest_doc_links(self):
+        for name in PRIVATE_NAMES:
+            self.assertNotIn(name, self.text.lower())
+        for url in re.findall(r"https?://[^\s)`]+", self.text):
+            with self.subTest(url):
+                self.assertTrue(url.startswith(VITEST_DOCS))
+
+    def test_each_table_row_and_class_is_the_expected_mark_of_at_least_one_example(self):
+        commands = section(self.text, "## Commands")
+        layout = section(self.text, "## Layout")
+        rules = section(self.text, "## Rules")
+        ts_01 = subsection(rules, "### TS-01").splitlines()
+        marks = {
+            "Table 1": (table_rows(commands), [m for m in example_marks(commands) if m.isdigit()]),
+            "Table 2": (table_classes(commands, "Class"), [m for m in example_marks(commands) if not m.isdigit()]),
+            "Table 3": (table_rows(layout), example_marks(layout)),
+            "Table 4": (table_rows(ts_01), example_marks(ts_01)),
+        }
+        for name, (rows, examples) in marks.items():
+            with self.subTest(name):
+                self.assertTrue(rows)
+                self.assertEqual(sorted(set(rows)), sorted(set(examples)))
+
+    def test_each_command_example_has_exactly_the_expected_row_or_class(self):
+        commands = section(self.text, "## Commands")
+        ts_01 = subsection(section(self.text, "## Rules"), "### TS-01").splitlines()
+        for line in commands:
+            parsed = parse_command_example(line)
+            if parsed is None:
+                continue
+            command, scripts, mark = parsed
+            with self.subTest(line):
+                if mark.isdigit():
+                    self.assertEqual(str(table_1_row(command, scripts)), mark)
+                else:
+                    self.assertEqual(token_classes(command), {mark})
+        for line in ts_01:
+            parsed = parse_command_example(line)
+            if parsed is None:
+                continue
+            command, scripts, mark = parsed
+            with self.subTest(line):
+                self.assertEqual(str(table_4_row(command, scripts)), mark)
+
+    def test_the_table_examples_cover_the_wrapper_forms_of_requirement_c(self):
+        commands = "\n".join(section(self.text, "## Commands"))
+        self.assertIn("with no such script => row 2", commands)
+        self.assertIn("with the script `npm run ci` => row 2", commands)
+        self.assertIn("with the script `vitest run && tsc`", "\n".join(self.text.splitlines()))
+
+    def test_the_table_classifiers_on_samples(self):
+        self.assertEqual(table_1_row("npx vitest run", {}), 5)
+        self.assertEqual(table_1_row("pnpm exec vitest run -u", {}), 1)
+        self.assertEqual(table_1_row("vitest", {}), 2)
+        self.assertEqual(table_1_row("npm test", {"test": "vitest"}), 3)
+        self.assertEqual(table_1_row("npm test", {"test": "vitest run --update=none"}), 5)
+        self.assertEqual(table_1_row("npm test", {}), 2)
+        self.assertEqual(table_4_row("npx vitest run --watch", {}), 3)
+        self.assertEqual(table_4_row("npx vitest list --watch", {}), 2)
+        self.assertEqual(token_classes("npx vitest run -t slow src/a"), {"Name filter", "Path operand"})
+
+    def test_the_table_one_extension_list_equals_the_grader_languages(self):
+        row_1 = next(line for line in section(self.text, "## Layout") if line.startswith("| 1 |"))
+        listed = tuple(re.findall(r"`(\.[a-z]+)`", row_1.split("|")[2]))
+        typescript = tuple(ext for ext, language in grader_languages().items() if language == "typescript")
+        self.assertEqual(sorted(e for e in listed if e in TS_EXTENSIONS), sorted(typescript))
+
+    def test_general_md_holds_the_ts_01_rule_text_and_the_catalogue_note_has_no_none_yet(self):
+        general = read(GENERAL_MD)
+        body = subsection(section(general, "## Rules"), "### TS-01")
+        finding = body.split("**Not a finding when**")[0]
+        self.assertIn("watch", finding)
+        self.assertIn("single-run", finding)
+        note = next(line for line in general.splitlines() if line.startswith("The script constant `CATALOG`"))
+        self.assertNotIn("none yet", note)
+
+    def test_libraries_holds_vitest_text_only_under_the_vitest_sub_heading(self):
+        lines = section(self.text, "## Libraries")
+        before = lines[:lines.index("### Vitest")]
+        self.assertNotIn("vi.", "\n".join(before))
+        self.assertNotIn("CI=true", "\n".join(before))
+
+    def test_ts_01_check_details_say_that_table_4_ignores_table_1_row_1(self):
+        body = subsection(section(self.text, "## Rules"), "### TS-01")
+        self.assertIn("ignores row 1 of Table 1", body)
+        self.assertEqual(table_4_row("npx vitest -u", {}), 6)
+
+    def test_skill_md_links_the_entry(self):
+        self.assertIn("entries/typescript.md", LINK.findall(read(SKILL_MD)))
+
+    def test_review_and_write_hold_the_reporter_watch_form_and_not_checked_phrases(self):
+        review, write = read(REVIEW_MD), read(WRITE_MD)
+        self.assertEqual(review.count(REPORTER_PHRASE), 1)
+        self.assertEqual(write.count(REPORTER_PHRASE), 1)
+        self.assertEqual(review.count(WATCH_FORM_PHRASE), 1)
+        self.assertEqual(write.count(WATCH_FORM_PHRASE), 1)
+        self.assertEqual(review.count(WRAPPER_ENTRY.strip("`")), 1)
+        self.assertIn(WRAPPER_ENTRY.strip("`"), self.text)
+        self.assertEqual(review.count("arguments that a loaded entry names"), 1)
+        self.assertEqual(write.count("arguments that a loaded entry names"), 0)
+        step_4 = "\n".join(section(write, "## Step 4: Self-check"))
+        self.assertIn("TS-01", step_4)
+
+    def test_the_typescript_eval_cases_exist_with_their_expectations(self):
+        cases = case_expectations()
+        for name in TS_REVIEW_CASES + TS_WRITE_CASES:
+            with self.subTest(name):
+                self.assertIn(name, cases)
+        self.assertIn("TS-01", cases["ts-01-watch-script"]["expect"])
+        self.assertIn("TS-01", cases["ts-01-run-mode"]["forbid"])
+        self.assertIn("TS-01", cases["ts-gate-other-runner"]["forbid"])
+        self.assertIn("RUN-04", cases["ts-run-04-wrapper-not-checked"]["forbid"])
+        self.assertIn("GRP-01", cases["ts-grp-01-not-checked"]["forbid"])
+        self.assertIn("GRP-01", cases["ts-grp-01-list-decides"]["expect"])
+
+    def test_every_typescript_write_case_ships_an_expectation_file_with_tests(self):
+        for name in TS_WRITE_CASES:
+            with self.subTest(name):
+                data = json.loads(read(os.path.join(EVALS, name, "expect-write.json")))
+                self.assertIn("tests", data)
+
+    def test_the_product_edit_graders_match_the_product_files_and_not_the_expected_test_files(self):
+        for name in TS_WRITE_CASES:
+            graders = os.path.join(EVALS, name, "graders")
+            expect = json.loads(read(os.path.join(EVALS, name, "expect-write.json")))
+            for grader in ("no-product-edit-write.md", "no-product-edit-edit.md"):
+                path = os.path.join(graders, grader)
+                if not os.path.exists(path):
+                    continue
+                pattern = re.search(r"^input_match: '(.*)'$", read(path), re.MULTILINE).group(1)
+                for test in expect["tests"]:
+                    with self.subTest(case=name, grader=grader, test=test):
+                        self.assertIsNone(re.search(pattern, f'{{"file_path": "/work/{test}"}}'))
+                for product in expect.get("product", []):
+                    with self.subTest(case=name, grader=grader, product=product):
+                        self.assertIsNotNone(re.search(pattern, f'{{"file_path": "/work/{product}"}}'))
+
+    def test_the_mixed_case_prompt_names_files_that_the_fixture_holds(self):
+        base = os.path.join(EVALS, "write-mixed-rust-ts")
+        prompt = read(os.path.join(base, "prompt.md"))
+        for path in re.findall(r"\b[\w./-]+\.(?:rs|ts)\b", prompt):
+            with self.subTest(path):
+                self.assertTrue(os.path.isfile(os.path.join(base, "repo", path)))
+
+    def test_the_typescript_eval_cases_hold_no_private_name(self):
+        for name in TS_REVIEW_CASES + TS_WRITE_CASES:
+            base = os.path.join(EVALS, name)
+            for folder, _, files in os.walk(base):
+                if "node_modules" in folder:
+                    continue
+                for file in files:
+                    with self.subTest(case=name, file=file):
+                        text = read(os.path.join(folder, file)).lower()
+                        for private in PRIVATE_NAMES:
+                            self.assertNotIn(private, text)
+
+    def test_sample_example_parser(self):
+        self.assertEqual(example_marks(["- Example: `a b` => row 3", "- Example: `x` => class Fixed", "text"]), ["3", "Fixed"])
+        self.assertEqual(table_rows(["| 1 | a | b |", "| # | x |", "| 12 | z |"]), ["1", "12"])
 
 
 if __name__ == "__main__":

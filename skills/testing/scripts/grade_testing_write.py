@@ -445,6 +445,77 @@ def rust_group_selects(command, path):
     )
 
 
+VITEST_EXEC = (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"])
+VITEST_SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
+VITEST_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry", "--dir", "-t", "--testNamePattern", "--project", "-p")
+VITEST_FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--update", "-u", "--coverage")
+VITEST_SELECTOR_FLAGS = ("-t", "--testNamePattern", "--project", "-p")
+VITEST_NO_UPDATE = ("none", "false")
+
+
+def vitest_group_selects(command, path):
+    """Whether a plain Vitest group command selects a file for write (the write column of the TypeScript entry).
+
+    Returns None when the command is not an exec form of Vitest, so the caller keeps the old reading."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+    words = next((tokens[len(prefix):] for prefix in VITEST_EXEC if tokens[:len(prefix)] == prefix), None)
+    if words is None:
+        return None
+    flat = []
+    for token in words:
+        if token.startswith("-") and "=" in token:
+            flat.extend(token.split("=", 1))
+        else:
+            flat.append(token)
+    subcommand = next((t for t in flat if t in VITEST_SUBCOMMANDS), None)
+    if subcommand in ("watch", "dev", "related", "list", "bench"):
+        return False
+    if subcommand is None and "--run" not in flat:
+        return False
+    operands, directories = [], []
+    index = 0
+    while index < len(flat):
+        token = flat[index]
+        if token == subcommand:
+            index += 1
+        elif token == "--dir":
+            if index + 1 >= len(flat):
+                return False
+            directories.append(flat[index + 1])
+            index += 2
+        elif token in ("--watch", "-w"):
+            return False
+        elif token in ("-u", "--update"):
+            if index + 1 < len(flat) and flat[index + 1] in VITEST_NO_UPDATE:
+                index += 2
+            else:
+                return False
+        elif token in VITEST_SELECTOR_FLAGS:
+            return False
+        elif token in VITEST_VALUE_FLAGS:
+            index += 2
+        elif token in VITEST_FIXED_FLAGS:
+            index += 1
+        elif token.startswith("-") or re.search(r":\d+$", token):
+            return False
+        else:
+            operands.append(token)
+            index += 1
+    below = not directories or any(vitest_below(directory, path) for directory in directories)
+    return below and (not operands or any(operand in path for operand in operands))
+
+
+def vitest_below(directory, path):
+    """Whether a path is the directory or below it (a leading ./ and a trailing / are dropped)."""
+    directory = (directory[2:] if directory.startswith("./") else directory).rstrip("/")
+    return directory in ("", ".") or path == directory or path.startswith(directory + "/")
+
+
 def selecting_groups(groups, path):
     """Names of the recorded groups that select a file. A name filter or a project flag skips a group."""
     language = LANGUAGES.get(os.path.splitext(path)[1])
@@ -456,6 +527,11 @@ def selecting_groups(groups, path):
             continue
         if language == "rust":
             if rust_group_selects(group["command"], path):
+                names.append(group["name"])
+            continue
+        vitest = vitest_group_selects(group["command"], path)
+        if vitest is not None:
+            if vitest:
                 names.append(group["name"])
             continue
         try:

@@ -6,7 +6,7 @@ Severities are fixed per rule. Critical: the test can give a false result (it pa
 
 ## Catalogue
 
-The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match. An id has rule text only when `## Rules` holds a subsection for it (`TS-01` has none yet).
+The script constant `CATALOG` in [scripts/intake.py](scripts/intake.py) lists the same ids with the same severities. A structure test checks that both match. An id has rule text only when `## Rules` holds a subsection for it.
 
 | Id | Severity | Rule |
 |---|---|---|
@@ -246,3 +246,11 @@ A Rust group command that starts with neither `cargo test` nor `cargo nextest` i
 **Not a finding when**: the runner is not nextest; no crate under the root has doc tests; no group exists and the effective doc command is non-empty; or some group command runs doc tests.
 
 **Fix**: record `commands.rust.doc` as `cargo test --doc` and, when the language has a group, add a group whose command runs it.
+
+### TS-01
+
+**Finding when**: `TS-01` is checked when at least one in-scope file has the `entries` value `typescript`, and only for a runner whose watch forms a loaded entry names. It gives one row in all. It is a finding when the single-run command starts the runner in watch mode, or leaves the choice between watch and run to the terminal. The commands in scope are the recorded single-run test command (else the `test` script of the language root `package.json`) and every group command of the language. A wrapper script that hides the runner command is not decided: it gives no finding, and `Not checked:` gets one entry for it (the entry form is in the loaded entry). The `Where` cell lists the rules-file line of the command and, for a resolved script, the line of the script.
+
+**Not a finding when**: the single-run command runs once (a run subcommand or a run flag); the command is a list or benchmark command; the runner is not covered by a loaded entry (it is not checked and gets no `Not checked:` entry); or no file of the language is in scope.
+
+**Fix**: record a single-run command that runs once and does not watch, and put no watch command in a group.

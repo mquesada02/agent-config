@@ -7,7 +7,7 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(npm test*)" "Bash(npm run*)" "Bash(CI=true npm test*)" "Bash(CI=true npm run*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
@@ -92,5 +92,30 @@ Each folder holds one case:
 | `write-rs-group-path` | The groups are `--test missing` and `--test it`. The derived path is selected by no group, so the tests are added to the existing `tests/it.rs`, and `tests/<stem>.rs` is not written. |
 | `write-rs-no-group` | The only group has an exclude flag, so it never counts. The tests go to the derived path, the report has the `No group:` note and Group `none`. |
 | `write-rs-binary-only` | A crate with only `src/main.rs`: the report has `Not written: src/main.rs (no test location is known)` and a Result line of zeros. Its `expect-write.json` holds the `tests` key for the structure test only, so grade it with its in-run graders, not with `grade_testing_write.py`. |
+| `ts-assert-forms` | A test with only a call (`ASSERT-01`) and a `mockReturnValue` value that the assertion compares (`ASSERT-02`); a test with `expect.assertions` is clean. |
+| `ts-net-and-port` | A real `fetch` to a remote host in a small group (`RUN-03`) and a literal `listen` port (`PAR-01`); an MSW-handled request is not a finding. Static-only. |
+| `ts-skip-and-order` | A `test.skip` with no reason (`RUN-05`) and a `toHaveBeenCalledBefore` assertion (`DBL-01`); a `test.skipIf` on a platform and a `test.todo` are not findings. |
+| `ts-01-watch-script` | The recorded test command is `npm test` and the `test` script is `vitest`: one `TS-01` row whose Where cell lists both lines. |
+| `ts-01-run-mode` | The single-run command is `vitest run`: no `TS-01` row. |
+| `ts-assert-03-update` | `--update` in the single-run command, `update: 'all'` in the config and a time value in a snapshot: `ASSERT-03`. |
+| `ts-run-01-retry` | `retry` in the config and a `{ retry: 3 }` test option: `RUN-01`. |
+| `ts-run-02-fake-timers` | One real sleep gives `RUN-02`; a fake-timer test beside it is not a finding. |
+| `ts-run-04-verbose-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--reporter=verbose`, reads the verbose line and gives `RUN-04`. |
+| `ts-run-04-wrapper-not-checked` | The test command and the group are a wrapper script: no `RUN-04` row, and the `Not checked:` line names `RUN-04`. |
+| `ts-grp-01-list-decides` | A group with `--exclude` is unreadable for the general file: `vitest list --filesOnly` decides its membership, no `Not checked:` entry names the group, and the unselected test case gives `GRP-01`. |
+| `ts-grp-01-not-checked` | A wrapper group and a `related` group have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. |
+| `ts-par-02-env-var` | A test writes `process.env` without a restore: `PAR-02`; a `vi.stubEnv` test with a restore is clean. |
+| `ts-gate-other-runner` | The recorded runner is `jest`: the Vitest content of the entry does not apply, so there is no `TS-01` row, no `TS-01` entry in `Not checked:` and no reporter flag. |
+| `write-ts-derived-path` | A co-located layout and a group with no selector. The prompt names no test path. The tests go to `src/<stem>.test.ts`, the Group cell names the group, the command holds `--maxWorkers=2` and `--reporter=verbose`, `CI=true` is set, and the result is `pass`. |
+| `write-ts-mirrored-path` | The tests live under `tests/`: the tests go to `tests/<stem>.test.ts`. |
+| `write-ts-project-group` | The groups are Vitest projects. The derived path matches the `include` of project `unit`, so the Group cell is `unit` (checked by an in-run grader, because `grade_testing_write.py` cannot read the config). |
+| `write-ts-no-group` | The only group is `--changed`, so it never counts. The tests go to the derived path, the report has the `No group:` note and Group `none`. |
+| `write-ts-no-path` | A declaration file as the product file: the report has `Not written: types/api.d.ts (no test location is known)` and a Result line of zeros. Its `expect-write.json` holds the `tests` key for the structure test only, so grade it with its in-run graders. |
+| `write-ts-existing-test` | The product file already has a test file beside it: the new test cases go into that file and no second test file is written. |
+| `write-ts-fakes` | The product file uses a timer, `process.env` and an HTTP call: the new test uses fake timers, `vi.stubEnv` with a restore and an MSW request fake, and the run passes in `CI=true` mode. |
+| `write-ts-gate-other-runner` | The recorded runner is `jest`: no test location is known, so the report has `Not written` and the run holds no flag that the Vitest entry adds. Grade it with its in-run graders. |
+| `write-mixed-rust-ts` | A Rust root crate and a TypeScript folder `web`: one change touches both languages, both entries are read, and each file's tests run with the command of its own entry. |
+
+The `ts-*` and `write-ts-*` cases that run Vitest install it in their scaffold (`npm install`), which needs network access. They need `npm` on the machine. The case `write-mixed-rust-ts` also needs `cargo` and `cargo-nextest`.
 
 Not covered by a case in this ticket: the reply `none`, and a reply after a report with zero rows. The grammar text of `review.md` states them.

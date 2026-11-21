@@ -29,7 +29,7 @@ Put each test at its test location (see "Test location"). Add test cases. In an 
 
 ## Step 4: Self-check
 
-Read each new test case against every rule text of [general.md](general.md): `## Rules`, `## Kinds of tests`, `## Test points`, `## Design topics`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", `GRP-01` for a test location that no readable group selects, and `RS-01` (a repository setting, not a test-case rule).
+Read each new test case against every rule text of [general.md](general.md): `## Rules`, `## Kinds of tests`, `## Test points`, `## Design topics`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", `GRP-01` for a test location that no readable group selects, and `RS-01` and `TS-01` (repository settings, not test-case rules: write does not change the repo command).
 
 ## Step 5: Run
 
@@ -58,12 +58,12 @@ Write the report as your final message, as "Report contract" says.
 
 Every run state maps to one result. The result of a test file is the first of these that applies:
 
-1. `not run (<reason>)`: no command is known, or the command cannot start, is a watch command, has an update mode, or runs more than 10 minutes.
+1. `not run (<reason>)`: no command is known, or the command cannot start, is a watch command (a watch flag, a watch subcommand, or a form that a loaded entry names as a watch form: for Vitest, the bare form, the `related` form without `--run` and every watch marker of its `TS-01` table), has an update mode, or runs more than 10 minutes.
 2. `fail (<names>)`: a test case of the file failed. A failure that names no test case is named by the path of the test file that holds it. Also `fail`: the run has a failure or a non-zero exit that no reported file holds. Then every file of the language gets `fail (<name or exit code>)`.
 3. `not run (no test collected)`: the run completed with no failure for the file, but a new test case of the file is not shown as executed.
 4. `pass`.
 
-A test case is shown as executed when the output names it, or when the output gives an executed count (for its file, else for the whole run) that is at least the number of new test cases. Write adds no reporter flag.
+A test case is shown as executed when the output names it, or when the output gives an executed count (for its file, else for the whole run) that is at least the number of new test cases. Write adds no reporter flag, except the reporter argument that a loaded entry names (Vitest: `--reporter=verbose`), which shows each test case as run.
 
 ## Group and size
 

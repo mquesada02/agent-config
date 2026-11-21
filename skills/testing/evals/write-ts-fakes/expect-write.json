@@ -1,0 +1,13 @@
+{
+  "tests": [
+    "src/status.test.ts"
+  ],
+  "product": [
+    "src/status.ts"
+  ],
+  "fallback": "none",
+  "result": {
+    "src/status.test.ts": "pass"
+  },
+  "command_contains": "--maxWorkers=2"
+}
