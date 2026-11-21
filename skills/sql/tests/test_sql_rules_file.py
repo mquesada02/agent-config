@@ -15,6 +15,7 @@ CATALOG = (
     + [f"PGN-{n:02d}" for n in range(1, 7)]
     + [f"PG-{n:02d}" for n in range(1, 11)]
     + [f"PLAN-{n:02d}" for n in range(1, 6)]
+    + [f"GEN-{n:02d}" for n in range(1, 14)]
 )
 FULL_BLOCK = """[style]
 keyword_case = "upper"
