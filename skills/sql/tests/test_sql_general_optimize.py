@@ -65,8 +65,8 @@ class RouterEngineStepTest(unittest.TestCase):
     def test_a_fallback_file_skips_the_extractor_and_the_source_modules_for_every_file_form(self):
         body = squash(section(self.text, "Source module"))
         self.assertIn("A fallback file skips it", body)
-        self.assertIn("run no extractor", body)
-        self.assertIn("load no source module", body)
+        self.assertIn("run no extractor", body.lower())
+        self.assertIn("load no source module", body.lower())
         self.assertIn("every file form", body)
         self.assertRegex(body, r"\"not supported\" rule below applies to PostgreSQL files only")
 

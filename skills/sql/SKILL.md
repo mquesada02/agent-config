@@ -54,8 +54,13 @@ python3 <skill folder>/scripts/detect_engine.py <repo root> --file <path> [--req
 
 Pass `--request` only when the user's request names an engine, with the name as the user wrote it. For SQL that the user pastes in the message (no file), make one call with no `--file`. The script prints one JSON object with the keys `engine`, `signal`, `ask` and `evidence`. Act on it in this order:
 
-1. `ask` is not null (`clash` or `no_signal`): ask one question, in one message, for that file only. Name the evidence of the `evidence` list (driver names, scheme names, file paths and rules-file keys, and "your request" for a `request` entry) and ask which engine the file uses. A run with several such files asks one question for each of them. The answer applies to that file (or to that run, for a call with no `--file`) in this run only. The skill writes it nowhere. The answer `postgres` or `postgresql` (any case) means PostgreSQL. Any other answer is a fallback engine, and its name is lowercase.
-2. `ask` is null: use `engine`. With no engine signal at all, `engine` is `postgres` and `signal` is `default`, so a PostgreSQL repo and a repo with no engine signal get the same report as before.
+1. `ask` is not null (`clash` or `no_signal`): ask one question, in one message, for that file only.
+   - Name the evidence of the `evidence` list: driver names, scheme names, file paths and rules-file keys, and "your request" for a `request` entry.
+   - Ask which engine the file uses.
+   - A run with several such files asks one question for each of them.
+   - The answer applies to that file (or to that run, for a call with no `--file`) in this run only. The skill writes it nowhere.
+   - The answer `postgres` or `postgresql` (any case) means PostgreSQL. Any other answer is a fallback engine, and its name is lowercase.
+2. `ask` is null: use `engine`. With no engine signal at all, `engine` is `postgres` and `signal` is `default`. So a PostgreSQL repo and a repo with no engine signal get the same report as before.
 
 A file whose engine is `postgres` is a PostgreSQL file: load [dialects/postgres.md](dialects/postgres.md) and follow the source module rule below. A file with any other engine is a fallback file: load [dialects/general.md](dialects/general.md) in place of the PostgreSQL module. The first line of a fallback reply is the fallback sentence:
 
@@ -67,7 +72,7 @@ General guidance: this repo uses <Engine>, which the skill does not cover. The a
 
 ## Source module
 
-The source module rule is for PostgreSQL files only. A fallback file skips it: run no extractor on it (not `scripts/extract.py` for a JS/TS file) and load no source module. Read the file as text, and judge the lines that the user points at, else every SQL statement that you find in the file. This holds for every file form (`.sql`, JS/TS and any other form), so the "not supported" rule below applies to PostgreSQL files only.
+The source module rule is for PostgreSQL files only. A fallback file skips it. Run no extractor on it (not `scripts/extract.py` for a JS/TS file) and load no source module. Read the file as text. Judge the lines that the user points at, else every SQL statement that you find in the file. This holds for every file form (`.sql`, JS/TS and any other form). So the "not supported" rule below applies to PostgreSQL files only.
 
 When you are pointed at a PostgreSQL file to find its SQL (format, optimize, or a read of the SQL in a file), pick the source module by the file form. The extension is case-insensitive, as it is for `scripts/extract.py`.
 

@@ -4,7 +4,7 @@
 
 ## Steps
 
-Run the engine step of the router for each file that the user points at (or once, with no file, for SQL pasted in the message). Steps 2 to 5 below run for each PostgreSQL file (the engine step gives `postgres`, also when no engine signal shows). A fallback file (any other engine) runs none of steps 2 to 5: it follows the section General part. Step 1 and step 6 apply to both. When a run has both kinds of file, the reply is the general part first and then the PostgreSQL report in full, as the section General part says.
+Run the engine step of the router for each file that the user points at. For SQL pasted in the message, run it once with no file. Steps 2 to 5 below run for each PostgreSQL file (the engine step gives `postgres`, also when no engine signal shows). A fallback file (any other engine) runs none of steps 2 to 5. It follows the section General part. Step 1 and step 6 apply to both kinds of file. When a run has both kinds, the reply is the general part first and then the PostgreSQL report in full, as the section General part says.
 
 1. Take the repo rules: run the reader of the router's rules file step. A rule that is disabled with a reason is not checked. Name the other results as the `Note:` lines below.
 2. Pick the source modules by the file form (the router's source module rule: for a JS/TS file, by the `source` of its statements). Run the extractor once and read its statements. Name each statement as `<file>:<start_line>-<end_line>`.
@@ -80,7 +80,9 @@ The table rules of the section Report hold, with these changes:
 
 The general part has no `## Approve` section, no rewrite, no Database path and no `PLAN-*` finding. The skill makes no database call for a fallback file and edits no file.
 
-When a run has both kinds of file, the reply is the general part first, and then the PostgreSQL report in full. Each part has its own title and its own Result line. The PostgreSQL part starts at its own title line `# sql optimize: <scope>`, right after the last line of the general part. The only text before the PostgreSQL title is the general part. The rule "no prose between the parts" of the section Report holds inside each part. The `Disabled rules:` line of each part names the disabled ids of its own rule family. `## Approve` is the last section of the reply, and it covers the PostgreSQL findings only.
+When a run has both kinds of file, the reply is the general part first, and then the PostgreSQL report in full. Each part has its own title and its own Result line. The PostgreSQL part starts at its own title line `# sql optimize: <scope>`, right after the last line of the general part. The only text before the PostgreSQL title is the general part.
+
+The rule "no prose between the parts" of the section Report holds inside each part. The `Disabled rules:` line of each part names the disabled ids of its own rule family. `## Approve` is the last section of the reply. It covers the PostgreSQL findings only.
 
 ## Rewrites
 
