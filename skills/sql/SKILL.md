@@ -1,6 +1,6 @@
 ---
 name: sql
-description: Use when writing or editing SQL (PostgreSQL in .sql files, postgres.js templates or pg strings), or when the user calls `/sql setup`, `/sql format` or `/sql optimize`. Setup writes the repo SQL rules file, format formats only the SQL the user points at, and optimize reports problems in a query.
+description: Use when writing or editing SQL (full rules for PostgreSQL in .sql files, postgres.js templates or pg strings; general advice for other engines), or when the user calls `/sql setup`, `/sql format` or `/sql optimize`. Setup writes the repo SQL rules file, format formats only the SQL the user points at, and optimize reports problems in a query.
 ---
 
 # SQL
@@ -19,7 +19,19 @@ If the user calls `/sql` with no mode, or with a mode that is not in the list ab
 
 ## Model-invoked path
 
-When this skill loads with no `/sql` call (you write or edit SQL yourself), apply only the style and the static rules to the SQL you write. Take the style from [style.md](style.md) and the static rules from the dialect module.
+When this skill loads with no `/sql` call (you write or edit SQL yourself), run the engine step (the Engine step section gives the command) for the SQL you write. These call rules apply:
+
+- You write or edit SQL in a file: one call with `--file <path>` for each file.
+- The SQL is only in your reply, or in a file that does not exist yet: one call with no `--file`.
+- Pass `--request` when the user's request names an engine.
+- When `ask` is not null, ask the one question of the Engine step section.
+
+Then apply only the style and the static rules to the SQL you write:
+
+- Engine `postgres`: take the style from [style.md](style.md) and the static rules from [dialects/postgres.md](dialects/postgres.md). This works as today: the reply has no fallback sentence.
+- Any other engine: take the style from [style.md](style.md), with the general style that the General part section of [format.md](format.md) gives, and the `GEN-*` rules from [dialects/general.md](dialects/general.md), in place of the PostgreSQL module. Load the rules file with the reader script, as the Rules file section says, so that the `[style]` section and the disabled GEN ids reach you. Do not apply a GEN id that the rules file disables with a reason. Run no extractor and load no source module. The first line of the reply is the fallback sentence of the Engine step section. A reply with several fallback files has the fallback sentence once, with the `<Engine>` display names as that section says. The reply has no title, no table and no `Note:` line: it is your normal reply. Name a GEN rule id only when you change the SQL because of it, or when you keep a construct that the rule warns about and say why.
+
+These rules hold for every engine:
 
 - Do not connect to a database.
 - Do not run a formatter.
@@ -80,7 +92,7 @@ When you are pointed at a PostgreSQL file to find its SQL (format, optimize, or 
 - A file that ends in `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` or `.tsx`: run `scripts/extract.py` once, with `--tags` and `--receivers` from the rules file (leave an option out when its list is empty; the command is the same in both modules below, and the modules do not repeat the run). Read the `source` of each statement, then load the module that it needs: [sources/postgres-js.md](sources/postgres-js.md) when a statement has `source` `template`, [sources/pg.md](sources/pg.md) when a statement has `source` `pg` (a `dynamic` one too), and both when the file has both.
 - Any other file form is not supported. Say so, and do not run the extractor on it.
 
-The model-invoked path (you write SQL yourself) does not change.
+The model-invoked path runs its own engine step (see the Model-invoked path section), and a fallback file skips this rule there too.
 
 ## Layers
 
@@ -93,7 +105,7 @@ A mode picks the source modules that a PostgreSQL file needs (a JS/TS file can l
 | [optimize.md](optimize.md) | `/sql optimize` |
 | [db-access.md](db-access.md) | `/sql optimize` needs a database |
 | [style.md](style.md) | the style applies (format, or the model-invoked path) |
-| `scripts/detect_engine.py` (the engine step) | `/sql optimize` and `/sql format`, once for each file: it decides the engine, and with a fallback engine the first line of the reply is the fallback sentence |
+| `scripts/detect_engine.py` (the engine step) | `/sql optimize`, `/sql format` and the model-invoked path, once for each file: it decides the engine, and with a fallback engine the first line of the reply is the fallback sentence |
 | [dialects/postgres.md](dialects/postgres.md) | the engine step gives `postgres` (the `PG-*` rules and plan reading) |
 | [dialects/general.md](dialects/general.md) | the engine step gives any other engine (the `GEN-*` rules of the general fallback; the file is read as text, with no extractor and no source module) |
 | [sources/sql-files.md](sources/sql-files.md) | the SQL is in a `.sql` file |
