@@ -106,6 +106,23 @@ The general fallback has two more optimize cases. Their folder names do not star
 | `general-opt-mysql` | A repo with `mysql2` and one TypeScript file that imports it: the report is a general part (the fallback sentence on line 1, the title `# sql optimize (general): <scope>`, a `GEN-08` row whose Rule cell is `GEN-08 (SQLFluff)`, no `## Approve`, the last line `The skill edits no file in general mode.`), no `PG-*` row, and no extractor, database call or file edit |
 | `general-opt-mixed` | A repo with `postgres` and `mysql2` and one file of each (the driver imports decide): the reply is the general part for the MySQL file first, then the full PostgreSQL report that starts at its own title, with `## Approve` last. It has a `GEN-08` row in the first part and a `PG-08` row in the second part |
 
+The general fallback has two format cases. Their folder names start with `general-format-`, not `format-`, so the PostgreSQL format case tests do not scan them (`tests/test_sql_general_format.py` checks their files). They have no `expected.json` or `expect.json`: the checks are the graders. Both use synthetic fixtures only. Both cases allow `Edit` and `Write`, so that the no-edit graders can fail:
+
+| Case | What it proves |
+|---|---|
+| `general-format-mysql` | A repo with `mysql2`, a rules file with the default style, and one TypeScript file that imports `mysql2` and holds one lower-case query: the reply is a general part (the fallback sentence on line 1, the title `# sql format (general): <scope>` on line 2, at least one bullet `- <path>:<line>: <style point>`, the last line `The skill edits no file in general mode.`), and the run uses no formatter, no extractor and no database, and edits no file |
+| `general-format-mixed` | A repo with `postgres` and `mysql2` (no `[style]` section) and one file of each (the driver imports decide): the reply is the general part for the MySQL file first, then the PostgreSQL format report unchanged (a `Formatter:` line, no `# sql format` title, no `**Result:` line). The PostgreSQL flow may write the PostgreSQL file. The graders check that no Edit, Write or Bash write call names `reports.ts` |
+
+Run the two cases with `--allow-tools Bash Write Edit --trust-plugin --scaffold --keep-temp`, as for the `format-*` cases. Then run the reply grader by hand on the final message of a run, and check by hand that `src/reports.ts` of the run folder is equal to the fixture file (`cmp`): no existing case uses `input_match` on `Edit` or `Write`, so this hand check backs the mixed graders. Put the final message in a file, then:
+
+```
+python3 skills/sql/graders/grade_format_general.py <reply file> --general
+python3 skills/sql/graders/grade_format_general.py <reply file> --mixed
+cmp skills/sql/evals/general-format-mysql/repo/src/reports.ts <run folder>/src/reports.ts
+```
+
+`grade_format_general.py REPLY (--general | --mixed)` (format reply grader): `--general` grades one general part (the fallback sentence, the title, only `Note:` lines and bullets, and the last line). `--mixed` splits the reply after the first line that equals the general last line, grades the first part as `--general`, and checks the second part: it is not empty, it has no `# sql format` title line and no `**Result:` line, and it has a `Formatter:` line.
+
 The graders live in `skills/sql/graders/`. Each one takes a report (or a trace) as a path, or `-` for standard input:
 
 - `grade_rule_ids.py REPORT [--expect ID...] [--forbid ID...]` (E): the rule ids in the Rule column.

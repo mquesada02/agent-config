@@ -521,7 +521,8 @@ class FormatModuleTest(unittest.TestCase):
 
     def test_the_headings_are_in_order(self):
         self.assertEqual(
-            headings(self.text), ["Target", "Style", "Write", "pg statements", "Report", "Safe tool path"]
+            headings(self.text),
+            ["Target", "Style", "Write", "pg statements", "Report", "Safe tool path", "General part"],
         )
 
     def test_the_write_section_and_step_5_leave_pg_statements_to_their_section(self):
@@ -1019,7 +1020,7 @@ class GraderFilesTest(unittest.TestCase):
             sorted(name for name in os.listdir(folder) if name != "__pycache__"),
             [
                 "grade_db_eval_results.py", "grade_db_unchanged.py", "grade_eval_results.py",
-                "grade_leak_scan.py", "grade_no_change.py", "grade_refusals.py", "grade_report.py",
+                "grade_format_general.py", "grade_leak_scan.py", "grade_no_change.py", "grade_refusals.py", "grade_report.py",
                 "grade_rule_ids.py", "grade_setup.py", "interpolations_same.py", "only_target_changes.py",
                 "style_matches.py",
             ],
