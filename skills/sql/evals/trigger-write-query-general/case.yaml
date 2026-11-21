@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: trigger-write-query-general
+description: Model-invoked trigger case on a MySQL repo (a `mysql2` driver in package.json). A prompt that does not name the skill makes the skill fire, and line 1 of the reply is the fallback sentence, with no database connection, formatter run, extractor run or file edit.
+tags: [trigger, model-invoked, general]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    This repo reads its data with mysql2 (see src/reports.ts). Write a query that returns the three newest orders of each customer, with the customer name and the order total. The tables are `customers(id, name)` and `orders(id, customer_id, total, created_at)`. Show the query in your reply. Do not create or change any file.
