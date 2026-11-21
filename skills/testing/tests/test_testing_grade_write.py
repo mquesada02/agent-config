@@ -426,9 +426,9 @@ class RustGroupModelTest(WriteGraderCase):
 
 
 @NEEDS_TOMLLIB
-class VitestGroupModelTest(WriteGraderCase):
-    """The grouped check for TypeScript groups that are an exec form of Vitest (Table 2, write column)."""
-    FILES = ("src/price.test.ts", "tests/a.test.ts")
+class GroupModelBase(WriteGraderCase):
+    """Scratch repo and the `selects` helper for the TypeScript group reader tests (no test of its own)."""
+    FILES = ("src/price.test.ts", "tests/a.test.ts", "tests/unit/b.test.ts", "src/deep/c.test.ts")
 
     def setUp(self):
         super().setUp()
@@ -450,8 +450,13 @@ class VitestGroupModelTest(WriteGraderCase):
         self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
         return done.returncode == 0
 
+
+@NEEDS_TOMLLIB
+class VitestGroupModelTest(GroupModelBase):
+    """The grouped check for TypeScript groups that are an exec form of Vitest (Table 2, write column)."""
+
     def test_a_group_with_no_selector_selects_every_file(self):
-        for command in ("npx vitest run", "pnpm exec vitest run", "yarn vitest run", "bunx vitest run", "npx vitest --run"):
+        for command in ("npx vitest run","pnpm exec vitest run", "yarn vitest run", "bunx vitest run", "npx vitest --run"):
             with self.subTest(command):
                 self.assertTrue(self.selects(command, "tests/a.test.ts"))
 
@@ -493,10 +498,115 @@ class VitestGroupModelTest(WriteGraderCase):
     def test_an_update_value_of_none_is_not_an_update_mode(self):
         self.assertTrue(self.selects("npx vitest run --update=none", "tests/a.test.ts"))
 
-    def test_a_wrapper_and_the_other_runners_keep_the_old_result(self):
+    def test_a_wrapper_keeps_the_old_result(self):
         self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
-        self.assertTrue(self.selects("node --test", "tests/a.test.ts"))
-        self.assertFalse(self.selects("node --test -t slow", "tests/a.test.ts"))
+        self.assertTrue(self.selects("jest", "tests/a.test.ts"))
+
+
+@NEEDS_TOMLLIB
+class JestGroupModelTest(GroupModelBase):
+    """The grouped check for TypeScript groups that are an exec form of Jest (Table J2, write column)."""
+
+    def test_a_group_with_no_selector_selects_every_file(self):
+        for command in ("npx jest --ci", "pnpm exec jest", "yarn jest", "bunx jest", "CI=true npx jest --ci --json"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "tests/a.test.ts"))
+
+    def test_a_path_operand_is_a_regular_expression_on_the_path(self):
+        self.assertTrue(self.selects("npx jest src/price", "src/price.test.ts"))
+        self.assertTrue(self.selects("npx jest src tests", "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx jest 'src/.*\\.test\\.ts'", "src/price.test.ts"))
+        self.assertFalse(self.selects("npx jest src/other", "src/price.test.ts"))
+
+    def test_test_path_patterns_always_reads_as_a_regular_expression(self):
+        self.assertTrue(self.selects("npx jest --testPathPatterns tests/a", "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx jest --testPathPatterns=tests/a", "tests/a.test.ts"))
+        self.assertFalse(self.selects("npx jest --runTestsByPath --testPathPatterns src/other", "src/price.test.ts"))
+
+    def test_an_operand_that_starts_with_a_caret_or_slash_selects_no_file(self):
+        for command in ("npx jest ^src/price", "npx jest /src/price", "npx jest src/price ^tests"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_run_tests_by_path_reads_an_operand_as_an_equal_path_with_a_dropped_dot_slash(self):
+        self.assertTrue(self.selects("npx jest --runTestsByPath ./src/price.test.ts", "src/price.test.ts"))
+        self.assertTrue(self.selects("npx jest --runTestsByPath src/price.test.ts tests/a.test.ts", "tests/a.test.ts"))
+        self.assertFalse(self.selects("npx jest --runTestsByPath src/price", "src/price.test.ts"))
+
+    def test_a_fixed_flag_with_a_value_is_not_an_operand(self):
+        self.assertTrue(self.selects("npx jest --maxWorkers 2 -w 2 --ci", "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx jest --maxWorkers=2 --outputFile out.json", "tests/a.test.ts"))
+
+    def test_a_project_name_filter_or_unreadable_token_selects_no_file(self):
+        for command in (
+            "npx jest --selectProjects unit", "npx jest -t slow", "npx jest --testNamePattern slow",
+            "npx jest --onlyChanged", "npx jest --shard 1/2", "npx jest --testPathIgnorePatterns tests/slow",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_an_update_mode_or_a_watch_marker_selects_no_file(self):
+        for command in (
+            "npx jest -u", "npx jest --updateSnapshot", "npx jest --updateSnapshot=true", "npx jest --watch",
+            "npx jest --watchAll", "npx jest --listTests",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_an_update_snapshot_value_of_false_is_not_an_update_mode(self):
+        self.assertTrue(self.selects("npx jest --updateSnapshot=false", "tests/a.test.ts"))
+
+    def test_a_bare_update_snapshot_token_is_an_update_mode_whatever_follows_it(self):
+        for command in ("npx jest --updateSnapshot false", "npx jest --updateSnapshot tests/a"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+
+    def test_a_wrapper_and_jest_alone_keep_the_old_result(self):
+        self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
+        self.assertTrue(self.selects("jest --ci", "tests/a.test.ts"))
+        self.assertFalse(self.selects("jest -t slow", "tests/a.test.ts"))
+
+
+@NEEDS_TOMLLIB
+class NodeTestGroupModelTest(GroupModelBase):
+    """The grouped check for TypeScript groups that are `node --test` commands (Table N2, write column)."""
+
+    def test_a_group_with_no_operand_selects_every_file(self):
+        for command in ("node --test", "node --import tsx --test", "CI=true node --test --test-concurrency=2"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "tests/a.test.ts"))
+
+    def test_a_file_a_folder_or_a_glob_operand_selects_the_files_it_names(self):
+        self.assertTrue(self.selects("node --test tests/a.test.ts", "tests/a.test.ts"))
+        self.assertTrue(self.selects("node --test ./tests/unit/", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("node --test tests", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("node --test 'tests/**/*.test.ts'", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("node --test 'tests/**/*.test.ts'", "tests/a.test.ts"))
+        self.assertTrue(self.selects("node --test src/other tests/a.test.ts", "tests/a.test.ts"))
+
+    def test_a_star_does_not_cross_a_folder(self):
+        self.assertFalse(self.selects("node --test 'tests/*.test.ts'", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("node --test 'tests/*.test.ts'", "tests/a.test.ts"))
+
+    def test_an_operand_that_names_no_file_selects_no_file(self):
+        self.assertFalse(self.selects("node --test tests/unit", "tests/a.test.ts"))
+        self.assertFalse(self.selects("node --test src/other.test.ts", "src/price.test.ts"))
+
+    def test_a_fixed_flag_with_a_value_is_not_an_operand(self):
+        self.assertTrue(self.selects("node --import tsx --test --test-concurrency 2 --test-reporter spec", "tests/a.test.ts"))
+        self.assertTrue(self.selects("node --test --test-reporter=spec --test-timeout=5000", "tests/a.test.ts"))
+
+    def test_a_name_filter_unreadable_token_watch_marker_or_update_mode_selects_no_file(self):
+        for command in (
+            "node --test -t slow", "node --test --test-name-pattern slow", "node --test --test-skip-pattern slow",
+            "node --test --test-shard=1/2", "node --test --watch", "node --test --watch-path src",
+            "node --test --test-update-snapshots",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_a_command_with_no_test_token_keeps_the_old_result(self):
+        self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
 
 
 if __name__ == "__main__":

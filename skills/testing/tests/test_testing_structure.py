@@ -552,24 +552,46 @@ class RustEntryTest(unittest.TestCase):
 
 TS_ENTRY = os.path.join(ENTRIES, "typescript.md")
 TS_SECTIONS = RUST_SECTIONS
+RUNNERS = ("Vitest", "Jest", "node:test")
+JEST_CASES = (
+    "jest-01-watch-script", "jest-01-run-mode", "jest-assert-03-update", "jest-run-01-retry",
+    "jest-run-02-fake-timers", "jest-run-04-json-durations", "jest-run-04-wrapper-not-checked",
+    "jest-grp-01-list-decides", "jest-grp-01-not-checked", "jest-assert-forms", "jest-net-port-skip",
+    "jest-par-02-env-var",
+)
+NODE_CASES = (
+    "node-01-watch-script", "node-01-run-mode", "node-assert-03-update", "node-run-01-rerun",
+    "node-run-02-mock-timers", "node-run-04-spec-durations", "node-run-04-wrapper-not-checked",
+    "node-grp-01-not-checked", "node-grp-01-readable", "node-assert-forms", "node-net-port-skip",
+    "node-par-02-env-var",
+)
 TS_REVIEW_CASES = (
     "ts-assert-forms", "ts-net-and-port", "ts-skip-and-order", "ts-01-watch-script", "ts-01-run-mode",
     "ts-assert-03-update", "ts-run-01-retry", "ts-run-02-fake-timers", "ts-run-04-verbose-durations",
     "ts-run-04-wrapper-not-checked", "ts-grp-01-list-decides", "ts-grp-01-not-checked", "ts-par-02-env-var",
     "ts-gate-other-runner",
-)
+) + JEST_CASES + NODE_CASES
 TS_WRITE_CASES = (
     "write-ts-derived-path", "write-ts-mirrored-path", "write-ts-project-group", "write-ts-no-group",
     "write-ts-no-path", "write-ts-existing-test", "write-ts-fakes", "write-ts-gate-other-runner",
     "write-mixed-rust-ts",
+    "write-jest-derived-path", "write-jest-project-group", "write-jest-no-path", "write-jest-existing-test",
+    "write-jest-fakes", "write-jest-no-group",
+    "write-node-derived-path", "write-node-mirrored-path", "write-node-no-group", "write-node-no-path",
+    "write-node-existing-test", "write-node-fakes",
+    "write-mixed-rust-node",
 )
-VITEST_DOCS = "https://vitest.dev/"
+DOCS = {"Vitest": "https://vitest.dev/", "Jest": "https://jestjs.io/", "node:test": "https://nodejs.org/"}
 PRIVATE_NAMES = ("mquesada", "vtxlabs")
 EXAMPLE = re.compile(r"^- Example: .+ => (row (\d+)|class (.+))$")
-GATE_SENTENCE = "The Vitest runner gate:"
+GATE_SENTENCE = "The runner gate:"
 WATCH_FORM_PHRASE = "a form that a loaded entry names as a watch form"
 REPORTER_PHRASE = "reporter argument that a loaded entry names"
-WRAPPER_ENTRY = "`TS-01 (command of <names> is not a plain Vitest command)`"
+WRAPPER_ENTRIES = (
+    "`TS-01 (command of <names> is not a plain Vitest command)`",
+    "`TS-01 (command of <names> is not a plain Jest command)`",
+    "`TS-01 (command of <names> is not a plain node:test command)`",
+)
 TS_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".cjs")
 
 
@@ -605,7 +627,10 @@ def grader_languages():
 COMMAND_EXAMPLE = re.compile(
     r"^- Example: `([^`]+)`(?: with the script `([^`]+)`| with no such script)? => (?:row (\d+)|class (.+))$"
 )
-EXEC_FORMS = (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"])
+EXEC_FORMS = {
+    "vitest": (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"]),
+    "jest": (["npx", "jest"], ["pnpm", "exec", "jest"], ["yarn", "jest"], ["bunx", "jest"]),
+}
 SCRIPT_CALL = re.compile(r"^(?:npm test|npm run (\S+)|pnpm test|pnpm run (\S+)|yarn test|yarn run (\S+)|bun run (\S+))( .*)?$")
 WRAPPER_MARKERS = ("&&", "||", ";", "|", "$(", "`", ">", "<")
 SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
@@ -613,6 +638,18 @@ NAME_VALUE_FLAGS = ("-t", "--testNamePattern")
 PROJECT_FLAGS = ("--project", "-p")
 FIXED_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry")
 FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--update", "-u", "--coverage")
+JEST_NON_TEST = ("--listTests", "--showConfig", "--clearCache", "--version", "--help")
+JEST_FIXED_VALUE_FLAGS = ("--maxWorkers", "-w", "--outputFile", "--reporters")
+JEST_FIXED_FLAGS = (
+    "--ci", "--runInBand", "-i", "--verbose", "--json", "--silent", "--coverage", "--passWithNoTests",
+    "--watchman", "--no-watchman", "--cache", "--no-cache", "--runTestsByPath", "-u", "--updateSnapshot",
+)
+NODE_NAME_FLAGS = ("--test-name-pattern", "--test-skip-pattern")
+NODE_FIXED_VALUE_FLAGS = (
+    "--test-concurrency", "--test-reporter", "--test-reporter-destination", "--test-timeout",
+    "--test-isolation", "--import", "--require", "-r", "--env-file",
+)
+NODE_FIXED_FLAGS = ("--test-force-exit", "--test-update-snapshots", "--no-warnings", "--experimental-test-coverage")
 
 
 def parse_command_example(line):
@@ -634,8 +671,20 @@ def strip_assignments(tokens):
     return tokens
 
 
-def read_command(command, scripts):
-    """(kind, tokens after vitest) for Table 1 steps 1 to 3; kind is plain or wrapper. For a wrapper the tokens are all words."""
+def exec_length(tokens, runner, from_script):
+    """How many leading tokens are the exec form of the runner, or None when the command has none."""
+    if runner == "node:test":
+        return 1 if tokens[:1] == ["node"] and "--test" in tokens else None
+    form = next((f for f in EXEC_FORMS[runner] if tokens[:len(f)] == f), None)
+    if form is None and from_script and tokens[:1] == [runner]:
+        return 1
+    return None if form is None else len(form)
+
+
+def read_command(command, scripts, runner="vitest"):
+    """(kind, tokens after the exec form) for steps 1 to 3 of the command reading; kind is plain or wrapper.
+
+    For a wrapper the tokens are all words."""
     tokens = strip_assignments(command.split())
     from_script = False
     call = SCRIPT_CALL.match(" ".join(tokens))
@@ -648,15 +697,17 @@ def read_command(command, scripts):
         if SCRIPT_CALL.match(" ".join(tokens)):
             return "wrapper", tokens
     text = " ".join(tokens)
-    exec_form = next((f for f in EXEC_FORMS if tokens[:len(f)] == f), None)
-    if exec_form is None and from_script and tokens[:1] == ["vitest"]:
-        exec_form = ["vitest"]
-    if exec_form is None or any(marker in text for marker in WRAPPER_MARKERS):
+    length = exec_length(tokens, runner, from_script)
+    if length is None or any(marker in text for marker in WRAPPER_MARKERS):
         return "wrapper", tokens
-    return "plain", tokens[len(exec_form):]
+    return "plain", tokens[length:]
 
 
-def has_update_mode(tokens):
+def has_update_mode(tokens, runner="vitest"):
+    if runner == "jest":
+        return any(t in ("-u", "--updateSnapshot", "--updateSnapshot=true") for t in tokens)
+    if runner == "node:test":
+        return "--test-update-snapshots" in tokens
     for index, token in enumerate(tokens):
         value = tokens[index + 1] if index + 1 < len(tokens) else ""
         if token == "-u" or (token == "--update" and value not in ("none", "false")):
@@ -666,10 +717,26 @@ def has_update_mode(tokens):
     return False
 
 
-def table_4_row(command, scripts):
-    kind, tokens = read_command(command, scripts)
+def has_watch_marker(tokens, runner):
+    if runner == "jest":
+        return any(
+            t in ("--watch", "--watchAll") or t.startswith("--watchAll=")
+            or (t.startswith("--watch=") and t.split("=", 1)[1] != "false")
+            for t in tokens
+        )
+    return any(t in ("--watch", "--watch-path") or t.startswith(("--watch=", "--watch-path=")) for t in tokens)
+
+
+def table_4_row(command, scripts, runner="vitest"):
+    kind, tokens = read_command(command, scripts, runner)
     if kind == "wrapper":
         return 1
+    if runner == "jest":
+        if any(t in JEST_NON_TEST for t in tokens):
+            return 2
+        return 3 if has_watch_marker(tokens, runner) else 4
+    if runner == "node:test":
+        return 2 if has_watch_marker(tokens, runner) else 3
     subcommand = next((t for t in tokens if t in SUBCOMMANDS), None)
     if subcommand in ("list", "bench"):
         return 2
@@ -680,22 +747,37 @@ def table_4_row(command, scripts):
     return 5 if subcommand == "related" else 6
 
 
-def table_1_row(command, scripts):
-    kind, tokens = read_command(command, scripts)
-    if has_update_mode(tokens):
+def table_1_row(command, scripts, runner="vitest"):
+    kind, tokens = read_command(command, scripts, runner)
+    if has_update_mode(tokens, runner):
         return 1
     if kind == "wrapper":
         return 2
+    if runner == "jest":
+        if has_watch_marker(tokens, runner):
+            return 3
+        return 4 if any(t in JEST_NON_TEST for t in tokens) else 5
+    if runner == "node:test":
+        return 3 if has_watch_marker(tokens, runner) else 4
     verdict = table_4_row(command, scripts)
     return {2: 4, 4: 5}.get(verdict, 3)
 
 
-def token_classes(command):
-    """The set of Table 2 classes of the tokens after vitest and its subcommand."""
-    _, tokens = read_command(command, {})
+def flat_tokens(tokens):
     flat = []
     for token in tokens:
         flat.extend(token.split("=", 1) if token.startswith("--") and "=" in token else [token])
+    return flat
+
+
+def token_classes(command, runner="vitest"):
+    """The set of selector table classes of the tokens after the exec form (and the Vitest subcommand)."""
+    if runner == "jest":
+        return jest_token_classes(command)
+    if runner == "node:test":
+        return node_token_classes(command)
+    _, tokens = read_command(command, {}, runner)
+    flat = flat_tokens(tokens)
     classes, index, seen_subcommand = set(), 0, False
     while index < len(flat):
         token = flat[index]
@@ -725,19 +807,111 @@ def token_classes(command):
     return classes
 
 
+def flag_name(token):
+    """(name, has an inline value) of a token: `--flag=value` is the name `--flag` with an inline value."""
+    if token.startswith("--") and "=" in token:
+        return token.split("=", 1)[0], True
+    return token, False
+
+
+def jest_token_classes(command):
+    _, tokens = read_command(command, {}, "jest")
+    classes, index = set(), 0
+    while index < len(tokens):
+        token = tokens[index]
+        name, inline = flag_name(token)
+        step = 1 if inline else 2
+        if name in ("-t", "--testNamePattern"):
+            classes.add("Name filter")
+        elif name == "--selectProjects":
+            classes.add("Project")
+            step = 1
+            while not inline and index + step < len(tokens) and not tokens[index + step].startswith("-"):
+                step += 1
+        elif name == "--testPathPatterns":
+            classes.add("Path operand")
+        elif name in JEST_FIXED_VALUE_FLAGS:
+            classes.add("Fixed")
+        elif name in JEST_FIXED_FLAGS:
+            classes.add("Fixed")
+            step = 1
+        elif token.startswith(("-", "^", "/")):
+            classes.add("Unreadable")
+            step = 1
+        else:
+            classes.add("Path operand")
+            step = 1
+        index += step
+    return classes
+
+
+def node_token_classes(command):
+    _, tokens = read_command(command, {}, "node:test")
+    tokens = [t for t in tokens if t != "--test"]
+    classes, index = set(), 0
+    while index < len(tokens):
+        token = tokens[index]
+        name, inline = flag_name(token)
+        step = 1 if inline else 2
+        if name in NODE_NAME_FLAGS:
+            classes.add("Name filter")
+        elif name in NODE_FIXED_VALUE_FLAGS:
+            classes.add("Fixed")
+        elif name in NODE_FIXED_FLAGS:
+            classes.add("Fixed")
+            step = 1
+        elif token.startswith("-"):
+            classes.add("Unreadable")
+            step = 1
+        else:
+            classes.add("Path operand")
+            step = 1
+        index += step
+    return classes
+
+
+def runner_part(lines, runner):
+    """The lines of the `### <runner>` sub-heading of a list of section lines."""
+    return subsection(lines, f"### {runner}").splitlines()
+
+
+def labelled_table(lines, label):
+    """The lines from a `Table ... :` label line to the next label line (or the end)."""
+    start = lines.index(label)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("Table ") and lines[i].endswith(":")), len(lines))
+    return lines[start:end]
+
+
+RUNNER_KEY = {"Vitest": "vitest", "Jest": "jest", "node:test": "node:test"}
+
+
 class TypeScriptEntryTest(unittest.TestCase):
     def setUp(self):
         self.assertTrue(os.path.isfile(TS_ENTRY), "skills/testing/entries/typescript.md does not exist")
         self.text = read(TS_ENTRY)
 
+    def commands(self, runner):
+        return runner_part(section(self.text, "## Commands"), runner)
+
+    def layout(self, runner):
+        return runner_part(section(self.text, "## Layout"), runner)
+
+    def ts_01(self):
+        return subsection(section(self.text, "## Rules"), "### TS-01").splitlines()
+
     def test_the_entry_has_the_seven_sections_in_order(self):
         headings = [line for line in self.text.splitlines() if line.startswith("## ")]
         self.assertEqual(tuple(headings), TS_SECTIONS)
 
-    def test_the_entry_has_a_vitest_sub_heading_in_the_runner_sections(self):
+    def test_the_entry_has_a_sub_heading_for_each_runner_in_the_runner_sections(self):
         for heading in ("## Commands", "## Runner facts", "## Layout", "## Design how-to"):
-            with self.subTest(heading):
-                self.assertIn("### Vitest", section(self.text, heading))
+            for runner in RUNNERS:
+                with self.subTest(heading, runner=runner):
+                    self.assertIn(f"### {runner}", section(self.text, heading))
+        for heading in ("## Libraries", "## Detection notes"):
+            for runner in RUNNERS[1:]:
+                with self.subTest(heading, runner=runner):
+                    self.assertIn(f"### {runner}", section(self.text, heading))
 
     def test_the_entry_has_a_subsection_with_both_labels_for_every_typescript_id_and_none_for_rs_01(self):
         rules = section(self.text, "## Rules")
@@ -750,32 +924,69 @@ class TypeScriptEntryTest(unittest.TestCase):
                 positions = [body.find(label) for label in RUST_LABELS]
                 self.assertNotIn(-1, positions)
                 self.assertEqual(positions, sorted(positions))
-                self.assertIn("- Vitest:", body)
 
-    def test_table_1_row_5_and_the_ci_text_name_the_worker_cap_and_the_reporter(self):
-        commands = "\n".join(section(self.text, "## Commands"))
-        row_5 = next(line for line in commands.splitlines() if line.startswith("| 5 |"))
-        for option in ("--maxWorkers=2", "--reporter=verbose"):
+    def test_each_label_of_each_rule_has_a_bullet_for_each_runner(self):
+        rules = section(self.text, "## Rules")
+        for rule_id in TS_RULE_IDS:
+            body = subsection(rules, f"### {rule_id}")
+            how, check = body.split("**Check details**")
+            for label, part in (("how", how), ("check", check)):
+                for runner in RUNNERS:
+                    with self.subTest(rule_id, label=label, runner=runner):
+                        self.assertIn(f"- {runner}:", part)
+
+    def test_the_run_command_rows_name_the_worker_cap_and_the_reporter_of_each_runner(self):
+        row_5 = next(line for line in self.commands("Jest") if line.startswith("| 5 |"))
+        for option in ("--ci", "--maxWorkers=2", "--json", "--runTestsByPath"):
             with self.subTest(option):
                 self.assertIn(option, row_5)
-        self.assertIn("The commands run with `CI=true` set", commands)
+        row_4 = next(line for line in self.commands("node:test") if line.startswith("| 4 |"))
+        for option in ("--test-concurrency=2", "--test-reporter=spec"):
+            with self.subTest(option):
+                self.assertIn(option, row_4)
+        vitest_row_5 = next(line for line in self.commands("Vitest") if line.startswith("| 5 |"))
+        for option in ("--maxWorkers=2", "--reporter=verbose"):
+            with self.subTest(option):
+                self.assertIn(option, vitest_row_5)
+        for runner in RUNNERS:
+            with self.subTest(runner):
+                self.assertIn("The commands run with `CI=true` set", "\n".join(self.commands(runner)))
         for path in (REVIEW_MD, WRITE_MD):
-            with self.subTest(path):
-                self.assertIn("--reporter=verbose", read(path))
+            for reporter in ("--reporter=verbose", "Jest: `--json`", "--test-reporter=spec"):
+                with self.subTest(path=path, reporter=reporter):
+                    self.assertIn(reporter, read(path))
 
-    def test_the_runner_gate_sentence_is_in_the_entry_once(self):
+    def test_the_runner_gate_sentence_is_in_the_entry_once_and_names_the_three_runners(self):
         self.assertEqual(self.text.count(GATE_SENTENCE), 1)
-        self.assertIn(GATE_SENTENCE, "\n".join(section(self.text, "## Detection notes")))
+        notes = "\n".join(section(self.text, "## Detection notes"))
+        self.assertIn(GATE_SENTENCE, notes)
+        gate = next(line for line in notes.splitlines() if GATE_SENTENCE in line)
+        for runner in ("`vitest`", "`jest`", "`node:test`"):
+            with self.subTest(runner):
+                self.assertIn(runner, gate)
 
-    def test_every_runner_fact_is_confirmed_with_a_link_or_unconfirmed_and_unused(self):
-        facts = [line for line in section(self.text, "## Runner facts") if line.startswith("- ")]
-        self.assertTrue(facts)
-        for line in facts:
+    def test_every_runner_fact_is_confirmed_with_a_link_of_its_runner_or_unconfirmed_and_unused(self):
+        runner, count = None, 0
+        for line in section(self.text, "## Runner facts"):
+            if line.startswith("### "):
+                runner = line[4:].strip()
+            if not line.startswith("- "):
+                continue
+            count += 1
+            body = line[2:]
             with self.subTest(line[:60]):
-                body = line[2:]
-                self.assertTrue(
-                    (body.startswith("Confirmed:") and VITEST_DOCS in body) or body.startswith("Unconfirmed, not used:")
-                )
+                self.assertTrue(body.startswith("Confirmed:") or body.startswith("Unconfirmed, not used:"))
+                if body.startswith("Confirmed:"):
+                    self.assertIn(DOCS[runner], body)
+                else:
+                    self.assertNotIn("https://", body)
+        self.assertGreater(count, 30)
+
+    def test_each_runner_has_an_unconfirmed_bullet(self):
+        part = {runner: "\n".join(runner_part(section(self.text, "## Runner facts"), runner)) for runner in RUNNERS}
+        for runner in RUNNERS:
+            with self.subTest(runner):
+                self.assertIn("- Unconfirmed, not used:", part[runner])
 
     def test_the_list_reporter_workers_retry_and_update_facts_link_their_pages(self):
         facts = {line[2:] for line in section(self.text, "## Runner facts") if line.startswith("- ")}
@@ -785,12 +996,26 @@ class TypeScriptEntryTest(unittest.TestCase):
             "Confirmed: Options that the group reader names": "https://vitest.dev/config/maxworkers",
             "Confirmed: `retry`": "https://vitest.dev/config/retry",
             "Confirmed: `update` modes": "https://vitest.dev/config/update",
+            "Confirmed: `--listTests`": "https://jestjs.io/docs/cli",
+            "Confirmed: `--ci`": "https://jestjs.io/docs/snapshot-testing",
+            "Confirmed: `--json`": "https://jestjs.io/docs/cli",
+            "Confirmed: `jest.retryTimes": "https://jestjs.io/docs/jest-object",
+            "Confirmed: `--test-reporter`": "https://nodejs.org/api/test.html",
+            "Confirmed: `--test-concurrency`": "https://nodejs.org/api/cli.html",
+            "Confirmed: `--test-update-snapshots`": "https://nodejs.org/api/test.html",
         }
         for start, page in pages.items():
             with self.subTest(start):
                 matching = [f for f in facts if f.startswith(start)]
                 self.assertEqual(len(matching), 1)
                 self.assertIn(page, matching[0])
+
+    def test_the_node_test_facts_record_no_confirmed_list_command(self):
+        facts = [line[2:] for line in runner_part(section(self.text, "## Runner facts"), "node:test") if line.startswith("- ")]
+        self.assertFalse([f for f in facts if f.startswith("Confirmed:") and "list command" in f])
+        unconfirmed = next(f for f in facts if f.startswith("Unconfirmed, not used:"))
+        self.assertIn("a `node:test` list command", unconfirmed)
+        self.assertIn("no `node:test` list command", "\n".join(self.commands("node:test")))
 
     def test_an_unconfirmed_form_is_not_used_outside_the_runner_facts_section(self):
         outside = "\n".join(
@@ -799,56 +1024,88 @@ class TypeScriptEntryTest(unittest.TestCase):
         for phrase in ("fail-on-retry", "does not type-check", "no-watch form", "--watch=false is not"):
             with self.subTest(phrase):
                 self.assertNotIn(phrase, outside)
+        jest_dbl = "\n".join(line for line in outside.splitlines() if line.startswith("- Jest:") and "toHaveBeenNthCalledWith" in line)
+        self.assertTrue(jest_dbl)
+        for phrase in ("toHaveBeenCalledBefore", "toHaveBeenCalledAfter", "invocationCallOrder"):
+            with self.subTest(phrase):
+                self.assertNotIn(phrase, jest_dbl)
+        self.assertNotIn("--colors", self.text)
+        self.assertNotIn("module registry", self.text)
 
-    def test_the_entry_holds_no_private_name_and_only_vitest_doc_links(self):
+    def test_the_entry_holds_no_private_name_and_only_the_three_doc_prefixes(self):
         for name in PRIVATE_NAMES:
             self.assertNotIn(name, self.text.lower())
         for url in re.findall(r"https?://[^\s)`]+", self.text):
             with self.subTest(url):
-                self.assertTrue(url.startswith(VITEST_DOCS))
+                self.assertTrue(url.startswith(tuple(DOCS.values())))
+        for url in re.findall(r"\(/docs/[^)\s]*\)", self.text):
+            self.fail(f"relative Jest link: {url}")
 
     def test_each_table_row_and_class_is_the_expected_mark_of_at_least_one_example(self):
-        commands = section(self.text, "## Commands")
-        layout = section(self.text, "## Layout")
-        rules = section(self.text, "## Rules")
-        ts_01 = subsection(rules, "### TS-01").splitlines()
-        marks = {
-            "Table 1": (table_rows(commands), [m for m in example_marks(commands) if m.isdigit()]),
-            "Table 2": (table_classes(commands, "Class"), [m for m in example_marks(commands) if not m.isdigit()]),
-            "Table 3": (table_rows(layout), example_marks(layout)),
-            "Table 4": (table_rows(ts_01), example_marks(ts_01)),
+        ts_01 = self.ts_01()
+        tables = {
+            "Table 1": self.commands("Vitest"),
+            "Table J1": self.commands("Jest"),
+            "Table N1": self.commands("node:test"),
+            "Table 3": self.layout("Vitest"),
+            "Table J3": self.layout("Jest"),
+            "Table N3": self.layout("node:test"),
+            "Table 4": labelled_table(ts_01, "Table 4 (Vitest):"),
+            "Table J4": labelled_table(ts_01, "Table J4 (Jest):"),
+            "Table N4": labelled_table(ts_01, "Table N4 (`node:test`):"),
         }
-        for name, (rows, examples) in marks.items():
+        for name, lines in tables.items():
             with self.subTest(name):
+                rows = table_rows(lines)
                 self.assertTrue(rows)
-                self.assertEqual(sorted(set(rows)), sorted(set(examples)))
+                examples = example_marks(lines)
+                self.assertEqual(sorted(set(rows)), sorted({m for m in examples if m.isdigit()}))
+        for runner in RUNNERS:
+            with self.subTest("classes", runner=runner):
+                lines = self.commands(runner)
+                classes = table_classes(lines, "Class")
+                self.assertEqual(sorted(set(classes)), sorted({m for m in example_marks(lines) if not m.isdigit()}))
+        self.assertEqual(
+            table_classes(self.commands("Jest"), "Class"), ["Path operand", "Project", "Name filter", "Fixed", "Unreadable"]
+        )
+        self.assertEqual(
+            table_classes(self.commands("node:test"), "Class"), ["Path operand", "Name filter", "Fixed", "Unreadable"]
+        )
 
     def test_each_command_example_has_exactly_the_expected_row_or_class(self):
-        commands = section(self.text, "## Commands")
-        ts_01 = subsection(section(self.text, "## Rules"), "### TS-01").splitlines()
-        for line in commands:
-            parsed = parse_command_example(line)
-            if parsed is None:
-                continue
-            command, scripts, mark = parsed
-            with self.subTest(line):
-                if mark.isdigit():
-                    self.assertEqual(str(table_1_row(command, scripts)), mark)
-                else:
-                    self.assertEqual(token_classes(command), {mark})
-        for line in ts_01:
-            parsed = parse_command_example(line)
-            if parsed is None:
-                continue
-            command, scripts, mark = parsed
-            with self.subTest(line):
-                self.assertEqual(str(table_4_row(command, scripts)), mark)
+        ts_01 = self.ts_01()
+        parts = (
+            ("vitest", self.commands("Vitest"), labelled_table(ts_01, "Table 4 (Vitest):")),
+            ("jest", self.commands("Jest"), labelled_table(ts_01, "Table J4 (Jest):")),
+            ("node:test", self.commands("node:test"), labelled_table(ts_01, "Table N4 (`node:test`):")),
+        )
+        for runner, commands, verdicts in parts:
+            for line in commands:
+                parsed = parse_command_example(line)
+                if parsed is None:
+                    continue
+                command, scripts, mark = parsed
+                with self.subTest(line):
+                    if mark.isdigit():
+                        self.assertEqual(str(table_1_row(command, scripts, runner)), mark)
+                    else:
+                        self.assertEqual(token_classes(command, runner), {mark})
+            for line in verdicts:
+                parsed = parse_command_example(line)
+                if parsed is None:
+                    continue
+                command, scripts, mark = parsed
+                with self.subTest(line):
+                    self.assertEqual(str(table_4_row(command, scripts, runner)), mark)
 
-    def test_the_table_examples_cover_the_wrapper_forms_of_requirement_c(self):
-        commands = "\n".join(section(self.text, "## Commands"))
-        self.assertIn("with no such script => row 2", commands)
-        self.assertIn("with the script `npm run ci` => row 2", commands)
-        self.assertIn("with the script `vitest run && tsc`", "\n".join(self.text.splitlines()))
+    def test_the_table_examples_cover_the_wrapper_forms_of_requirement_c_for_each_runner(self):
+        scripts = {"Vitest": "vitest run && tsc", "Jest": "jest && tsc", "node:test": "node --test && tsc"}
+        for runner in RUNNERS:
+            with self.subTest(runner):
+                commands = "\n".join(self.commands(runner))
+                self.assertIn("with no such script => row 2", commands)
+                self.assertIn("with the script `npm run ci` => row 2", commands)
+                self.assertIn(f"with the script `{scripts[runner]}`", commands)
 
     def test_the_table_classifiers_on_samples(self):
         self.assertEqual(table_1_row("npx vitest run", {}), 5)
@@ -861,11 +1118,70 @@ class TypeScriptEntryTest(unittest.TestCase):
         self.assertEqual(table_4_row("npx vitest list --watch", {}), 2)
         self.assertEqual(token_classes("npx vitest run -t slow src/a"), {"Name filter", "Path operand"})
 
-    def test_the_table_one_extension_list_equals_the_grader_languages(self):
-        row_1 = next(line for line in section(self.text, "## Layout") if line.startswith("| 1 |"))
-        listed = tuple(re.findall(r"`(\.[a-z]+)`", row_1.split("|")[2]))
+    def test_the_jest_classifiers_on_samples(self):
+        self.assertEqual(table_1_row("npx jest --ci", {}, "jest"), 5)
+        self.assertEqual(table_1_row("yarn jest -u", {}, "jest"), 1)
+        self.assertEqual(table_1_row("jest --ci", {}, "jest"), 2)
+        self.assertEqual(table_1_row("npm test", {"test": "jest --ci"}, "jest"), 5)
+        self.assertEqual(table_1_row("npx jest --watch --listTests", {}, "jest"), 3)
+        self.assertEqual(table_4_row("npx jest --watch --listTests", {}, "jest"), 2)
+        for command in ("npx jest --watch=false", "npx jest --no-watch", "npx jest -w 2", "npx jest --maxWorkers=2"):
+            with self.subTest(command):
+                self.assertEqual(table_4_row(command, {}, "jest"), 4)
+        for command in ("npx jest --watch", "npx jest --watchAll", "npx jest --watchAll=false", "npx jest --watch=true",
+                        "npx jest --watch --watch=false"):
+            with self.subTest(command):
+                self.assertEqual(table_4_row(command, {}, "jest"), 3)
+        self.assertEqual(table_1_row("npx jest --updateSnapshot=false", {}, "jest"), 5)
+        self.assertEqual(table_1_row("npx jest --updateSnapshot=true", {}, "jest"), 1)
+        self.assertEqual(table_4_row("npx jest -u", {}, "jest"), 4)
+        self.assertEqual(token_classes("npx jest -w 2", "jest"), {"Fixed"})
+        self.assertEqual(token_classes("npx jest --selectProjects a b --testPathPatterns src/x", "jest"), {"Project", "Path operand"})
+        self.assertEqual(token_classes("npx jest --selectProjects a src/x", "jest"), {"Project"})
+        self.assertEqual(token_classes("npx jest /abs/path", "jest"), {"Unreadable"})
+
+    def test_the_node_test_classifiers_on_samples(self):
+        self.assertEqual(table_1_row("node --test", {}, "node:test"), 4)
+        self.assertEqual(table_1_row("node --import tsx --test tests", {}, "node:test"), 4)
+        self.assertEqual(table_1_row("node tests/a.test.js", {}, "node:test"), 2)
+        self.assertEqual(table_1_row("node --test --test-update-snapshots", {}, "node:test"), 1)
+        self.assertEqual(table_1_row("node --test --watch", {}, "node:test"), 3)
+        self.assertEqual(table_4_row("node --test --watch-path src", {}, "node:test"), 2)
+        self.assertEqual(table_4_row("node tests/a.test.js", {}, "node:test"), 1)
+        self.assertEqual(table_4_row("node --test --test-update-snapshots", {}, "node:test"), 3)
+        self.assertEqual(token_classes("node --test --test-name-pattern x tests", "node:test"), {"Name filter", "Path operand"})
+        self.assertEqual(token_classes("node --test --test-shard=1/2", "node:test"), {"Unreadable"})
+
+    def test_the_output_matchers_on_documented_samples(self):
+        jest_output = json.loads(
+            '{"testResults": [{"name": "/work/src/a.test.ts", "assertionResults": ['
+            '{"fullName": "a adds", "duration": 12}, {"fullName": "a skips", "duration": null}]}]}'
+        )
+        durations = {
+            (result["name"], case["fullName"]): case["duration"]
+            for result in jest_output["testResults"] for case in result["assertionResults"]
+            if case.get("duration") is not None
+        }
+        self.assertEqual(durations, {("/work/src/a.test.ts", "a adds"): 12})
+        spec_output = (
+            "▶ suite\n  ✔ adds (1.2ms)\n  ✔ adds (0.4ms)\n  ✖ fails (5s)\n✔ suite (7ms)\n"
+        )
+        line = re.compile(r"^(\s*)([✔✖]) (.+) \((\d+(?:\.\d+)?)(ms|s)\)$")
+        names = [m.group(3) for text in spec_output.splitlines() for m in [line.match(text)] if m]
+        self.assertEqual(names, ["adds", "adds", "fails", "suite"])
+        self.assertEqual(names.count("adds"), 2)
+
+    def test_the_table_one_extension_lists_equal_the_grader_languages(self):
         typescript = tuple(ext for ext, language in grader_languages().items() if language == "typescript")
-        self.assertEqual(sorted(e for e in listed if e in TS_EXTENSIONS), sorted(typescript))
+        for runner, expected in (
+            ("Vitest", sorted(typescript)),
+            ("Jest", sorted(typescript)),
+            ("node:test", sorted(e for e in typescript if e != ".tsx")),
+        ):
+            with self.subTest(runner):
+                row_1 = next(line for line in self.layout(runner) if line.startswith("| 1 |"))
+                listed = tuple(re.findall(r"`(\.[a-z]+)`", row_1.split("|")[2]))
+                self.assertEqual(sorted(e for e in listed if e in TS_EXTENSIONS), expected)
 
     def test_general_md_holds_the_ts_01_rule_text_and_the_catalogue_note_has_no_none_yet(self):
         general = read(GENERAL_MD)
@@ -876,19 +1192,31 @@ class TypeScriptEntryTest(unittest.TestCase):
         note = next(line for line in general.splitlines() if line.startswith("The script constant `CATALOG`"))
         self.assertNotIn("none yet", note)
 
-    def test_libraries_holds_vitest_text_only_under_the_vitest_sub_heading(self):
+    def test_libraries_holds_runner_text_only_under_a_runner_sub_heading(self):
         lines = section(self.text, "## Libraries")
-        before = lines[:lines.index("### Vitest")]
-        self.assertNotIn("vi.", "\n".join(before))
-        self.assertNotIn("CI=true", "\n".join(before))
+        before = "\n".join(lines[:lines.index("### Vitest")])
+        for phrase in ("vi.", "jest.", "mock.", "CI=true"):
+            with self.subTest(phrase):
+                self.assertNotIn(phrase, before)
 
-    def test_ts_01_check_details_say_that_table_4_ignores_table_1_row_1(self):
+    def test_ts_01_check_details_say_that_the_verdict_tables_ignore_row_1_of_table_1(self):
         body = subsection(section(self.text, "## Rules"), "### TS-01")
         self.assertIn("ignores row 1 of Table 1", body)
         self.assertEqual(table_4_row("npx vitest -u", {}), 6)
 
-    def test_skill_md_links_the_entry(self):
-        self.assertIn("entries/typescript.md", LINK.findall(read(SKILL_MD)))
+    def test_the_design_how_to_names_projects_for_each_runner_and_the_typecheck_sentence(self):
+        design = section(self.text, "## Design how-to")
+        self.assertEqual(sum("recorded `typecheck` command" in line for line in design), 1)
+        self.assertIn("a Jest project is a group", "\n".join(runner_part(design, "Jest")))
+        self.assertIn("`node:test` has no project", "\n".join(runner_part(design, "node:test")))
+
+    def test_skill_md_links_the_entry_and_names_the_three_runners(self):
+        text = read(SKILL_MD)
+        self.assertIn("entries/typescript.md", LINK.findall(text))
+        line = next(line for line in text.splitlines() if "entries/typescript.md" in line)
+        for runner in ("Vitest", "Jest", "`node:test`"):
+            with self.subTest(runner):
+                self.assertIn(runner, line)
 
     def test_review_and_write_hold_the_reporter_watch_form_and_not_checked_phrases(self):
         review, write = read(REVIEW_MD), read(WRITE_MD)
@@ -896,8 +1224,14 @@ class TypeScriptEntryTest(unittest.TestCase):
         self.assertEqual(write.count(REPORTER_PHRASE), 1)
         self.assertEqual(review.count(WATCH_FORM_PHRASE), 1)
         self.assertEqual(write.count(WATCH_FORM_PHRASE), 1)
-        self.assertEqual(review.count(WRAPPER_ENTRY.strip("`")), 1)
-        self.assertIn(WRAPPER_ENTRY.strip("`"), self.text)
+        for entry in WRAPPER_ENTRIES:
+            with self.subTest(entry):
+                self.assertEqual(review.count(entry.strip("`")), 1)
+                self.assertEqual(self.text.count(entry.strip("`")), 1)
+        for marker in ("`--watchAll`", "`--watch-path`"):
+            with self.subTest(marker):
+                self.assertEqual(review.count(marker), 1)
+                self.assertEqual(write.count(marker), 1)
         self.assertEqual(review.count("arguments that a loaded entry names"), 1)
         self.assertEqual(write.count("arguments that a loaded entry names"), 0)
         step_4 = "\n".join(section(write, "## Step 4: Self-check"))
@@ -914,12 +1248,37 @@ class TypeScriptEntryTest(unittest.TestCase):
         self.assertIn("RUN-04", cases["ts-run-04-wrapper-not-checked"]["forbid"])
         self.assertIn("GRP-01", cases["ts-grp-01-not-checked"]["forbid"])
         self.assertIn("GRP-01", cases["ts-grp-01-list-decides"]["expect"])
+        for prefix in ("jest", "node"):
+            self.assertIn("TS-01", cases[f"{prefix}-01-watch-script"]["expect"])
+            self.assertIn("TS-01", cases[f"{prefix}-01-run-mode"]["forbid"])
+            self.assertIn("RUN-04", cases[f"{prefix}-run-04-wrapper-not-checked"]["forbid"])
+            self.assertIn("GRP-01", cases[f"{prefix}-grp-01-not-checked"]["forbid"])
+            self.assertEqual(sorted(cases[f"{prefix}-assert-forms"]["expect"]), ["ASSERT-01", "ASSERT-02"])
+            self.assertEqual(
+                sorted(cases[f"{prefix}-net-port-skip"]["expect"]), ["DBL-01", "PAR-01", "RUN-03", "RUN-05"]
+            )
+        self.assertIn("GRP-01", cases["jest-grp-01-list-decides"]["expect"])
+        self.assertIn("GRP-01", cases["node-grp-01-readable"]["expect"])
 
     def test_every_typescript_write_case_ships_an_expectation_file_with_tests(self):
         for name in TS_WRITE_CASES:
             with self.subTest(name):
                 data = json.loads(read(os.path.join(EVALS, name, "expect-write.json")))
                 self.assertIn("tests", data)
+
+    def test_the_jest_and_node_derived_path_cases_check_the_flags_of_the_entry(self):
+        for name, option, in_run in (
+            ("write-jest-derived-path", "--maxWorkers=2", ("--ci", "--json")),
+            ("write-node-derived-path", "--test-concurrency=2", ("--test-reporter=spec",)),
+        ):
+            with self.subTest(name):
+                data = json.loads(read(os.path.join(EVALS, name, "expect-write.json")))
+                self.assertEqual(data["command_contains"], option)
+                graders = "\n".join(
+                    read(os.path.join(EVALS, name, "graders", file)) for file in os.listdir(os.path.join(EVALS, name, "graders"))
+                )
+                for flag in in_run:
+                    self.assertIn(f"^Command: .*{flag}", graders)
 
     def test_the_product_edit_graders_match_the_product_files_and_not_the_expected_test_files(self):
         for name in TS_WRITE_CASES:
@@ -937,12 +1296,13 @@ class TypeScriptEntryTest(unittest.TestCase):
                     with self.subTest(case=name, grader=grader, product=product):
                         self.assertIsNotNone(re.search(pattern, f'{{"file_path": "/work/{product}"}}'))
 
-    def test_the_mixed_case_prompt_names_files_that_the_fixture_holds(self):
-        base = os.path.join(EVALS, "write-mixed-rust-ts")
-        prompt = read(os.path.join(base, "prompt.md"))
-        for path in re.findall(r"\b[\w./-]+\.(?:rs|ts)\b", prompt):
-            with self.subTest(path):
-                self.assertTrue(os.path.isfile(os.path.join(base, "repo", path)))
+    def test_the_mixed_case_prompts_name_files_that_the_fixture_holds(self):
+        for case in ("write-mixed-rust-ts", "write-mixed-rust-node"):
+            base = os.path.join(EVALS, case)
+            prompt = read(os.path.join(base, "prompt.md"))
+            for path in re.findall(r"\b[\w./-]+\.(?:rs|ts)\b", prompt):
+                with self.subTest(case=case, path=path):
+                    self.assertTrue(os.path.isfile(os.path.join(base, "repo", path)))
 
     def test_the_typescript_eval_cases_hold_no_private_name(self):
         for name in TS_REVIEW_CASES + TS_WRITE_CASES:
@@ -955,6 +1315,25 @@ class TypeScriptEntryTest(unittest.TestCase):
                         text = read(os.path.join(folder, file)).lower()
                         for private in PRIVATE_NAMES:
                             self.assertNotIn(private, text)
+
+    def test_the_gate_other_runner_cases_record_a_runner_that_the_entry_does_not_cover(self):
+        for name in ("ts-gate-other-runner", "write-ts-gate-other-runner"):
+            with self.subTest(name):
+                rules = read(os.path.join(EVALS, name, "repo", "docs", "agents", "testing.md"))
+                self.assertIn("mocha", rules)
+                self.assertNotIn('"jest"', rules)
+                self.assertNotIn("npx jest", rules)
+
+    def test_the_wrapper_group_of_each_not_checked_case_resolves_to_a_wrapper(self):
+        for name in ("jest-grp-01-not-checked", "node-grp-01-not-checked"):
+            with self.subTest(name):
+                scripts = json.loads(read(os.path.join(EVALS, name, "repo", "package.json")))["scripts"]
+                self.assertTrue(any(marker in scripts["unit"] for marker in WRAPPER_MARKERS))
+
+    def test_the_evals_readme_allows_the_jest_run_commands_and_names_jest_in_the_install_note(self):
+        readme = read(os.path.join(EVALS, "README.md"))
+        self.assertIn("Bash(npx jest*)", readme)
+        self.assertIn("Bash(CI=true npx jest*)", readme)
 
     def test_sample_example_parser(self):
         self.assertEqual(example_marks(["- Example: `a b` => row 3", "- Example: `x` => class Fixed", "text"]), ["3", "Fixed"])
