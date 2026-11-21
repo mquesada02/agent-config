@@ -753,5 +753,105 @@ class RoundThreeFilesTest(FilesCase):
         self.assertNotIn("stayed changed", out["message"])
 
 
+class EngineTest(FilesCase):
+    """The `[engine]` section of the rules file (ticket 926)."""
+
+    def engine_proposal(self, engine, **changes):
+        return self.proposal(settings={"engine": engine}, services=None, prose_rules=None, **changes)
+
+    def read(self, text):
+        self.write_rules(text)
+        return json.loads(
+            subprocess.run([sys.executable, "-I", os.path.join(SCRIPTS, "rules_file.py"), self.repo], capture_output=True, text=True).stdout
+        )
+
+    def test_a_new_file_writes_engine_with_name_and_paths_after_the_other_sections(self):
+        engine = {"name": "mysql", "paths": ["db/reporting=postgres"]}
+        text = self.plan(self.engine_proposal(engine))["rules_file"]["text"]
+        self.assertIn('[rules]\ndisabled = []\n\n[engine]\nname = "mysql"\npaths = ["db/reporting=postgres"]\n```', text)
+        self.assertEqual(self.read(text)["settings"]["engine"], engine)
+
+    def test_a_proposal_with_no_engine_writes_no_engine_section(self):
+        out = self.plan(self.proposal(services=None))
+        self.assertNotIn("[engine]", out["rules_file"]["text"])
+        self.assertEqual(out["rules_file"]["text"], NEW_RULES)
+
+    def test_a_proposal_with_no_services_writes_no_allowlist(self):
+        out = self.plan(self.engine_proposal({"name": "mysql"}))
+        self.assertNotIn("allowlist", out)
+        self.assertIsNone(out["service_check"])
+
+    def test_the_name_postgres_is_written_as_it_is(self):
+        text = self.plan(self.engine_proposal({"name": "postgres"}))["rules_file"]["text"]
+        self.assertIn('[engine]\nname = "postgres"\n', text)
+
+    def test_a_paths_list_with_no_entry_writes_no_paths_key(self):
+        text = self.plan(self.engine_proposal({"name": "mysql", "paths": []}))["rules_file"]["text"]
+        self.assertIn('[engine]\nname = "mysql"\n```', text)
+        self.assertNotIn("paths", text)
+
+    def test_capital_letters_are_written_in_lowercase(self):
+        text = self.plan(self.engine_proposal({"name": "MySQL", "paths": ["db/a=SQLite"]}))["rules_file"]["text"]
+        self.assertIn('name = "mysql"\npaths = ["db/a=sqlite"]\n', text)
+
+    def test_an_old_file_gains_engine_after_its_last_section(self):
+        self.write_rules(OLD_RULES)
+        out = self.plan(self.engine_proposal({"name": "mysql"}))
+        self.assertEqual(out["conflicts"], [])
+        self.assertIn('[rules]\ndisabled = []\n\n[engine]\nname = "mysql"\n```', out["rules_file"]["text"])
+
+    def test_engine_is_the_last_section_when_other_sections_are_added_too(self):
+        text = '# SQL rules\n\n```toml\n[style]\nkeyword_case = "lower"\n```\n'
+        self.write_rules(text)
+        settings = {"style": {"keyword_case": "lower"}, "formatter": {"tool": "none"}, "rules": {"disabled": []},
+                    "engine": {"name": "mysql"}}
+        new = self.plan(self.proposal(settings=settings, services=None, prose_rules=None))["rules_file"]["text"]
+        headers = [line for line in new.splitlines() if line.startswith("[")]
+        self.assertEqual(headers[0], "[style]")
+        self.assertEqual(headers[-1], "[engine]")
+        self.assertEqual(sorted(headers), sorted(["[style]", "[formatter]", "[rules]", "[engine]"]))
+
+    def test_a_hand_written_paths_list_is_a_conflict_and_stays_when_the_key_is_dropped(self):
+        old = OLD_RULES.replace("```\n\n## Repo", '\n[engine]\nname = "mysql"\npaths = ["db/a=sqlite"]\n```\n\n## Repo')
+        self.write_rules(old)
+        out = self.plan(self.engine_proposal({"name": "mysql", "paths": ["db/b=sqlite"]}))
+        self.assertEqual(
+            out["conflicts"],
+            [{"target": "rules_file", "section": "engine", "key": "paths", "current": ["db/a=sqlite"], "proposed": ["db/b=sqlite"]}],
+        )
+        kept = self.plan(self.engine_proposal({"name": "mysql"}))
+        self.assertEqual(kept["conflicts"], [])
+        self.assertIn('paths = ["db/a=sqlite"]', kept["rules_file"]["text"])
+
+    def test_a_differing_name_is_a_conflict(self):
+        old = OLD_RULES.replace("```\n\n## Repo", '\n[engine]\nname = "postgresql"\n```\n\n## Repo')
+        self.write_rules(old)
+        out = self.plan(self.engine_proposal({"name": "postgres"}))
+        self.assertEqual(
+            out["conflicts"],
+            [{"target": "rules_file", "section": "engine", "key": "name", "current": "postgresql", "proposed": "postgres"}],
+        )
+
+    def test_a_bad_engine_table_is_a_usage_error_and_writes_nothing(self):
+        for engine in (
+            {}, {"paths": ["db/a=mysql"]}, {"name": ""}, {"name": "  "}, {"name": 3}, {"name": "mysql", "other": 1},
+            {"name": "mysql", "paths": "db/a=mysql"}, {"name": "mysql", "paths": ["db/a"]},
+            {"name": "mysql", "paths": ["=mysql"]}, {"name": "mysql", "paths": ["db/a="]},
+            {"name": "mysql", "paths": [" =mysql"]}, {"name": "mysql", "paths": [3]}, "mysql",
+        ):
+            with self.subTest(engine=engine):
+                before = self.snapshot()
+                code, out, err = self.run_script("plan", self.repo, "--proposal", self.engine_proposal(engine))
+                self.assertEqual(code, 2, (out, err))
+                self.assertEqual(out, "")
+                self.assertEqual(len(err.strip().splitlines()), 1)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_the_unknown_section_error_names_engine(self):
+        code, _, err = self.run_script("plan", self.repo, "--proposal", self.proposal(settings={"other": {"a": 1}}))
+        self.assertEqual(code, 2)
+        self.assertIn("engine", err)
+
+
 if __name__ == "__main__":
     unittest.main()
