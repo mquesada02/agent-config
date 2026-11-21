@@ -1,0 +1,16 @@
+{
+  "tests": [
+    "tests/slug.test.ts"
+  ],
+  "product": [
+    "src/slug.ts"
+  ],
+  "grouped": {
+    "tests/slug.test.ts": true
+  },
+  "fallback": "none",
+  "result": {
+    "tests/slug.test.ts": "pass"
+  },
+  "command_contains": "--maxWorkers=2"
+}

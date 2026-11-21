@@ -1,0 +1,11 @@
+{
+  "name": "fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ci": "vitest run && echo done"
+  },
+  "devDependencies": {
+    "vitest": "5.1.1"
+  }
+}

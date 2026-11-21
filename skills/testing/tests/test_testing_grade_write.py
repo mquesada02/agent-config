@@ -425,5 +425,79 @@ class RustGroupModelTest(WriteGraderCase):
                 self.assertFalse(self.selects(command, "tests/it.rs"))
 
 
+@NEEDS_TOMLLIB
+class VitestGroupModelTest(WriteGraderCase):
+    """The grouped check for TypeScript groups that are an exec form of Vitest (Table 2, write column)."""
+    FILES = ("src/price.test.ts", "tests/a.test.ts")
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self._scratch.name, "repo")
+        for name in self.FILES:
+            path = os.path.join(self.repo, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("expect(1).toBe(1);\n")
+        os.makedirs(os.path.join(self.repo, "docs", "agents"))
+
+    def selects(self, command, path):
+        rules = f"# Rules\n\n```toml\n[[groups]]\nname = \"g\"\nlanguage = \"typescript\"\nsize = \"small\"\ncommand = {json.dumps(command)}\n```\n"
+        with open(os.path.join(self.repo, "docs", "agents", "testing.md"), "w", encoding="utf-8") as handle:
+            handle.write(rules)
+        text = report(file_section(path=path, group="g"), scope="src/price.ts", notes="")
+        expect = self.scratch_file(json.dumps({"tests": [path], "grouped": {path: True}}), "expect.json")
+        done = self.run_grader(text, ["--repo", self.repo, "--expect", expect])
+        self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
+        return done.returncode == 0
+
+    def test_a_group_with_no_selector_selects_every_file(self):
+        for command in ("npx vitest run", "pnpm exec vitest run", "yarn vitest run", "bunx vitest run", "npx vitest --run"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "tests/a.test.ts"))
+
+    def test_a_path_operand_selects_a_file_whose_path_contains_it(self):
+        self.assertTrue(self.selects("npx vitest run src/price", "src/price.test.ts"))
+        self.assertTrue(self.selects("npx vitest run src tests", "tests/a.test.ts"))
+
+    def test_an_operand_that_is_not_a_substring_selects_no_file(self):
+        self.assertFalse(self.selects("npx vitest run src/other", "src/price.test.ts"))
+
+    def test_a_fixed_flag_with_a_value_is_not_an_operand(self):
+        self.assertTrue(self.selects("CI=true npx vitest run --maxWorkers 2 --reporter=verbose", "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx vitest run --maxWorkers=2", "tests/a.test.ts"))
+
+    def test_a_project_name_filter_or_unreadable_token_selects_no_file(self):
+        for command in (
+            "npx vitest run --project unit", "npx vitest run -p unit", "npx vitest run -t slow",
+            "npx vitest run --testNamePattern slow", "npx vitest run --changed",
+            "npx vitest run --exclude x", "npx vitest run src/price.test.ts:12",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_a_directory_selects_the_files_below_it_and_is_an_intersection_with_an_operand(self):
+        for command in ("npx vitest run --dir src", "npx vitest run --dir=./src/", "npx vitest run --dir src price"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "src/price.test.ts"))
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+        self.assertFalse(self.selects("npx vitest run --dir src other", "src/price.test.ts"))
+
+    def test_a_command_that_table_1_does_not_run_selects_no_file(self):
+        for command in (
+            "npx vitest", "npx vitest watch", "npx vitest --watch", "npx vitest run -u", "npx vitest run --update=all",
+            "npx vitest list --filesOnly", "npx vitest bench", "npx vitest related src/price.ts",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_an_update_value_of_none_is_not_an_update_mode(self):
+        self.assertTrue(self.selects("npx vitest run --update=none", "tests/a.test.ts"))
+
+    def test_a_wrapper_and_the_other_runners_keep_the_old_result(self):
+        self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
+        self.assertTrue(self.selects("node --test", "tests/a.test.ts"))
+        self.assertFalse(self.selects("node --test -t slow", "tests/a.test.ts"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,13 @@
+{
+  "tests": [
+    "src/fmt.test.ts"
+  ],
+  "product": [
+    "src/fmt.ts"
+  ],
+  "fallback": "none",
+  "result": {
+    "src/fmt.test.ts": "pass"
+  },
+  "command_contains": "--maxWorkers=2"
+}
