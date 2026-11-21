@@ -15,7 +15,7 @@ SETUP = os.path.join(SKILL_DIR, "setup.md")
 sys.path.insert(0, SCRIPTS)
 
 
-CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun", "setup-pg-fixture")
+CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun", "setup-pg-fixture", "setup-engine-mysql")
 KEY = "example.com/acme/shop"
 SCRIPT_NAMES = (
     "rules_file.py", "allowlist.py", "setup_scan.py", "measure_style.py", "detect_formatter.py",
@@ -90,12 +90,73 @@ class SetupModuleTest(unittest.TestCase):
     def test_the_proposal_example_has_the_receivers_beside_the_tags(self):
         self.assertIn('"sources": {"tags": [...], "receivers": [...]}', read(SETUP))
 
+    def test_the_proposal_example_has_the_engine_table(self):
+        self.assertIn('"engine": {"name": "...", "paths": ["<folder>=<engine>"]}', read(SETUP))
+
     def test_the_cases_table_has_a_row_for_every_setup_case(self):
         rows = [line for line in read(os.path.join(EVALS, "README.md")).splitlines() if line.startswith("| `")]
         names = [line.split("`")[1] for line in rows]
         for case in CASES:
             with self.subTest(case=case):
                 self.assertIn(case, names)
+
+
+def engine_step():
+    return read(SETUP).split("## Step 1b: Engine", 1)[1].split("## Step 2", 1)[0]
+
+
+class EngineStepTest(unittest.TestCase):
+    def test_the_engine_step_sits_after_step_1_and_before_step_2(self):
+        text = read(SETUP)
+        self.assertLess(text.index("## Step 1: Detect"), text.index("## Step 1b: Engine"))
+        self.assertLess(text.index("## Step 1b: Engine"), text.index("## Step 2: Tags and receivers"))
+
+    def test_the_engine_step_runs_the_detection_and_shows_the_result(self):
+        step = engine_step()
+        for phrase in (
+            "detect_engine.py <repo root> [--request <engine>]", "no `--file` option", "only when the developer's request for setup names an engine",
+            "Show the result", "`evidence`", "never prints a connection string", "Ask the developer to confirm or edit the engine",
+            "`clash` or `no_signal`", "no suggested engine",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, step)
+
+    def test_the_engine_step_shows_the_current_value_on_a_re_run(self):
+        step = engine_step()
+        self.assertIn("On a re-run", step)
+        self.assertIn("current `engine.name` and `engine.paths`", step)
+
+    def test_the_paths_question_comes_only_for_two_engines(self):
+        step = engine_step()
+        self.assertIn("the `evidence` list names two different engines", step)
+        self.assertIn("ask the developer for the `paths` entries", step)
+        self.assertIn("<folder>=<engine>", step)
+
+    def test_the_proposal_carries_postgres_for_a_postgresql_engine(self):
+        step = engine_step()
+        self.assertIn("A PostgreSQL engine (the names `postgres` and `postgresql`) is written `postgres`", step)
+        self.assertIn("`engine.name` is the confirmed engine in lowercase", step)
+
+    def test_an_unset_engine_writes_no_engine_and_keeps_step_4(self):
+        step = engine_step()
+        self.assertIn("the proposal carries no `engine`", step)
+        self.assertIn("the engine stays unset", step)
+        self.assertIn("Step 4 runs as today", step)
+
+    def test_step_4_skips_with_its_full_condition_and_the_intro_names_the_exception(self):
+        text = read(SETUP)
+        step = text.split("## Step 4: Allowlist", 1)[1].split("## Step 5", 1)[0]
+        for phrase in (
+            "Skip this step when the confirmed engine of Step 1b is not PostgreSQL and no `engine.paths` entry names PostgreSQL",
+            "(`postgres` or `postgresql`)", "the proposal has no `services`", "This is the only step that setup skips",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, step)
+        self.assertIn("Never skip a step, except Step 4 when its skip condition holds", text)
+        self.assertNotIn("Never skip a step and", text)
+
+    def test_the_detection_script_is_named(self):
+        self.assertIn("detect_engine.py", read(SETUP))
 
 
 class CaseFilesTest(unittest.TestCase):
@@ -164,6 +225,14 @@ class ScaffoldTest(unittest.TestCase):
 
     def test_no_sql_scaffold_writes_nothing_outside_the_run_folder(self):
         self.scaffold("setup-no-sql")
+        self.assertEqual(self.origin(), "https://example.com/acme/shop.git")
+        self.assertEqual(os.listdir(self.home), [])
+        self.assertEqual(os.listdir(self.xdg), [])
+
+    def test_engine_scaffold_copies_the_fixture_and_writes_nothing_outside_the_run_folder(self):
+        self.scaffold("setup-engine-mysql")
+        self.assertTrue(os.path.isfile(os.path.join(self.work, "db", "schema.sql")))
+        self.assertIn('"mysql2"', read(os.path.join(self.work, "package.json")))
         self.assertEqual(self.origin(), "https://example.com/acme/shop.git")
         self.assertEqual(os.listdir(self.home), [])
         self.assertEqual(os.listdir(self.xdg), [])
@@ -247,7 +316,7 @@ class FixtureProofTest(unittest.TestCase):
     def expected(self, case):
         return json.loads(read(case_path(case, "expected.json")))
 
-    def run_case(self, case, style, tags, formatter, prose_rules, services, drop_conflicts=(), kept_conflicts=(), extra_expect=None):
+    def run_case(self, case, style, tags, formatter, prose_rules, services, drop_conflicts=(), kept_conflicts=(), extra_expect=None, engine=None):
         self.scaffold(case)
         proposal = {
             "settings": {
@@ -255,6 +324,8 @@ class FixtureProofTest(unittest.TestCase):
             },
             "prose_rules": prose_rules,
         }
+        if engine:
+            proposal["settings"]["engine"] = engine
         if services:
             proposal["services"] = services
         path = os.path.join(self.tmp, "proposal.json")
@@ -315,6 +386,26 @@ class FixtureProofTest(unittest.TestCase):
     def test_the_no_sql_flow_passes_grader_d(self):
         style = self.expected("setup-no-sql")["settings"]["style"]
         self.run_case("setup-no-sql", style, [], "none", [], None)
+
+    def test_the_engine_fixture_is_detected_as_mysql_with_one_sql_file(self):
+        self.scaffold("setup-engine-mysql")
+        engine = self.script("detect_engine.py", self.work)
+        self.assertEqual((engine["engine"], engine["signal"], engine["ask"]), ("mysql", "repo", None))
+        scan = self.script("setup_scan.py", self.work)
+        self.assertEqual((scan["files_with_sql"], scan["detected_tags"], scan["candidates"]), (["db/schema.sql"], [], []))
+        measured = self.script("measure_style.py", os.path.join(self.work, "db", "schema.sql"))
+        self.assertEqual(measured["style"], self.expected("setup-engine-mysql")["settings"]["style"])
+        self.assertEqual(self.script("detect_formatter.py", self.work, "--form", "sql")["chosen"], "none")
+
+    def test_the_engine_flow_passes_grader_d(self):
+        style = self.expected("setup-engine-mysql")["settings"]["style"]
+        self.run_case("setup-engine-mysql", style, [], "none", [], None, engine={"name": "mysql"})
+
+    def test_the_engine_is_written_in_the_rules_file_and_no_allowlist_exists(self):
+        style = self.expected("setup-engine-mysql")["settings"]["style"]
+        self.run_case("setup-engine-mysql", style, [], "none", [], None, engine={"name": "mysql"})
+        self.assertIn('[engine]\nname = "mysql"\n', read(os.path.join(self.work, "docs", "agents", "sql.md")))
+        self.assertFalse(os.path.exists(os.path.join(self.xdg, "sql-skill", "allowlist.toml")))
 
     def test_the_no_sql_scan_finds_nothing(self):
         self.scaffold("setup-no-sql")
