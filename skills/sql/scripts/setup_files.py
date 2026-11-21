@@ -11,7 +11,8 @@ diffs, the conflicts with the existing files and a digest of the new texts. `wri
 the plan and writes both files only when its digest equals `--confirm`.
 
 The proposal is a JSON object with optional `settings` (a table of the tables `style`,
-`formatter`, `sources` and `rules`), `prose_rules` (a list of rule texts to append) and
+`formatter`, `sources`, `rules` and `engine`; `engine` has no default, so the file has an `[engine]`
+table only when the proposal carries one), `prose_rules` (a list of rule texts to append) and
 `services` (a list of PG service names). An existing file is edited in place: only a replaced key
 line changes, and rule texts are appended.
 
@@ -36,6 +37,11 @@ import rules_file  # noqa: E402
 import sql_text  # noqa: E402
 
 SETTING_SECTIONS = rules_file.SECTIONS
+ENGINE = "engine"
+# The sections that a proposal may carry: the four reader sections and `engine`. `engine` has no default, so the
+# default tables and the loops over SETTING_SECTIONS do not cover it.
+WRITABLE_SECTIONS = SETTING_SECTIONS + (ENGINE,)
+ENGINE_KEYS = ("name", "paths")
 DEFAULTS = {
     "style": dict(sql_text.DEFAULT_STYLE),
     "formatter": {"tool": "none"},
@@ -99,6 +105,29 @@ def scalar(value):
     return isinstance(value, (bool, int)) or (isinstance(value, float) and math.isfinite(value))
 
 
+def clean_engine(table):
+    """The `engine` table of a proposal with its engine names in lowercase (the reader reports them in lowercase),
+    and with no `paths` key when the list has no entry. A bad table is a usage error."""
+    def text(value):
+        return isinstance(value, str) and value.strip() != "" and utf8(value)
+
+    if not table or set(table) - set(ENGINE_KEYS) or not text(table.get("name")):
+        raise sql_text.UsageError("settings.engine needs a name and may hold only the keys: " + ", ".join(ENGINE_KEYS))
+    cleaned = {"name": table["name"].lower()}
+    paths = table.get("paths", [])
+    if not isinstance(paths, list):
+        raise sql_text.UsageError("settings.engine.paths must be a list of <folder>=<engine> strings")
+    entries = []
+    for entry in paths:
+        folder, _, engine = entry.rpartition("=") if isinstance(entry, str) else ("", "", "")
+        if not text(folder) or not text(engine):
+            raise sql_text.UsageError("settings.engine.paths entries must be <folder>=<engine> strings: %r" % (entry,))
+        entries.append("%s=%s" % (folder, engine.lower()))
+    if entries:
+        cleaned["paths"] = entries
+    return cleaned
+
+
 def parse_proposal(data):
     if not isinstance(data, dict):
         raise sql_text.UsageError("the proposal is not a JSON object")
@@ -108,14 +137,17 @@ def parse_proposal(data):
     settings = data.get("settings", {})
     if not isinstance(settings, dict):
         raise sql_text.UsageError("settings must be a table of tables")
+    settings = dict(settings)
     for section, table in settings.items():
-        if section not in SETTING_SECTIONS or not isinstance(table, dict):
-            raise sql_text.UsageError("settings.%s is not one of the tables %s" % (section, ", ".join(SETTING_SECTIONS)))
+        if section not in WRITABLE_SECTIONS or not isinstance(table, dict):
+            raise sql_text.UsageError("settings.%s is not one of the tables %s" % (section, ", ".join(WRITABLE_SECTIONS)))
         for key, value in table.items():
             if not BARE_KEY.fullmatch(key):
                 raise sql_text.UsageError("settings.%s: bad key %r" % (section, key))
             if not (scalar(value) or (isinstance(value, list) and all(scalar(item) for item in value))):
                 raise sql_text.UsageError("settings.%s.%s must be a string, boolean, number or a list of them" % (section, key))
+    if ENGINE in settings:
+        settings[ENGINE] = clean_engine(settings[ENGINE])
     rules = data.get("prose_rules", [])
     if not isinstance(rules, list) or not all(isinstance(r, str) and r.strip() and "\n" not in r and "\r" not in r and utf8(r) for r in rules):
         raise sql_text.UsageError("prose_rules must be a list of one-line texts")
@@ -198,6 +230,9 @@ def new_rules_text(settings, prose_rules):
             lines.append("")
         lines.append("[%s]" % section)
         lines.extend("%s = %s" % (key, toml_value(value)) for key, value in table.items())
+    if ENGINE in settings:
+        lines += ["", "[%s]" % ENGINE]
+        lines.extend("%s = %s" % (key, toml_value(value)) for key, value in settings[ENGINE].items())
     lines += ["```", "", REPO_RULES_HEADING, ""]
     lines.extend("- " + rule for rule in prose_rules)
     return "\n".join(lines) + "\n"
@@ -263,7 +298,9 @@ def edit_block(file, proposal, current, conflicts):
     content = block.content
     sections = scan_block(content)
     edits = []
-    for section, table in proposal.items():
+    # Edits at the same line apply in list order and each one lands before the earlier ones, so the section that
+    # comes first in the list ends last in the file. `engine` goes first, so that it is the last section.
+    for section, table in sorted(proposal.items(), key=lambda item: item[0] != ENGINE):
         if not table:
             continue
         if section not in sections:
@@ -354,6 +391,17 @@ def prose_edits(file, rules, block):
     return [(position, 0, bullets, 0)], appended, skipped
 
 
+def fresh_expected(settings):
+    """The settings that a new toml block must read back as: the defaults, the proposal, and `engine` only when proposed."""
+    expected = {}
+    for section in SETTING_SECTIONS:
+        expected[section] = dict(DEFAULTS[section])
+        expected[section].update(settings.get(section, {}))
+    if ENGINE in settings:
+        expected[ENGINE] = dict(settings[ENGINE])
+    return expected
+
+
 def plan_rules(repo, settings, rules):
     path = os.path.join(repo, rules_file.RULES_FILE)
     raw = read_raw(path)
@@ -362,10 +410,7 @@ def plan_rules(repo, settings, rules):
         old_text, bom = "", False
         result["appended"] = list(dict.fromkeys(rules))
         new_text = new_rules_text(settings, result["appended"])
-        expected = {}
-        for section in SETTING_SECTIONS:
-            expected[section] = dict(DEFAULTS[section])
-            expected[section].update(settings.get(section, {}))
+        expected = fresh_expected(settings)
     else:
         read = rules_file.read_rules(repo)
         if read["error"]:
@@ -399,10 +444,7 @@ def plan_rules(repo, settings, rules):
             elif heading is None:
                 added.append(file.make(""))
             edits.append((position, 0, added, 1))
-            expected = {}
-            for section in SETTING_SECTIONS:
-                expected[section] = dict(DEFAULTS[section])
-                expected[section].update(settings.get(section, {}))
+            expected = fresh_expected(settings)
         more, result["appended"], result["skipped"] = prose_edits(file, rules, block)
         file.lines = apply_edits(file.lines, edits + more)
         new_text = file.text()

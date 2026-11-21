@@ -1,0 +1,11 @@
+schema_version: "1.0"
+name: setup-engine-mysql
+description: Seam 4 setup case. `/sql setup` on a repo with a `mysql2` dependency and one `.sql` file (a synthetic table), no `pg` and no connection string. Setup runs the engine detection, shows the result, and writes `[engine] name = "mysql"` with the other sections. It asks no PG service question, and it writes no allowlist.
+tags: [setup]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Edit, Write]
+  prompt: |
+    Run `/sql setup` on the repo in the current folder (the current folder is the repo root). Nobody can answer your questions, so use these answers. When setup shows the detected engine, confirm it as it is. Confirm the empty tag list. Decline the formatter install. Drop every candidate rule, and add no rule of my own. Show me the diff, and then confirm it and write the files. In your final message, show the whole rules file as it was written in a code block, and give the setup report: the confirmed engine, the chosen formatter and the other tools that the detector found, the tags, the services and what was written.

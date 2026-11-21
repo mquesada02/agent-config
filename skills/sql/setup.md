@@ -1,6 +1,6 @@
 # Setup module
 
-`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never skip a step and never reorder them.
+`/sql setup` writes the repo rules file (`docs/agents/sql.md`) and the user-local allowlist file, after one confirmation. Run the steps in this order. Never reorder them. Never skip a step, except Step 4 when its skip condition holds.
 
 Every script needs Python 3.11 or newer. `<skill folder>` is the folder of this skill and `<repo root>` is the repo. Never read the PG password file (`PGPASSFILE`, `~/.pgpass`): setup reads service names only.
 
@@ -23,6 +23,25 @@ Every script needs Python 3.11 or newer. `<skill folder>` is the folder of this 
    ```
 
    It gives `files_with_sql`, `forms` (`template`, `sql` and `pg` counts), `detected_tags`, `detected_receivers`, `hints`, `candidates` and `truncated`. When `truncated` is true, tell the developer that only 1000 files were read. Tell the developer each text of `hints` once (a hint says that `pg` is a dependency and that no file shows a `pg` receiver, so the developer lists the receivers that the files import).
+
+## Step 1b: Engine
+
+This step sits after Step 1 and before Step 2, because it needs the rules file that Step 1 read. The existing step numbers do not change.
+
+1. Run the engine detection on the repo (no `--file` option). Add `--request <engine>` only when the developer's request for setup names an engine (a lowercase word such as `mysql`):
+
+   ```
+   python3 <skill folder>/scripts/detect_engine.py <repo root> [--request <engine>]
+   ```
+
+   It gives `engine`, `signal`, `ask` and `evidence` (driver names, scheme names and file paths: it never prints a connection string).
+2. Show the result in plain words: the engine, the signal that decided, and each `evidence` entry. On a re-run, also show the current `engine.name` and `engine.paths` of the settings that Step 1 read, as the current value (the detection without `--file` never reads `paths`).
+3. Ask the developer to confirm or edit the engine. When `ask` is `clash` or `no_signal`, `engine` is null: say which one it is (`clash`: the repo files and the request name different engines; `no_signal`: the repo shows two engines and no signal settles it), ask the same question with no suggested engine, and show the evidence.
+4. The repo shows two engines when the `evidence` list names two different engines. Only then, ask the developer for the `paths` entries: one `<folder>=<engine>` string for each folder that does not use the repo engine. The developer confirms or edits them.
+5. Keep the confirmed engine for the proposal:
+   - `engine.name` is the confirmed engine in lowercase. A PostgreSQL engine (the names `postgres` and `postgresql`) is written `postgres`.
+   - `engine.paths` is the list of confirmed `paths` entries. Leave the key out when the list has no entry.
+   - When the developer names no engine, the proposal carries no `engine`. Tell the developer that the engine stays unset. An unset engine keeps PostgreSQL, and Step 4 runs as today.
 
 ## Step 2: Tags and receivers
 
@@ -61,7 +80,9 @@ Show `detected_tags` and `detected_receivers`. Ask the developer to confirm or e
 
 ## Step 4: Allowlist
 
-Ask which PG service names the optimizer may use. Check the names that the developer types, against the PG service file (the `[name]` headers only):
+Skip this step when the confirmed engine of Step 1b is not PostgreSQL and no `engine.paths` entry names PostgreSQL (`postgres` or `postgresql`). Setup then asks no service question, and the proposal has no `services`. This is the only step that setup skips. An unset engine does not skip it.
+
+Otherwise, ask which PG service names the optimizer may use. Check the names that the developer types, against the PG service file (the `[name]` headers only):
 
 ```
 python3 <skill folder>/scripts/setup_files.py services <name>...
@@ -77,10 +98,10 @@ Show each name in `service_check.missing`. The developer corrects it or keeps it
 
 ## Step 6: Write
 
-1. Write the proposal JSON with the Write tool into the system temp folder, never into the repo. Send every section, so that a re-run lists every differing key:
+1. Write the proposal JSON with the Write tool into the system temp folder, never into the repo. Send every section, so that a re-run lists every differing key. Send `engine` only when Step 1b kept one, and send `services` only when Step 4 ran:
 
    ```
-   {"settings": {"style": {...}, "formatter": {"tool": "..."}, "sources": {"tags": [...], "receivers": [...]}, "rules": {"disabled": [...]}}, "prose_rules": ["..."], "services": ["..."]}
+   {"settings": {"style": {...}, "formatter": {"tool": "..."}, "sources": {"tags": [...], "receivers": [...]}, "rules": {"disabled": [...]}, "engine": {"name": "...", "paths": ["<folder>=<engine>"]}}, "prose_rules": ["..."], "services": ["..."]}
    ```
 
 2. Plan. This writes nothing:

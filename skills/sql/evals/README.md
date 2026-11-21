@@ -168,6 +168,7 @@ Grader D (`graders/grade_setup.py TRACE --repo <folder> --expect <expected.json>
 | `setup-no-sql` | A repo with no SQL: default style, empty tags, no allowlist, no detector run |
 | `setup-rerun` | A re-run asks per changed key, keeps the hand-written comment and rule, appends the new rule |
 | `setup-pg-fixture` | A repo whose SQL is two `pg` statements sent through the receivers `pool` and `client` (`pg` in the package.json, no template): the receivers are detected and stored beside an empty tag list, the measurer gets `--receivers`, no detector runs, no service is set |
+| `setup-engine-mysql` | A repo with a `mysql2` dependency and one `.sql` file (a synthetic table): setup runs the engine detection, shows the result, and writes `[engine] name = "mysql"` with the other sections. The engine is not PostgreSQL and no `paths` entry names it, so the allowlist step is skipped and no allowlist is written |
 
 ### Two-turn runner (`evals/turns/run_setup_turns.py`)
 
