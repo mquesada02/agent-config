@@ -58,12 +58,12 @@ Write the report as your final message, as "Report contract" says.
 
 Every run state maps to one result. The result of a test file is the first of these that applies:
 
-1. `not run (<reason>)`: no command is known, or the command cannot start, is a watch command (a watch flag, a watch subcommand, or a form that a loaded entry names as a watch form: for Vitest, the bare form, the `related` form without `--run` and every watch marker of its `TS-01` table), has an update mode, or runs more than 10 minutes.
+1. `not run (<reason>)`: no command is known, or the command cannot start, is a watch command (a watch flag, a watch subcommand, or a form that a loaded entry names as a watch form: for Vitest, the bare form, the `related` form without `--run` and every watch marker of its `TS-01` table; for Jest, `--watch` and `--watchAll`; for `node:test`, `--watch` and `--watch-path`), has an update mode, or runs more than 10 minutes.
 2. `fail (<names>)`: a test case of the file failed. A failure that names no test case is named by the path of the test file that holds it. Also `fail`: the run has a failure or a non-zero exit that no reported file holds. Then every file of the language gets `fail (<name or exit code>)`.
 3. `not run (no test collected)`: the run completed with no failure for the file, but a new test case of the file is not shown as executed.
 4. `pass`.
 
-A test case is shown as executed when the output names it, or when the output gives an executed count (for its file, else for the whole run) that is at least the number of new test cases. Write adds no reporter flag, except the reporter argument that a loaded entry names (Vitest: `--reporter=verbose`), which shows each test case as run.
+A test case is shown as executed when the output names it, or when the output gives an executed count (for its file, else for the whole run) that is at least the number of new test cases. Write adds no reporter flag, except the reporter argument that a loaded entry names (Vitest: `--reporter=verbose`, Jest: `--json`, `node:test`: `--test-reporter=spec`), which shows each test case as run.
 
 ## Group and size
 
