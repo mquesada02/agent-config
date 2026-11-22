@@ -506,11 +506,11 @@ def vitest_group_selects(command, path):
         else:
             operands.append(token)
             index += 1
-    below = not directories or any(vitest_below(directory, path) for directory in directories)
+    below = not directories or any(path_below(directory, path) for directory in directories)
     return below and (not operands or any(operand in path for operand in operands))
 
 
-def vitest_below(directory, path):
+def path_below(directory, path):
     """Whether a path is the directory or below it (a leading ./ and a trailing / are dropped)."""
     directory = (directory[2:] if directory.startswith("./") else directory).rstrip("/")
     return directory in ("", ".") or path == directory or path.startswith(directory + "/")
@@ -669,7 +669,7 @@ def node_group_selects(command, path):
         return True
     for operand in operands:
         operand = operand[2:] if operand.startswith("./") else operand
-        if vitest_below(operand, path) or re.search(glob_regex(operand), path):
+        if path_below(operand, path) or re.search(glob_regex(operand), path):
             return True
     return False
 

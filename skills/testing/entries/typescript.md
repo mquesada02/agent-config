@@ -126,7 +126,7 @@ Group selector classes (Table J2). Tokens are the words after `jest`. Every toke
 
 | Class | Tokens | Review reads it as | Write: can the group select a file |
 |---|---|---|---|
-| Path operand | a token that is not a flag and not the value of a named flag, or the value of `--testPathPatterns` | a regular expression matched against the test file path relative to the language root, written with `/`; with `--runTestsByPath`, an operand is equal to that path (a leading `./` dropped); `--testPathPatterns <regex>` always reads as a regular expression; several operands select the union; an operand or a `--testPathPatterns` value that starts with `^` or `/` is unreadable, because Jest matches the absolute path, which this entry does not rebuild | yes, when the derived path matches (or, with `--runTestsByPath`, equals it) |
+| Path operand | a token that is not a flag and not the value of a named flag, or the value of `--testPathPatterns` | a regular expression matched against the test file path relative to the language root, written with `/`; with `--runTestsByPath`, an operand is equal to that path (a leading `./` dropped); `--testPathPatterns <regex>` always reads as a regular expression; several operands select the union; an operand or a `--testPathPatterns` value that starts with `^` or `/` is unreadable, because Jest matches the absolute path, which this entry does not rebuild; a regular expression that does not compile is unreadable too | yes, when the derived path matches (or, with `--runTestsByPath`, equals it) |
 | Project | `--selectProjects <name> ...` (the `displayName` values; takes values until the next flag) | the files that the `testMatch` of those projects match | yes, when the derived path matches the `testMatch` of a project with that `displayName` (the agent reads the Jest config; the write grader cannot, so it reads a project group as selecting none) |
 | Name filter | `-t <pattern>`, `--testNamePattern <pattern>` | a filter on the full test name | no file |
 | Fixed | `--ci`, `--maxWorkers <n>`, `-w <n>`, `--runInBand`, `-i`, `--verbose`, `--json`, `--outputFile <path>`, `--reporters <name>`, `--silent`, `--coverage`, `--passWithNoTests`, `--watchman`, `--no-watchman`, `--cache`, `--no-cache`, `--runTestsByPath`, `-u`, `--updateSnapshot` | narrows nothing | narrows nothing |
@@ -506,9 +506,9 @@ Examples:
 
 **Check details**:
 - Vitest: the commands in scope are `commands.typescript.test` when recorded, else `scripts.test` of the language root `package.json` (when the script exists), and every group command of the language. Each is read by Table 1, and the table below ignores row 1 of Table 1 (an update mode is an `ASSERT-03` matter, not a watch matter), so a command with an update mode still gets its verdict here. The first row of the table below that applies to a command gives its verdict. `TS-01` is a finding when at least one command has the verdict "finding". It gives one row in all. The `Where` cell lists the rules-file line of the command (the `test` key or the group `command`) when it is recorded, and, for a resolved script, the `package.json` line of the script. The check applies when a TypeScript file is in scope.
+- "Table 1" in the Vitest bullet means Table 1 for Vitest, Table J1 for Jest and Table N1 for `node:test`.
 - Jest: the same commands in scope, read by Table J1 (row 1 ignored) and judged by Table J4 below.
 - node:test: the same commands in scope, read by Table N1 (row 1 ignored) and judged by Table N4 below.
-- "Table 1" in the Vitest bullet means Table 1 for Vitest, Table J1 for Jest and Table N1 for `node:test`.
 
 Table 4 (Vitest):
 
