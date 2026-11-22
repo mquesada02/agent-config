@@ -633,6 +633,7 @@ EXEC_FORMS = {
 }
 SCRIPT_CALL = re.compile(r"^(?:npm test|npm run (\S+)|pnpm test|pnpm run (\S+)|yarn test|yarn run (\S+)|bun run (\S+))( .*)?$")
 WRAPPER_MARKERS = ("&&", "||", ";", "|", "$(", "`", ">", "<")
+QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
 SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
 NAME_VALUE_FLAGS = ("-t", "--testNamePattern")
 PROJECT_FLAGS = ("--project", "-p")
@@ -696,7 +697,7 @@ def read_command(command, scripts, runner="vitest"):
         from_script = True
         if SCRIPT_CALL.match(" ".join(tokens)):
             return "wrapper", tokens
-    text = " ".join(tokens)
+    text = QUOTED.sub("", " ".join(tokens))
     length = exec_length(tokens, runner, from_script)
     if length is None or any(marker in text for marker in WRAPPER_MARKERS):
         return "wrapper", tokens
@@ -883,6 +884,45 @@ def labelled_table(lines, label):
 
 
 RUNNER_KEY = {"Vitest": "vitest", "Jest": "jest", "node:test": "node:test"}
+SPEC_LINE = re.compile(r"^(\s*)([✔✖]) (.+) \((\d+(?:\.\d+)?)(ms|s)\)$")
+
+
+def location_row(example, runner):
+    """The row of the location table (Table 3, J3 or N3) for an `Example:` bullet of the Layout section."""
+    product = re.search(r"`P` = `([^`]+)`", example) or re.search(r"`([^`]+)`", example)
+    product = product.group(1)
+    paths = re.search(r"`test_paths` = `(\[[^`]*\])`", example)
+    test_paths = json.loads(paths.group(1)) if paths else []
+    name = os.path.basename(product)
+    extensions = (".ts", ".js", ".mjs", ".cjs") if runner == "node:test" else (".ts", ".tsx", ".js", ".mjs", ".cjs")
+    if name.endswith(".d.ts") or ".config." in name or not product.endswith(extensions):
+        return 1
+    if "beside it" in example:
+        return 2
+    if not test_paths or test_paths == ["."] or test_paths == [product.split("/")[0]]:
+        return 3
+    return 4 if len(test_paths) == 1 and test_paths[0] in ("test", "tests", "__tests__") else 5
+
+
+def jest_durations(output):
+    """Duration by (file, full name); a pair that more than one result holds gets none."""
+    seen = [(r["name"], c["fullName"], c.get("duration")) for r in output["testResults"] for c in r["assertionResults"]]
+    return {(f, n): d for f, n, d in seen if d is not None and sum(1 for g, m, _ in seen if (g, m) == (f, n)) == 1}
+
+
+def spec_durations(text):
+    """Duration in ms by full name (the enclosing `▶` suite names joined with ` > `); a name on several lines gets none."""
+    stack, found = [], []
+    for raw in text.splitlines():
+        suite = re.match(r"^(\s*)▶ (.+)$", raw)
+        if suite:
+            stack = [s for s in stack if s[0] < len(suite.group(1))] + [(len(suite.group(1)), suite.group(2))]
+            continue
+        line = SPEC_LINE.match(raw)
+        if line:
+            stack = [s for s in stack if s[0] < len(line.group(1))]
+            found.append((" > ".join([s[1] for s in stack] + [line.group(3)]), float(line.group(4)) * (1000 if line.group(5) == "s" else 1)))
+    return {name: ms for name, ms in found if [n for n, _ in found].count(name) == 1}
 
 
 class TypeScriptEntryTest(unittest.TestCase):
@@ -948,6 +988,13 @@ class TypeScriptEntryTest(unittest.TestCase):
         for option in ("--maxWorkers=2", "--reporter=verbose"):
             with self.subTest(option):
                 self.assertIn(option, vitest_row_5)
+        for row, options in (
+            (row_5, ("--maxWorkers", "-w", "--runInBand", "-i", "--json", "--outputFile", "--ci")),
+            (row_4, ("--test-concurrency", "--test-reporter", "--test-reporter-destination")),
+            (vitest_row_5, ("--maxWorkers", "--reporter")),
+        ):
+            removal = row.split("Remove every ", 1)[1].split(" option", 1)[0]
+            self.assertEqual(re.findall(r"`([^`]+)`", removal), list(options))
         for runner in RUNNERS:
             with self.subTest(runner):
                 self.assertIn("The commands run with `CI=true` set", "\n".join(self.commands(runner)))
@@ -1157,19 +1204,57 @@ class TypeScriptEntryTest(unittest.TestCase):
             '{"testResults": [{"name": "/work/src/a.test.ts", "assertionResults": ['
             '{"fullName": "a adds", "duration": 12}, {"fullName": "a skips", "duration": null}]}]}'
         )
-        durations = {
-            (result["name"], case["fullName"]): case["duration"]
-            for result in jest_output["testResults"] for case in result["assertionResults"]
-            if case.get("duration") is not None
-        }
-        self.assertEqual(durations, {("/work/src/a.test.ts", "a adds"): 12})
-        spec_output = (
-            "▶ suite\n  ✔ adds (1.2ms)\n  ✔ adds (0.4ms)\n  ✖ fails (5s)\n✔ suite (7ms)\n"
-        )
-        line = re.compile(r"^(\s*)([✔✖]) (.+) \((\d+(?:\.\d+)?)(ms|s)\)$")
-        names = [m.group(3) for text in spec_output.splitlines() for m in [line.match(text)] if m]
-        self.assertEqual(names, ["adds", "adds", "fails", "suite"])
-        self.assertEqual(names.count("adds"), 2)
+        self.assertEqual(jest_durations(jest_output), {("/work/src/a.test.ts", "a adds"): 12})
+        jest_output["testResults"][0]["assertionResults"].append({"fullName": "a adds", "duration": 3})
+        self.assertEqual(jest_durations(jest_output), {})
+        jest_output["testResults"].append({"name": "/work/src/b.test.ts", "assertionResults": [{"fullName": "a adds", "duration": 4}]})
+        self.assertEqual(jest_durations(jest_output), {("/work/src/b.test.ts", "a adds"): 4})
+        spec_output = "▶ suite\n  ✔ adds (1.2ms)\n  ✔ adds (0.4ms)\n  ✖ fails (5s)\n✔ suite (7ms)\n"
+        self.assertEqual(spec_durations(spec_output), {"suite > fails": 5000.0, "suite": 7.0})
+        joined = "▶ outer\n  ▶ inner\n    ✔ adds (2ms)\n  ✔ inner (3ms)\n✔ adds (1ms)\n✔ outer (9ms)\n"
+        self.assertEqual(spec_durations(joined), {"outer > inner > adds": 2.0, "outer > inner": 3.0, "adds": 1.0, "outer": 9.0})
+        self.assertEqual(spec_durations("✔ adds (1ms)\n✔ adds (2ms)\n"), {})
+
+    def test_the_location_examples_have_the_row_that_the_table_gives(self):
+        for runner in RUNNERS:
+            with self.subTest(runner):
+                examples = [line for line in self.layout(runner) if line.startswith("- Example:") and "=> row" in line]
+                self.assertEqual(len(examples), 6)
+                for line in examples:
+                    self.assertEqual(location_row(line, runner), int(line.rsplit("row ", 1)[1]), line)
+
+    def test_a_quoted_wrapper_marker_is_not_a_wrapper_marker(self):
+        self.assertEqual(table_1_row("npx vitest run -t 'a && b'", {}), 5)
+        self.assertEqual(table_1_row("npx vitest run && tsc", {}), 2)
+
+    def test_a_flag_with_a_concrete_value_in_an_unconfirmed_bullet_is_not_stated_outside_the_runner_facts(self):
+        facts = "\n".join(section(self.text, "## Runner facts"))
+        outside = "\n".join(line for heading in TS_SECTIONS if heading != "## Runner facts" for line in section(self.text, heading))
+        flags = re.findall(r"`(--[A-Za-z-]+=[a-z]+)`", "\n".join(f for f in facts.splitlines() if f.startswith("- Unconfirmed")))
+        self.assertIn("--watchAll=false", flags)
+        for flag in flags:
+            with self.subTest(flag):
+                self.assertNotIn(flag, outside)
+
+    def test_the_hand_run_marker_is_explained_in_the_intro_of_each_runner_with_a_hand_run_fact(self):
+        facts = section(self.text, "## Runner facts")
+        for runner in ("Jest", "node:test"):
+            part = runner_part(facts, runner)
+            with self.subTest(runner):
+                self.assertTrue(any("(hand-run" in line for line in part if line.startswith("- ")))
+                self.assertTrue(any("facts marked `hand-run`" in line for line in part if not line.startswith("- ")))
+
+    def test_the_gate_cases_record_mocha_and_the_write_case_forbids_each_flag_of_the_entry(self):
+        for name in ("ts-gate-other-runner", "write-ts-gate-other-runner"):
+            rules = read(os.path.join(EVALS, name, "repo", "docs", "agents", "testing.md"))
+            with self.subTest(name):
+                self.assertIn('name = "mocha"', rules)
+        graders = os.path.join(EVALS, "write-ts-gate-other-runner", "graders")
+        for flag in ("--maxWorkers", "--reporter"):
+            with self.subTest(flag):
+                text = read(os.path.join(graders, f"no-{flag[2:].lower()}-flag.md"))
+                self.assertIn(f"input_match: '{flag}'", text)
+                self.assertIn("max: 0", text)
 
     def test_the_table_one_extension_lists_equal_the_grader_languages(self):
         typescript = tuple(ext for ext, language in grader_languages().items() if language == "typescript")
@@ -1181,7 +1266,7 @@ class TypeScriptEntryTest(unittest.TestCase):
             with self.subTest(runner):
                 row_1 = next(line for line in self.layout(runner) if line.startswith("| 1 |"))
                 listed = tuple(re.findall(r"`(\.[a-z]+)`", row_1.split("|")[2]))
-                self.assertEqual(sorted(e for e in listed if e in TS_EXTENSIONS), expected)
+                self.assertEqual(sorted(listed), expected)
 
     def test_general_md_holds_the_ts_01_rule_text_and_the_catalogue_note_has_no_none_yet(self):
         general = read(GENERAL_MD)
@@ -1330,10 +1415,18 @@ class TypeScriptEntryTest(unittest.TestCase):
                 scripts = json.loads(read(os.path.join(EVALS, name, "repo", "package.json")))["scripts"]
                 self.assertTrue(any(marker in scripts["unit"] for marker in WRAPPER_MARKERS))
 
-    def test_the_evals_readme_allows_the_jest_run_commands_and_names_jest_in_the_install_note(self):
+    def test_the_evals_readme_allows_the_jest_run_commands(self):
         readme = read(os.path.join(EVALS, "README.md"))
         self.assertIn("Bash(npx jest*)", readme)
         self.assertIn("Bash(CI=true npx jest*)", readme)
+
+    def test_the_install_note_matches_the_scaffolds_of_the_jest_and_node_cases(self):
+        self.assertIn("The `node-*` and `write-node-*` cases use `node --test` and need no install", read(os.path.join(EVALS, "README.md")))
+        for name in sorted(os.listdir(EVALS)):
+            if name.startswith(("jest-", "write-jest-", "node-", "write-node-")):
+                installs = "npm install" in read(os.path.join(EVALS, name, "scaffold.sh"))
+                with self.subTest(name):
+                    self.assertEqual(installs, "jest" in name)
 
     def test_sample_example_parser(self):
         self.assertEqual(example_marks(["- Example: `a b` => row 3", "- Example: `x` => class Fixed", "text"]), ["3", "Fixed"])

@@ -566,6 +566,34 @@ class JestGroupModelTest(GroupModelBase):
         self.assertTrue(self.selects("jest --ci", "tests/a.test.ts"))
         self.assertFalse(self.selects("jest -t slow", "tests/a.test.ts"))
 
+    def test_a_wrapper_selects_no_file_even_when_an_operand_matches(self):
+        for command in ("npx jest tests/a && tsc", "npx jest --ci; tsc", "npx jest tests/a | cat", "npx jest tests/a > out.txt"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx jest 'tests/(a|b)'", "tests/a.test.ts"))
+
+    def test_a_boolean_flag_with_an_inline_value_is_not_an_operand(self):
+        self.assertTrue(self.selects("npx jest --ci=true --runInBand=true", "tests/a.test.ts"))
+        self.assertFalse(self.selects("npx jest --ci=true tests/a", "src/price.test.ts"))
+
+    def test_several_operands_and_combined_selectors_select_the_union(self):
+        self.assertTrue(self.selects("npx jest src/price tests/unit", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("npx jest --testPathPatterns src/price tests/unit", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("npx jest --testPathPatterns src/price --runTestsByPath tests/a.test.ts", "tests/a.test.ts"))
+        self.assertFalse(self.selects("npx jest --testPathPatterns src/price tests/unit", "tests/a.test.ts"))
+
+    def test_a_caret_value_of_test_path_patterns_selects_no_file(self):
+        self.assertFalse(self.selects("npx jest --testPathPatterns ^tests/a", "tests/a.test.ts"))
+
+    def test_run_tests_by_path_does_not_read_a_caret_or_slash_operand_as_a_regular_expression(self):
+        self.assertFalse(self.selects("npx jest --runTestsByPath /tests/a.test.ts", "tests/a.test.ts"))
+        self.assertTrue(self.selects("npx jest --runTestsByPath ^x tests/a.test.ts", "tests/a.test.ts"))
+
+    def test_an_invalid_regular_expression_selects_no_file_whatever_its_place(self):
+        for command in ("npx jest tests/a '('", "npx jest '(' tests/a"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+
 
 @NEEDS_TOMLLIB
 class NodeTestGroupModelTest(GroupModelBase):
@@ -607,6 +635,22 @@ class NodeTestGroupModelTest(GroupModelBase):
 
     def test_a_command_with_no_test_token_keeps_the_old_result(self):
         self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
+
+    def test_a_wrapper_selects_no_file_even_when_an_operand_matches(self):
+        for command in ("node --test tests/a.test.ts && tsc", "node --test; tsc", "node --test tests | cat"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+        self.assertTrue(self.selects("node --test 'tests/*.test.ts'", "tests/a.test.ts"))
+
+    def test_a_dot_or_dot_slash_folder_selects_every_file(self):
+        for command in ("node --test .", "node --test ./"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "tests/unit/b.test.ts"))
+
+    def test_several_operands_and_combined_selectors_select_the_union(self):
+        self.assertTrue(self.selects("node --test src tests/unit", "tests/unit/b.test.ts"))
+        self.assertTrue(self.selects("node --test tests/a.test.ts 'tests/**/*.test.ts'", "tests/unit/b.test.ts"))
+        self.assertFalse(self.selects("node --test src tests/unit", "tests/a.test.ts"))
 
 
 if __name__ == "__main__":

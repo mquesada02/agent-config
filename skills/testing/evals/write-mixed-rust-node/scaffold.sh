@@ -4,3 +4,5 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 cp -r "$here/repo/." .
 git init -q
+git add -A
+git -c user.name=x -c user.email=x@example.invalid commit -q -m fixture

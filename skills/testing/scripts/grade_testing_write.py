@@ -525,11 +525,11 @@ JEST_FIXED_VALUE_FLAGS = ("--maxWorkers", "-w", "--outputFile", "--reporters")
 JEST_UPDATE_MODES = ("-u", "--updateSnapshot", "--updateSnapshot=true")
 
 
-def flat_tokens(words):
-    """Split a `--flag=value` word into two tokens; keep every other word."""
+def flat_tokens(words, boolean_flags=()):
+    """Split a `--flag=value` word into two tokens; keep every other word, and a `--flag=value` of a boolean flag, whole."""
     flat = []
     for token in words:
-        if token.startswith("-") and "=" in token:
+        if token.startswith("-") and "=" in token and token.split("=", 1)[0] not in boolean_flags:
             flat.extend(token.split("=", 1))
         else:
             flat.append(token)
@@ -547,16 +547,28 @@ def command_words(command, exec_forms):
     return next((tokens[len(prefix):] for prefix in exec_forms if tokens[:len(prefix)] == prefix), None)
 
 
+WRAPPER_MARKERS = ("&&", "||", ";", "|", "$(", "`", ">", "<")
+
+
+def has_wrapper_marker(command):
+    """Whether a command holds a shell marker outside quotes (the entry reads such a command as a wrapper)."""
+    unquoted = re.sub(r"\"[^\"]*\"|'[^']*'", "", command)
+    return any(marker in unquoted for marker in WRAPPER_MARKERS)
+
+
 def jest_group_selects(command, path):
     """Whether a plain Jest group command selects a file for write (the write column of the TypeScript entry).
 
-    Returns None when the command is not an exec form of Jest, so the caller keeps the old reading."""
+    Returns None when the command is not an exec form of Jest, so the caller keeps the old reading.
+    A wrapper (a shell marker outside quotes) selects no file."""
     words = command_words(command, JEST_EXEC)
     if words is None:
         return None
+    if has_wrapper_marker(command):
+        return False
     if any(word in JEST_UPDATE_MODES for word in words):
         return False
-    flat = flat_tokens(words)
+    flat = flat_tokens(words, JEST_FIXED_FLAGS)
     patterns, operands, by_path = [], [], "--runTestsByPath" in flat
     index = 0
     while index < len(flat):
@@ -570,7 +582,7 @@ def jest_group_selects(command, path):
             index += 2
         elif token in JEST_FIXED_VALUE_FLAGS:
             index += 2
-        elif token in JEST_FIXED_FLAGS:
+        elif token.split("=", 1)[0] in JEST_FIXED_FLAGS:
             index += 1
         elif token.startswith("-"):
             return False
@@ -581,18 +593,20 @@ def jest_group_selects(command, path):
     if not selectors:
         return True
     for selector, equal in selectors:
-        if selector.startswith(("^", "/")) and not equal:
+        if equal:
+            continue
+        if selector.startswith(("^", "/")):
+            return False
+        try:
+            re.compile(selector)
+        except re.error:
             return False
     for selector, equal in selectors:
         if equal:
             if (selector[2:] if selector.startswith("./") else selector) == path:
                 return True
-        else:
-            try:
-                if re.search(selector, path):
-                    return True
-            except re.error:
-                return False
+        elif re.search(selector, path):
+            return True
     return False
 
 
@@ -633,8 +647,10 @@ def node_group_selects(command, path):
 
     Returns None when the command is not a `node` command with a `--test` token, so the caller keeps the old reading."""
     words = command_words(command, (["node"],))
-    if words is None or "--test" not in words:
+    if words is None or "--test" not in re.split(r"[\s;|&<>`$()]+", command):
         return None
+    if has_wrapper_marker(command):
+        return False
     flat = flat_tokens(words)
     operands = []
     index = 0
@@ -653,11 +669,7 @@ def node_group_selects(command, path):
         return True
     for operand in operands:
         operand = operand[2:] if operand.startswith("./") else operand
-        if (
-            path == operand
-            or path.startswith(operand.rstrip("/") + "/")
-            or re.search(glob_regex(operand), path)
-        ):
+        if vitest_below(operand, path) or re.search(glob_regex(operand), path):
             return True
     return False
 
