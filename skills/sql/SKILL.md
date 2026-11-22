@@ -21,7 +21,7 @@ If the user calls `/sql` with no mode, or with a mode that is not in the list ab
 
 When this skill loads with no `/sql` call (you write or edit SQL yourself), run the engine step (the Engine step section gives the command) for the SQL you write. These call rules apply:
 
-- You write or edit SQL in a file, or in a new file: one call with `--file <path>` for each file. The file does not need to exist yet, so the `paths` signal of the rules file reaches a new file.
+- You write or edit SQL in a file, even one that does not exist yet: one call with `--file <path>` for each file.
 - The SQL is only in your reply: one call with no `--file`.
 - Pass `--request` when the user's request names an engine.
 - When `ask` is not null, ask the one question of the Engine step section.
