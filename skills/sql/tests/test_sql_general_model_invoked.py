@@ -67,13 +67,32 @@ class ModelInvokedPathTest(unittest.TestCase):
         self.assertIn("`ask`", self.body)
         self.assertRegex(self.body, r"(?i)fallback sentence once")
 
+    def test_a_new_file_gets_a_call_with_file_and_only_reply_sql_gets_no_file(self):
+        self.assertRegex(self.body, r"(?i)a new file[^.]*`--file <path>`")
+        self.assertRegex(self.body, r"(?i)only in your reply: one call with no `--file`\.")
+        self.assertNotIn("does not exist yet: one call with no `--file`", self.body)
+
     def test_the_section_says_postgres_works_as_before_with_no_fallback_sentence(self):
-        self.assertRegex(self.body, r"(?i)`postgres`.*as today.*no fallback sentence")
+        self.assertRegex(self.body, r"(?i)`postgres`.*as before.*no fallback sentence")
+        self.assertNotIn("as today", self.body)
 
     def test_the_section_names_the_style_source_and_the_display_names(self):
         self.assertIn("`[style]`", self.body)
         self.assertIn("reader script", self.body)
         self.assertRegex(self.body, r"(?i)display names?")
+
+    def test_only_a_fallback_engine_loads_the_reader_and_skips_a_disabled_gen_id(self):
+        lines = section(self.text, "Model-invoked path").splitlines()
+        postgres = next(l for l in lines if l.startswith("- Engine `postgres`"))
+        other = lines.index(next(l for l in lines if l.startswith("- Any other engine")))
+        nested = []
+        for line in lines[other + 1:]:
+            if not line.startswith("  - "):
+                break
+            nested.append(line)
+        self.assertNotIn("reader script", postgres)
+        self.assertTrue(any("reader script" in l for l in nested))
+        self.assertTrue(any("Do not apply a GEN id that the rules file disables with a reason." in l for l in nested))
 
     def test_the_section_runs_no_extractor_and_loads_no_source_module_for_a_fallback_file(self):
         self.assertRegex(self.body, r"(?i)no extractor")

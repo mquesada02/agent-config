@@ -21,14 +21,14 @@ If the user calls `/sql` with no mode, or with a mode that is not in the list ab
 
 When this skill loads with no `/sql` call (you write or edit SQL yourself), run the engine step (the Engine step section gives the command) for the SQL you write. These call rules apply:
 
-- You write or edit SQL in a file: one call with `--file <path>` for each file.
-- The SQL is only in your reply, or in a file that does not exist yet: one call with no `--file`.
+- You write or edit SQL in a file, or in a new file: one call with `--file <path>` for each file. The file does not need to exist yet, so the `paths` signal of the rules file reaches a new file.
+- The SQL is only in your reply: one call with no `--file`.
 - Pass `--request` when the user's request names an engine.
 - When `ask` is not null, ask the one question of the Engine step section.
 
 Then apply only the style and the static rules to the SQL you write:
 
-- Engine `postgres`: take the style from [style.md](style.md) and the static rules from [dialects/postgres.md](dialects/postgres.md). This works as today: the reply has no fallback sentence.
+- Engine `postgres`: take the style from [style.md](style.md) and the static rules from [dialects/postgres.md](dialects/postgres.md). This works as before: the reply has no fallback sentence.
 - Any other engine: take the style from [style.md](style.md), with the general style that the General part section of [format.md](format.md) gives, and the `GEN-*` rules from [dialects/general.md](dialects/general.md), in place of the PostgreSQL module.
   - Load the rules file with the reader script, as the Rules file section says, so that the `[style]` section and the disabled GEN ids reach you. Do not apply a GEN id that the rules file disables with a reason.
   - Run no extractor and load no source module.
