@@ -32,7 +32,8 @@ Then apply only the style and the static rules to the SQL you write:
 - Any other engine: take the style from [style.md](style.md), with the general style that the General part section of [format.md](format.md) gives, and the `GEN-*` rules from [dialects/general.md](dialects/general.md), in place of the PostgreSQL module.
   - Load the rules file with the reader script, as the Rules file section says, so that the `[style]` section and the disabled GEN ids reach you. Do not apply a GEN id that the rules file disables with a reason.
   - Run no extractor and load no source module.
-  - The first line of the reply is the fallback sentence of the Engine step section. A reply with several fallback files has the fallback sentence once, with the `<Engine>` display names as that section says. With no rules file, the `/sql setup` suggestion of the Rules file section is a plain sentence of the reply after the fallback sentence, never before it.
+  - The first line of the reply is the fallback sentence of the Engine step section. A reply with several fallback files has the fallback sentence once, with the `<Engine>` display names as that section says.
+  - With no rules file, suggest `/sql setup` (step 2 of the Rules file section) in a plain sentence after the fallback sentence.
   - The reply has no title, no table and no `Note:` line: it is your normal reply. Name a GEN rule id only when you change the SQL because of it, or when you keep a construct that the rule warns about and say why.
 
 These rules hold for every engine:

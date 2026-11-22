@@ -46,8 +46,8 @@ class ModelInvokedPathTest(unittest.TestCase):
     def test_the_section_says_line_1_is_the_fallback_sentence(self):
         self.assertRegex(self.body, r"(?i)first line of the reply is the fallback sentence")
 
-    def test_the_setup_suggestion_comes_after_the_fallback_sentence(self):
-        self.assertRegex(self.body, r"(?i)`/sql setup` suggestion[^.]*after the fallback sentence")
+    def test_the_section_says_the_setup_suggestion_comes_after_the_fallback_sentence(self):
+        self.assertRegex(self.body, r"(?i)suggest `/sql setup` [^.]*in a plain sentence after the fallback sentence\.")
 
     def test_the_section_does_not_hold_the_sentence_text_and_the_router_holds_it_once(self):
         self.assertNotIn(SENTENCE_START, self.body)
