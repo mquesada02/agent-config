@@ -126,7 +126,7 @@ Group selector classes (Table J2). Tokens are the words after `jest`. Every toke
 
 | Class | Tokens | Review reads it as | Write: can the group select a file |
 |---|---|---|---|
-| Path operand | a token that is not a flag and not the value of a named flag, or the value of `--testPathPatterns` | a regular expression matched against the test file path relative to the language root, written with `/`; with `--runTestsByPath`, an operand is equal to that path (a leading `./` dropped); `--testPathPatterns <regex>` always reads as a regular expression; several operands select the union; an operand that starts with `^` or `/` is unreadable, because Jest matches the absolute path, which this entry does not rebuild | yes, when the derived path matches (or, with `--runTestsByPath`, equals it) |
+| Path operand | a token that is not a flag and not the value of a named flag, or the value of `--testPathPatterns` | a regular expression matched against the test file path relative to the language root, written with `/`; with `--runTestsByPath`, an operand is equal to that path (a leading `./` dropped); `--testPathPatterns <regex>` always reads as a regular expression; several operands select the union; an operand or a `--testPathPatterns` value that starts with `^` or `/` is unreadable, because Jest matches the absolute path, which this entry does not rebuild; a regular expression that does not compile is unreadable too | yes, when the derived path matches (or, with `--runTestsByPath`, equals it) |
 | Project | `--selectProjects <name> ...` (the `displayName` values; takes values until the next flag) | the files that the `testMatch` of those projects match | yes, when the derived path matches the `testMatch` of a project with that `displayName` (the agent reads the Jest config; the write grader cannot, so it reads a project group as selecting none) |
 | Name filter | `-t <pattern>`, `--testNamePattern <pattern>` | a filter on the full test name | no file |
 | Fixed | `--ci`, `--maxWorkers <n>`, `-w <n>`, `--runInBand`, `-i`, `--verbose`, `--json`, `--outputFile <path>`, `--reporters <name>`, `--silent`, `--coverage`, `--passWithNoTests`, `--watchman`, `--no-watchman`, `--cache`, `--no-cache`, `--runTestsByPath`, `-u`, `--updateSnapshot` | narrows nothing | narrows nothing |
@@ -198,9 +198,11 @@ Examples:
 
 ## Runner facts
 
-Each fact below is confirmed from the docs on 2026-11-20 (Vitest v5.1.1; the list and reporter facts were also hand-run), or is marked as unconfirmed and not used.
+Each fact below is confirmed from the docs on 2026-11-20, as the sub-heading of its runner says, or is marked as unconfirmed and not used.
 
 ### Vitest
+
+Confirmed on 2026-11-20 (Vitest v5.1.1; the list and reporter facts were also hand-run).
 
 - Confirmed: `vitest list` prints matching tests (with `--filesOnly`, test files), inherits the options of `vitest`, ignores reporters, and since Vitest 5 parses files statically; `--json` prints JSON (https://vitest.dev/guide/cli)
 - Confirmed: Subcommands and watch: `vitest run` is a single run; `vitest watch` and its alias `vitest dev` watch; bare `vitest` watches, and falls back to a single run in CI or with no TTY; `-w, --watch` enables watch mode; `vitest related <files>` watches unless `--run` is passed; `vitest bench` runs benchmarks (https://vitest.dev/guide/cli)
@@ -229,14 +231,14 @@ Confirmed on 2026-11-20 (Jest 30.5.2; facts marked `hand-run` were also run by h
 - Confirmed: `--watch` and `--watchAll` watch; `--no-watch` and `--watch=false` disable watch (https://jestjs.io/docs/cli)
 - Confirmed: `--maxWorkers` and `-w` set the worker count (https://jestjs.io/docs/cli)
 - Confirmed: `--json` prints the result as JSON and sends other output to stderr (hand-run: `assertionResults` with `fullName` and `duration`); `--verbose` prints every test case (https://jestjs.io/docs/cli)
-- Confirmed: `--selectProjects` takes `displayName` values; `-t` and `--testNamePattern` filter by name; `--testPathPatterns` and `--runTestsByPath` select files (https://jestjs.io/docs/cli)
+- Confirmed: `--selectProjects` takes `displayName` values; `-t` and `--testNamePattern` filter by name; `--testPathPatterns` (Jest 30) and `--runTestsByPath` select files (https://jestjs.io/docs/cli)
 - Confirmed: `jest.retryTimes(n, options?)` retries failed tests; there is no config key or CLI flag for retries and none that fails a run on a retried pass (https://jestjs.io/docs/jest-object)
 - Confirmed: `testMatch` (default), `testRegex`, `roots`, `testPathIgnorePatterns` (default) and `projects` decide which files are tests (https://jestjs.io/docs/configuration)
 - Confirmed: Fake timers (`jest.useFakeTimers`, `advanceTimersByTime`, `advanceTimersByTimeAsync`, `runAllTimers`, `useRealTimers`, `setSystemTime`) (https://jestjs.io/docs/timer-mocks and https://jestjs.io/docs/jest-object)
 - Confirmed: `test.skip` and its aliases, `test.todo` and `test.failing` (https://jestjs.io/docs/api)
 - Confirmed: Snapshot matchers and property matchers (https://jestjs.io/docs/snapshot-testing)
 - Confirmed: Options that a table names only to classify a token (`--runInBand`, `-i`, `--showConfig`, `--clearCache`, `--version`, `--help`, `--silent`, `--coverage`, `--passWithNoTests`, `--watchman`, `--cache`, `--reporters`, `--outputFile`, `--onlyChanged`, `--changedSince`, `--findRelatedTests`, `--shard`, `--config`, `--roots`, `--projects`, `--testMatch`, `--testPathIgnorePatterns`, `--bail`) are documented options; the entry does not state what they do (https://jestjs.io/docs/cli)
-- Unconfirmed, not used: a Jest setting that fails the run for a test that passed only on retry; that Jest does not type-check test files; the effect of `--watchAll=false`; that Jest picks a summary reporter without per-test lines under an AI agent (seen in a hand run; the entry does not use the default reporter); a call-order matcher or a call-order property of a mock for Jest (neither is in the docs read); any changed-files command other than the detected `--onlyChanged`. The assertion and mock API names that the rules below use (`expect.hasAssertions`, `test.failing`, `jest.fn`, `jest.spyOn`, `toHaveBeenNthCalledWith`) are API names of the how-to, not runner facts.
+- Unconfirmed, not used: the Jest 29 spelling `--testPathPattern` (the entry reads `--testPathPatterns` only, so `--testPathPattern` is an unreadable token); a Jest setting that fails the run for a test that passed only on retry; that Jest does not type-check test files; the effect of `--watchAll=false`; that Jest picks a summary reporter without per-test lines under an AI agent (seen in a hand run; the entry does not use the default reporter); a call-order matcher or a call-order property of a mock for Jest (neither is in the docs read); any changed-files command other than the detected `--onlyChanged`. The assertion and mock API names that the rules below use (`expect.hasAssertions`, `test.failing`, `jest.fn`, `jest.spyOn`, `toHaveBeenNthCalledWith`) are API names of the how-to, not runner facts.
 
 ### node:test
 
@@ -244,13 +246,14 @@ Confirmed on 2026-11-20 (Node.js 22.23.3; facts marked `hand-run` were also run 
 
 - Confirmed: `--test` and its default file patterns (TypeScript patterns unless `--no-strip-types`; hand-run: a `.ts` test file ran); glob operands (https://nodejs.org/api/test.html and https://nodejs.org/api/cli.html)
 - Confirmed: `--test-concurrency` sets the number of test files that run at once (https://nodejs.org/api/cli.html)
-- Confirmed: `--test-reporter` and the built-in reporters (`spec`, `tap`, `dot`, `junit`, `lcov`); the default reporter is `spec` on a non-TTY stdout since v23 (hand-run on 22.23.3: `tap`, so the entry names `--test-reporter=spec`); the spec reporter prints each test with its duration (hand-run) (https://nodejs.org/api/test.html)
+- Confirmed: `--test-reporter` and the built-in reporters (`spec`, `tap`, `dot`, `junit`, `lcov`); the default reporter is `spec` on a non-TTY stdout since v23 (hand-run on 22.23.3: `tap`, so the entry names `--test-reporter=spec`) (https://nodejs.org/api/test.html)
+- Confirmed: The `spec` reporter layout (hand-run): a result line starts with `✔` or `✖`, then the test name and a final duration `(<N>ms)` or `(<N>s)`; a suite is a `▶` line, and its tests are indented below it (https://nodejs.org/api/test.html)
 - Confirmed: `--watch` with `--test` and `--watch-path` turn watch mode on (https://nodejs.org/api/cli.html)
 - Confirmed: `--test-name-pattern`, `--test-skip-pattern`, `--test-only`, `--test-shard` and `--test-rerun-failures` (v24.7) select or rerun tests (https://nodejs.org/api/cli.html)
 - Confirmed: `--test-isolation` (default `'process'`: each test file in its own child process) (https://nodejs.org/api/cli.html)
 - Confirmed: `--test-update-snapshots` and `t.assert.snapshot` (https://nodejs.org/api/test.html and https://nodejs.org/api/cli.html)
 - Confirmed: Options that a table names only to classify a token (`--test-timeout`, `--test-force-exit`, `--env-file`, `--experimental-test-coverage`, `--import`, `-r`, `--require`, `--no-warnings`, `--test-reporter-destination`) are documented on the CLI page (https://nodejs.org/api/cli.html)
-- Confirmed: A folder operand is read as the files below it for group membership; a hand run on 22.23.3 rejected a folder operand at run time, so a group command with a folder operand fails when it runs and the run result shows it (hand-run) (https://nodejs.org/api/cli.html)
+- Confirmed: A hand run on 22.23.3 rejected a folder operand at run time, so a group command with a folder operand fails when it runs and the run result shows it (hand-run) (https://nodejs.org/api/cli.html)
 - Confirmed: `mock.fn`, `mock.method`, `mock.timers` (`enable`, `tick`, `reset`); `skip`, `todo` and `only` options and `t.skip`; `expectFailure`; `t.plan` (https://nodejs.org/api/test.html)
 - Unconfirmed, not used: a `node:test` setting that fails the run for a test that passed only on retry; that `node:test` does not type-check test files; a `node:test` list command (no documented list or dry-run command is used); the first Node version that finds TypeScript test files by default (a derived `.ts` test file that does not run shows as `not run (no test collected)`).
 
@@ -289,7 +292,7 @@ Test location for write (Table J3). The rows are the rows of the Vitest Layout t
 | # | State of `P` | Derived path |
 |---|---|---|
 | 1 | `P` is outside `R`, is a declaration file (`.d.ts`), is a config file (`*.config.*`, `jest.*`), is below `node_modules`, `dist`, `build` or `coverage`, or has an extension other than `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs` | none (`no test location is known`) |
-| 2 | A test file `<stem>.test.<ext>` or `<stem>.spec.<ext>` beside `P`, `__tests__/<stem>.test.<ext>` or `__tests__/<stem>.<ext>` beside `P`, or at the mirrored path (row 4), exists | that file; write adds test cases to it |
+| 2 | A test file `<stem>.test.<ext>` or `<stem>.spec.<ext>` beside `P`, `__tests__/<stem>.test.<ext>` or `__tests__/<stem>.<ext>` beside `P`, or at the mirrored path (row 4), exists | that file (`.test` first, then `.spec`, then `__tests__`); write adds test cases to it |
 | 3 | The layout is co-located: `test_paths` is empty, holds `.`, or holds the first folder of `P` | `<folder of P>/<stem>.test.<ext of P>` |
 | 4 | The layout is mirrored: `test_paths` holds exactly one folder `T` and its name is `test`, `tests` or `__tests__` | `T/<path of P below its first folder, if it has one>/<stem>.test.<ext of P>` |
 | 5 | Every other state of `test_paths` | none (`no test location is known`) |
@@ -312,7 +315,7 @@ Test location for write (Table N3). The rows are the rows of the Vitest Layout t
 | # | State of `P` | Derived path |
 |---|---|---|
 | 1 | `P` is outside `R`, is a declaration file (`.d.ts`), is a config file (`*.config.*`), is below `node_modules`, `dist`, `build` or `coverage`, or has an extension other than `.ts`, `.js`, `.mjs`, `.cjs` (the default patterns have no TSX files) | none (`no test location is known`) |
-| 2 | A test file `<stem>.test.<ext>` beside `P`, or at the mirrored path (row 4), exists | that file; write adds test cases to it |
+| 2 | A test file beside `P`, or at the mirrored path (row 4), exists: `<stem>.test.<ext>`, `<stem>-test.<ext>`, `<stem>_test.<ext>` or `test-<stem>.<ext>` | that file (the first of these forms that exists); write adds test cases to it |
 | 3 | The layout is co-located: `test_paths` is empty, holds `.`, or holds the first folder of `P` | `<folder of P>/<stem>.test.<ext of P>` |
 | 4 | The layout is mirrored: `test_paths` holds exactly one folder `T` and its name is `test`, `tests` or `__tests__` | `T/<path of P below its first folder, if it has one>/<stem>.test.<ext of P>` |
 | 5 | Every other state of `test_paths` | none (`no test location is known`) |
@@ -503,7 +506,8 @@ Examples:
 
 **Check details**:
 - Vitest: the commands in scope are `commands.typescript.test` when recorded, else `scripts.test` of the language root `package.json` (when the script exists), and every group command of the language. Each is read by Table 1, and the table below ignores row 1 of Table 1 (an update mode is an `ASSERT-03` matter, not a watch matter), so a command with an update mode still gets its verdict here. The first row of the table below that applies to a command gives its verdict. `TS-01` is a finding when at least one command has the verdict "finding". It gives one row in all. The `Where` cell lists the rules-file line of the command (the `test` key or the group `command`) when it is recorded, and, for a resolved script, the `package.json` line of the script. The check applies when a TypeScript file is in scope.
-- Jest: the same commands in scope, read by Table J1 (row 1 ignored) and judged by Table J4 below. "Table 1" in the text above means Table J1 for Jest and Table N1 for `node:test`.
+- "Table 1" in the Vitest bullet means Table 1 for Vitest, Table J1 for Jest and Table N1 for `node:test`.
+- Jest: the same commands in scope, read by Table J1 (row 1 ignored) and judged by Table J4 below.
 - node:test: the same commands in scope, read by Table N1 (row 1 ignored) and judged by Table N4 below.
 
 Table 4 (Vitest):
@@ -536,7 +540,7 @@ Table J4 (Jest):
 |---|---|---|
 | 1 | Wrapper | not decided: no finding; one `Not checked:` entry (the form is below) |
 | 2 | Plain, with a token `--listTests`, `--showConfig`, `--clearCache`, `--version` or `--help` | no finding (not a test run) |
-| 3 | Plain, with a token `--watch`, `--watchAll`, `--watch=<value>` where the value is not `false`, or `--watchAll=<value>` (any value, because the effect of `--watchAll=false` is unconfirmed); the forms `--watch=false` and `--no-watch` are documented disable forms and are not a marker, but a command with a `--watch` token is a marker | finding |
+| 3 | Plain, with a token `--watch`, `--watchAll`, `--watch=<value>` where the value is not `false`, or `--watchAll=<value>` (any value, because the effect of a `--watchAll` value is unconfirmed); the forms `--watch=false` and `--no-watch` are documented disable forms and are not a marker, but a command with a `--watch` token is a marker | finding |
 | 4 | Plain, any other (Jest runs once without a watch flag) | no finding |
 
 Examples:

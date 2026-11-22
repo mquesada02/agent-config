@@ -13,7 +13,7 @@ claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --s
 - `--no-publish` keeps the cases and the report private.
 - `-j 2` keeps the CPU load low.
 - `--scaffold` runs the `scaffold.sh` of each case. It copies `repo/` into the empty workspace.
-- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest` or `jest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init`.
+- `--allow-tools` grants the shell calls of the review: the intake script, the fixture test run and the timed run of `RUN-04` with its `git status --porcelain` calls. The `approve-1` case runs the fixture tests. The older fixtures hold no installed `vitest` or `jest`. Their runs report `not run`, `fail` or a `Not checked:` entry for `RUN-04` with the reason. No in-run grader of those cases rejects that entry. The new fixtures use the Node built-in runner (`node --test`), which needs no install, and their scaffold runs `git init` and commits the fixture.
 - The Rust cases (`rs-*` and `write-rs-*`) need `cargo` and `cargo-nextest` on the machine. The fixtures that run use std-only crates with a hand-written `Cargo.lock`, so they need no crate registry. Their scaffold commits the files, so that the timed run leaves `git status --porcelain` unchanged. The cases `rs-assert-03-insta-update` and `rs-run-02-tokio-sleep` use `insta` or `tokio`: they are static-only (graded by reading, no run, no registry).
 - `--keep-temp` keeps the trace of each run. Plugin eval prints the kept folders (`/tmp/claude-eval-*`, read-only). Move them to a dated backup folder under `/tmp` when you are done. Never delete them recursively.
 - Add `--case <glob>` to run one case.
@@ -123,14 +123,14 @@ Each folder holds one case:
 | `jest-run-04-json-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--json`, reads the `assertionResults` duration and gives `RUN-04`. |
 | `jest-run-04-wrapper-not-checked` | The test command and the group are a wrapper script: no `RUN-04` row, and the `Not checked:` line names `RUN-04`. |
 | `jest-grp-01-list-decides` | A group with `--testPathIgnorePatterns` is unreadable for the general file: `jest --listTests` decides its membership, no `Not checked:` entry names the group, and the unselected test case gives `GRP-01`. |
-| `jest-grp-01-not-checked` | A wrapper group and a `--watch` group have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. |
+| `jest-grp-01-not-checked` | A wrapper group and a `--watch` group have no list command: the `Not checked:` line names both for `GRP-01` and no `GRP-01` row is given. The `--watch` group also gives a `TS-01` row. |
 | `jest-assert-forms` | A test with only a call (`ASSERT-01`) and a `mockReturnValue` value that the assertion compares (`ASSERT-02`); a test with `expect.assertions` is clean. |
 | `jest-net-port-skip` | A real `fetch` (`RUN-03`), a literal `listen` port (`PAR-01`), a `test.skip` with no reason (`RUN-05`) and `toHaveBeenNthCalledWith` calls (`DBL-01`); a `jest.spyOn(globalThis, 'fetch')` fake and a `test.todo` are not findings. Static-only. |
 | `jest-par-02-env-var` | A test writes `process.env` without a restore: `PAR-02`; a test with a restore in `afterEach` is clean. |
 | `node-01-watch-script` | The recorded test command is `npm test` and the `test` script is `node --test --watch`: one `TS-01` row whose Where cell lists both lines. |
 | `node-01-run-mode` | The single-run command is `node --test`: no `TS-01` row. |
 | `node-assert-03-update` | `--test-update-snapshots` in the single-run command and a time value in `t.assert.snapshot`: `ASSERT-03`. |
-| `node-run-01-rerun` | `--test-rerun-failures` in the single-run command: `RUN-01`. |
+| `node-run-01-rerun` | `--test-rerun-failures=<file>` in the single-run command: `RUN-01`. |
 | `node-run-02-mock-timers` | One real sleep gives `RUN-02`; a `mock.timers` test beside it is not a finding. |
 | `node-run-04-spec-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--test-reporter=spec`, reads the result line with its duration and gives `RUN-04`. |
 | `node-run-04-wrapper-not-checked` | The test command and the group are a wrapper script: no `RUN-04` row, and the `Not checked:` line names `RUN-04`. |

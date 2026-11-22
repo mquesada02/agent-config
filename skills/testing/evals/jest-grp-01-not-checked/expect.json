@@ -1,5 +1,7 @@
 {
-  "expect": [],
+  "expect": [
+    "TS-01"
+  ],
   "forbid": [
     "GRP-01"
   ]

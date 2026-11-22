@@ -6,13 +6,13 @@ name = "typescript"
 root = "."
 
 [commands.typescript]
-test = "node --test --test-rerun-failures"
+test = "node --test --test-rerun-failures=state.json"
 
 [[groups]]
 name = "unit"
 language = "typescript"
 size = "small"
-command = "node --test --test-rerun-failures"
+command = "node --test --test-rerun-failures=state.json"
 
 [runner.typescript]
 name = "node:test"
