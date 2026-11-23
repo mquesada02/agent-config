@@ -125,6 +125,16 @@ class ExpectationTest(GradeSetupCase):
         self.assert_pass(expect={"set": {"rules.disabled": []}})
         self.assert_fail("set", expect={"set": {"rules.disabled": ["RUN-05"]}})
 
+    def test_set_does_not_match_a_boolean_with_a_number(self):
+        self.repo.write(helper.doc(helper.block(replace={"limits": "[limits]\nsmall_ms = true\n"}), prose_after=PROSE))
+        self.assert_pass(expect={"set": {"limits.small_ms": True}})
+        self.assert_fail("set", expect={"set": {"limits.small_ms": 1}})
+
+    def test_set_does_not_match_a_boolean_inside_a_list_with_a_number(self):
+        self.repo.write(helper.doc(helper.block(replace={"limits": "[limits]\nsmall_ms = [true]\n"}), prose_after=PROSE))
+        self.assert_pass(expect={"set": {"limits.small_ms": [True]}})
+        self.assert_fail("set", expect={"set": {"limits.small_ms": [1]}})
+
     def test_unset_fails_on_a_present_path(self):
         self.assert_pass(expect={"unset": ["limits.medium_ms"]})
         self.assert_fail("unset", expect={"unset": ["limits.small_ms"]})
@@ -139,6 +149,20 @@ class ExpectationTest(GradeSetupCase):
     def test_absent_fails_on_a_string_anywhere_in_the_file(self):
         self.assert_pass(expect={"absent": ["FOO-99"]})
         self.assert_fail("absent", expect={"absent": ["small_ms"]})
+
+    def test_invalid_utf8_gives_a_fail_line_and_a_failing_exit_code(self):
+        self.repo.put("docs/agents/testing.md", b"\xff\xfe not utf-8")
+        done = self.run_grader()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("FAIL intake:", done.stdout)
+        self.assertEqual(done.stdout.strip().splitlines()[-1], "FAIL")
+        self.assertNotIn("Traceback", done.stderr)
+
+    def test_a_missing_repo_folder_gives_a_fail_line_and_a_failing_exit_code(self):
+        done = self.run_grader(repo=os.path.join(self.repo.root, "missing"))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("FAIL intake:", done.stdout)
+        self.assertNotIn("Traceback", done.stderr)
 
     def test_a_file_with_a_bom_and_crlf_lines_is_read(self):
         text = helper.doc(helper.FULL_BLOCK, prose_after=PROSE).replace("\n", "\r\n")
@@ -165,6 +189,20 @@ class BeforeTest(GradeSetupCase):
     def test_a_changed_value_that_is_approved_passes(self):
         self.after(helper.block(replace={"limits": "[limits]\nsmall_ms = 50\n"}))
         self.assert_pass(before_text=self.BEFORE, expect={"set": {"limits.small_ms": 50}})
+
+    def test_a_nested_set_path_does_not_approve_a_changed_sibling(self):
+        two = helper.block(replace={"limits": "[limits]\nsmall_ms = 100\nmedium_ms = 500\n"})
+        before = helper.doc(two, prose_after=PROSE)
+        after = helper.block(replace={"limits": "[limits]\nsmall_ms = 50\nmedium_ms = 900\n"})
+        self.repo.write(helper.doc(after, prose_after=PROSE))
+        out = self.assert_fail("settings", before_text=before, expect={"set": {"limits.small_ms": 50}})
+        self.assertIn("limits.medium_ms", out)
+        self.assertNotIn("limits.small_ms was", out)
+
+    def test_a_before_boolean_does_not_match_a_number_in_the_new_file(self):
+        before = helper.doc(helper.block(replace={"limits": "[limits]\nsmall_ms = true\n"}), prose_after=PROSE)
+        self.after(helper.block(replace={"limits": "[limits]\nsmall_ms = 1\n"}))
+        self.assert_fail("settings", before_text=before)
 
     def test_a_lost_value_fails_settings(self):
         self.after(helper.block(drop=("limits",)))
