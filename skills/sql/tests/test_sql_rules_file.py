@@ -421,6 +421,11 @@ class RulesFileReaderTest(unittest.TestCase):
         code, out = self.read()
         self.assertEqual(out["bad_paths"], ['"db=mysql"'])
 
+    def test_a_bad_paths_entry_listed_twice_is_reported_once(self):
+        self.write(doc('[engine]\npaths = ["/db=mysql", 7, "/db=mysql", "x", 7]\n'))
+        code, out = self.read()
+        self.assertEqual(out["bad_paths"], ["/db=mysql", "7", "x"])
+
     def test_valid_paths_or_no_engine_section_report_nothing(self):
         self.write(doc('[engine]\nname = "mysql"\npaths = ["./db=sqlite", "db//a=MySQL", ".=mysql"]\n'))
         code, out = self.read()

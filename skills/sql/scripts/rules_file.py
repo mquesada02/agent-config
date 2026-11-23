@@ -127,14 +127,14 @@ def split_path_entry(entry):
 
 
 def bad_path_entries(settings):
-    """Each `[engine] paths` entry that the engine step ignores, as text (a value that is not a list counts as one)."""
+    """Each `[engine] paths` entry that the engine step ignores, as text and once (a value that is not a list counts as one)."""
     engine = settings.get("engine")
     if not isinstance(engine, dict) or "paths" not in engine:
         return []
     paths = engine["paths"]
     if not isinstance(paths, list):
         return [json.dumps(paths, default=str)]
-    return [as_text(entry) for entry in paths if split_path_entry(entry) is None]
+    return unique(as_text(entry) for entry in paths if split_path_entry(entry) is None)
 
 
 def lowercase_path_entry(entry):
