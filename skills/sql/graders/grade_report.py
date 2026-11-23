@@ -79,9 +79,9 @@ def general_sources():
     """The names of the `## Sources` entries of the general module, and `skill rule`."""
     with open(GENERAL_MODULE, encoding="utf-8") as handle:
         text = handle.read()
-    if "\n## Sources" not in text:
+    _, found, section = text.partition("\n## Sources")
+    if not found:
         raise ValueError(f"the general module has no ## Sources section: {GENERAL_MODULE}")
-    section = text.split("\n## Sources", 1)[-1]
     return set(re.findall(r"^- \*\*(.+?):\*\*", section, re.M)) | {"skill rule"}
 
 
