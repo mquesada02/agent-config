@@ -38,7 +38,7 @@ TOOL_GRADERS = {
     "no-write.md": ("Write", None),
     "no-shell-write.md": (
         "Bash",
-        r"\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<!&)>>?(?!&)\s*(?!/dev/null)\S|&>>?\s*(?!/dev/null)\S",
+        r"\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<![&=<>#@-])>>?(?!&)\s*(?!/dev/null)\S|&>>?\s*(?!/dev/null)\S",
     ),
 }
 
@@ -635,6 +635,39 @@ class CaseFilesTest(unittest.TestCase):
     def test_the_old_cases_are_not_touched(self):
         for name in ("trigger-write-query", "extract-tag-not-sql"):
             self.assertTrue(os.path.isdir(os.path.join(EVALS, name)))
+
+
+class ShellWritePatternTest(unittest.TestCase):
+    """The no-shell-write pattern catches a shell write and lets SQL operators that end in `>` through."""
+
+    PATTERN = re.compile(TOOL_GRADERS["no-shell-write.md"][1])
+    FALLBACK_FILE = os.path.join(EVALS, "general-format-mixed", "graders", "no-shell-write-fallback-file.md")
+
+    def test_a_shell_write_matches(self):
+        for command in ("echo x > a.sql", "cat a >> b", "node run.js 2>err.log", "make &> out.log", "sed -i s/a/b/ q.sql"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(self.PATTERN.search(command))
+
+    def test_a_sql_operator_or_a_null_redirect_does_not_match(self):
+        for command in (
+            "psql -c \"SELECT data->>'name' FROM t\"", "grep -n '->' src/a.ts",
+            "psql -c \"SELECT id FROM t WHERE a <> 1\"", "psql -c \"SELECT data #>> '{a}' FROM t\"",
+            "psql -c \"SELECT id FROM t WHERE tags @> '{x}'\"",
+            "node -e '[1].map(x => x)'", "node run.js > /dev/null", "node run.js 2>&1",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(self.PATTERN.search(command))
+
+    def test_the_fallback_file_pattern_lets_an_arrow_through(self):
+        head = frontmatter(read(self.FALLBACK_FILE))
+        pattern = re.compile(unquote(key(head, "input_match")))
+        # this pattern has no separate `&>` branch, so its lookbehind leaves `&` out and `&>` still matches
+        for command in ("echo x > src/reports.ts", "make &> src/reports.ts"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(pattern.search(command))
+        for command in ("grep -n '->' src/reports.ts", "grep -n '<>' src/reports.ts"):
+            with self.subTest(command=command):
+                self.assertIsNone(pattern.search(command))
 
 
 class ReadmeTest(unittest.TestCase):
