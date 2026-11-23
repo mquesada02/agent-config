@@ -2,6 +2,13 @@
 
 Review existing tests against the rules of [general.md](general.md) and write a report. The skill changes no file until the user approves. The reply of the user starts the fix flow (see "Fix on approval").
 
+## Scope
+
+The files in scope are the files that step 1 of the review flow in [SKILL.md](SKILL.md) takes.
+
+- A path that the user names must exist as a file and be a test file by the name-only rule of that step. When a named path does not exist, or is not a test file, the review stops before step 1 below: name each such path, and ask the user which files to review. This is the same outcome as for no file found.
+- A product file holds no test file of its own. Inline Rust test modules (`#[cfg(test)] mod tests`) in a product file are not in scope, because a product file is never a file in scope.
+
 ## Steps
 
 1. Read the intake JSON that [SKILL.md](SKILL.md) made for the files in scope. Run no other shell command for the rules or the facts. The only commands that a review runs before the report are the timed run (see "Timed run") and a list command that a loaded language entry confirms.
