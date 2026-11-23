@@ -79,6 +79,7 @@ RUST_UNREADABLE = (
 )
 RUST_VALUE_FLAGS = (
     "-j", "--test-threads", "-P", "--profile", "-F", "--features", "--retries", "--target", "--manifest-path",
+    "--status-level", "--message-format", "--cargo-profile", "--flaky-result",
 )
 ASSERTION = re.compile(r"\b(assert|expect|should)|\bt\.(Error|Errorf|Fatal|Fatalf)\(", re.IGNORECASE)
 
@@ -410,6 +411,8 @@ def rust_group_selects(command, path):
     if tokens[:1] != ["cargo"]:
         return False
     words = tokens[1:]
+    if words[:1] and words[0].startswith("+"):
+        words = words[1:]
     if words[:1] == ["nextest"]:
         words = words[2:]
     elif words[:1] == ["test"]:

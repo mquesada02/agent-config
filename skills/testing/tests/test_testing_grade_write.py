@@ -415,6 +415,19 @@ class RustGroupModelTest(WriteGraderCase):
         self.assertTrue(self.selects("cargo nextest run --profile ci -j 2", "tests/foo.rs"))
         self.assertTrue(self.selects("CI=true cargo test --no-fail-fast -- --test-threads=2", "tests/foo.rs"))
 
+    def test_the_value_of_a_value_flag_of_the_entry_is_not_a_name_filter(self):
+        for command in (
+            "cargo nextest run --status-level all", "cargo nextest run --message-format oneline",
+            "cargo nextest run --cargo-profile release", "cargo nextest run --flaky-result fail",
+        ):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "tests/foo.rs"))
+
+    def test_a_toolchain_word_after_cargo_is_skipped(self):
+        self.assertTrue(self.selects("cargo +nightly test", "tests/foo.rs"))
+        self.assertTrue(self.selects("CI=true cargo +nightly nextest run --test it", "tests/it.rs"))
+        self.assertFalse(self.selects("cargo +nightly nextest run slow_", "tests/foo.rs"))
+
     def test_a_group_with_a_selector_that_is_not_a_test_target_selects_no_file(self):
         for command in (
             "cargo nextest run slow_", "cargo test -- --skip slow_", "cargo nextest run -p other",

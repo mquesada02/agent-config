@@ -573,6 +573,17 @@ class RustEntryTest(unittest.TestCase):
                     (body.startswith("Confirmed:") and "https://" in body) or body.startswith("Unconfirmed, not used:")
                 )
 
+    def test_the_value_flags_of_the_name_filter_row_are_the_value_flags_of_the_grader(self):
+        row = next(line for line in section(self.text, "## Commands") if line.startswith("| Name filter |"))
+        self.assertIn("value flags:", row)
+        listed = re.findall(r"`([^`]+)`", row.split("value flags:", 1)[1].split("|")[0])
+        tree = ast.parse(read(os.path.join(helper.SKILL, "scripts", "grade_testing_write.py")))
+        grader = next(
+            ast.literal_eval(node.value) for node in tree.body
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RUST_VALUE_FLAGS" for t in node.targets)
+        )
+        self.assertEqual(sorted(listed), sorted(grader))
+
     def test_the_list_fact_and_the_two_narrowing_facts_link_their_pages(self):
         facts = [line[2:] for line in section(self.text, "## Runner facts") if line.startswith("- ")]
         listing = [f for f in facts if f.startswith("Confirmed: `cargo nextest list`") or f.startswith("Confirmed: cargo nextest list")]
