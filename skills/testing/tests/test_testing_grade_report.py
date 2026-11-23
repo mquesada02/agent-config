@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -229,6 +230,41 @@ class BrokenReportTest(GradeCase):
         notes = "No reason line, checked anyway: ASSERT-01.\n"
         self.assert_pass(report(notes=notes))
 
+    def test_escaped_pipe_stays_in_its_cell(self):
+        rows = "| 1 | ASSERT-01 | a.test.ts:3 | Test `a \\| b` asserts nothing. | Add one. |\n"
+        self.assert_pass(report(critical=rows, required="", suggestion="", result="**Result: 1 critical, 0 required, 0 suggestions.**"))
+
+    def test_unescaped_pipe_makes_an_extra_cell(self):
+        rows = "| 1 | ASSERT-01 | a.test.ts:3 | Test `a | b` asserts nothing. | Add one. |\n"
+        text = report(critical=rows, required="", suggestion="", result="**Result: 1 critical, 0 required, 0 suggestions.**")
+        self.assert_fail(text, "tables")
+
+    def test_lone_pipe_line_in_a_table_is_ignored_without_a_traceback(self):
+        text = report(critical="| 1 | ASSERT-01 | a.test.ts:3 | x | y |\n|\n")
+        result = grade(text)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assert_pass(text)
+
+    def test_heading_other_than_two_hashes(self):
+        for heading in ("### Notes", "# testing review: again", "#Critical"):
+            with self.subTest(heading=heading):
+                self.assert_fail(report() + f"\n{heading}\n", "sections")
+
+    def test_note_line_after_a_table(self):
+        text = report(tail="## Approve\n\n" + APPROVE + "\n\nNot checked: RUN-04 (a).\n")
+        self.assertIn("after a table", self.assert_fail(text, "notes"))
+
+    def test_both_forms_of_the_fallback_line(self):
+        notes = (
+            "Detected for this run: groups. Run /testing setup to record them.\n"
+            "Rules file error: x (line 1). Every setting is detected for this run. Run /testing setup.\n"
+        )
+        self.assert_fail(report(notes=notes), "notes")
+
+    def test_id_in_line_a_with_a_table_row(self):
+        notes = "Disabled (reason recorded, not checked): ASSERT-01.\n"
+        self.assertIn("ASSERT-01 is in line (a)", self.assert_fail(report(notes=notes), "notes"))
+
 
 class CliTest(unittest.TestCase):
     def test_unreadable_report_is_exit_2(self):
@@ -238,6 +274,28 @@ class CliTest(unittest.TestCase):
     def test_no_argument_is_a_usage_error(self):
         result = subprocess.run([sys.executable, "-I", GRADER], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
+
+    def run_without_catalogue_source(self, intake_text):
+        repo = helper.Repo()
+        self.addCleanup(repo.close)
+        copy = os.path.join(repo.root, "grade_testing_report.py")
+        shutil.copy(GRADER, copy)
+        if intake_text is not None:
+            with open(os.path.join(repo.root, "intake.py"), "w", encoding="utf-8") as handle:
+                handle.write(intake_text)
+        result = subprocess.run([sys.executable, "-I", copy, "-"], input=report(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(len(result.stderr.strip().splitlines()), 1)
+
+    def test_missing_catalogue_source_is_exit_2(self):
+        self.run_without_catalogue_source(None)
+
+    def test_catalogue_source_without_catalog_is_exit_2(self):
+        self.run_without_catalogue_source("OTHER = 1\n")
+
+    def test_catalogue_source_with_a_syntax_error_is_exit_2(self):
+        self.run_without_catalogue_source("CATALOG = (\n")
 
     def test_report_from_a_path(self):
         repo = helper.Repo()

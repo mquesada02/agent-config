@@ -7,7 +7,7 @@ REPORT is a path, or - for stdin. Checks: title, summary, sections, tables, numb
 where, ids, severities, notes, approve.
 Output: one line "FAIL <check>: <message>" for each failed check (a passing check prints
 nothing), then a last line PASS or FAIL.
-Exit code: 0 pass, 1 fail, 2 usage error or unreadable report.
+Exit code: 0 pass, 1 fail, 2 usage error, unreadable report or unreadable catalogue source.
 The catalogue ids and severities come from the CATALOG constant of intake.py, which is read
 from its source (the script is never imported).
 """
@@ -39,14 +39,22 @@ ID_LIST_NOTES = ("a", "b", "c")
 
 
 def load_catalog():
-    with open(os.path.join(HERE, "intake.py"), encoding="utf-8") as handle:
-        tree = ast.parse(handle.read())
+    """The CATALOG constant of intake.py. Raises ValueError when the source cannot give it."""
+    path = os.path.join(HERE, "intake.py")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+    except (OSError, UnicodeDecodeError, SyntaxError) as error:
+        raise ValueError(f"cannot read {path}: {error}") from error
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == "CATALOG" for target in node.targets
         ):
-            return ast.literal_eval(node.value)
-    raise SystemExit("intake.py has no CATALOG constant")
+            try:
+                return ast.literal_eval(node.value)
+            except ValueError as error:
+                raise ValueError(f"{path} has a CATALOG constant that is not a literal") from error
+    raise ValueError(f"{path} has no CATALOG constant")
 
 
 def read_report(path):
@@ -56,8 +64,18 @@ def read_report(path):
         return handle.read()
 
 
+UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
+
+
 def split_row(line):
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    """The cells of a table row. An escaped pipe (backslash, pipe) stays inside its cell."""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    cells = UNESCAPED_PIPE.split(body)
+    if len(cells) > 1 and not cells[-1].strip():
+        cells.pop()
+    return [cell.strip() for cell in cells]
 
 
 def parse_table(lines, heading_index):
@@ -111,6 +129,10 @@ def grade(text, catalog):
     # sections: only the four known ## headings, and no flag or lock mark
     headings = [(i, line.strip()) for i, line in enumerate(lines) if line.strip().startswith("## ")]
     known = list(HEADINGS.values()) + [APPROVE_HEADING]
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#") and not stripped.startswith("## ") and i != title_at:
+            fail("sections", f"unknown heading: {stripped}")
     for _, heading in headings:
         if heading not in known:
             fail("sections", f"unknown section: {heading}")
@@ -182,6 +204,11 @@ def grade(text, catalog):
             prefix = next((p for p in prefixes if stripped.startswith(p)), None)
             if prefix:
                 note_lines.append((name, prefix, stripped))
+    for i in range(first_heading, len(lines)):
+        stripped = lines[i].strip()
+        for name, prefixes in NOTES:
+            if any(stripped.startswith(p) for p in prefixes):
+                fail("notes", f"note line ({name}) is after a table, not before the first section")
     names = [name for name, _, _ in note_lines]
     for name in dict.fromkeys(names):
         if names.count(name) > 1:
@@ -196,6 +223,9 @@ def grade(text, catalog):
     for rule, where in sorted(placed.items()):
         if len(where) > 1:
             fail("notes", f"{rule} is in more than one of the lines (a), (b), (c)")
+    for rule, where in sorted(placed.items()):
+        if "a" in where and rule in seen:
+            fail("notes", f"{rule} is in line (a), so it is not checked, but the report has a row for it")
 
     # approve: present and exact with at least one row, absent with zero rows
     total = sum(counts.values()) if counts is not None else sum(len(r) for r in rows.values())
@@ -224,7 +254,12 @@ def main(argv):
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read the report: {error}", file=sys.stderr)
         return 2
-    failures = grade(text, load_catalog())
+    try:
+        catalog = load_catalog()
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    failures = grade(text, catalog)
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))
     return 1 if failures else 0
 
