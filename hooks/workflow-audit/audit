@@ -2908,26 +2908,28 @@ def _worktree_path(arguments):
     """The path of the one `--worktree path:<absolute path>` option in the arguments of a dispatch, else None. The arguments are read as
     orca reads them: a value option takes the next word, so `--task --worktree path:/x` has no `--worktree` option. A second
     `--worktree`, a `--` (orca may read the words after it as positional words), an option outside the two lists below (it may change
-    where the worker runs, as `--on` does) and a path that is not absolute or has a character outside `RESEARCH_PATH` (a shell could
+    where the worker runs, as `--on` does), a value option with no value or with a value that starts with `-`, a positional word and a path that is not absolute or has a character outside `RESEARCH_PATH` (a shell could
     expand it) give None."""
     if "--" in arguments:
         return None
     found, position = [], 0
     while position < len(arguments):
         word = arguments[position]
-        if word == "--worktree":
-            found.append(arguments[position + 1] if position + 1 < len(arguments) else None)
+        if word == "--worktree" or word in RESEARCH_VALUE_OPTIONS:
+            # orca reads an option-looking word after a value option as an option (`--model --on srv` has a live `--on`)
+            if position + 1 >= len(arguments) or arguments[position + 1].startswith("-"):
+                return None
+            if word == "--worktree":
+                found.append(arguments[position + 1])
             position += 2
         elif word.startswith("--worktree="):
             found.append(word[len("--worktree="):])
             position += 1
-        elif word in RESEARCH_VALUE_OPTIONS:
-            position += 2
-        elif word in RESEARCH_FLAGS or not word.startswith("-"):
+        elif word in RESEARCH_FLAGS:
             position += 1
         else:
-            return None
-    if len(found) != 1 or found[0] is None or not found[0].startswith("path:"):
+            return None  # another option, or a positional word that the gate does not know
+    if len(found) != 1 or not found[0].startswith("path:"):
         return None
     path = found[0][len("path:"):]
     return path if RESEARCH_PATH.fullmatch(path) else None

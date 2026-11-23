@@ -135,6 +135,16 @@ class ResearchFailClosedTest(ResearchWorktreeCase):
                 with self.subTest(command=command):
                     self.assert_no_record(command)
 
+    def test_a_value_option_with_no_value_or_a_positional_word_is_denied(self):
+        # orca reads an option-looking word after a value option as an option, so `--on srv` could be live
+        path = self.worktree("research/x")
+        for command in (f"{WS} --model --on srv --worktree path:{path}", f"{WS} --task --on srv --worktree path:{path}",
+                        f"{WS} --worktree path:{path} --model --on srv", f"{WS} --worktree path:{path} --model",
+                        f"{WS} --model --worktree path:{path}", f"{WS} extra --worktree path:{path}", f"{WS} --worktree path:{path} extra",
+                        f"{WS} --worktree --on path:{path}"):
+            with self.subTest(command=command):
+                self.assert_no_record(command)
+
     def test_a_path_that_the_shell_can_expand_is_denied(self):
         # shlex.quote keeps the word literal, so only the character check can deny it: a bash expansion of the unquoted word would differ
         for number, name in enumerate(("w{a,b}", "w*", "w?", "w[ab]", "w'x'", 'w"x"', "w\\x", "w x", "w~x")):
