@@ -248,11 +248,23 @@ class S9Case(SafetyCase):
 class S9RmTest(S9Case):
     def test_recursive_rm_in_every_form_fails(self):
         self.assert_flagged(["rm -rf build", "rm -fr build", "rm -R build", "rm -r build", "rm --recursive build", "rm -f -r build",
-                             "rm build -r", "rm --rec build", "rm --r build", "rm -rv build", "/bin/rm -rf build", "git rm -r dir"])
+                             "rm build -r", "rm --rec build", "rm --r build", "rm -rv build", "/bin/rm -rf build"])
 
     def test_rm_behind_other_words_fails(self):
         self.assert_flagged(["sudo rm -rf build", "xargs rm -rf", "nohup rm -rf build", "find . -exec rm -rf {} +", "env A=1 rm -rf build",
                              "time rm -rf build", "A=1 rm -rf build", "git rm -rf dir"])
+
+    def test_a_recursive_git_rm_without_force_passes(self):
+        # Section 13: git refuses to delete a file with uncommitted changes, so the deleted files stay in the git history.
+        self.assert_clean(["git rm -r dir", "git rm -r -q dir", "git -C repo rm -r dir", "git rm -rq dir",
+                           "git rm -r -- -f", "A=1 git rm -r dir", "git -c a=b rm -r --cached dir"])
+
+    def test_a_forced_recursive_git_rm_fails(self):
+        self.assert_flagged(["git rm -rf dir", "git rm -fr dir", "git rm -r -f dir", "git rm -r --force dir", "git rm -r --forc dir",
+                             "git -C repo rm -rqf dir", "git rm -f dir -r"])
+
+    def test_rm_that_is_no_git_subcommand_still_fails(self):
+        self.assert_flagged(["git status && rm -r dir", "xargs git rm -r dir", "git -C rm rm -rf dir", "git grep x | rm -r dir"])
 
     def test_rm_in_a_later_segment_fails(self):
         self.assert_flagged(["ls && rm -rf x", "ls; rm -rf x", "ls | rm -rf x", "(rm -rf x)", "sleep 1 & rm -rf x", "ls || rm -rf x",

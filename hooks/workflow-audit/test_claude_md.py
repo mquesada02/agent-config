@@ -413,8 +413,13 @@ class WorktreeCleanupRuleTest(RuleTextCase):
         self.assertGreater(paragraph.index(self.FINISH_FIRST), paragraph.index(self.COMMAND))
 
     def test_section_thirteen_names_the_command_as_the_only_exception_and_keeps_the_user_overrides_out(self):
-        self.assert_in(section(read(ROOT_CLAUDE_MD), 13), "the only exception",
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 13), "the only exceptions to this rule",
                        "the user's `!` overrides are user actions, not session exceptions")
+
+    def test_section_thirteen_allows_git_rm_r_without_force(self):
+        """Issue #979: a tracked folder is deleted with `git rm -r` without `-f`, so every deleted file stays in the git history."""
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 13), "use `git rm -r <path>` without `-f` or `--force`",
+                       "git refuses to delete a file with uncommitted changes")
 
 
 class DockerCleanupRuleTest(RuleTextCase):

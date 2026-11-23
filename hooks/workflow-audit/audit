@@ -136,6 +136,7 @@ ARGUMENT_COMMANDS = frozenset(("rm", "docker", "eval")) | SHELLS  # the words wh
 SHELL_COMMAND_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 MAX_SHELL_DEPTH = 3
 RM_RECURSIVE_OPTION = re.compile(r"-[fiIdv]*[rR][fiIrRdv]*")  # only letters that are options of rm, so that find's -regex is not one
+GIT_RM_SHORT_OPTIONS = re.compile(r"-[fnrq]+")  # the short options of `git rm`, alone or in a cluster
 MAX_WORKERS = 2
 VALUE_LIMIT = 20
 # The base name of a runner -> its worker flags. A runner in SUBCOMMAND_RUNNERS counts when its subcommand is `test`.
@@ -1972,6 +1973,28 @@ def _recursive_rm(arguments):
     return False
 
 
+def _forced_recursive_git_rm(arguments):
+    """Whether `git rm` with these arguments is recursive and forced. CLAUDE.md section 13 allows `git rm -r` without `-f`: git then
+    refuses to delete a file with uncommitted changes, so every deleted file stays in the git history."""
+    recursive = forced = False
+    for word in arguments:
+        if word == "--":
+            break
+        if GIT_RM_SHORT_OPTIONS.fullmatch(word):
+            recursive = recursive or "r" in word
+            forced = forced or "f" in word
+        elif word.startswith("--f") and "--force".startswith(word):
+            forced = True
+    return recursive and forced
+
+
+def _is_git_rm(words, index):
+    """Whether the `rm` word at `index` of the segment is the subcommand of a `git` command."""
+    rest = _git_command(words)
+    offset = len(words) - len(_command_words(words))
+    return bool(rest) and rest[0][1] == "rm" and rest[0][0] + offset == index
+
+
 def _few_workers(value):
     return re.fullmatch(r"[0-9]+", value) is not None and value.lstrip("0") in ("", "1", "2")
 
@@ -2031,7 +2054,7 @@ def _segment_problems(words, depth):
         if name not in ARGUMENT_COMMANDS:
             continue
         arguments = words[index + 1:]
-        if name == "rm" and _recursive_rm(arguments):
+        if name == "rm" and (_forced_recursive_git_rm(arguments) if _is_git_rm(words, index) else _recursive_rm(arguments)):
             found.append("recursive rm")
         elif name == "docker" and "prune" in arguments:
             found.append("docker prune")
