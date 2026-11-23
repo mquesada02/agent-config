@@ -141,9 +141,48 @@ class MixedReportGraderTest(unittest.TestCase):
         code, out, _ = self.grade(text, "--disabled", "GEN-10", "PG-06")
         self.assertEqual(code, 1)
 
-    def test_a_part_with_no_disabled_id_gets_no_disabled_check(self):
+    def test_a_part_with_no_disabled_id_and_no_disabled_line_passes(self):
         text = general_part(extra=["Disabled rules: GEN-10."]) + PG_REPORT
         self.assertEqual(self.grade(text, "--disabled", "GEN-10")[:2], (0, ["PASS"]))
+
+    def test_a_disabled_line_in_a_part_with_no_disabled_id_fails(self):
+        stray_general = general_part(extra=["Disabled rules: GEN-01."]) + PG_REPORT.replace(
+            "**Result: 0 critical, 0 required, 1 suggestion.**",
+            "**Result: 0 critical, 0 required, 1 suggestion.**\nDisabled rules: PG-10.")
+        stray_pg = general_part(extra=["Disabled rules: GEN-10."]) + PG_REPORT.replace(
+            "**Result: 0 critical, 0 required, 1 suggestion.**",
+            "**Result: 0 critical, 0 required, 1 suggestion.**\nDisabled rules: PG-10.")
+        for text, flag in ((stray_general, "PG-10"), (stray_pg, "GEN-10")):
+            with self.subTest(flag=flag):
+                code, out, _ = self.grade(text, "--disabled", flag)
+                self.assertEqual(code, 1, out)
+                self.assertTrue(any(line.startswith("FAIL disabled:") for line in out), out)
+
+    def test_no_disabled_flag_checks_no_part(self):
+        text = general_part(extra=["Disabled rules: GEN-01."]) + PG_REPORT
+        self.assertEqual(self.grade(text)[:2], (0, ["PASS"]))
+
+
+class GeneralSourcesTest(unittest.TestCase):
+    def test_a_module_with_no_sources_heading_is_an_error(self):
+        sys.path.insert(0, GRADERS)
+        try:
+            import grade_report
+        finally:
+            sys.path.remove(GRADERS)
+        with tempfile.TemporaryDirectory() as folder:
+            module = os.path.join(folder, "general.md")
+            with open(module, "w", encoding="utf-8") as handle:
+                handle.write("# General\n\n## Rules\n\n### GEN-01\n\n- **Title:** A rule\n")
+            saved = grade_report.GENERAL_MODULE
+            grade_report.GENERAL_MODULE = module
+            grade_report.general_sources.cache_clear()
+            try:
+                with self.assertRaises(ValueError):
+                    grade_report.general_sources()
+            finally:
+                grade_report.GENERAL_MODULE = saved
+                grade_report.general_sources.cache_clear()
 
 
 class PostgresqlReportUnchangedTest(unittest.TestCase):
@@ -207,6 +246,29 @@ class EvalResultsReportKeyTest(unittest.TestCase):
     def test_a_general_report_fails_with_no_key(self):
         code, out, _ = self.grade("c", {"expect": ["GEN-08"], "forbid": []}, general_part())
         self.assertEqual(code, 1)
+
+    def test_a_report_grader_that_cannot_grade_is_a_failure(self):
+        sys.path.insert(0, GRADERS)
+        try:
+            import grade_eval_results
+        finally:
+            sys.path.remove(GRADERS)
+        real = grade_eval_results.run_grader
+
+        def fake(script, args, stdin=None):
+            if script == "grade_report.py":
+                return 2, [], "the general module has no ## Sources section"
+            return real(script, args, stdin)
+
+        with tempfile.TemporaryDirectory() as root:
+            trace = self.make_case(root, "c", {"expect": [], "forbid": []}, general_part())
+            grade_eval_results.run_grader = fake
+            try:
+                lines = grade_eval_results.grade_run("c", 1, trace, {"expect": ["GEN-08"], "forbid": [],
+                                                                     "report": "general"})
+            finally:
+                grade_eval_results.run_grader = real
+        self.assertTrue(any(line.startswith("FAIL c#1 grade_report.py:") and "Sources" in line for line in lines), lines)
 
     def test_an_unknown_report_value_gives_exit_code_2(self):
         code, _, err = self.grade("c", {"expect": [], "forbid": [], "report": "gneral"}, general_part())
