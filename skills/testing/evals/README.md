@@ -78,6 +78,9 @@ Each folder holds one case:
 | `write-no-rules-file` | The fallback line is written once and `/testing setup` is named once. |
 | `write-malformed-rules-file` | The rules file error is named once with its line. |
 | `write-go-mod` | A repo with only a `go.mod`. Write uses the general file only (no entry is read), places the tests at the named path, and reports `not run` because no command is known. |
+| `write-empty-scope` | A repo with no product file and no named path: the report is the empty-scope report. Grade the saved report with `grade_testing_write.py <report file>` alone (it has no test file for the repo checks). |
+| `write-failed-intake` | The named path `/etc/hosts` is outside the repo root, so intake exits with code 2: the report is the failed-intake report. Grade the saved report with `grade_testing_write.py <report file>` alone. |
+| `write-kept-failing` | The product file imports a module that does not exist, so the test file cannot load. The failure names no test case: after 2 fix tries the report lists `(file)` in `## Kept failing`. |
 | `rs-01-doc-tests-skipped` | Nextest is the runner, a library has doc tests, a doc command is recorded and no group runs doc tests: review gives one `RS-01` row. |
 | `rs-01-doc-group-present` | The same repo with a group whose command is `cargo test --doc`: no `RS-01` row. |
 | `rs-assert-03-insta-update` | The single-run command sets `INSTA_UPDATE=always` and the snapshot holds a timestamp: `ASSERT-03`. Static-only. |

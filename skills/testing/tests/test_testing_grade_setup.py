@@ -1,9 +1,11 @@
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import helper_testing_rules as helper
 
@@ -157,6 +159,17 @@ class ExpectationTest(GradeSetupCase):
         self.assertIn("FAIL intake:", done.stdout)
         self.assertEqual(done.stdout.strip().splitlines()[-1], "FAIL")
         self.assertNotIn("Traceback", done.stderr)
+
+    def test_a_read_failure_of_the_grader_gives_a_fail_line_when_intake_is_clean(self):
+        self.repo.write(helper.doc(helper.FULL_BLOCK))
+        spec = importlib.util.spec_from_file_location("grade_testing_setup", GRADER)
+        grader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(grader)
+        self.assertEqual(grader.grade(self.repo.root, {}, None), [])
+        with mock.patch.object(grader, "read_lines", side_effect=OSError("gone")):
+            failures = grader.grade(self.repo.root, {"absent": ["small_ms"]}, None)
+        self.assertEqual(len(failures), 1)
+        self.assertTrue(failures[0].startswith("FAIL read:"), failures)
 
     def test_a_missing_repo_folder_gives_a_fail_line_and_a_failing_exit_code(self):
         done = self.run_grader(repo=os.path.join(self.repo.root, "missing"))
