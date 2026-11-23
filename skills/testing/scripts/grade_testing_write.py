@@ -253,11 +253,11 @@ def check_report(text):
             held = [n.strip() for n in (match.group(2) or "").split(", ") if n.strip()]
         if len(commands) == 1 and commands[0] == "Command: none" and word in ("pass", "fail"):
             fail("command", f"{path}: Command: none needs Run result: not run, found {word}")
+        new_names = [c[0] for c in rows if c]
         for name in held:
-            is_new = name in [c[0] for c in rows if c]
-            if name.endswith(EXISTING) and name[:-len(EXISTING)] in [c[0] for c in rows if c]:
+            if name.endswith(EXISTING) and name[:-len(EXISTING)] in new_names:
                 fail("run result", f"{path}: {name!r} has the suffix {EXISTING.strip()!r} but is a new test")
-            elif not (is_new or name.endswith(EXISTING) or name == path or re.fullmatch(r"(exit code )?-?\d+", name)):
+            elif not (name in new_names or name.endswith(EXISTING) or name == path or re.fullmatch(r"(exit code )?-?\d+", name)):
                 fail("run result", f"{path}: the fail result names {name!r}, which is no row, existing test or file path")
         model["files"][path] = {
             "rows": rows,
@@ -268,7 +268,8 @@ def check_report(text):
 
     # Found bugs and Kept failing
     bug_rows, kept_rows = [], []
-    stray_lines((bug_at or []) + (kept_at or []), "a bug or kept failing section: ", fail, prefixes=("|",))
+    stray_lines(bug_at or [], "Found bugs: ", fail, prefixes=("|",))
+    stray_lines(kept_at or [], "Kept failing: ", fail, prefixes=("|",))
     if bug_at is not None:
         header, bug_rows = parse_table(bug_at)
         if header != BUG_COLUMNS:
@@ -319,7 +320,11 @@ def check_report(text):
         fail("kept failing", f"{test}: in both Found bugs and Kept failing for {file}")
 
     # No group line: present exactly when a row has Group none
-    any_none = any(len(c) == len(FILE_COLUMNS) and c[4] == "none" for e in model["files"].values() for c in e["rows"])
+    none_languages = {
+        LANGUAGES.get(os.path.splitext(path)[1], "general") for path, entry in model["files"].items()
+        if any(len(c) == len(FILE_COLUMNS) and c[4] == "none" for c in entry["rows"])
+    }
+    any_none = bool(none_languages)
     if any_none and "b" not in names:
         fail("notes", "a test has Group none, but the report has no No group line")
     if not any_none and "b" in names:
@@ -327,10 +332,6 @@ def check_report(text):
     no_group = next((line for name, line in notes if name == "b"), None)
     if any_none and no_group is not None and NO_GROUP.match(no_group):
         named = set(no_group[len("No group: "):].split(". ")[0].split(", "))
-        none_languages = {
-            LANGUAGES.get(os.path.splitext(path)[1], "general") for path, entry in model["files"].items()
-            if any(len(c) == len(FILE_COLUMNS) and c[4] == "none" for c in entry["rows"])
-        }
         if named != none_languages:
             fail("notes", f"the No group line names {sorted(named)}, the tests with Group none are in {sorted(none_languages)}")
 

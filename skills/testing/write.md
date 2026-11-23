@@ -29,7 +29,7 @@ Put each test case at its test location (see "Test location"), under the rule at
 
 ## Step 4: Self-check
 
-Read each new test case against the checked rule text of [general.md](general.md): `## Rules`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed in step 2, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", `GRP-01` for a test location that no readable group selects, and `RS-01` and `TS-01` (repository settings, not test-case rules: write does not change the repo command).
+Read each new test case against the checked rule text of [general.md](general.md): `## Rules`, `## Sizes and groups`, `## Doubles and seams`, `## Parallel safety` and `## Flakiness`. Change the test case until none of those rules would flag it. The sections `## Kinds of tests`, `## Test points` and `## Design topics` are followed while you write, not flagged. The exceptions are `GRP-01` in the no-group states of "Group and size", `GRP-01` for a test location that no readable group selects, and `RS-01` and `TS-01` (repository settings, not test-case rules: write does not change the repo command).
 
 ## Step 5: Run
 
