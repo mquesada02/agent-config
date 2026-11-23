@@ -138,7 +138,7 @@ The loop session is the session that runs this loop: the main section 7 session,
 This loop differs from section 6 on purpose in two ways. It has no `/simplify`: step (b) only applies the recorded Minor findings. It has no verifier subagent: the quoted line is the evidence, and the loop session confirms it. So the loop session confirms the findings that it raises in (c) itself.
 4. /mattpocock-skills:to-tickets after creating the general spec.
 4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
-The step 3 and step 4.1 plan-review loops run in one worktree, because the pre-dispatch audit reads only the ledger of the worktree that it names. The cleanup of that worktree waits until the pre-dispatch audit passes.
+The step 3 and step 4.1 plan-review loops run in one worktree, because the audit reads only the ledger of the worktree that it names. The cleanup of that worktree waits until the pre-dispatch audit passes.
 5. For each one of the created tickets, create its worktree as section 10 says (`orca worktree create --branch <type>/<description> --parent-worktree <your own worktree>`), then dispatch an Orca worker (see section 11) into it with `worker-start --worktree path:<that path>`. The worker executes each of these steps:
 5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
