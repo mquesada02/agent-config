@@ -2297,6 +2297,9 @@ def _pre_dispatch(argv):
         os.close(dir_fd)
     for item in items:
         print(item["id"], item["result"])
+        if item["result"] == "fail":
+            for line in item["evidence"].splitlines():
+                print("  " + line)
     print("result", result)
     return 0 if result == "pass" else 1
 

@@ -122,6 +122,13 @@ class SectionSevenTest(RuleTextCase):
                        "a plain `worker-start --retry-of` for a worker handover is exempt",
                        "A context-handoff successor of the main session runs the audit again before its next dispatch")
 
+    def test_the_step_3_and_step_4_1_loops_share_one_worktree_until_the_pre_dispatch_audit_passes(self):
+        rule = "The step 3 and step 4.1 plan-review loops run in one worktree"
+        self.assert_in(self.text, rule, "The cleanup of that worktree waits until the pre-dispatch audit passes.")
+        self.assertLess(self.text.index("4.1. Review the tickets"), self.text.index(rule))
+        self.assertLess(self.text.index(rule), self.text.index("5. For each one of the created tickets"))
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 8), "the worktree that holds the step 3 and step 4.1 plan-review ledger stays until the pre-dispatch audit passes (section 7)")
+
     def test_the_plan_review_loops_use_their_loop_names_in_the_ledger(self):
         self.assert_in(self.text, "`plan-review-3`, `plan-review-4.1` or `plan-review-5.3`")
 
