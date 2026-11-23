@@ -506,6 +506,7 @@ class RustEntryTest(unittest.TestCase):
 
     def test_the_value_flags_of_the_name_filter_row_are_the_value_flags_of_the_grader(self):
         row = next(line for line in section(self.text, "## Commands") if line.startswith("| Name filter |"))
+        self.assertIn("value flags:", row)
         listed = re.findall(r"`([^`]+)`", row.split("value flags:", 1)[1].split("|")[0])
         tree = ast.parse(read(os.path.join(helper.SKILL, "scripts", "grade_testing_write.py")))
         grader = next(
