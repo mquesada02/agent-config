@@ -10,6 +10,7 @@ set (the JSON is still printed), 2 for a usage error.
 import collections
 import json
 import os
+import posixpath
 import re
 import sys
 import tomllib
@@ -96,6 +97,14 @@ def disabled_entries(settings):
         else:
             unknown.append(entry if isinstance(entry, str) else json.dumps(entry, default=str))
     return unique(candidates), unique(unknown)
+
+
+def clean_folder(folder):
+    """The folder of a `paths` entry in clean form, or None when it is not valid."""
+    folder = folder.strip()
+    if not folder or folder.startswith("/") or ".." in folder.split("/"):
+        return None
+    return posixpath.normpath(folder)
 
 
 def lowercase_path_entry(entry):

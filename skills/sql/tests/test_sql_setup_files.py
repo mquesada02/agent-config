@@ -838,6 +838,8 @@ class EngineTest(FilesCase):
             {"name": "mysql", "paths": "db/a=mysql"}, {"name": "mysql", "paths": ["db/a"]},
             {"name": "mysql", "paths": ["=mysql"]}, {"name": "mysql", "paths": ["db/a="]},
             {"name": "mysql", "paths": [" =mysql"]}, {"name": "mysql", "paths": [3]}, "mysql",
+            {"name": "mysql", "paths": ["/db=mysql"]}, {"name": "mysql", "paths": ["../db=mysql"]},
+            {"name": "mysql", "paths": ["db/../x=mysql"]},
         ):
             with self.subTest(engine=engine):
                 before = self.snapshot()
