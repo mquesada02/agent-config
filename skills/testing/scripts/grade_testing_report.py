@@ -51,9 +51,12 @@ def load_catalog():
             isinstance(target, ast.Name) and target.id == "CATALOG" for target in node.targets
         ):
             try:
-                return ast.literal_eval(node.value)
-            except ValueError as error:
+                catalog = ast.literal_eval(node.value)
+            except (ValueError, TypeError, RecursionError, MemoryError) as error:
                 raise ValueError(f"{path} has a CATALOG constant that is not a literal") from error
+            if not isinstance(catalog, dict):
+                raise ValueError(f"{path} has a CATALOG constant that is not a dict")
+            return catalog
     raise ValueError(f"{path} has no CATALOG constant")
 
 
