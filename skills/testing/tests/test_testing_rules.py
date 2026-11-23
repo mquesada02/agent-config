@@ -194,6 +194,15 @@ class RulesPartTest(unittest.TestCase):
         rules, _, code = helper.run_json(self.repo.root)
         self.assert_error(rules, code, None, "cannot read docs/agents/testing.md")
 
+    def test_dangling_symlink(self):
+        path = os.path.join(self.repo.root, "docs", "agents", "testing.md")
+        os.makedirs(os.path.dirname(path))
+        os.symlink(os.path.join(self.repo.root, "no-such-target.md"), path)
+        rules, _, code = helper.run_json(self.repo.root)
+        self.assert_error(rules, code, None, "cannot read docs/agents/testing.md")
+        self.assertTrue(rules["found"])
+        self.assertEqual(rules["missing_sections"], helper.SECTIONS)
+
     def test_non_utf8_file(self):
         rules, _, code = self.check(b"\xff\xfe\x00 not utf-8", raw=True)
         self.assert_error(rules, code, None, "cannot read docs/agents/testing.md")

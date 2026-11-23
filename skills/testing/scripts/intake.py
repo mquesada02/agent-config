@@ -53,6 +53,7 @@ def unique(items):
 
 
 def result(found, settings=None, missing=None, without_reason=None, unknown=None, error=None):
+    # An absent `missing` means all six sections are missing: no file, no toml block or a read error.
     return {
         "found": found,
         "settings": settings or {},
