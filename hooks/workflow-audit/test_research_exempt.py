@@ -15,6 +15,9 @@ class ResearchWorktreeCase(DispatchGateCase):
     def start(self, path, flag="--worktree path:"):
         return f"{WS} {flag}{path}"
 
+    def assert_no_record(self, command):
+        self.assert_denied(self.gate(command), "no pre-dispatch record")
+
 
 class ResearchExemptionTest(ResearchWorktreeCase):
     def test_a_research_worktree_is_allowed_with_no_record(self):
@@ -39,7 +42,7 @@ class ResearchExemptionTest(ResearchWorktreeCase):
     def test_a_worktree_on_another_branch_is_denied(self):
         for branch in ("feat/x", "fix/research", "research-x", "researchx/y", "research/a/b", "research/Bad"):
             with self.subTest(branch=branch):
-                self.assert_denied(self.gate(self.start(self.worktree(branch))), "no pre-dispatch record")
+                self.assert_no_record(self.start(self.worktree(branch)))
 
     def test_a_research_worktree_with_a_passing_record_is_still_allowed(self):
         self.pd_record()
@@ -47,9 +50,6 @@ class ResearchExemptionTest(ResearchWorktreeCase):
 
 
 class ResearchFailClosedTest(ResearchWorktreeCase):
-    def assert_no_record(self, command):
-        self.assert_denied(self.gate(command), "no pre-dispatch record")
-
     def test_a_path_whose_branch_cannot_be_read_is_denied(self):
         detached = self.worktree("research/x")
         self.git("checkout", "--detach", cwd=detached)

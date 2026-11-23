@@ -2891,8 +2891,9 @@ def _is_gated_pr_create(segment):
     return head is not None and (not _is_help(_arguments(segment, head)) or any(REDIRECTION.fullmatch(word) for word in head))
 
 
+# The research branch name of hooks/worktree-branch/check_branch_name.py (keep the two in step).
 RESEARCH_BRANCH = re.compile(r"research/[a-z0-9]+(?:[.-][a-z0-9]+)*")
-# An absolute path of word characters only: bash expands no other word (no brace, glob, tilde, quote or `$`), so the gate and orca read one path.
+# An absolute path of word characters and `. + @ % / -` only: bash expands no other word (no brace, glob, tilde, quote or `$`), so the gate and orca read one path.
 RESEARCH_PATH = re.compile(r"/[\w.+@%/-]*")
 
 
@@ -2928,10 +2929,10 @@ def _is_research_worktree(path):
         branch = _git_output(path, "symbolic-ref", "--short", "-q", "HEAD", no_result=(1,))
     except Exception:
         return False
-    return bool(top) and os.path.realpath(top) == os.path.realpath(path) and bool(branch) and bool(RESEARCH_BRANCH.fullmatch(branch))
+    return bool(top and branch and os.path.realpath(top) == os.path.realpath(path) and RESEARCH_BRANCH.fullmatch(branch))
 
 
-def _is_dispatch(segment, alone=False):
+def _is_dispatch(segment, alone):
     """A `worker-start` that needs a pre-dispatch record: one that is not a help-only command, has no `--retry-of` (the
     flag at any word position), which can only restart a Task that was dispatched before, and does not start a worker in a worktree on
     a `research/*` branch (a map in its research phase has no plan-review loops to audit; the branch reaches the base branch only through
