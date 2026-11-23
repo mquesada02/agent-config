@@ -357,6 +357,50 @@ class EntryAndTextRulesTest(unittest.TestCase):
         self.assertTrue(adapted_violations("Adapted from (MIT)."))
 
 
+CASE_NAME_ID = re.compile(r"(?:^|-)([a-z]+)-(\d\d)(?=-|$)")
+CASE_NAME_AREAS = {"assert": "ASSERT", "run": "RUN", "par": "PAR", "dbl": "DBL", "grp": "GRP", "rs": "RS",
+                   "ts": "TS", "jest": "TS", "node": "TS"}
+GRADER_PATTERN = re.compile(r"^pattern: '(.*)'$", re.MULTILINE)
+GRADER_FLAGS = re.compile(r"^flags: (\w+)$", re.MULTILINE)
+
+
+def case_name_ids(name):
+    """The rule ids that a case folder name carries, as `<area>-<nn>` (`jest` and `node` stand for `TS`).
+    A name without such a part names a scenario, not a rule: the id check skips it."""
+    return {f"{CASE_NAME_AREAS[area]}-{number}" for area, number in CASE_NAME_ID.findall(name)
+            if area in CASE_NAME_AREAS}
+
+
+def grader_row_matches(text, rule_id):
+    """Whether the regex of an `expect-<id>.md` grader matches a report row of that id."""
+    pattern = GRADER_PATTERN.search(text)
+    if not pattern:
+        return False
+    flags = GRADER_FLAGS.search(text)
+    row = f"| 1 | {rule_id} | a.py:1 | problem | fix |"
+    return bool(re.search(pattern.group(1).replace("''", "'"), row, re.MULTILINE if flags and "m" in flags.group(1) else 0))
+
+
+def case_id_violations(name, expectation, graders, catalogue):
+    """What a review case gets wrong about its ids: a folder name id that `expect` and `forbid` lack, and an
+    `expect-<id>.md` grader of an id that is not expected, that misses a row of its id or that matches a row of
+    another id. `graders` maps a grader file name to its text."""
+    violations = [f"folder name id {rule_id} is in neither expect nor forbid" for rule_id in sorted(case_name_ids(name))
+                  if rule_id not in expectation["expect"] + expectation["forbid"]]
+    for file_name, text in sorted(graders.items()):
+        found = re.fullmatch(r"expect-(.+)\.md", file_name)
+        if not found:
+            continue
+        rule_id = found.group(1)
+        if rule_id not in expectation["expect"]:
+            violations.append(f"{file_name}: {rule_id} is not in expect")
+        if not grader_row_matches(text, rule_id):
+            violations.append(f"{file_name}: the pattern does not match a row of {rule_id}")
+        violations += [f"{file_name}: the pattern matches a row of {other}" for other in sorted(catalogue)
+                       if other != rule_id and grader_row_matches(text, other)]
+    return violations
+
+
 class EvalCaseTest(unittest.TestCase):
     def cases(self):
         self.assertTrue(os.path.isdir(EVALS), "skills/testing/evals does not exist")
@@ -398,6 +442,30 @@ class EvalCaseTest(unittest.TestCase):
 
     def test_evals_readme_exists(self):
         self.assertTrue(os.path.isfile(os.path.join(EVALS, "README.md")))
+
+    def test_each_case_folder_name_and_expect_grader_match_the_ids_of_the_case(self):
+        catalogue = {row[0] for row in catalogue_rows(read(GENERAL_MD))}
+        for case in self.cases():
+            folder = os.path.join(EVALS, case, "graders")
+            graders = {n: read(os.path.join(folder, n)) for n in sorted(os.listdir(folder))}
+            expectation = json.loads(read(os.path.join(EVALS, case, "expect.json")))
+            with self.subTest(case):
+                self.assertEqual(case_id_violations(case, expectation, graders, catalogue), [])
+
+    def test_case_id_check_on_samples(self):
+        catalogue = {"RUN-01", "RUN-02", "TS-01"}
+        good = "---\ntype: regex\npattern: '^\\|\\s*\\d+\\s*\\|\\s*RUN-01\\s*\\|'\nflags: m\n---\n"
+        expectation = {"expect": ["RUN-01"], "forbid": []}
+        self.assertEqual(case_name_ids("jest-run-01-retry"), {"RUN-01"})
+        self.assertEqual(case_name_ids("node-01-watch-script"), {"TS-01"})
+        self.assertEqual(case_name_ids("disabled-no-reason"), set())
+        self.assertEqual(case_id_violations("run-01-x", expectation, {"expect-RUN-01.md": good}, catalogue), [])
+        self.assertTrue(case_id_violations("run-02-x", expectation, {"expect-RUN-01.md": good}, catalogue))
+        wrong = good.replace("RUN-01", "RUN-02")
+        self.assertTrue(case_id_violations("run-01-x", expectation, {"expect-RUN-01.md": wrong}, catalogue))
+        loose = good.replace("RUN-01", "RUN-0\\d")
+        self.assertTrue(case_id_violations("run-01-x", expectation, {"expect-RUN-01.md": loose}, catalogue))
+        self.assertTrue(case_id_violations("run-01-x", expectation, {"expect-RUN-02.md": wrong}, catalogue))
 
 
 RUNNABLE_IDS = RULE_TEXT_IDS[4:]
