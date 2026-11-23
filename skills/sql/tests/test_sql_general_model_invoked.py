@@ -86,8 +86,11 @@ class ModelInvokedPathTest(unittest.TestCase):
         self.assertTrue(found, "no other-engine bullet")
         self.assertIn("- Engine `postgres`", before)
         self.assertNotIn("reader script", before)
-        self.assertIn("reader script", after)
-        self.assertIn("Do not apply a GEN id that the rules file disables with a reason.", after)
+        bullet, found, every_engine = after.partition("These rules hold for every engine:")
+        self.assertTrue(found, "no every-engine list")
+        self.assertNotIn("reader script", every_engine)
+        self.assertIn("Load the rules file with the reader script", bullet)
+        self.assertIn("Do not apply a GEN id that the rules file disables with a reason.", bullet)
 
     def test_the_section_runs_no_extractor_and_loads_no_source_module_for_a_fallback_file(self):
         self.assertRegex(self.body, r"(?i)no extractor")
