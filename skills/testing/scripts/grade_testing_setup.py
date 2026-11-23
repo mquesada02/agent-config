@@ -14,7 +14,8 @@ Usage: grade_testing_setup.py --repo <folder> --expect <json file> [--before <ru
 --before is the rules file as it was before the run. Its settings come from intake.py run on a
 temporary root that holds it.
 
-Checks, in this order: intake (exit code 0, rules.found, rules.error null, no missing_sections
+Checks, in this order: read (the grader reads the rules file itself, and a failed read is a FAIL
+whatever intake.py reported), intake (exit code 0, rules.found, rules.error null, no missing_sections
 outside allow_missing, no unknown_ids, no disabled_without_reason), set, unset, contains, absent,
 and with --before: settings (every leaf of the before settings that is not a set path is equal in
 the new file; a list is a leaf) and prose (every non-blank line outside the first toml block of the
@@ -142,10 +143,12 @@ def grade(repo, expect, before):
     failures = []
     data, code, stderr = run_intake(repo)
     path = os.path.join(repo, RULES_FILE)
+    read_failed = False
     try:
         lines = read_lines(path) if os.path.isfile(path) else [""]
-    except (OSError, ValueError):
-        lines = [""]  # intake.py reports the same file as rules.error
+    except (OSError, ValueError) as error:
+        lines, read_failed = [""], True
+        failures.append(f"FAIL read: cannot read the rules file: {error}")
     text = "\n".join(lines)
     problems = []
     if data is None:
@@ -169,7 +172,7 @@ def grade(repo, expect, before):
     for needle in expect.get("absent", []):
         if needle in text:
             failures.append(f"FAIL absent: the file holds {needle!r}")
-    if problems:
+    if problems or read_failed:
         return failures
 
     settings = data["rules"]["settings"]
