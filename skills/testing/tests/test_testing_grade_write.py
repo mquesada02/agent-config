@@ -471,9 +471,71 @@ class VitestGroupModelTest(GroupModelBase):
         self.assertTrue(self.selects("CI=true npx vitest run --maxWorkers 2 --reporter=verbose", "tests/a.test.ts"))
         self.assertTrue(self.selects("npx vitest run --maxWorkers=2", "tests/a.test.ts"))
 
-    def test_a_project_name_filter_or_unreadable_token_selects_no_file(self):
+    def test_a_project_token_narrows_nothing_because_the_grader_cannot_read_the_config(self):
+        for command in ("npx vitest run --project unit", "npx vitest run -p unit", "npx vitest run --project=unit"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "src/price.test.ts"))
+        self.assertFalse(self.selects("npx vitest run --project unit src/other", "src/price.test.ts"))
+
+    def test_the_subcommand_is_only_the_first_word_after_the_exec_form(self):
+        for command in ("npx vitest --project list --run src", "npx vitest --reporter list --run src"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "src/price.test.ts"))
+        self.assertFalse(self.selects("npx vitest list --run src", "src/price.test.ts"))
+
+    def test_a_later_word_equal_to_a_subcommand_is_an_operand(self):
+        self.assertFalse(self.selects("npx vitest --run run", "src/deep/c.test.ts"))
+
+    def test_a_bare_double_dash_is_dropped(self):
+        self.assertTrue(self.selects("npx vitest run -- src/price", "src/price.test.ts"))
+        self.assertTrue(self.selects("npx vitest run --", "src/price.test.ts"))
+
+    def test_a_leading_dot_slash_of_an_operand_is_dropped(self):
+        self.assertTrue(self.selects("npx vitest run ./src/price", "src/price.test.ts"))
+        self.assertFalse(self.selects("npx vitest run ./src/other", "src/price.test.ts"))
+
+    def test_a_boolean_flag_with_an_inline_value_is_not_an_operand(self):
+        for command in ("npx vitest run --silent=false", "npx vitest run --coverage=false src"):
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "src/price.test.ts"))
+
+    def test_a_launcher_form_that_is_not_an_exec_form_is_a_wrapper(self):
         for command in (
-            "npx vitest run --project unit", "npx vitest run -p unit", "npx vitest run -t slow",
+            "npx -y vitest run", "npx --no-install vitest run", "pnpm vitest run", "CI=true npm exec vitest run",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_every_exec_form_of_the_entry_narrows_by_path(self):
+        for prefix in ("npx vitest", "pnpm exec vitest", "yarn vitest", "bunx vitest"):
+            command = prefix + " run src/price"
+            with self.subTest(command):
+                self.assertTrue(self.selects(command, "src/price.test.ts"))
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
+
+    def test_a_shell_marker_in_an_exec_form_makes_a_wrapper(self):
+        for command in (
+            "npx vitest run src/price && tsc", "npx vitest run src/price | tee out", "npx vitest run src/price > out.txt",
+            "npx vitest run && tsc", "npx vitest run; true",
+        ):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "src/price.test.ts"))
+
+    def test_the_flag_name_tuples_do_not_overlap(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("grade_testing_write", GRADER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        groups = [
+            module.VITEST_FIXED_FLAGS, module.VITEST_FIXED_VALUE_FLAGS, module.VITEST_UPDATE_FLAGS,
+            module.VITEST_NAME_FLAGS, module.VITEST_PROJECT_FLAGS,
+        ]
+        every = [flag for group in groups for flag in group]
+        self.assertEqual(len(every), len(set(every)))
+
+    def test_a_name_filter_or_unreadable_token_selects_no_file(self):
+        for command in (
+            "npx vitest run -t slow",
             "npx vitest run --testNamePattern slow", "npx vitest run --changed",
             "npx vitest run --exclude x", "npx vitest run src/price.test.ts:12",
         ):
