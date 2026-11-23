@@ -400,8 +400,6 @@ def run_one(case_folder, number, out, budget, turn1_prompt, hook):
     failures += [f"FAIL {label} D: {line[len('FAIL '):]}" for line in lines]
     if code == 2:
         failures.append(f"FAIL {label} D: cannot grade ({error})")
-    elif code != 0 and not lines:
-        failures.append(f"FAIL {label} D: grader failed with exit code {code} ({error})")
     return failures
 
 

@@ -546,12 +546,17 @@ class TurnsTest(unittest.TestCase):
                 f"spec = importlib.util.spec_from_file_location('runner', {RUNNER!r})\n"
                 "runner = importlib.util.module_from_spec(spec)\n"
                 "spec.loader.exec_module(runner)\n"
-                "runner.results.run_grader = lambda script, args, stdin=None: (1, [], 'Traceback: boom')\n"
+                "real = runner.results.subprocess.run\n"
+                "def fake(argv, **kwargs):\n"
+                "    if isinstance(argv, list) and len(argv) > 2 and str(argv[2]).endswith('grade_setup.py'):\n"
+                "        return runner.results.subprocess.CompletedProcess(argv, 1, '', 'Traceback: boom')\n"
+                "    return real(argv, **kwargs)\n"
+                "runner.results.subprocess.run = fake\n"
                 "sys.exit(runner.main(sys.argv[1:]))\n")
         proc = subprocess.run([sys.executable, "-I", wrapper, "--evals", self.evals, "--out", self.out, "--runs", "1"],
                               capture_output=True, text=True, env=self.env, cwd=self.root)
         self.assertEqual(proc.returncode, 1, proc.stdout)
-        self.assertEqual(self.fail_lines(proc), ["FAIL setup-fake#1 D: grader failed with exit code 1 (Traceback: boom)"])
+        self.assertEqual(self.fail_lines(proc), ["FAIL setup-fake#1 D: cannot grade (exit code 1: Traceback: boom)"])
 
     def test_the_default_out_folder_is_resolved_when_the_temp_folder_is_a_symlink(self):
         real_tmp = os.path.join(self.root, "real_tmp")

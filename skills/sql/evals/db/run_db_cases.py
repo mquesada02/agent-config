@@ -130,7 +130,7 @@ def grade_final_message(label, trace, expectation):
         rules = expectation["rules"]
         checks.append(("grade_rule_ids.py", ["-", "--expect", *rules["expect"], "--forbid", *rules["forbid"]]))
     if expectation.get("report"):
-        checks.append(("grade_report.py", ["-", *(["--disabled", *expectation["disabled"]] if expectation.get("disabled") else [])]))
+        checks.append(("grade_report.py", ["-", *(["--disabled", *expectation["disabled"]] if expectation.get("disabled") is not None else [])]))
     if not checks and not strings:
         return []
     message = results.final_message(trace)

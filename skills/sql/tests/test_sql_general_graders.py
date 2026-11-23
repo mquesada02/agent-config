@@ -184,6 +184,28 @@ class GeneralSourcesTest(unittest.TestCase):
             with mock.patch.object(grade_report, "GENERAL_MODULE", module), self.assertRaises(ValueError):
                 grade_report.general_sources()
 
+    def sources(self, text):
+        grade_report = import_grader("grade_report")
+        grade_report.general_sources.cache_clear()
+        self.addCleanup(grade_report.general_sources.cache_clear)
+        with tempfile.TemporaryDirectory() as folder:
+            module = os.path.join(folder, "general.md")
+            with open(module, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            with mock.patch.object(grade_report, "GENERAL_MODULE", module):
+                return grade_report.general_sources()
+
+    def test_a_heading_that_only_starts_with_sources_is_not_the_section(self):
+        text = "# General\n\n## Sources-old\n\n- **Old:** x\n\n## Sources\n\n- **New:** y\n"
+        self.assertEqual(self.sources(text), {"New", "skill rule"})
+
+    def test_the_sources_heading_on_the_first_line_is_found(self):
+        self.assertEqual(self.sources("## Sources\n\n- **First:** z\n"), {"First", "skill rule"})
+
+    def test_a_longer_heading_alone_is_no_sources_section(self):
+        with self.assertRaises(ValueError):
+            self.sources("# General\n\n## Sourcesx\n\n- **X:** x\n")
+
 
 class PostgresqlReportUnchangedTest(unittest.TestCase):
     def test_a_postgresql_report_passes_with_no_flag(self):
@@ -266,6 +288,58 @@ class EvalResultsReportKeyTest(unittest.TestCase):
         code, _, err = self.grade("c", {"expect": [], "forbid": [], "report": "gneral"}, general_part())
         self.assertEqual(code, 2)
         self.assertIn("report", err)
+
+
+class GraderCrashTest(unittest.TestCase):
+    """A grader that exits with an error and prints no FAIL line cannot grade: it is never a silent pass."""
+
+    def setUp(self):
+        self.results = import_grader("grade_eval_results")
+
+    def run_with(self, returncode, stdout, stderr=""):
+        done = subprocess.CompletedProcess([], returncode, stdout, stderr)
+        with mock.patch.object(self.results.subprocess, "run", return_value=done):
+            return self.results.run_grader("grade_report.py", ["-"], "text")
+
+    def test_a_crash_with_no_fail_line_cannot_grade(self):
+        self.assertEqual(self.run_with(1, "", "Traceback: boom\n"), (2, [], "exit code 1: Traceback: boom"))
+        self.assertEqual(self.run_with(-11, "PASS\n"), (2, [], "exit code -11: "))
+
+    def test_fail_lines_and_a_pass_keep_their_exit_code(self):
+        self.assertEqual(self.run_with(1, "FAIL title: wrong\n"), (1, ["FAIL title: wrong"], ""))
+        self.assertEqual(self.run_with(0, "PASS\n"), (0, [], ""))
+        self.assertEqual(self.run_with(2, "", "bad usage\n"), (2, [], "bad usage"))
+
+    def test_a_crashing_report_grader_fails_the_run(self):
+        done = subprocess.CompletedProcess([], 1, "", "Traceback: boom")
+        real = subprocess.run
+
+        def fake(argv, **kwargs):
+            return done if argv[2].endswith("grade_report.py") else real(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(self.results.subprocess, "run", fake):
+            trace = EvalResultsReportKeyTest.make_case(None, root, "c", {"expect": [], "forbid": []}, general_part())
+            lines = self.results.grade_run("c", 1, trace, {"expect": ["GEN-08"], "forbid": [], "report": "general"})
+        self.assertIn("FAIL c#1 grade_report.py: cannot grade (exit code 1: Traceback: boom)", lines)
+
+
+class DbDriverDisabledTest(unittest.TestCase):
+    """The DB driver reads an empty `disabled` list as the other driver does: no `Disabled rules:` line expected."""
+
+    def test_an_empty_disabled_list_passes_the_flag(self):
+        spec = importlib.util.spec_from_file_location("run_db_cases", os.path.join(SKILL_DIR, "evals", "db", "run_db_cases.py"))
+        driver = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(driver)
+        calls = []
+
+        def fake(script, *args, stdin=None):
+            calls.append((script, list(args)))
+            return 0, [], ""
+
+        with mock.patch.object(driver, "grader", fake), mock.patch.object(driver.results, "final_message", lambda _: "x"):
+            driver.grade_final_message("c#1", "trace", {"report": True, "disabled": []})
+            driver.grade_final_message("c#1", "trace", {"report": True})
+        self.assertEqual(calls, [("grade_report.py", ["-", "--disabled"]), ("grade_report.py", ["-"])])
 
 
 if __name__ == "__main__":
