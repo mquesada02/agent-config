@@ -2898,10 +2898,10 @@ def _is_gated_pr_create(segment):
 RESEARCH_BRANCH = re.compile(r"research/[a-z0-9]+(?:[.-][a-z0-9]+)*")
 # The options of the dispatch command that only describe the worker, so they are harmless next to `--worktree path:<p>` (from `orca orchestration
 # worker-start --help`). Any other option can change where the worker runs (`--on`, `--environment`, `--pairing-code`, `--repo`, `--run`,
-# `--parent`, `--from`): the local branch of the path says nothing then, so the exemption is denied. Keep the lists in step with orca.
+# `--parent`, `--from`, and `--terminal`, which gives the Task to an agent in its own worktree; `--deps` has no described effect): the local
+# branch of the path says nothing then, so the exemption is denied. Keep the lists in step with orca.
 RESEARCH_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
-    "task", "spec", "spec-file", "task-title", "deps", "agent", "model", "effort", "terminal", "comment", "display-name", "setup", "name",
-    "timeout-ms"))
+    "task", "spec", "spec-file", "task-title", "agent", "model", "effort", "comment", "display-name", "setup", "name", "timeout-ms"))
 RESEARCH_FLAGS = frozenset(("--keep-open", "--json"))
 # An absolute path of word characters and `. + @ % / -` only: bash expands no other word (no brace, glob, tilde, quote or `$`), so the gate and orca read one path.
 RESEARCH_PATH = re.compile(r"/[\w.+@%/-]*")

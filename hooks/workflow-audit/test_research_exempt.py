@@ -31,7 +31,7 @@ class ResearchExemptionTest(ResearchWorktreeCase):
 
     def test_the_local_options_of_a_dispatch_are_allowed_next_to_a_research_worktree(self):
         path = self.worktree("research/x")
-        for options in ("--spec s", "--spec-file f", "--task-title t", "--deps d", "--model m", "--effort high", "--terminal t", "--display-name n",
+        for options in ("--spec s", "--spec-file f", "--task-title t", "--model m", "--effort high", "--display-name n",
                         "--setup run", "--name n", "--timeout-ms 1000", "--keep-open", "--json", "--comment c --model m"):
             with self.subTest(options=options):
                 self.assert_allowed(self.gate(f"{WS} {options} --worktree path:{path}"))
@@ -130,7 +130,7 @@ class ResearchFailClosedTest(ResearchWorktreeCase):
         # the local branch of the path says nothing about a remote host or another repo, run or parent
         path = self.worktree("research/x")
         for option in ("--on srv", "--on=srv", "--repo path:/x", "--environment e", "--pairing-code c", "--run r", "--parent t0",
-                       "--from t0", "--base-branch main", "--unknown", "--unknown v", "--spec-x v", "-x", "--task=t", "--retry-request"):
+                       "--from t0", "--base-branch main", "--terminal term_abc", "--deps d", "--unknown", "--unknown v", "--spec-x v", "-x", "--task=t", "--retry-request"):
             for command in (f"{WS} {option} --worktree path:{path}", f"{WS} --worktree path:{path} {option}"):
                 with self.subTest(command=command):
                     self.assert_no_record(command)
