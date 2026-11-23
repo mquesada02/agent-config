@@ -297,6 +297,12 @@ class CliTest(unittest.TestCase):
     def test_catalogue_source_with_a_syntax_error_is_exit_2(self):
         self.run_without_catalogue_source("CATALOG = (\n")
 
+    def test_catalogue_that_literal_eval_rejects_with_a_type_error_is_exit_2(self):
+        self.run_without_catalogue_source("CATALOG = {[1]: 2}\n")
+
+    def test_catalogue_that_is_not_a_dict_is_exit_2(self):
+        self.run_without_catalogue_source("CATALOG = [1]\n")
+
     def test_report_from_a_path(self):
         repo = helper.Repo()
         self.addCleanup(repo.close)
