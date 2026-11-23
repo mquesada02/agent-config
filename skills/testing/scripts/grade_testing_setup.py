@@ -93,7 +93,7 @@ def load_expect(path):
 
 
 def same(held, expected):
-    """Equality that also needs the same type at every level: a boolean never equals a number."""
+    """Equality that also needs the same type at every level: a boolean never equals a number, and an integer never equals a float."""
     if isinstance(held, dict) and isinstance(expected, dict):
         return held.keys() == expected.keys() and all(same(held[key], expected[key]) for key in held)
     if isinstance(held, list) and isinstance(expected, list):
