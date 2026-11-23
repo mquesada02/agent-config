@@ -152,6 +152,14 @@ class LedgerViewTest(PreDispatchCase):
                 self.assertEqual(item["result"], "fail")
                 self.assertIn(f"evidence unavailable: no round event for {loop}", item["evidence"])
 
+    def test_a_failed_item_prints_its_evidence_and_a_passed_item_does_not(self):
+        self.write_ledger("feature", [round_event(loop=LOOP_41)])
+        result = self.pre_dispatch()
+        self.assertEqual(result.returncode, 1)
+        lines = result.stdout.decode().splitlines()
+        self.assertEqual(lines[lines.index("S3 fail") + 1], f"  evidence unavailable: no round event for {LOOP_3}")
+        self.assertEqual([line for line in lines if line.startswith("  ")], [f"  evidence unavailable: no round event for {LOOP_3}"])
+
     def test_a_ledger_of_code_review_events_only_fails_s3(self):
         self.write_ledger("feature", [round_event(loop="code-review")])
         self.assertEqual(self.pre_dispatch().returncode, 1)
