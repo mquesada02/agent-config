@@ -240,7 +240,10 @@ A notification with nothing new needs only a text reply, not a tool call.
 Never use `rm -rf` or other recursive deletes. To remove something:
 - If it may be needed again, move it to a dated backup folder (`<dir>-backup-YYYY-MM-DD/`) and tell the user the path.
 - If it must go, move it to `/tmp`, which the system clears, or give the user the command to delete it manually.
-- To remove a worktree folder, use `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>` (section 8). It is the only way a session removes a worktree folder, and the only exception to this rule; the user's `!` overrides are user actions, not session exceptions.
+- To delete tracked files or folders from the repository as part of a change, use `git rm -r <path>` without `-f` or `--force`. Without them, git refuses to delete a file with uncommitted changes, so every deleted file stays in the git history. Do not use it on a file marked `assume-unchanged` or `skip-worktree`: git does not see its edits.
+- To remove a worktree folder, use `~/.claude/hooks/worktree-cleanup/cleanup <worktree path>` (section 8). It is the only way a session removes a worktree folder.
+
+The cleanup command and `git rm -r` without `-f` are the only exceptions to this rule; the user's `!` overrides are user actions, not session exceptions.
 
 ## 14. Docker containers
 
