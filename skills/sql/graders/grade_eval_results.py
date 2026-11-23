@@ -76,11 +76,17 @@ def final_message(trace_path):
 
 
 def run_grader(script, args, stdin=None):
-    """(exit code, FAIL lines, stderr) of a grader command."""
+    """(exit code, FAIL lines, stderr) of a grader command.
+
+    A grader that exits with an error and prints no FAIL line (a crash) cannot grade: the exit code is 2 and the
+    error names the real exit code, so no caller can read the crash as a pass."""
     proc = subprocess.run([sys.executable, "-I", os.path.join(HERE, script), *args],
                           input=stdin, capture_output=True, text=True)
     lines = [line for line in proc.stdout.splitlines() if line.startswith("FAIL ") and line != "FAIL"]
-    return proc.returncode, lines, proc.stderr.strip()
+    error = proc.stderr.strip()
+    if proc.returncode not in (0, 2) and not lines:
+        return 2, [], f"exit code {proc.returncode}: {error}"
+    return proc.returncode, lines, error
 
 
 def grader_lines(script, args, stdin):
