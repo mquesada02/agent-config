@@ -223,7 +223,6 @@ def grade(text, catalog):
     for rule, where in sorted(placed.items()):
         if len(where) > 1:
             fail("notes", f"{rule} is in more than one of the lines (a), (b), (c)")
-    for rule, where in sorted(placed.items()):
         if "a" in where and rule in seen:
             fail("notes", f"{rule} is in line (a), so it is not checked, but the report has a row for it")
 
