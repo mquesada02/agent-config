@@ -446,42 +446,49 @@ def rust_group_selects(command, path):
 
 
 VITEST_EXEC = (["npx", "vitest"], ["pnpm", "exec", "vitest"], ["yarn", "vitest"], ["bunx", "vitest"])
+VITEST_LAUNCHERS = ("npx", "pnpm", "yarn", "bunx", "bun", "npm")
 VITEST_SUBCOMMANDS = ("run", "watch", "dev", "related", "list", "bench")
-VITEST_FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--update", "-u", "--coverage")
-VITEST_SELECTOR_FLAGS = ("-t", "--testNamePattern", "--project", "-p")
-VITEST_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry", "--dir") + VITEST_SELECTOR_FLAGS
+VITEST_FIXED_FLAGS = ("--run", "--silent", "--no-color", "--passWithNoTests", "--no-file-parallelism", "--coverage")
+VITEST_FIXED_VALUE_FLAGS = ("--maxWorkers", "--reporter", "--outputFile", "--retry")
+VITEST_UPDATE_FLAGS = ("-u", "--update")
+VITEST_NAME_FLAGS = ("-t", "--testNamePattern")
+VITEST_PROJECT_FLAGS = ("--project", "-p")
 VITEST_NO_UPDATE = ("none", "false")
+
+
+def vitest_launcher_form(command):
+    """Whether a command is a launcher followed by the word vitest. The caller calls it only after
+    `command_words` found no exec form of the entry, so a match is a launcher form that is not one."""
+    tokens = command_tokens(command) or []
+    if tokens[:1] and tokens[0] in VITEST_LAUNCHERS:
+        rest = [t for t in tokens[1:] if not t.startswith("-") and t not in ("exec", "dlx", "x")]
+        return rest[:1] == ["vitest"]
+    return False
 
 
 def vitest_group_selects(command, path):
     """Whether a plain Vitest group command selects a file for write (the write column of the TypeScript entry).
 
-    Returns None when the command is not an exec form of Vitest, so the caller keeps the old reading."""
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return None
-    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-        tokens = tokens[1:]
-    words = next((tokens[len(prefix):] for prefix in VITEST_EXEC if tokens[:len(prefix)] == prefix), None)
+    Returns None when the command has no Vitest launcher word, so the caller keeps the old reading.
+    Returns False for a shell marker and for a launcher form that is not an exec form.
+    A launcher form that is not an exec form is a wrapper and selects no file.
+    The write grader cannot read the Vitest config, so a project token narrows nothing."""
+    words = command_words(command, VITEST_EXEC)
     if words is None:
-        return None
-    flat = []
-    for token in words:
-        if token.startswith("-") and "=" in token:
-            flat.extend(token.split("=", 1))
-        else:
-            flat.append(token)
-    subcommand = next((t for t in flat if t in VITEST_SUBCOMMANDS), None)
+        return False if vitest_launcher_form(command) else None
+    if has_wrapper_marker(command):
+        return False
+    flat = flat_tokens(words, VITEST_FIXED_FLAGS)
+    subcommand = flat[0] if flat and flat[0] in VITEST_SUBCOMMANDS else None
     if subcommand in ("watch", "dev", "related", "list", "bench"):
         return False
     if subcommand is None and "--run" not in flat:
         return False
     operands, directories = [], []
-    index = 0
+    index = 1 if subcommand else 0
     while index < len(flat):
         token = flat[index]
-        if token == subcommand:
+        if token == "--":
             index += 1
         elif token == "--dir":
             if index + 1 >= len(flat):
@@ -490,21 +497,21 @@ def vitest_group_selects(command, path):
             index += 2
         elif token in ("--watch", "-w"):
             return False
-        elif token in ("-u", "--update"):
+        elif token in VITEST_UPDATE_FLAGS:
             if index + 1 < len(flat) and flat[index + 1] in VITEST_NO_UPDATE:
                 index += 2
             else:
                 return False
-        elif token in VITEST_SELECTOR_FLAGS:
+        elif token in VITEST_NAME_FLAGS:
             return False
-        elif token in VITEST_VALUE_FLAGS:
+        elif token in VITEST_PROJECT_FLAGS or token in VITEST_FIXED_VALUE_FLAGS:
             index += 2
-        elif token in VITEST_FIXED_FLAGS:
+        elif token.split("=", 1)[0] in VITEST_FIXED_FLAGS:
             index += 1
         elif token.startswith("-") or re.search(r":\d+$", token):
             return False
         else:
-            operands.append(token)
+            operands.append(token[2:] if token.startswith("./") else token)
             index += 1
     below = not directories or any(path_below(directory, path) for directory in directories)
     return below and (not operands or any(operand in path for operand in operands))
@@ -536,14 +543,22 @@ def flat_tokens(words, boolean_flags=()):
     return flat
 
 
-def command_words(command, exec_forms):
-    """The words after the exec form of a command (leading NAME=value words dropped), or None."""
+def command_tokens(command):
+    """The shell words of a command (leading NAME=value words dropped), or None when it does not parse."""
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
+    return tokens
+
+
+def command_words(command, exec_forms):
+    """The words after the exec form of a command (leading NAME=value words dropped), or None."""
+    tokens = command_tokens(command)
+    if tokens is None:
+        return None
     return next((tokens[len(prefix):] for prefix in exec_forms if tokens[:len(prefix)] == prefix), None)
 
 

@@ -14,6 +14,12 @@ language = "typescript"
 size = "small"
 command = "npx vitest run --update"
 
+[[groups]]
+name = "config"
+language = "typescript"
+size = "small"
+command = "npx vitest run --config vitest.update.config.ts"
+
 [runner.typescript]
 name = "vitest"
 

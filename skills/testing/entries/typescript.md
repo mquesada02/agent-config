@@ -8,7 +8,7 @@ Text that belongs to one runner sits under a `### Vitest`, `### Jest` or `### no
 
 Read these intake facts of the language `typescript` first: `detected.facts.typescript.runner.name`, `.commands.test`, `.commands.worker_flag`, `.commands.typecheck`, `.layout.test_paths` and `.groups`. The rules file value wins over the detected fact (`rules.settings.commands.typescript`, `rules.settings.runner.typescript` and `rules.settings.groups`).
 
-- The runner gate: the runner of the language is `rules.settings.runner.typescript.name`, else `detected.facts.typescript.runner.name`. For each of `vitest`, `jest` and `node:test`, the content of this entry that belongs to that runner (its sub-headings, its tables and its `Vitest:`, `Jest:` or `node:test:` bullets) applies only when the runner is that runner. For any other value (null included) no runner content applies: no path derivation, no command form, no group selector reading, no list command, no runner bullet and no `Not checked:` entry of this entry. The general file alone decides every rule for that runner.
+- The runner gate: the runner of the language is `rules.settings.runner.typescript.name`, else `detected.facts.typescript.runner.name`. For each of `vitest`, `jest` and `node:test`, the content of this entry that belongs to that runner (its sub-headings, its tables and its `Vitest:`, `Jest:` or `node:test:` bullets) applies only when the runner is that runner. For any other value (null included) no runner content applies: no path derivation, no command form, no group selector reading, no list command, no verdict table reading (Table 4 and its Jest and `node:test` twins), no runner bullet and no `Not checked:` entry of this entry. The general file alone decides every rule for that runner.
 - The package manager comes from the recorded settings, else the detected fact, else it is npm. The exec prefix of the package manager is `npx` for npm, `pnpm exec` for pnpm, `yarn` for yarn and `bunx` for bun.
 - The module format (ESM or CommonJS) comes from `package.json` (`"type"`) and decides the import style of a new test file: use the import style of the neighbor files.
 - The type-check command is `commands.typescript.typecheck`. It can be null.
@@ -42,7 +42,7 @@ The first row that matches decides.
 |---|---|---|
 | 1 | A command (plain or wrapper, after steps 1 and 2) that has an update mode: a token `-u`, `--update`, `--update=true`, `--update=all` or `--update=new` anywhere in its text, or an effective Vitest config with `update` set to `true`, `'all'` or `'new'` | Do not run it. Review's timed-run entry says `command includes an update mode`, and write's result is `not run (command includes an update mode)`. The forms `--update=none` and `--update=false` are not an update mode. |
 | 2 | Wrapper | Run it as it is. Add no flag and no operand. Keep only the in-scope test cases. Run without a worker flag. |
-| 3 | Plain Vitest command that Table 4 reads as a finding (a watch marker or the bare form) | Do not run it. Review's timed-run entry says `command is a watch command`, and write's result is `not run (<reason>)`. |
+| 3 | Plain Vitest command that Table 4 reads as a finding (a watch marker, the subcommand `related` with no `--run`, or the bare form) | Do not run it. Review's timed-run entry says `command is a watch command`, and write's result is `not run (<reason>)`. |
 | 4 | Plain Vitest command with the subcommand `list` or `bench` | Not a test command: do not run it. The result is the same as for a command with no known command. |
 | 5 | Plain Vitest command that runs once (Table 4 reads it as no finding) | Remove every `--maxWorkers` and `--reporter` option (the `--flag=value` and the `--flag value` form), then append `--maxWorkers=2` and `--reporter=verbose`. When the command has no path operand and no token of the unreadable class of Table 2, also append the in-scope test file paths (relative to the Vitest root) as operands before the options. Otherwise add no operand and keep only the in-scope test cases. |
 
@@ -62,12 +62,12 @@ Examples:
 
 The commands run with `CI=true` set, as the review and write steps say. The reporter argument `--reporter=verbose` is the reporter argument of this entry: it prints every test case as `✓ <file> > <names> <N>ms`. A verbose line is matched to a test case by the file path, then ` > `, then the full test name, then the final duration (a number that ends with `ms` or `s`). Text before the path is ignored.
 
-Group selector classes. Tokens are the words after `vitest` and its subcommand (a subcommand is the first token that is exactly `run`, `watch`, `dev`, `related`, `list` or `bench`). Every token belongs to exactly one class. A named flag with a value reads the same in the forms `--flag value` and `--flag=value`. A project list that holds only `!` exclusions selects every project except the excluded ones.
+Group selector classes. Tokens are the words after `vitest` and its subcommand (a subcommand is the first word after `vitest`, when it is exactly `run`, `watch`, `dev`, `related`, `list` or `bench`; a later word, or the value of a flag, is never a subcommand). A bare `--` token is dropped. Every token belongs to exactly one class. A named flag with a value reads the same in the forms `--flag value` and `--flag=value`. A project list that holds only `!` exclusions selects every project except the excluded ones.
 
 | Class | Tokens | Review reads it as | Write: can the group select a file |
 |---|---|---|---|
-| Path operand | a token that is not a flag and not the value of a named flag, and does not end with `:<number>` | a substring filter: it selects every test file whose path (relative to the Vitest root) contains it; several operands select the union | yes, when the derived path contains it |
-| Project | `--project <name>`, `-p <name>` (repeatable; `*` wildcard; a leading `!` excludes) | the group applies to the projects whose `name` matches; it selects the files that the `include` patterns of those projects match | yes, when the derived path matches an `include` of a matching project |
+| Path operand | a token that is not a flag and not the value of a named flag, and does not end with `:<number>` | a substring filter: it selects every test file whose path (relative to the Vitest root) contains it (a leading `./` is dropped); several operands select the union | yes, when the derived path contains it |
+| Project | `--project <name>`, `-p <name>` (repeatable; `*` wildcard; a leading `!` excludes) | the group applies to the projects whose `name` matches; it selects the files that the `include` patterns of those projects match | yes, when the derived path matches an `include` of a matching project (the agent reads the Vitest config; the write grader cannot, so it reads a project token as narrowing nothing) |
 | Directory | `--dir <path>` | the test files below the path that the effective `include` matches | yes, when the derived path is below it |
 | Name filter | `-t <pattern>`, `--testNamePattern <pattern>` | a filter on the full test name | no file |
 | Fixed | `--maxWorkers <n>`, `--reporter <name>`, `--outputFile <path>`, `--retry <n>`, `--run`, `--silent`, `--no-color`, `--passWithNoTests`, `--no-file-parallelism`, `--update`, `-u`, `--coverage` | narrows nothing | narrows nothing |
@@ -85,7 +85,7 @@ Examples:
 
 - Selection state for review. The first item that applies gives the state. (1) A token of the unreadable class: the group is unreadable for the general file, and the list command decides its membership. When that command cannot run, the group stays unreadable and the `Not checked:` line names it. (2) Otherwise each class that the group has selects the union of what its tokens select, and the group selects the intersection of what its classes select. (3) A group with Fixed tokens only, or no token, has no selector: it selects every test case of the language root. A wrapper group command is unreadable and has no list command.
 - Selection state for write. The first item that applies gives the state. (1) A token of the unreadable or name filter class, or a command that Table 1 does not run (rows 1 to 4): the group selects no file. (2) Otherwise the group selects the derived path when, for each of the classes path operand, project and directory that the group has, at least one token of that class selects it. (3) A group with Fixed tokens only, or no token, selects every file of the language root. A wrapper group selects nothing.
-- List command. A group command that Table 1 does not run as a test (rows 1 to 4) has no list command: it stays unreadable and the `Not checked:` line names it. A group with the subcommand `related` has no list command in any form (also with `--run`). For every other plain Vitest group command (Table 1 row 5), take its effective form, remove every token of the Fixed class (with its value) and the subcommand `run`, insert the subcommand `list` right after `vitest` and add `--filesOnly`. The output is one test file path per line, relative to the Vitest root (the language root, where the command runs). Text before the path (such as a project label) is ignored, and a file is selected when the rest of a line is equal to its path. Write runs no list command.
+- List command. A group command that Table 1 does not run as a test (rows 1 to 4) has no list command: it stays unreadable and the `Not checked:` line names it. A group with the subcommand `related` has no list command in any form (also with `--run`). For every other plain Vitest group command (Table 1 row 5), take its effective form, remove every token of the Fixed class (with its value) and the subcommand `run`, insert the subcommand `list` right after `vitest` and add `--filesOnly`. The output is one test file path per line, relative to the Vitest root (the language root, where the command runs). Text before the path (such as a project label) is ignored, and a file is selected when a line ends with its path. Write runs no list command.
 - Size of a selection. A path operand, a project or a directory selects test cases by file; `-t` selects test cases by name (the general rules apply).
 
 ### Jest
@@ -361,7 +361,7 @@ Examples:
 - node:test: end each test with an `assert.*` call (also `t.assert.*`), `t.plan` or `assert.rejects`. Use `test` with `{ expectFailure }` for a known failing case, and `todo` for a placeholder.
 
 **Check details**:
-- Vitest: a `test` or `it` body with no `expect`, `assert`, `expect.assertions`, `rejects`, `resolves` or `expect.poll` is a candidate. A test that only calls the code under test has no assertion. A `test.todo` is a placeholder, not a test. Read helper functions that assert.
+- Vitest: a `test` or `it` body with no `expect`, `assert`, `expect.assertions`, `expect.hasAssertions`, `rejects`, `resolves` or `expect.poll` is a candidate. A test that only calls the code under test has no assertion. A `test.todo` is a placeholder, not a test. `test.fails` holds an assertion that must fail. Read helper functions that assert.
 - Jest: a `test` or `it` body with no `expect`, `expect.assertions`, `expect.hasAssertions`, `.resolves` or `.rejects` is a candidate. `test.todo` is a placeholder, not a test. `test.failing` holds an assertion that must fail. Read helper functions that assert.
 - node:test: a `test` or `it` body with no `assert.*`, `t.assert.*`, `t.plan` or `assert.rejects` is a candidate. `todo` is a placeholder, not a test. A test with `{ expectFailure }` still needs an assertion. Read helper functions that assert.
 
@@ -380,7 +380,7 @@ Examples:
 ### ASSERT-03
 
 **How to write**:
-- Vitest: redact a time, a random id or a path with a property matcher (`expect.any(String)`), an injected clock (`vi.setSystemTime`) or a normalised path. Run snapshots in the single-run command without an update mode. Write snapshots by hand.
+- Vitest: redact a time, a random id or a path with a property matcher (`expect.any(String)`), an injected clock (`vi.setSystemTime`), a seeded generator or a normalised path. Run snapshots in the single-run command without an update mode. Write snapshots by hand.
 - Jest: redact a time, a random id or a path with a property matcher (`expect.any(String)`), an injected clock (`jest.setSystemTime`) or a normalised path. Run snapshots in the single-run command with `--ci` and without an update mode. Write snapshots by hand.
 - node:test: redact a time, a random id or a path before the `t.assert.snapshot` call, or inject the clock. Run snapshots in the single-run command without `--test-update-snapshots`. Write the snapshot file by hand.
 
@@ -516,7 +516,7 @@ Table 4 (Vitest):
 |---|---|---|
 | 1 | Wrapper | not decided: no finding; one `Not checked:` entry (the form is below), with the names `test` for the test command and the group names, comma separated |
 | 2 | Plain Vitest command with the subcommand `list` or `bench` | no finding (not a test run) |
-| 3 | A watch marker: the subcommand `watch` or `dev`, or a token `--watch`, `--watch=<value>` or `-w` | finding (a `--watch=false` form is also a finding: the fix is the `run` subcommand) |
+| 3 | A watch marker: the subcommand `watch` or `dev`, or a token `--watch`, `--watch=<value>` or `-w` | finding (a `--watch=false` form is also a finding: the fix is to remove the flag and, when the command has no `run` subcommand and no `--run`, to add the `run` subcommand) |
 | 4 | The subcommand `run`, or a token `--run` | no finding |
 | 5 | The subcommand `related` (with no `--run`) | finding |
 | 6 | Any other plain Vitest command (no subcommand: the bare form) | finding: bare Vitest watches in a terminal and runs once only in CI or with no TTY |
@@ -527,6 +527,7 @@ Examples:
 - Example: `npx vitest bench` => row 2
 - Example: `npx vitest --watch` => row 3
 - Example: `npx vitest watch` => row 3
+- Example: `npx vitest run --watch=false` => row 3
 - Example: `npx vitest run` => row 4
 - Example: `npx vitest related src/a.ts --run` => row 4
 - Example: `npx vitest related src/a.ts` => row 5
