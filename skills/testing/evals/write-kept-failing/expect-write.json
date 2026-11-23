@@ -1,0 +1,1 @@
+{"tests": ["tests/total.test.js"], "product": ["src/total.js"], "result": {"tests/total.test.js": "fail"}}

@@ -383,12 +383,23 @@ def grader_row_matches(text, rule_id):
 
 
 def case_id_violations(name, expectation, graders, catalogue):
-    """What a review case gets wrong about its ids: a folder name id that `expect` and `forbid` lack, and an
-    `expect-<id>.md` grader of an id that is not expected, that misses a row of its id or that matches a row of
-    another id. `graders` maps a grader file name to its text."""
+    """What a review case gets wrong about its ids: a folder name id that `expect` and `forbid` lack, an expected id
+    with no `expect-<id>.md` grader, a `no-<id>-row.md` grader of an id that is not forbidden (or a forbidden id with
+    none, or a grader text that does not name its id), and an `expect-<id>.md` grader of an id that is not expected,
+    that misses a row of its id or that matches a row of another id. `graders` maps a grader file name to its text."""
     violations = [f"folder name id {rule_id} is in neither expect nor forbid" for rule_id in sorted(case_name_ids(name))
                   if rule_id not in expectation["expect"] + expectation["forbid"]]
+    violations += [f"expected id {rule_id} has no expect-{rule_id}.md grader" for rule_id in expectation["expect"]
+                   if f"expect-{rule_id}.md" not in graders]
+    violations += [f"forbidden id {rule_id} has no no-{rule_id}-row.md grader" for rule_id in expectation["forbid"]
+                   if f"no-{rule_id}-row.md" not in graders]
     for file_name, text in sorted(graders.items()):
+        forbidden = re.fullmatch(r"no-(.+)-row\.md", file_name)
+        if forbidden:
+            if forbidden.group(1) not in expectation["forbid"]:
+                violations.append(f"{file_name}: {forbidden.group(1)} is not in forbid")
+            elif forbidden.group(1) not in text:
+                violations.append(f"{file_name}: the text does not name {forbidden.group(1)}")
         found = re.fullmatch(r"expect-(.+)\.md", file_name)
         if not found:
             continue
@@ -467,6 +478,21 @@ class EvalCaseTest(unittest.TestCase):
         loose = good.replace("RUN-01", "RUN-0\\d")
         self.assertTrue(case_id_violations("run-01-x", expectation, {"expect-RUN-01.md": loose}, catalogue))
         self.assertTrue(case_id_violations("run-01-x", expectation, {"expect-RUN-02.md": wrong}, catalogue))
+
+    def test_case_id_check_on_forbid_graders_and_missing_expect_graders(self):
+        catalogue = {"RUN-01", "RUN-02", "TS-01"}
+        good = "---\ntype: regex\npattern: '^\\|\\s*\\d+\\s*\\|\\s*RUN-01\\s*\\|'\nflags: m\n---\n"
+        no_row = "---\ntype: llm\n---\nPASS if no table row has the rule id RUN-02 in its Rule cell.\n"
+        expectation = {"expect": ["RUN-01"], "forbid": ["RUN-02"]}
+        graders = {"expect-RUN-01.md": good, "no-RUN-02-row.md": no_row}
+        self.assertEqual(case_id_violations("x", expectation, graders, catalogue), [])
+        outside = {"expect": ["RUN-01"], "forbid": []}
+        self.assertTrue(case_id_violations("x", outside, graders, catalogue))
+        self.assertTrue(case_id_violations("x", expectation, {"expect-RUN-01.md": good}, catalogue))
+        self.assertTrue(case_id_violations(
+            "x", expectation, {**graders, "no-RUN-02-row.md": no_row.replace("RUN-02", "RUN-01")}, catalogue))
+        self.assertTrue(case_id_violations("x", expectation, {"no-RUN-02-row.md": no_row}, catalogue))
+        self.assertTrue(case_id_violations("x", expectation, {**graders, "no-run-02-row.md": no_row}, catalogue))
 
 
 RUNNABLE_IDS = RULE_TEXT_IDS[4:]
