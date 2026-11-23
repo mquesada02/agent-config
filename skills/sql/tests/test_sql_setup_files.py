@@ -849,6 +849,12 @@ class EngineTest(FilesCase):
                 self.assertEqual(len(err.strip().splitlines()), 1)
                 self.assertEqual(self.snapshot(), before)
 
+    def test_a_relative_folder_inside_the_repo_is_accepted(self):
+        for entry in (".=mysql", "./db=mysql", "db/sub=mysql"):
+            with self.subTest(entry=entry):
+                text = self.plan(self.engine_proposal({"name": "postgres", "paths": [entry]}))["rules_file"]["text"]
+                self.assertIn('paths = ["%s"]' % entry, text)
+
     def test_the_unknown_section_error_names_engine(self):
         code, _, err = self.run_script("plan", self.repo, "--proposal", self.proposal(settings={"other": {"a": 1}}))
         self.assertEqual(code, 2)

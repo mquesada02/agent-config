@@ -121,7 +121,10 @@ def clean_engine(table):
     for entry in paths:
         folder, _, engine = entry.rpartition("=") if isinstance(entry, str) else ("", "", "")
         if not text(folder) or not text(engine) or rules_file.clean_folder(folder) is None:
-            raise sql_text.UsageError("settings.engine.paths entries must be <folder>=<engine> strings with a relative folder inside the repo: %r" % (entry,))
+            raise sql_text.UsageError(
+                "settings.engine.paths entries must be <folder>=<engine> strings"
+                " with a relative folder inside the repo: %r" % (entry,)
+            )
         entries.append("%s=%s" % (folder, engine.lower()))
     if entries:
         cleaned["paths"] = entries
