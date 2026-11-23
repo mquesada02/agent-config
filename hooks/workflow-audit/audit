@@ -2893,6 +2893,13 @@ def _is_gated_pr_create(segment):
 
 # The research branch name of hooks/worktree-branch/check_branch_name.py (keep the two in step).
 RESEARCH_BRANCH = re.compile(r"research/[a-z0-9]+(?:[.-][a-z0-9]+)*")
+# The options of the dispatch command that only describe the worker, so they are harmless next to `--worktree path:<p>` (from `orca orchestration
+# worker-start --help`). Any other option can change where the worker runs (`--on`, `--environment`, `--pairing-code`, `--repo`, `--run`,
+# `--parent`, `--from`): the local branch of the path says nothing then, so the exemption is denied. Keep the lists in step with orca.
+RESEARCH_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
+    "task", "spec", "spec-file", "task-title", "deps", "agent", "model", "effort", "terminal", "comment", "display-name", "setup", "name",
+    "timeout-ms"))
+RESEARCH_FLAGS = frozenset(("--keep-open", "--json"))
 # An absolute path of word characters and `. + @ % / -` only: bash expands no other word (no brace, glob, tilde, quote or `$`), so the gate and orca read one path.
 RESEARCH_PATH = re.compile(r"/[\w.+@%/-]*")
 
@@ -2900,21 +2907,26 @@ RESEARCH_PATH = re.compile(r"/[\w.+@%/-]*")
 def _worktree_path(arguments):
     """The path of the one `--worktree path:<absolute path>` option in the arguments of a dispatch, else None. The arguments are read as
     orca reads them: a value option takes the next word, so `--task --worktree path:/x` has no `--worktree` option. A second
-    `--worktree`, a `--` (orca may read the words after it as positional words) and a path that is not absolute or has a character
-    outside `RESEARCH_PATH` (a shell could expand it) give None."""
+    `--worktree`, a `--` (orca may read the words after it as positional words), an option outside the two lists below (it may change
+    where the worker runs, as `--on` does) and a path that is not absolute or has a character outside `RESEARCH_PATH` (a shell could
+    expand it) give None."""
     if "--" in arguments:
         return None
     found, position = [], 0
     while position < len(arguments):
         word = arguments[position]
-        if word in ORCA_VALUE_OPTIONS:
-            if word == "--worktree":
-                found.append(arguments[position + 1] if position + 1 < len(arguments) else None)
+        if word == "--worktree":
+            found.append(arguments[position + 1] if position + 1 < len(arguments) else None)
             position += 2
-        else:
-            if word.startswith("--worktree="):
-                found.append(word[len("--worktree="):])
+        elif word.startswith("--worktree="):
+            found.append(word[len("--worktree="):])
             position += 1
+        elif word in RESEARCH_VALUE_OPTIONS:
+            position += 2
+        elif word in RESEARCH_FLAGS or not word.startswith("-"):
+            position += 1
+        else:
+            return None
     if len(found) != 1 or found[0] is None or not found[0].startswith("path:"):
         return None
     path = found[0][len("path:"):]

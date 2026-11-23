@@ -29,6 +29,13 @@ class ResearchExemptionTest(ResearchWorktreeCase):
                 self.assert_allowed(result)
                 self.assertEqual(result.stderr, b"")
 
+    def test_the_local_options_of_a_dispatch_are_allowed_next_to_a_research_worktree(self):
+        path = self.worktree("research/x")
+        for options in ("--spec s", "--spec-file f", "--task-title t", "--deps d", "--model m", "--effort high", "--terminal t", "--display-name n",
+                        "--setup run", "--name n", "--timeout-ms 1000", "--keep-open", "--json", "--comment c --model m"):
+            with self.subTest(options=options):
+                self.assert_allowed(self.gate(f"{WS} {options} --worktree path:{path}"))
+
     def test_a_research_worktree_is_allowed_in_an_unsafe_runtime_folder_and_with_no_session_id(self):
         path = self.worktree("research/x")
         os.makedirs(self.runtime, 0o700, exist_ok=True)
@@ -118,6 +125,15 @@ class ResearchFailClosedTest(ResearchWorktreeCase):
                         f"{self.start(path)} && {switch}", f"{self.start(path)} <(true)"):
             with self.subTest(command=command):
                 self.assert_no_record(command)
+
+    def test_an_option_that_can_change_where_the_worker_runs_is_denied(self):
+        # the local branch of the path says nothing about a remote host or another repo, run or parent
+        path = self.worktree("research/x")
+        for option in ("--on srv", "--on=srv", "--repo path:/x", "--environment e", "--pairing-code c", "--run r", "--parent t0",
+                       "--from t0", "--base-branch main", "--unknown", "--unknown v", "--spec-x v", "-x", "--task=t", "--retry-request"):
+            for command in (f"{WS} {option} --worktree path:{path}", f"{WS} --worktree path:{path} {option}"):
+                with self.subTest(command=command):
+                    self.assert_no_record(command)
 
     def test_a_path_that_the_shell_can_expand_is_denied(self):
         # shlex.quote keeps the word literal, so only the character check can deny it: a bash expansion of the unquoted word would differ
