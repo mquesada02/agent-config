@@ -1,7 +1,7 @@
 ---
 type: tool_used
 tool: Bash
-input_match: '(?:\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|>>?)[^|;&\n]*reports\.ts'
+input_match: '(?:\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<![=>-])>>?)[^|;&\n]*reports\.ts'
 min: 0
 max: 0
 ---
