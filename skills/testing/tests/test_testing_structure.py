@@ -377,8 +377,9 @@ def grader_row_matches(text, rule_id):
     if not pattern:
         return False
     flags = GRADER_FLAGS.search(text)
+    multiline = re.MULTILINE if flags and "m" in flags.group(1) else 0
     row = f"| 1 | {rule_id} | a.py:1 | problem | fix |"
-    return bool(re.search(pattern.group(1).replace("''", "'"), row, re.MULTILINE if flags and "m" in flags.group(1) else 0))
+    return bool(re.search(pattern.group(1).replace("''", "'"), row, multiline))
 
 
 def case_id_violations(name, expectation, graders, catalogue):
