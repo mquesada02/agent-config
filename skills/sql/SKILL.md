@@ -52,14 +52,15 @@ The repo rules live in `docs/agents/sql.md`. Load them with the reader script. T
 python3 <skill folder>/scripts/rules_file.py <repo root>
 ```
 
-It prints one JSON object with the keys `found`, `settings`, `missing_sections`, `disabled_without_reason`, `unknown_ids` and `error`. Act on it in this order:
+It prints one JSON object with the keys `found`, `settings`, `missing_sections`, `disabled_without_reason`, `unknown_ids`, `bad_paths` and `error`. Act on it in this order:
 
 1. `error` is set: stop the skill. Show the parse error message and its line, and ask the user to fix the file.
 2. `found` is false: there is no rules file. Every section falls back as in step 3, and you suggest `/sql setup` once. Format and optimize then run tag detection and formatter detection for that run only. This holds for PostgreSQL files only: a fallback file runs no tag detection and no formatter detection.
 3. Each missing section falls back for that part only, and you name it once: `style` uses the repo majority, `formatter` uses detection, `sources` (the tags and the receivers) uses detection for that run, and `rules` means no disabled rules.
 4. Each id in `disabled_without_reason` stays enabled, because it has no reason line (`- PG-10: <reason>` in the prose outside the TOML block). Name it once.
 5. Each id in `unknown_ids` is ignored. Name it once.
-6. A disabled id with a reason is not checked. List the disabled rules once in the report.
+6. Each entry in `bad_paths` is an `[engine] paths` entry that is not a `<folder>=<engine>` string with a relative folder inside the repo and an engine that is not blank. A `paths` value that is not a list is one entry. The engine step ignores it, so the files of that folder get the next engine signal. Name it once, so that the user can fix it.
+7. A disabled id with a reason is not checked. List the disabled rules once in the report.
 
 ## Engine step
 

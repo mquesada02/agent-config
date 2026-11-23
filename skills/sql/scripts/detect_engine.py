@@ -89,12 +89,11 @@ def rules_signals(root, file):
     if file is not None and isinstance(paths, list):
         best = -1
         for entry in paths:
-            if not isinstance(entry, str) or "=" not in entry:
+            parts = rules_file.split_path_entry(entry)
+            if parts is None:
                 continue
-            raw_folder, _, raw_engine = entry.rpartition("=")
+            raw_folder, raw_engine = parts
             folder = rules_file.clean_folder(raw_folder)
-            if folder is None or not raw_engine.strip():
-                continue
             if folder != "." and file != folder and not file.startswith(folder + "/"):
                 continue
             length = 0 if folder == "." else len(folder)

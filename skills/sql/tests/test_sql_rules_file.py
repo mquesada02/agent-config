@@ -82,13 +82,13 @@ class RulesFileReaderTest(unittest.TestCase):
 
     # --- the six keys and the file cases -------------------------------
 
-    def test_a_valid_file_gives_all_six_keys(self):
+    def test_a_valid_file_gives_all_seven_keys(self):
         self.write(doc(FULL_BLOCK))
         code, out = self.read()
         self.assertEqual(code, 0)
         self.assertEqual(
             set(out),
-            {"found", "settings", "missing_sections", "disabled_without_reason", "unknown_ids", "error"},
+            {"found", "settings", "missing_sections", "disabled_without_reason", "unknown_ids", "bad_paths", "error"},
         )
         self.assertIs(out["found"], True)
         self.assertEqual(out["settings"]["style"]["keyword_case"], "upper")
@@ -404,6 +404,59 @@ class RulesFileReaderTest(unittest.TestCase):
         self.write(doc('engine = "MySQL"\n'))
         code, out = self.read()
         self.assertEqual(out["settings"]["engine"], "MySQL")
+
+    def test_each_paths_entry_that_the_engine_step_ignores_is_reported(self):
+        entries = '["/legacy=MySQL", "../db=mysql", "db/../x=mysql", "no equals sign", 7, "db=", " =mysql", "ok=mysql"]'
+        self.write(doc(f"[engine]\npaths = {entries}\n"))
+        code, out = self.read()
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out["bad_paths"],
+            ["/legacy=MySQL", "../db=mysql", "db/../x=mysql", "no equals sign", "7", "db=", " =mysql"],
+        )
+        self.assertEqual(out["settings"]["engine"]["paths"][-1], "ok=mysql")
+
+    def test_a_paths_value_that_is_not_a_list_is_reported(self):
+        self.write(doc('[engine]\npaths = "db=mysql"\n'))
+        code, out = self.read()
+        self.assertEqual(out["bad_paths"], ['"db=mysql"'])
+
+    def test_valid_paths_or_no_engine_section_report_nothing(self):
+        self.write(doc('[engine]\nname = "mysql"\npaths = ["./db=sqlite", "db//a=MySQL", ".=mysql"]\n'))
+        code, out = self.read()
+        self.assertEqual(out["bad_paths"], [])
+        self.write(doc(FULL_BLOCK))
+        code, out = self.read()
+        self.assertEqual(out["bad_paths"], [])
+
+
+class PathEntryTest(unittest.TestCase):
+    """Direct tests of the `paths` entry helpers that setup, the reader and the engine step share."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(SKILL, "scripts"))
+        self.addCleanup(sys.path.remove, os.path.join(SKILL, "scripts"))
+        import rules_file
+        self.module = rules_file
+
+    def test_clean_folder_normalizes_a_relative_folder(self):
+        for folder, clean in (("db", "db"), ("./db", "db"), ("db//a/", "db/a"), (" db ", "db"), (".", "."), ("a/./b", "a/b")):
+            with self.subTest(folder=folder):
+                self.assertEqual(self.module.clean_folder(folder), clean)
+
+    def test_clean_folder_rejects_a_folder_outside_the_repo(self):
+        for folder in ("", "  ", "/db", "..", "../db", "db/../x", "db/.."):
+            with self.subTest(folder=folder):
+                self.assertIsNone(self.module.clean_folder(folder))
+
+    def test_split_path_entry_gives_the_folder_and_the_engine_as_written(self):
+        self.assertEqual(self.module.split_path_entry("./db=MySQL"), ("./db", "MySQL"))
+        self.assertEqual(self.module.split_path_entry("a=b=sqlite"), ("a=b", "sqlite"))
+
+    def test_split_path_entry_rejects_a_bad_entry(self):
+        for entry in (7, None, "no equals sign", "db=", "db=  ", "=mysql", "/db=mysql", "../db=mysql"):
+            with self.subTest(entry=entry):
+                self.assertIsNone(self.module.split_path_entry(entry))
 
 
 if __name__ == "__main__":
