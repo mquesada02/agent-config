@@ -1,9 +1,11 @@
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import helper_testing_rules as helper
 
@@ -88,6 +90,34 @@ class ReportCheckTest(WriteGraderCase):
 
     def test_a_missing_result_line_fails(self):
         self.assert_fail("result", report().replace("**Result:", "Result:"))
+
+    def test_a_row_with_an_empty_first_cell_is_kept(self):
+        self.assert_pass(report(file_section(rows=[("", "add()", "unit", "small", "none", "pure; wanted small")])))
+
+    def test_an_invalid_title_adds_no_scope_failure(self):
+        out = self.assert_fail("title", report().replace("# testing write: src/a.js", "# testing review: src/a.js"))
+        self.assertNotIn("FAIL forms", out)
+        self.assertNotIn("FAIL notes", out)
+
+    def test_a_test_in_both_found_bugs_and_kept_failing_fails(self):
+        both = report(FAILED + BUG_SECTION + KEPT_SECTION, counts="1 files, 0 pass, 1 fail, 0 not run, 1 bugs")
+        self.assertIn("in both", self.assert_fail("kept failing", both))
+
+    def test_a_fail_name_that_is_no_row_existing_test_or_path_fails(self):
+        counts = "1 files, 0 pass, 1 fail, 0 not run, 0 bugs"
+        self.assert_fail("run result", report(file_section(result="fail (ghost)"), counts=counts))
+        self.assert_pass(report(file_section(result="fail (old test (existing))"), counts=counts))
+        self.assert_pass(report(file_section(result="fail (tests/a.test.js)"), counts=counts))
+        self.assert_pass(report(file_section(result="fail (exit code 1)"), counts=counts))
+
+    def test_a_line_that_is_no_table_row_or_contract_line_in_a_section_fails(self):
+        self.assert_fail("sections", report(file_section().replace("Command:", "All tests pass.\nCommand:")))
+        both = report(FAILED + BUG_SECTION.replace("\n\n", "\nNote.\n\n", 1), counts="1 files, 0 pass, 1 fail, 0 not run, 1 bugs")
+        self.assert_fail("sections", both)
+
+    def test_the_no_group_line_names_the_languages_of_the_tests_with_group_none(self):
+        self.assert_fail("notes", report(notes="No group: rust. Tests are placed at the named or derived path.\n"))
+        self.assert_pass(report(notes="No group: typescript. Tests are placed at the named or derived path.\n"))
 
     def test_a_count_mismatch_fails(self):
         out = self.assert_fail("counts", report(counts="1 files, 0 pass, 1 fail, 0 not run, 0 bugs"))
@@ -255,6 +285,36 @@ class RepoCheckTest(WriteGraderCase):
         done = self.run_repo(report(), {"tests": ["tests/a.test.js"]})
         self.assertEqual(done.returncode, 0, done.stdout)
 
+    def test_a_word_that_only_starts_like_an_assertion_or_sits_in_a_comment_is_no_assertion(self):
+        for text in (
+            "const assertions = 1;\n", "const expected = add(1, 2);\n", 'it("should add", () => {});\n',
+            "// expect(add(1, 2)).toBe(3)\n", "/* assert.equal(add(1, 2), 3); */\nconsole.log(1);\n",
+        ):
+            with self.subTest(text):
+                self.put(self.repo, "tests/a.test.js", text)
+                done = self.run_repo(report(), {"tests": ["tests/a.test.js"]})
+                self.assertIn("FAIL tests:", done.stdout)
+
+    def test_an_assertion_call_form_passes(self):
+        for text in ("assert_eq!(add(1, 2), 3);\n", "expect(add(1, 2)).toBe(3);\n", "assert!(ok);\n", "x.should.equal(3);\n",
+                     "debug_assert_eq!(add(1, 2), 3);\n"):
+            with self.subTest(text):
+                self.put(self.repo, "tests/a.test.js", text)
+                self.assertEqual(self.run_repo(report(), {"tests": ["tests/a.test.js"]}).returncode, 0)
+
+    def test_an_all_false_grouped_check_does_not_read_the_rules_file(self):
+        spec = importlib.util.spec_from_file_location("grade_testing_write", GRADER)
+        grader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(grader)
+        row = ["t", "p", "unit", "small", "none", "r"]
+        model = {"files": {"tests/a.test.js": {"rows": [row]}}, "bugs": [], "kept": [], "lines": []}
+        with mock.patch.object(grader, "toml_groups", side_effect=grader.Usage("no tomllib")):
+            expect = {"tests": ["tests/a.test.js"], "grouped": {"tests/a.test.js": False}}
+            self.assertEqual(grader.check_repo(self.repo, None, expect, model), [])
+            expect["grouped"]["tests/a.test.js"] = True
+            with self.assertRaises(grader.Usage):
+                grader.check_repo(self.repo, None, expect, model)
+
     def test_a_test_file_with_no_assertion_fails(self):
         self.put(self.repo, "tests/a.test.js", "console.log(add(1, 2));\n")
         done = self.run_repo(report(), {"tests": ["tests/a.test.js"]})
@@ -296,11 +356,11 @@ class RepoCheckTest(WriteGraderCase):
     def test_an_existing_test_line_removed_or_moved_fails(self):
         self.put(self.before, "tests/a.test.js", "line one\nline two\n")
         expect = {"tests": ["tests/a.test.js"], "existing": ["tests/a.test.js"]}
-        self.put(self.repo, "tests/a.test.js", "line one\nassert 1\nline two\n")
+        self.put(self.repo, "tests/a.test.js", "line one\nassert(1)\nline two\n")
         self.assertEqual(self.run_repo(report(), expect, use_before=True).returncode, 0)
-        self.put(self.repo, "tests/a.test.js", "line one\nassert 1\n")
+        self.put(self.repo, "tests/a.test.js", "line one\nassert(1)\n")
         self.assertIn("FAIL existing:", self.run_repo(report(), expect, use_before=True).stdout)
-        self.put(self.repo, "tests/a.test.js", "line two\nline one\nassert 1\n")
+        self.put(self.repo, "tests/a.test.js", "line two\nline one\nassert(1)\n")
         self.assertIn("FAIL existing:", self.run_repo(report(), expect, use_before=True).stdout)
 
     def test_result_words_per_file(self):
@@ -608,6 +668,14 @@ class JestGroupModelTest(GroupModelBase):
         self.assertTrue(self.selects("npx jest --runTestsByPath src/price.test.ts tests/a.test.ts", "tests/a.test.ts"))
         self.assertFalse(self.selects("npx jest --runTestsByPath src/price", "src/price.test.ts"))
 
+    def test_run_tests_by_path_with_an_inline_true_reads_as_the_bare_flag(self):
+        self.assertTrue(self.selects("npx jest --runTestsByPath=true ./src/price.test.ts", "src/price.test.ts"))
+        self.assertFalse(self.selects("npx jest --runTestsByPath=true src/price", "src/price.test.ts"))
+
+    def test_run_tests_by_path_with_an_inline_false_reads_as_without_the_flag(self):
+        self.assertTrue(self.selects("npx jest --runTestsByPath=false src/price", "src/price.test.ts"))
+        self.assertFalse(self.selects("npx jest --runTestsByPath=false ./src/price.test.ts", "src/price.test.ts"))
+
     def test_a_fixed_flag_with_a_value_is_not_an_operand(self):
         self.assertTrue(self.selects("npx jest --maxWorkers 2 -w 2 --ci", "tests/a.test.ts"))
         self.assertTrue(self.selects("npx jest --maxWorkers=2 --outputFile out.json", "tests/a.test.ts"))
@@ -710,6 +778,11 @@ class NodeTestGroupModelTest(GroupModelBase):
 
     def test_a_command_with_no_test_token_keeps_the_old_result(self):
         self.assertTrue(self.selects("npm test", "tests/a.test.ts"))
+
+    def test_a_node_command_with_no_test_token_is_a_wrapper_and_selects_no_file(self):
+        for command in ("node scripts/run-tests.js", "node tests/a.test.ts", "CI=true node --import tsx run.mjs"):
+            with self.subTest(command):
+                self.assertFalse(self.selects(command, "tests/a.test.ts"))
 
     def test_a_wrapper_selects_no_file_even_when_an_operand_matches(self):
         for command in ("node --test tests/a.test.ts && tsc", "node --test; tsc", "node --test tests | cat"):

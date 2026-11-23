@@ -27,7 +27,7 @@ is required. The other keys are optional, and an absent key means no check:
   command_contains a string that every Command line must hold
 Output: one line "FAIL <check>: <message>" for each failed check, then a last line PASS or FAIL.
 Exit code: 0 pass, 1 fail, 2 usage error or unreadable input.
-The grader reads the rules file itself with tomllib (imported only for the grouped check). It never
+The grader reads the rules file itself with tomllib (imported only for a grouped check that expects a group). It never
 calls intake.py.
 """
 import argparse
@@ -81,7 +81,9 @@ RUST_VALUE_FLAGS = (
     "-j", "--test-threads", "-P", "--profile", "-F", "--features", "--retries", "--target", "--manifest-path",
     "--status-level", "--message-format", "--cargo-profile", "--flaky-result",
 )
-ASSERTION = re.compile(r"\b(assert|expect|should)|\bt\.(Error|Errorf|Fatal|Fatalf)\(", re.IGNORECASE)
+SEPARATOR_CELL = re.compile(r"^:?-+:?$")
+ASSERTION = re.compile(r"\b((debug_)?assert(_\w+)?|expect|should)\s*[(.!]|\bt\.(Error|Errorf|Fatal|Fatalf)\(", re.IGNORECASE)
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
 
 
 class Usage(Exception):
@@ -102,9 +104,16 @@ def parse_table(body):
         cells = split_row(stripped)
         if header is None:
             header = cells
-        elif not set(cells[0]) <= set("-: "):
+        elif not all(SEPARATOR_CELL.match(cell) for cell in cells):
             rows.append(cells)
     return header, rows
+
+
+def stray_lines(body, where, fail, prefixes=("|", "Command:", "Run result:")):
+    """Fail for each non-blank line of a section body that is not a table row or a line of its contract."""
+    for line in body:
+        if line.strip() and not line.strip().startswith(prefixes):
+            fail("sections", f"{where}unknown line {line.strip()!r}")
 
 
 def check_report(text):
@@ -120,7 +129,7 @@ def check_report(text):
     title = TITLE.match(lines[first].strip()) if first is not None else None
     if title is None:
         fail("title", "the first line is not like # testing write: <scope>")
-        scope = []
+        scope = None
     else:
         scope = [] if title.group(1) == "none" else title.group(1).split(", ")
     result_at = next((i for i, line in enumerate(lines) if RESULT.match(line.strip())), None)
@@ -164,10 +173,10 @@ def check_report(text):
         if not_written.count(path) > 1:
             fail("notes", f"Not written appears more than once for {path}")
     for path in not_written:
-        if path not in scope:
+        if scope is not None and path not in scope:
             fail("notes", f"Not written names {path}, which is not in the title scope")
     forms = [line for name, line in notes if name == "form"]
-    if not scope:
+    if scope is not None and not scope:
         if len(forms) != 1 or len(notes) != 1:
             fail("forms", "the scope none needs exactly one line: the empty-scope line or the Intake failed line")
         if headings:
@@ -175,7 +184,7 @@ def check_report(text):
         if counts is not None and any(counts):
             fail("forms", "an empty-scope or failed-intake report has all zero counts")
         return failures, model
-    if forms:
+    if forms and scope is not None:
         fail("forms", "the empty-scope and failed-intake lines need the scope none")
 
     # the one mention of the setup command
@@ -210,11 +219,12 @@ def check_report(text):
     paths = [path for path, _ in file_sections]
     if len(set(paths)) != len(paths):
         fail("sections", "a ## File: section appears twice for the same path")
-    if file_sections and len(set(not_written)) >= len(scope):
+    if scope and file_sections and len(set(not_written)) >= len(scope):
         fail("notes", "every product file is not written, so the report has no file section")
 
     # file sections
     for path, body in file_sections:
+        stray_lines(body, f"{path}: ", fail)
         header, rows = parse_table(body)
         if header != FILE_COLUMNS:
             fail("tables", f"{path}: the table columns are not {FILE_COLUMNS}")
@@ -244,8 +254,11 @@ def check_report(text):
         if len(commands) == 1 and commands[0] == "Command: none" and word in ("pass", "fail"):
             fail("command", f"{path}: Command: none needs Run result: not run, found {word}")
         for name in held:
+            is_new = name in [c[0] for c in rows if c]
             if name.endswith(EXISTING) and name[:-len(EXISTING)] in [c[0] for c in rows if c]:
                 fail("run result", f"{path}: {name!r} has the suffix {EXISTING.strip()!r} but is a new test")
+            elif not (is_new or name.endswith(EXISTING) or name == path or re.fullmatch(r"(exit code )?-?\d+", name)):
+                fail("run result", f"{path}: the fail result names {name!r}, which is no row, existing test or file path")
         model["files"][path] = {
             "rows": rows,
             "command": commands[0][len("Command:"):].strip() if len(commands) == 1 else None,
@@ -255,6 +268,7 @@ def check_report(text):
 
     # Found bugs and Kept failing
     bug_rows, kept_rows = [], []
+    stray_lines((bug_at or []) + (kept_at or []), "a bug or kept failing section: ", fail, prefixes=("|",))
     if bug_at is not None:
         header, bug_rows = parse_table(bug_at)
         if header != BUG_COLUMNS:
@@ -301,12 +315,24 @@ def check_report(text):
         elif test not in entry["held"]:
             fail("kept failing", f"{test}: not named in the fail result of {file}")
 
+    for file, test in sorted({(b["file"], b["test"]) for b in model["bugs"]} & {(k["file"], k["test"]) for k in model["kept"]}):
+        fail("kept failing", f"{test}: in both Found bugs and Kept failing for {file}")
+
     # No group line: present exactly when a row has Group none
     any_none = any(len(c) == len(FILE_COLUMNS) and c[4] == "none" for e in model["files"].values() for c in e["rows"])
     if any_none and "b" not in names:
         fail("notes", "a test has Group none, but the report has no No group line")
     if not any_none and "b" in names:
         fail("notes", "the report has a No group line, but no test has Group none")
+    no_group = next((line for name, line in notes if name == "b"), None)
+    if any_none and no_group is not None and NO_GROUP.match(no_group):
+        named = set(no_group[len("No group: "):].split(". ")[0].split(", "))
+        none_languages = {
+            LANGUAGES.get(os.path.splitext(path)[1], "general") for path, entry in model["files"].items()
+            if any(len(c) == len(FILE_COLUMNS) and c[4] == "none" for c in entry["rows"])
+        }
+        if named != none_languages:
+            fail("notes", f"the No group line names {sorted(named)}, the tests with Group none are in {sorted(none_languages)}")
 
     # counts
     if counts is not None:
@@ -587,7 +613,8 @@ def jest_group_selects(command, path):
     if any(word in JEST_UPDATE_MODES for word in words):
         return False
     flat = flat_tokens(words, JEST_FIXED_FLAGS)
-    patterns, operands, by_path = [], [], "--runTestsByPath" in flat
+    patterns, operands = [], []
+    by_path = any(token in ("--runTestsByPath", "--runTestsByPath=true") for token in flat)
     index = 0
     while index < len(flat):
         token = flat[index]
@@ -663,11 +690,12 @@ def glob_regex(pattern):
 def node_group_selects(command, path):
     """Whether a plain `node --test` group command selects a file for write (the write column of the TypeScript entry).
 
-    Returns None when the command is not a `node` command with a `--test` token, so the caller keeps the old reading."""
+    Returns None when the command is not a `node` command, so the caller keeps the old reading.
+    A `node` command with no `--test` token is a wrapper (the TypeScript entry says so) and selects no file."""
     words = command_words(command, (["node"],))
-    if words is None or "--test" not in re.split(r"[\s;|&<>`$()]+", command):
+    if words is None:
         return None
-    if has_wrapper_marker(command):
+    if "--test" not in re.split(r"[\s;|&<>`$()]+", command) or has_wrapper_marker(command):
         return False
     flat = flat_tokens(words)
     operands = []
@@ -747,7 +775,7 @@ def check_repo(repo, before, expect, model):
         except (OSError, UnicodeDecodeError):
             fail("tests", f"{path}: the test file does not exist or is not readable")
             continue
-        if not ASSERTION.search(content):
+        if not ASSERTION.search(COMMENT.sub("", content)):
             fail("tests", f"{path}: the file holds no assert, expect, should, t.Error or t.Fatal")
     for path in expect.get("product", []):
         try:
@@ -775,7 +803,7 @@ def check_repo(repo, before, expect, model):
             position += 1
     grouped = expect.get("grouped", {})
     if grouped:
-        groups = toml_groups(repo) or []
+        groups = (toml_groups(repo) or []) if any(grouped.values()) else []
         for path, want in grouped.items():
             entry = files.get(path)
             if entry is None:
