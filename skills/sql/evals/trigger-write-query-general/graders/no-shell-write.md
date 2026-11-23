@@ -1,7 +1,7 @@
 ---
 type: tool_used
 tool: Bash
-input_match: '\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<![&=>-])>>?(?!&)\s*(?!/dev/null)\S|&>>?\s*(?!/dev/null)\S'
+input_match: '\bsed\s+-i|\b(?:tee|mv|cp|rm|patch)\b|(?<![&=<>#@-])>>?(?!&)\s*(?!/dev/null)\S|&>>?\s*(?!/dev/null)\S'
 min: 0
 max: 0
 ---
