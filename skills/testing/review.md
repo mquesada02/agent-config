@@ -4,7 +4,7 @@ Review existing tests against the rules of [general.md](general.md) and write a 
 
 ## Steps
 
-1. Read the intake JSON that [SKILL.md](SKILL.md) made for the files in scope. Run no other shell command for the rules or the facts. The only commands that a review runs before the report are the timed run of step 5 (with its two `git status --porcelain` calls) and a list command that a loaded language entry confirms.
+1. Read the intake JSON that [SKILL.md](SKILL.md) made for the files in scope. Run no other shell command for the rules or the facts. The only commands that a review runs before the report are the timed run (see "Timed run") and a list command that a loaded language entry confirms.
 2. Take each setting from the `rules.settings` object. A section that is missing (see `rules.missing_sections`) or an optional key that is absent falls back to the `detected.facts` of the language. When `rules.error` is set, `rules.settings` is empty and every setting falls back.
 3. Take the disabled ids from `rules.settings.rules.disabled`. This list is empty when the rules file is absent or `rules.error` is set, and a value that is not a list gives no id.
    - Skip each distinct disabled id that is in the catalogue and is not in `rules.disabled_without_reason`. Line (a) of the report lists them.
