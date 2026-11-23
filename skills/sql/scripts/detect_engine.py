@@ -17,7 +17,6 @@ Exit code: 0 when it ran, 2 for a usage error (one line on stderr, nothing on st
 """
 import json
 import os
-import posixpath
 import re
 import sys
 
@@ -74,14 +73,6 @@ def relative_file(root, file):
     return relative.replace(os.sep, "/")
 
 
-def clean_folder(folder):
-    """The folder of a `paths` entry in clean form, or None when it is not valid."""
-    folder = folder.strip()
-    if not folder or folder.startswith("/") or ".." in folder.split("/"):
-        return None
-    return posixpath.normpath(folder)
-
-
 def rules_signals(root, file):
     """(the `paths` evidence or None, the `name` evidence or None) of the rules file."""
     settings = rules_file.read_rules(root)["settings"]
@@ -101,7 +92,7 @@ def rules_signals(root, file):
             if not isinstance(entry, str) or "=" not in entry:
                 continue
             raw_folder, _, raw_engine = entry.rpartition("=")
-            folder = clean_folder(raw_folder)
+            folder = rules_file.clean_folder(raw_folder)
             if folder is None or not raw_engine.strip():
                 continue
             if folder != "." and file != folder and not file.startswith(folder + "/"):

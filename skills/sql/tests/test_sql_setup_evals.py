@@ -19,7 +19,7 @@ CASES = ("setup-tags-fixture", "setup-no-sql", "setup-rerun", "setup-pg-fixture"
 KEY = "example.com/acme/shop"
 SCRIPT_NAMES = (
     "rules_file.py", "allowlist.py", "setup_scan.py", "measure_style.py", "detect_formatter.py",
-    "formatter_install.py", "setup_files.py",
+    "formatter_install.py", "setup_files.py", "detect_engine.py",
 )
 STEPS = ("Step 1: Detect", "Step 2: Tags and receivers", "Step 3: Style and formatter", "Step 4: Allowlist",
          "Step 5: Interview", "Step 6: Write", "Step 7: Report")
