@@ -83,6 +83,14 @@ def run_grader(script, args, stdin=None):
     return proc.returncode, lines, proc.stderr.strip()
 
 
+def grader_lines(script, args, stdin):
+    """The FAIL lines of a grader, or one FAIL line when the grader cannot grade (exit code 2)."""
+    code, lines, error = run_grader(script, args, stdin)
+    if code == 2:
+        return [f"FAIL {script}: cannot grade ({error})"]
+    return lines
+
+
 def grade_run(case, number, trace_path, lists):
     """The failure lines of one run, each prefixed with the case and the run number."""
     label = f"{case}#{number}"
@@ -98,11 +106,11 @@ def grade_run(case, number, trace_path, lists):
     disabled = lists.get("disabled")
     lines = change_lines
     report_flag = REPORT_FLAGS.get(lists.get("report"), [])
-    lines = lines + run_grader("grade_report.py",
-                               ["-", *(["--disabled", *disabled] if disabled is not None else []), *report_flag],
-                               message)[1]
-    lines = lines + run_grader("grade_rule_ids.py", ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]],
-                               message)[1]
+    lines = lines + grader_lines("grade_report.py",
+                                 ["-", *(["--disabled", *disabled] if disabled is not None else []), *report_flag],
+                                 message)
+    lines = lines + grader_lines("grade_rule_ids.py",
+                                 ["-", "--expect", *lists["expect"], "--forbid", *lists["forbid"]], message)
     return [f"FAIL {label} {line[len('FAIL '):]}" for line in lines]
 
 

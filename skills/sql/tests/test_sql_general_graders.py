@@ -1,9 +1,11 @@
+import importlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(HERE)
@@ -18,6 +20,15 @@ def run(script, args=(), stdin=None):
     proc = subprocess.run([sys.executable, "-I", os.path.join(GRADERS, script), *args],
                           input=stdin, capture_output=True, text=True)
     return proc.returncode, proc.stdout.splitlines(), proc.stderr
+
+
+def import_grader(name):
+    """The grader module of that name, imported from the graders folder."""
+    sys.path.insert(0, GRADERS)
+    try:
+        return importlib.import_module(name)
+    finally:
+        sys.path.remove(GRADERS)
 
 
 def general_part(rows=None, title="# sql optimize (general): src/reports.ts", extra=()):
@@ -141,9 +152,37 @@ class MixedReportGraderTest(unittest.TestCase):
         code, out, _ = self.grade(text, "--disabled", "GEN-10", "PG-06")
         self.assertEqual(code, 1)
 
-    def test_a_part_with_no_disabled_id_gets_no_disabled_check(self):
+    def test_a_part_with_no_disabled_id_and_no_disabled_line_passes(self):
         text = general_part(extra=["Disabled rules: GEN-10."]) + PG_REPORT
         self.assertEqual(self.grade(text, "--disabled", "GEN-10")[:2], (0, ["PASS"]))
+
+    def test_a_disabled_line_in_a_part_with_no_disabled_id_fails(self):
+        result = "**Result: 0 critical, 0 required, 1 suggestion.**"
+        text = general_part(extra=["Disabled rules: GEN-10."]) + PG_REPORT.replace(
+            result, result + "\nDisabled rules: PG-10.")
+        # the flag names ids of one part only, so the Disabled rules line of the other part is stray
+        for flag, stray_part in (("PG-10", "general"), ("GEN-10", "PostgreSQL")):
+            with self.subTest(stray_part=stray_part):
+                code, out, _ = self.grade(text, "--disabled", flag)
+                self.assertEqual(code, 1, out)
+                self.assertTrue(any(line.startswith("FAIL disabled:") for line in out), out)
+
+    def test_no_disabled_flag_checks_no_part(self):
+        text = general_part(extra=["Disabled rules: GEN-01."]) + PG_REPORT
+        self.assertEqual(self.grade(text)[:2], (0, ["PASS"]))
+
+
+class GeneralSourcesTest(unittest.TestCase):
+    def test_a_module_with_no_sources_heading_is_an_error(self):
+        grade_report = import_grader("grade_report")
+        grade_report.general_sources.cache_clear()
+        self.addCleanup(grade_report.general_sources.cache_clear)
+        with tempfile.TemporaryDirectory() as folder:
+            module = os.path.join(folder, "general.md")
+            with open(module, "w", encoding="utf-8") as handle:
+                handle.write("# General\n\n## Rules\n\n### GEN-01\n\n- **Title:** A rule\n")
+            with mock.patch.object(grade_report, "GENERAL_MODULE", module), self.assertRaises(ValueError):
+                grade_report.general_sources()
 
 
 class PostgresqlReportUnchangedTest(unittest.TestCase):
@@ -207,6 +246,21 @@ class EvalResultsReportKeyTest(unittest.TestCase):
     def test_a_general_report_fails_with_no_key(self):
         code, out, _ = self.grade("c", {"expect": ["GEN-08"], "forbid": []}, general_part())
         self.assertEqual(code, 1)
+
+    def test_a_report_grader_that_cannot_grade_is_a_failure(self):
+        grade_eval_results = import_grader("grade_eval_results")
+        real = grade_eval_results.run_grader
+
+        def fake(script, args, stdin=None):
+            if script == "grade_report.py":
+                return 2, [], "the general module has no ## Sources section"
+            return real(script, args, stdin)
+
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(grade_eval_results, "run_grader", fake):
+            trace = self.make_case(root, "c", {"expect": [], "forbid": []}, general_part())
+            lines = grade_eval_results.grade_run("c", 1, trace, {"expect": ["GEN-08"], "forbid": [],
+                                                                 "report": "general"})
+        self.assertTrue(any(line.startswith("FAIL c#1 grade_report.py:") and "Sources" in line for line in lines), lines)
 
     def test_an_unknown_report_value_gives_exit_code_2(self):
         code, _, err = self.grade("c", {"expect": [], "forbid": [], "report": "gneral"}, general_part())

@@ -5,7 +5,8 @@ Usage: grade_report.py REPORT [--disabled ID...] [--general | --mixed]
 
 REPORT is a path, or - for stdin. Checks: title, summary, sections, disabled, tables, rows, numbering,
 counts, unique, where, approve, rewrite. With --disabled, the ids of the `Disabled rules:` line must be
-exactly that set. In every case no table row may hold a disabled id of the line.
+exactly that set, and --disabled with no id means that the report has no `Disabled rules:` line. In every
+case no table row may hold a disabled id of the line.
 
 With --general the report is one general part (the form of the section General part of optimize.md): the
 fallback sentence, the title `# sql optimize (general): <scope>`, the Result line, GEN rows whose Rule cell
@@ -13,11 +14,12 @@ is `GEN-NN (<Source>)`, no `## Approve` section, no `Rewrite` in a Fix cell, and
 `The skill edits no file in general mode.` With --mixed the report is a general part and then a PostgreSQL
 report: it is split at the first line that matches `# sql optimize: <scope>`, the first part is graded as
 --general and the second part as the PostgreSQL report. With --mixed, the --disabled ids that start with
-`GEN-` go to the general part and the other ids go to the PostgreSQL part (a part with no id gets no
---disabled check).
+`GEN-` go to the general part and the other ids go to the PostgreSQL part (a part with no id must have no
+`Disabled rules:` line).
 
 Output: one line "FAIL <check>: <message>" for each failed check, then PASS or FAIL.
-Exit code: 0 pass, 1 fail, 2 usage error or unreadable report (no PASS or FAIL line then).
+Exit code: 0 pass, 1 fail, 2 usage error, unreadable report or a general module with no `## Sources`
+section (no PASS or FAIL line then).
 """
 import argparse
 import functools
@@ -77,7 +79,9 @@ def general_sources():
     """The names of the `## Sources` entries of the general module, and `skill rule`."""
     with open(GENERAL_MODULE, encoding="utf-8") as handle:
         text = handle.read()
-    section = text.split("\n## Sources", 1)[-1]
+    _, found, section = text.partition("\n## Sources")
+    if not found:
+        raise ValueError(f"the general module has no ## Sources section: {GENERAL_MODULE}")
     return set(re.findall(r"^- \*\*(.+?):\*\*", section, re.M)) | {"skill rule"}
 
 
@@ -158,7 +162,10 @@ def grade(text, disabled_flag, general=False):
         if len(disabled_ids) != len(set(disabled_ids)):
             fail("disabled", "a disabled id is named twice")
     if disabled_flag is not None:
-        if not disabled_lines:
+        if not disabled_flag:
+            if disabled_lines:
+                fail("disabled", "a Disabled rules line, but no disabled id is expected")
+        elif not disabled_lines:
             fail("disabled", "no Disabled rules line, but --disabled names ids")
         elif set(disabled_ids) != set(disabled_flag):
             fail("disabled", f"the Disabled rules line names {sorted(set(disabled_ids))}, not {sorted(disabled_flag)}")
@@ -264,10 +271,8 @@ def grade_mixed(text, disabled_flag):
         return ["FAIL mixed: no PostgreSQL title line `# sql optimize: <scope>` after the general part"]
     general_flag = pg_flag = None
     if disabled_flag is not None:
-        general_ids = [i for i in disabled_flag if i.startswith("GEN-")]
-        pg_ids = [i for i in disabled_flag if not i.startswith("GEN-")]
-        general_flag = general_ids or None
-        pg_flag = pg_ids or None
+        general_flag = [i for i in disabled_flag if i.startswith("GEN-")]
+        pg_flag = [i for i in disabled_flag if not i.startswith("GEN-")]
     first = "\n".join(lines[:split_at])
     second = "\n".join(lines[split_at:])
     return (grade(first, general_flag, general=True) + grade(second, pg_flag))
@@ -286,10 +291,14 @@ def main(argv):
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read the report: {error}", file=sys.stderr)
         return 2
-    if args.mixed:
-        failures = grade_mixed(text, args.disabled)
-    else:
-        failures = grade(text, args.disabled, general=args.general)
+    try:
+        if args.mixed:
+            failures = grade_mixed(text, args.disabled)
+        else:
+            failures = grade(text, args.disabled, general=args.general)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
     print("\n".join(failures + ["FAIL" if failures else "PASS"]))
     return 1 if failures else 0
 
