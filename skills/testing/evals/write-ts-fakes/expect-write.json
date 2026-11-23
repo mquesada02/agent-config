@@ -9,5 +9,8 @@
   "result": {
     "src/status.test.ts": "pass"
   },
+  "grouped": {
+    "src/status.test.ts": true
+  },
   "command_contains": "--maxWorkers=2"
 }

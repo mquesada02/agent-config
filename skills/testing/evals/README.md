@@ -7,7 +7,7 @@ Model evals for the skill. You run them by hand. They cost tokens and their resu
 Run this from the repo root. Put the results outside the repo (`--output-dir`), so they cannot be committed by accident:
 
 ```
-claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(npx jest*)" "Bash(CI=true npx jest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(npm test*)" "Bash(npm run*)" "Bash(CI=true npm test*)" "Bash(CI=true npm run*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
+claude plugin eval skills/testing --no-publish -j 2 --runs 3 --threshold 1.0 --scaffold --ablation with-without --trust-plugin --keep-temp --allow-tools "Bash(python3 *scripts/intake.py*)" "Bash(npx vitest*)" "Bash(CI=true npx vitest*)" "Bash(npx jest*)" "Bash(CI=true npx jest*)" "Bash(node --test*)" "Bash(CI=true node --test*)" "Bash(cargo nextest*)" "Bash(CI=true cargo nextest*)" "Bash(cargo test*)" "Bash(CI=true cargo test*)" "Bash(npm test*)" "Bash(npm run ci*)" "Bash(npm run unit*)" "Bash(CI=true npm test*)" "Bash(CI=true npm run ci*)" "Bash(CI=true npm run unit*)" "Bash(git status*)" "Bash(git rev-parse*)" --output-dir <results folder> --json <results folder>/result.json
 ```
 
 - `--no-publish` keeps the cases and the report private.
@@ -97,7 +97,7 @@ Each folder holds one case:
 | `ts-skip-and-order` | A `test.skip` with no reason (`RUN-05`) and a `toHaveBeenCalledBefore` assertion (`DBL-01`); a `test.skipIf` on a platform and a `test.todo` are not findings. |
 | `ts-01-watch-script` | The recorded test command is `npm test` and the `test` script is `vitest`: one `TS-01` row whose Where cell lists both lines. |
 | `ts-01-run-mode` | The single-run command is `vitest run`: no `TS-01` row. |
-| `ts-assert-03-update` | `--update` in the single-run command, `update: 'all'` in the config and a time value in a snapshot: `ASSERT-03`. |
+| `ts-assert-03-update` | `--update` in the single-run command, `update: true` in the config of a second group and a time value in a snapshot: `ASSERT-03`. |
 | `ts-run-01-retry` | `retry` in the config and a `{ retry: 3 }` test option: `RUN-01`. |
 | `ts-run-02-fake-timers` | One real sleep gives `RUN-02`; a fake-timer test beside it is not a finding. |
 | `ts-run-04-verbose-durations` | A test with a fixed real 2 second sleep in a small group: the timed run uses `--reporter=verbose`, reads the verbose line and gives `RUN-04`. |
