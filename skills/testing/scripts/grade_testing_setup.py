@@ -92,6 +92,15 @@ def load_expect(path):
     return expect
 
 
+def same(held, expected):
+    """Equality that also needs the same type at every level: a boolean never equals a number."""
+    if isinstance(held, dict) and isinstance(expected, dict):
+        return held.keys() == expected.keys() and all(same(held[key], expected[key]) for key in held)
+    if isinstance(held, list) and isinstance(expected, list):
+        return len(held) == len(expected) and all(same(a, b) for a, b in zip(held, expected))
+    return type(held) is type(expected) and held == expected
+
+
 def lookup(settings, dotted):
     """(found, value) of a dotted path in nested dicts."""
     node = settings
@@ -133,7 +142,10 @@ def grade(repo, expect, before):
     failures = []
     data, code, stderr = run_intake(repo)
     path = os.path.join(repo, RULES_FILE)
-    lines = read_lines(path) if os.path.isfile(path) else [""]
+    try:
+        lines = read_lines(path) if os.path.isfile(path) else [""]
+    except (OSError, ValueError):
+        lines = [""]  # intake.py reports the same file as rules.error
     text = "\n".join(lines)
     problems = []
     if data is None:
@@ -166,7 +178,7 @@ def grade(repo, expect, before):
         found, held = lookup(settings, dotted)
         if not found:
             failures.append(f"FAIL set: {dotted} is absent")
-        elif held != value:
+        elif not same(held, value):
             failures.append(f"FAIL set: {dotted} is {held!r}, expected {value!r}")
     for dotted in expect.get("unset", []):
         if lookup(settings, dotted)[0]:
@@ -181,7 +193,7 @@ def grade(repo, expect, before):
             if any(dotted == item or dotted.startswith(item + ".") for item in approved):
                 continue
             found, held = lookup(settings, dotted)
-            if not found or held != value:
+            if not found or not same(held, value):
                 failures.append(f"FAIL settings: {dotted} was {value!r} and is {held if found else 'absent'!r}")
         kept = set(prose)
         for line in before_prose:
