@@ -106,6 +106,12 @@ class RouterTest(unittest.TestCase):
         for phrase in ("parse error", "missing section", "no reason", "unknown", "disabled", "/sql setup"):
             self.assertIn(phrase, body.lower())
 
+    def test_rules_file_section_names_each_bad_paths_entry(self):
+        body = section(self.text, "Rules file")
+        self.assertIn("`unknown_ids`, `bad_paths` and `error`", body)
+        self.assertIn("Each entry in `bad_paths` is an `[engine] paths` entry", body)
+        self.assertIn("Name it once, so that the user can fix it.", body)
+
 
 class StubTest(unittest.TestCase):
     """The modules that are still stubs (STUBS), each naming the tickets that fill it."""

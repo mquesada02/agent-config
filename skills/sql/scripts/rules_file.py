@@ -33,13 +33,14 @@ def unique(items):
     return list(dict.fromkeys(items))
 
 
-def result(found, settings=None, missing=None, without_reason=None, unknown=None, error=None):
+def result(found, settings=None, missing=None, without_reason=None, unknown=None, bad_paths=None, error=None):
     return {
         "found": found,
         "settings": settings or {},
         "missing_sections": list(SECTIONS) if missing is None else missing,
         "disabled_without_reason": without_reason or [],
         "unknown_ids": unknown or [],
+        "bad_paths": bad_paths or [],
         "error": error,
     }
 
@@ -107,11 +108,40 @@ def clean_folder(folder):
     return posixpath.normpath(folder)
 
 
+def split_path_entry(entry):
+    """(folder, engine) of a `<folder>=<engine>` entry, both as written, or None when the entry is not valid.
+
+    Valid: a string whose engine part (after the last `=`) is not blank and whose folder passes `clean_folder`.
+    Setup, the reader and the engine step all parse an entry with this function."""
+    if not isinstance(entry, str):
+        return None
+    folder, found, engine = entry.rpartition("=")
+    if not found or not engine.strip() or clean_folder(folder) is None:
+        return None
+    return folder, engine
+
+
+def bad_path_entries(settings):
+    """Each `[engine] paths` entry that the engine step ignores, as text (a value that is not a list counts as one)."""
+    engine = settings.get("engine")
+    if not isinstance(engine, dict) or "paths" not in engine:
+        return []
+    paths = engine["paths"]
+    if not isinstance(paths, list):
+        return [json.dumps(paths, default=str)]
+    return [
+        entry if isinstance(entry, str) else json.dumps(entry, default=str)
+        for entry in paths
+        if split_path_entry(entry) is None
+    ]
+
+
 def lowercase_path_entry(entry):
-    """A `<folder>=<engine>` string with its engine part in lowercase (other values as they are)."""
-    if not isinstance(entry, str) or "=" not in entry:
+    """A valid `<folder>=<engine>` string with its engine part in lowercase (other values as they are)."""
+    parts = split_path_entry(entry)
+    if parts is None:
         return entry
-    folder, _, engine = entry.rpartition("=")
+    folder, engine = parts
     return f"{folder}={engine.lower()}"
 
 
@@ -171,7 +201,7 @@ def read_rules(repo):
     prose = lines[: block.opening - 1] + lines[after_block:]
     candidates, unknown = disabled_entries(settings)
     without_reason = [rule_id for rule_id in candidates if not has_reason(rule_id, prose)]
-    return result(True, settings, missing, without_reason, unknown)
+    return result(True, settings, missing, without_reason, unknown, bad_path_entries(settings))
 
 
 def main(argv):
