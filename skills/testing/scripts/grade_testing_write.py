@@ -457,13 +457,9 @@ VITEST_NO_UPDATE = ("none", "false")
 
 
 def vitest_launcher_form(command):
-    """Whether a command is a launcher followed by the word vitest in a form that is not an exec form of the entry."""
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return False
-    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-        tokens = tokens[1:]
+    """Whether a command is a launcher followed by the word vitest. The caller calls it only after
+    `command_words` found no exec form of the entry, so a match is a launcher form that is not one."""
+    tokens = command_tokens(command) or []
     if tokens[:1] and tokens[0] in VITEST_LAUNCHERS:
         rest = [t for t in tokens[1:] if not t.startswith("-") and t not in ("exec", "dlx", "x")]
         return rest[:1] == ["vitest"]
@@ -473,7 +469,8 @@ def vitest_launcher_form(command):
 def vitest_group_selects(command, path):
     """Whether a plain Vitest group command selects a file for write (the write column of the TypeScript entry).
 
-    Returns None when the command is not a form of Vitest, so the caller keeps the old reading.
+    Returns None when the command has no Vitest launcher word, so the caller keeps the old reading.
+    Returns False for a shell marker and for a launcher form that is not an exec form.
     A launcher form that is not an exec form is a wrapper and selects no file.
     The write grader cannot read the Vitest config, so a project token narrows nothing."""
     words = command_words(command, VITEST_EXEC)
@@ -546,14 +543,22 @@ def flat_tokens(words, boolean_flags=()):
     return flat
 
 
-def command_words(command, exec_forms):
-    """The words after the exec form of a command (leading NAME=value words dropped), or None."""
+def command_tokens(command):
+    """The shell words of a command (leading NAME=value words dropped), or None when it does not parse."""
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
     while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
+    return tokens
+
+
+def command_words(command, exec_forms):
+    """The words after the exec form of a command (leading NAME=value words dropped), or None."""
+    tokens = command_tokens(command)
+    if tokens is None:
+        return None
     return next((tokens[len(prefix):] for prefix in exec_forms if tokens[:len(prefix)] == prefix), None)
 
 
