@@ -1726,12 +1726,12 @@ def _real_input(audited):
     return units
 
 
-def _unbacked_extensions(ledger, extensions, units):
+def _unbacked_extensions(ledger, units):
     """The S5 evidence lines of the extensions whose quote is not found in real user input (`units`, from `_real_input`). Each extension
     takes the earliest unused block that is after the round at the cap in force before it and not after the extension. An extension that
     an extension-amend names is judged by its latest amendment instead: the new quote, and not after that amendment."""
     used, caps, failures = set(), {}, []
-    for number, event in enumerate(extensions, 1):
+    for number, event in enumerate(ledger.extensions, 1):
         key = (event["loop"], event["phase"])
         cap = caps.get(key, PHASE_CAPS[event["phase"]])
         caps[key] = cap + event["rounds"]
@@ -1813,13 +1813,12 @@ def check_s5(ledger, audited, problem, worktree=None, base_branch=None):
             elif (loop, phase) == FINAL_REVIEW:
                 detail = note
             failures.append(f"{loop} {phase}: round {number} is past the cap of {cap}{detail}")
-    extensions = [event for event in ledger.events if event["kind"] == "extension"]
     approvals = [event for event in ledger.events if event["kind"] == "size-approval"]
-    if extensions or approvals:
+    if ledger.extensions or approvals:
         if audited is None:
             return False, problem
         units = _real_input(audited)
-        failures += _unbacked_extensions(ledger, extensions, units) + _unbacked_size_approvals(approvals, units)
+        failures += _unbacked_extensions(ledger, units) + _unbacked_size_approvals(approvals, units)
     if failures:
         return False, _truncate_lines(failures)
     return True, f"{len(ledger.round_events)} rounds in {len(ledger.rounds)} loop phases, none past a cap" + (
@@ -2387,14 +2386,14 @@ def _pre_dispatch_arguments(argv):
 
 def _plan_review_view(ledger):
     """A new Ledger with the round, finding and extension events of the pre-dispatch loops and the status and finding-amend events of those findings."""
-    view, findings, extensions, count = Ledger(), set(), {}, 0  # extensions: the number of a kept extension -> its number in the view
+    view, findings, view_number, seen = Ledger(), set(), {}, 0  # view_number: the number of a kept extension -> its number in the view
     for event in ledger.events:
         if event["kind"] == "extension":
-            count += 1
+            seen += 1
             if event["loop"] in PRE_DISPATCH_LOOPS:
-                extensions[count] = len(extensions) + 1
-        elif event["kind"] == "extension-amend" and event["extension"] in extensions:
-            view.apply({**event, "extension": extensions[event["extension"]]})
+                view_number[seen] = len(view_number) + 1
+        elif event["kind"] == "extension-amend" and event["extension"] in view_number:
+            view.apply({**event, "extension": view_number[event["extension"]]})
             continue
         if event["kind"] in ("round", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
             if event["kind"] == "finding":
