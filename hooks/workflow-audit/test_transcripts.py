@@ -705,6 +705,14 @@ class S2Test(TranscriptCase):
                 rows = [self.run_row(template.format(tmp=self.tmp), "b1", 20, cwd=self.tmp), result_row("b1", 21)]
                 self.assert_item(self.run_rows(*rows), "S2", "fail", "other than the audited worktree")
 
+    def test_unicode_whitespace_around_the_declared_command_does_not_count(self):
+        # bash trims only space, tab and newline: `make test\xa0` runs make with the word `test\xa0`
+        for template in ("make test\xa0", "\x1fmake test", "cd {wt} && make test\x85", "make test\r"):
+            with self.subTest(command=template):
+                self.setUp()
+                rows = [self.run_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21)]
+                self.assert_item(self.run_rows(*rows), "S2", "fail", "did not run as declared")
+
     def test_a_git_step_outside_the_worktree_does_not_count(self):
         rows = [bash_row("git log && make test", "b1", 20, cwd="/elsewhere"), result_row("b1", 21)]
         self.assert_item(self.run_rows(*rows), "S2", "fail", "does not run in the audited worktree")

@@ -1010,10 +1010,10 @@ def check_s2(worktree, audited):
     root = os.path.realpath(worktree)
 
     def classified(call):
-        command = call["command"].strip()
+        command = call["command"].strip(" \t\n")  # bash trims only these; strip() would also drop a Unicode space that bash keeps in a word
         # a foreground call that the model resent with the redact_pre suffix (stacked once per resend in transcripts from before redact_pre stopped stacking it); a background call never gets it
         while not call["background"] and command.endswith(FAILED_SUFFIX):
-            command = command[:-len(FAILED_SUFFIX)].strip()
+            command = command[:-len(FAILED_SUFFIX)].strip(" \t\n")
         return _s2_chain(command, declared, root, call["cwd"])
 
     def foreground_outcome(call_id, transcript):
