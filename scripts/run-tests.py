@@ -12,7 +12,8 @@ import sys
 import tempfile
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT = os.path.abspath(__file__)
+ROOT = os.path.dirname(os.path.dirname(SCRIPT))
 GROUPS = (
     ("skills/sql/tests", "skills/cicd-pipelines/tests", "hooks/worktree-cleanup", "hooks/redact-secrets",
      "hooks/bash-reader", "hooks/forked-skills", "hooks/setup-diff-prompt", "hooks/subagent-readonly",
@@ -36,7 +37,7 @@ def main(argv):
     for index in range(len(GROUPS)):
         output = tempfile.TemporaryFile("w+", encoding="utf-8")
         outputs.append(output)
-        children.append(subprocess.Popen([sys.executable, __file__, str(index)], stdout=output, stderr=subprocess.STDOUT))
+        children.append(subprocess.Popen([sys.executable, SCRIPT, str(index)], stdout=output, stderr=subprocess.STDOUT))
     codes = [child.wait() for child in children]
     for index, output in enumerate(outputs):
         output.seek(0)
