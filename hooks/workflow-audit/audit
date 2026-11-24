@@ -2242,7 +2242,8 @@ def _segment_problems(words, depth, process_substitution=False):
             continue
         arguments = words[index + 1:]
         if name == "rm":
-            if _forced_recursive_git_rm(arguments) if index == git_rm_index else _recursive_rm(arguments):
+            recursive = _forced_recursive_git_rm(arguments) if index == git_rm_index else _recursive_rm(arguments)
+            if recursive:
                 found.append("recursive rm")
             elif process_substitution or any(isinstance(argument, _ExpandingWord) for argument in arguments):
                 found.append("rm with a shell expansion in a word")  # the expansion may make a recursive or force option
@@ -2920,16 +2921,15 @@ def split_command(command):
     Raises ValueError for an unbalanced quote or substitution."""
     masked, marker, substitutions = _mask_substitutions(command)
     placeholder = re.compile(re.escape(marker) + r"([0-9]+)" + re.escape(marker))
-    items, words, expands = [], [], []
+    items, words = [], []  # words: (token, whether it expands) pairs
 
     def close_segment():
-        restored = [placeholder.sub(lambda found: substitutions[int(found.group(1))][0], word) for word in words]
-        items.append([_ExpandingWord(word) if expanding else word for word, expanding in zip(restored, expands)])
-        for word in words:
+        items.append([(_ExpandingWord if expands else str)(placeholder.sub(lambda found: substitutions[int(found.group(1))][0], word))
+                      for word, expands in words])
+        for word, _ in words:
             for found in placeholder.finditer(word):
                 items.extend(["(", *split_command(substitutions[int(found.group(1))][1]), ")"])
         words.clear()
-        expands.clear()
 
     for token, shown in zip(_tokens(masked), _tokens(_hide_single_quoted(masked)), strict=True):
         if token and set(token) <= SEPARATOR_CHARS:  # shlex joins adjacent separators into one token
@@ -2937,8 +2937,7 @@ def split_command(command):
                 close_segment()
             items.append(token)
         else:
-            words.append(token)
-            expands.append("$" in shown or "`" in shown or placeholder.search(shown) is not None)
+            words.append((token, "$" in shown or "`" in shown or placeholder.search(shown) is not None))
     if words:
         close_segment()
     return items
