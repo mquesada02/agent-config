@@ -754,6 +754,26 @@ class S2Test(TranscriptCase):
                 self.setUp()
                 self.assert_item(self.background(rows), "S2", "fail")
 
+    def moved(self, notice_rows, **kwargs):
+        """A foreground run that the harness moved to the background after its timeout: the result is empty and names the task."""
+        result = result_row("b1", 21, stdout="")
+        result["toolUseResult"].update({"timedOutAfterMs": 600000, "backgroundTaskId": "t1"})
+        return self.run_rows(self.run_row("make test", "b1", 20), result, *notice_rows, **kwargs)
+
+    def test_a_moved_foreground_run_uses_the_exit_code_of_its_notification(self):
+        for name, row in (("user row", notification_user_row("b1")), ("attachment row", notification_attachment_row("b1"))):
+            with self.subTest(row=name):
+                self.setUp()
+                self.assert_item(self.moved([row]), "S2", "pass")
+
+    def test_a_moved_foreground_run_that_failed_or_never_reported_fails(self):
+        cases = {"exit 1": [notification_user_row("b1", status="failed", code=1)], "no notification": [],
+                 "other id": [notification_user_row("b9")]}
+        for name, rows in cases.items():
+            with self.subTest(case=name):
+                self.setUp()
+                self.assert_item(self.moved(rows), "S2", "fail")
+
     def test_a_notification_quoted_in_an_assistant_row_is_not_a_notification(self):
         quote = call_row("Bash", {"command": "echo"}, "q1", 22, message={"content": [{"type": "text", "text": notification_text("b1")}]})
         self.assert_item(self.background([quote]), "S2", "fail")
