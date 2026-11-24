@@ -158,7 +158,7 @@ class SwitchAndPullTest(CleanupCase):
         self.commit(self.main, "local-only.txt")
         result = self.run_cleanup(self.wt)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("local main and origin/main have diverged",self.starts(result, "Main checkout")[0])
+        self.assertIn("local main and origin/main have diverged", self.starts(result, "Main checkout")[0])
         self.assertTrue(self.remote_has(self.BRANCH))
         self.assertTrue(os.path.isdir(self.wt))
         self.assertEqual(self.rm_calls(), [])

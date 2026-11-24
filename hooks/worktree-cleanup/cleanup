@@ -7,6 +7,8 @@
 # It also passes when every file the branch changes is the same on origin/<base>, or when a merged PR's head contains the tip
 # (a squash-merged coordinator PR, #787); that PR's base is then used.
 # A merged PR at the tip takes precedence: its base is used and --base is ignored.
+# The base only feeds check 5. The main checkout returns to origin/develop when it exists, else to the default branch (#869);
+# every check that this switch and the pull need runs before the first action.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import os
 import sys
@@ -18,7 +20,7 @@ from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, anchor_worktree, bou
 
 DEVELOPMENT = "develop"
 USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
-PROTECTED = ("develop", "main")
+PROTECTED = (DEVELOPMENT, "main")
 SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 DEFAULT_WAIT_INTERVAL = 1.0
 DEFAULT_WAIT_LIMIT = 60.0
@@ -387,12 +389,12 @@ def main(argv):
     reasons += check_clean(target)
     reasons += check_submodules(target)
     tip = git(target, "rev-parse", "HEAD").stdout.strip()
-    merged, base, default, numbers = check_merged(target, facts["branch"], tip, named_base)
+    merged, _, default, numbers = check_merged(target, facts["branch"], tip, named_base)
     reasons += merged
     pushed, ref_absent = check_pushed(target, facts["branch"], tip, numbers)
     reasons += pushed
     switch_to = None
-    if default:
+    if default:  # a missing default branch is already a refusal of check 5
         switch_to, switch_reasons = switch_target(target, facts["checkout"], default)
         reasons += switch_reasons
     reasons += check_main_checkout(facts["checkout"])
