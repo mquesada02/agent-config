@@ -2,6 +2,7 @@ import shlex
 import time
 import unittest
 
+from audit_support import round_event
 from test_dispatch_gate import DispatchGateCase
 from test_gate import GateTestCase
 
@@ -54,8 +55,25 @@ ALIAS_ALLOWED = ("gh alias set pv 'pr view'", "gh alias set --shell pv '!gh pr l
 ALIAS_IMPORT_DENIED = ("gh alias import aliases.yml", "gh alias import -", "gh alias import --clobber aliases.yml", "gh -R o/r alias import f", "gh alias --help import f")
 
 
-class PrSpellingTest(GateTestCase):
+class GithubOriginCase(GateTestCase):
+    """A repo whose origin is a GitHub URL (pushes still go to the local bare repo): the gate allows -R only for that repository."""
+
+    def github_origin(self, slug="Org/Repo"):
+        self.git("remote", "set-url", "origin", f"https://github.com/{slug}.git")
+        self.git("remote", "set-url", "--push", "origin", self.origin)
+
+    def audited_github_branch(self, slug="Org/Repo"):
+        """A pushed branch with a passing record for the GitHub origin URL. The base is configured: the fixture URL is not a reachable remote."""
+        self.github_origin(slug)
+        self.start_branch("feature", "feat: a")
+        self.write_ledger("feature", [round_event()], url=f"https://github.com/{slug}.git")
+        self.git("config", "branch.feature.gh-merge-base", "main")
+        self.assertEqual(self.record().returncode, 0)
+
+
+class PrSpellingTest(GithubOriginCase):
     def test_every_spelling_is_denied_without_a_record(self):
+        self.github_origin("o/r")
         self.start_branch("feature", "feat: a")
         for command in SPELLINGS:
             with self.subTest(command=command):
@@ -79,13 +97,13 @@ class PrSpellingTest(GateTestCase):
                 self.assert_denied(self.gate(f'{command} "open'), "no branch to check: the command cannot be parsed")
 
     def test_every_spelling_is_allowed_with_a_passing_record(self):
-        self.audited_branch()
+        self.audited_github_branch("o/r")
         for command in SPELLINGS:
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
 
     def test_the_options_after_the_command_words_are_still_read(self):
-        self.audited_branch()
+        self.audited_github_branch("o/r")
         self.assert_denied(self.gate("gh -R o/r pr create --base other"), "base mismatch")
         self.assert_denied(self.gate("gh pr -R o/r create --head nowhere"), "push first")
 
@@ -100,6 +118,76 @@ class PrSpellingTest(GateTestCase):
         for command in ("gh -R o/r pr list", "gh pr -R o/r view 1", "gh -R o/r pr create --help", "gh pr new -h", "gh pr status", "gh -R o/r issue create"):
             with self.subTest(command=command):
                 self.assert_allowed(self.gate(command))
+
+
+class OtherRepositoryTest(GithubOriginCase):
+    """The gate allows -R only for a target that it proves is the origin repository; every other target is denied with a reason that says so."""
+
+    def test_a_passing_record_does_not_allow_another_repository(self):
+        self.audited_github_branch()
+        self.assert_allowed(self.gate("gh pr create"))
+        for command in ("gh pr create -R org/other", "gh -R org/other pr create", "gh pr create --repo=org/other --head feature",
+                        "gh pr create -R https://github.com/org/other.git", "gh pr create -R github.com/org/other",
+                        "gh pr create -R GitHub.com/org/other.git"):
+            with self.subTest(command=command):
+                reason = self.assert_denied(self.gate(command), "other repository")
+                self.assertIn("org/other", reason)
+
+    def test_a_passing_record_allows_the_working_directory_repository_in_every_form(self):
+        self.audited_github_branch()
+        for target in ("Org/Repo", "org/repo", "ORG/REPO", "org/repo.git", "Org/Repo.git", "github.com/org/repo", "GitHub.com/Org/Repo.git",
+                       "https://github.com/org/repo", "https://github.com/Org/Repo.git/", "git@github.com:org/repo.git", "ssh://git@github.com/ORG/REPO"):
+            with self.subTest(target=target):
+                self.assert_allowed(self.gate(f"gh pr create -R {target}"))
+        for command in ("gh pr create -R org/repo -R Org/Repo.git", "gh pr create --repo org/repo --repo=org/repo --body -Rorg/repo"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
+
+    def test_a_passing_record_denies_a_target_that_cannot_be_matched(self):
+        self.audited_github_branch()
+        for command in ("gh pr create -R $REPO", "gh pr create -R other", "gh pr create -R https://example.com/org/repo", "gh pr create -R org/..",
+                        "gh pr create -R org/repo/extra", "gh pr create -R", "gh pr create -R ''", "gh pr create -R ghe.example.com/org/repo",
+                        "gh pr create -dR org/other", "gh pr create -fRorg/other", "gh pr create -dR org/repo",
+                        "gh pr create -R org/repo -dR org/other"):  # a short flag cluster that reaches R: pflag reads its value, the gate does not
+            with self.subTest(command=command):
+                self.assertIn("cannot be matched", self.assert_denied(self.gate(command), "other repository"))
+
+    def test_a_passing_record_denies_an_option_value_that_looks_like_the_repository_option(self):
+        # Every -R/--repo word must match the origin: one of them can be the value of another option, and then the real one is hidden.
+        self.audited_github_branch()
+        for command in ("gh pr create -R org/other --body -Rorg/repo", "gh pr create -R org/other --title --repo=org/repo",
+                        "gh pr create -R org/repo --body -Rorg/other"):
+            with self.subTest(command=command):
+                self.assertIn("org/other", self.assert_denied(self.gate(command), "other repository"))
+
+    def test_an_origin_that_cannot_be_read_denies_a_target(self):
+        self.start_branch("feature", "feat: a")  # the fixture origin is a local path: it has no owner/repo pair
+        self.assertIn("cannot be matched", self.assert_denied(self.gate("gh pr create -R org/other"), "other repository"))
+        self.git("remote", "remove", "origin")
+        self.assertIn("cannot be matched", self.assert_denied(self.gate("gh pr create -R org/other"), "other repository"))
+
+    def test_another_repository_is_named_in_every_option_form(self):
+        self.github_origin()
+        self.start_branch("feature", "feat: a")
+        for option in ("-R org/other", "--repo org/other", "--repo=org/other", "-Rorg/other", "-R https://github.com/org/other.git"):
+            for command in (f"gh {option} pr create", f"gh pr {option} create", f"gh pr create {option} --base main"):
+                with self.subTest(command=command):
+                    reason = self.assert_denied(self.gate(command), "other repository")
+                    self.assertIn("org/other", reason)
+                    self.assertNotIn("no record", reason)
+
+    def test_another_repository_is_named_instead_of_a_missing_branch(self):
+        self.github_origin()
+        reason = self.assert_denied(self.gate("gh pr create -R org/other --head nowhere"), "other repository")
+        self.assertIn("org/other", reason)
+
+    def test_the_working_directory_repository_gives_the_usual_reason(self):
+        self.github_origin()
+        self.start_branch("feature", "feat: a")
+        for target in ("Org/Repo", "org/repo", "ORG/REPO", "org/repo.git", "https://github.com/org/repo", "https://github.com/Org/Repo.git/", "git@github.com:org/repo.git"):
+            with self.subTest(target=target):
+                self.assert_denied(self.gate(f"gh pr create -R {target}"), "no record")
+        self.assert_denied(self.gate("gh pr create -R org/repo --head nowhere"), "push first")
 
 
 class ApiTest(GateTestCase):

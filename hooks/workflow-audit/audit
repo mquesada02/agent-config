@@ -3580,6 +3580,67 @@ def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
     return None
 
 
+CLUSTERED_R = re.compile(r"-[A-QS-Za-z][A-Za-z]*R")  # a short flag, then more short flags that reach R: not the plain `-R` or `-Rvalue`
+
+
+def _repo_pair(value):
+    """The `owner/repo` pair of a `-R`/`--repo` value: `owner/repo`, `github.com/owner/repo` or a GitHub URL, else None."""
+    if not value.startswith(GITHUB_PREFIXES):
+        host = "github.com/"
+        value = "https://" + host + (value[len(host):] if value.lower().startswith(host) else value)
+    return _github_pair(value)
+
+
+def _repo_values(words):
+    """The value of every `-R`/`--repo` word, read as `_branch_option` reads one; "" for a value that cannot be resolved."""
+    values, index = [], 0
+    while index < len(words):
+        word = words[index]
+        if word in ("-R", "--repo"):
+            values.append(words[index + 1] if index + 1 < len(words) else "")
+            index += 1
+        elif word.startswith("--repo="):
+            values.append(word[len("--repo="):])
+        elif word.startswith("-R"):
+            values.append(word[2:].removeprefix("="))
+        index += 1
+    return ["" if "$" in value or "`" in value else value for value in values]
+
+
+def _other_repo_reason(cwd, words):
+    """The denial reason for a `-R`/`--repo` option that is not provably the origin repository of `cwd`; None when the command has no such
+    option, or `cwd` is unresolved (`_gate_reason` denies that). Fails closed: a value or an origin that cannot be matched is denied."""
+    # This flat scan cannot read the options like pflag. A short flag cluster that reaches R (`-dR x/y`) is never allowed. Every -R/--repo
+    # word must match the origin: one of them can be the value of another option (`--body -Rx/y`) and the real one must not be hidden.
+    cluster = next((word for word in words if CLUSTERED_R.match(word)), None)
+    values = [cluster] if cluster else _repo_values(words)
+    if not values or not isinstance(cwd, str):
+        return None
+    origin = None
+    try:
+        url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
+        origin = _github_pair(url) if url else None
+    except Exception:  # fail closed: a lookup that failed leaves `origin` None, so the command is denied
+        pass
+    for value in values:
+        target = _repo_pair(value) if value and not cluster else None
+        if target and origin and target.lower() == origin.lower():
+            continue
+        if target and origin:
+            return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
+                    f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
+        return (f"other repository: the -R value {_cut(value, 200)!r} cannot be matched to the repository of the working directory, and "
+                "the gate allows -R only for that repository. The owner opens this PR with `!`.")
+    return None
+
+
+def _pr_reason(runtime_dir, dir_fd, cwd, head, arguments):
+    """Why a PR creation is denied, or None when it is allowed. A PR that targets another repository, or one that the gate cannot prove
+    targets the repository of the working directory, is always denied: the checks that `_gate_reason` makes (branch, record) are those
+    of the working directory, so no record can cover it."""
+    return _other_repo_reason(cwd, head + arguments) or _gate_reason(runtime_dir, dir_fd, cwd, arguments)
+
+
 def _dispatch_reason(runtime_dir, dir_fd, session_id):
     """Why a `worker-start` is denied, or None when the session has a passing pre-dispatch record. Raises for a record that is not valid."""
     name = PRE_DISPATCH_NAME % session_id
@@ -3767,7 +3828,8 @@ def gate_reason(command, cwd, session_id=None):
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
                     moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
-                reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head(item)))
+                head = _pr_head(item)
+                reason = _pr_reason(runtime_dir, dir_fd, current, head, _arguments(item, head))
                 if reason:
                     return reason
             elif _is_dispatch(item, alone):
