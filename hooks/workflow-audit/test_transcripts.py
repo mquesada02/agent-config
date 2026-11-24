@@ -660,6 +660,42 @@ class S2Test(TranscriptCase):
                 self.setUp()
                 self.assert_item(self.run_rows(self.run_row(command, "b1", 20), result_row("b1", 21)), "S2", "fail", "did not run")
 
+    def test_the_declared_command_after_allowed_steps_counts_in_the_foreground_and_the_background(self):
+        for template in ("git log --oneline -1 && make test", "cd {wt} && git log --oneline -n 3 HEAD && make test",
+                         "git -C {wt} commit -q -F msg.txt && cd {wt} && make test", "git commit -q -m 'fix: a b' && make test",
+                         "git status -s && git log -3 && make test", "cd {wt}&&git status&&make test"):
+            for background in (False, True):
+                with self.subTest(command=template, background=background):
+                    self.setUp()
+                    rows = [self.run_row(template.format(wt=self.wt), "b1", 20, background=background), result_row("b1", 21)]
+                    self.assert_item(self.run_rows(*rows, *([notification_user_row("b1")] if background else [])), "S2", "pass")
+
+    def test_a_call_with_a_step_off_the_list_does_not_count_and_the_text_names_the_cause(self):
+        for template, cause in (("FOO=1 make test", "NAME=value prefix"), ("cd {wt} && FOO=1 make test", "NAME=value prefix"),
+                                ("git log; make test", "directly before"), ("git log & make test", "directly before"),
+                                ("make test | tail -3", "a pipe follows"), ("make test; echo", "`;` follows"), ("make test || true", "`||` follows"),
+                                ("make test &", "`&` follows"), ("make test 2>&1", "a redirection follows"),
+                                ("git log || true && make test", "shell syntax"), ("git log $(id) && make test", "shell syntax"),
+                                ("git log `id` && make test", "shell syntax"), ("cd ~ && make test", "shell syntax"),
+                                ("git commit --template=x && make test", "shell syntax"), ("git commit -m \"$x\" && make test", "shell syntax"),
+                                ("git commit -m 'a && b' && make test", "shell syntax"), ("git log\nmake test", "directly before"),
+                                ("cd /other && make test", "other than the audited worktree"), ("cd {wt}/.. && make test", "other than the audited worktree"),
+                                ("cd {wt} && git log && cd /tmp && make test", "other than the audited worktree"),
+                                ("git -C /other commit -q && make test", "git -C"), ("echo hi && make test", "step 'echo'"),
+                                ("git -c core.hooksPath=x commit && make test", "shell syntax"), ("git commit -c x && make test", "step 'git'"),
+                                ("git log -p && make test", "step 'git'"), ("git commit -q path && make test", "step 'git'"),
+                                ("git push && make test", "step 'git'"), ("cd {wt} && cd && make test", "step 'cd'")):
+            with self.subTest(command=template):
+                self.setUp()
+                rows = [self.run_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21)]
+                items = self.run_rows(*rows)
+                self.assert_item(items, "S2", "fail", "did not run as declared: ")
+                self.assert_item(items, "S2", "fail", cause)
+
+    def test_a_git_step_outside_the_worktree_does_not_count(self):
+        rows = [bash_row("git log && make test", "b1", 20, cwd="/elsewhere"), result_row("b1", 21)]
+        self.assert_item(self.run_rows(*rows), "S2", "fail", "does not run in the audited worktree")
+
     def test_outer_spaces_and_a_leading_cd_to_the_worktree_match(self):
         for template in ("  make test  ", "cd {wt} && make test", "cd '{wt}'&&  make test ", 'cd "{wt}" && make test'):
             with self.subTest(command=template):

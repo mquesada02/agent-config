@@ -119,7 +119,14 @@ READ_KINDS = frozenset(("user", "assistant", "system", "attachment"))
 EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
 LAUNCH_FIELDS = {"Agent": ("description", "subagent_type", "model"), "Skill": ("skill",)}  # the input keys that the digest shows
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*&&")
+# S2 words of a step before the declared command: a quoted text with no expansion, `&`, `;`, `|`, `<`, `>` or newline in it, or a bare word.
+S2_WORD = re.compile(r"""'[^'&;|<>\n]*'|"[^"$`\\!&;|<>\n]*"|[A-Za-z0-9_./:@+,-]+""")
+S2_LOG_WORD = re.compile(r"-[0-9]+|[A-Za-z0-9_./:@+,][A-Za-z0-9_./:@+,-]*")  # a `-N` limit or a ref
+S2_GIT_FLAGS = {"log": {"--oneline", "--stat", "--name-only", "--name-status", "--no-color"},
+                "status": {"-s", "--short", "-b", "--branch", "--porcelain", "--no-color"},
+                "commit": {"-q", "--quiet", "-a", "--all", "--amend", "--no-edit"}}
+S2_GIT_VALUE_FLAGS = {"commit": {"-m", "-F"}}
+S2_SYNTAX_CAUSE = "a step before it holds shell syntax that S2 does not accept (an expansion, a redirection, a NAME=value word, a quote left open)"
 # The suffix that hooks/redact-secrets/redact_pre.py appends to a foreground Bash call, and the line it prints on failure (#295).
 FAILED_LINE = "command-failed"
 FAILED_SUFFIX = " || echo " + FAILED_LINE
@@ -878,6 +885,106 @@ def _notification_exit(texts, call_id):
     return all(outcomes) if outcomes else None
 
 
+def _s2_words(step):
+    """The words of a step, or None when a part of it is not an S2 word (so that nothing in it can run or expand)."""
+    words, position = [], 0
+    while True:
+        while position < len(step) and step[position] in " \t":
+            position += 1
+        if position == len(step):
+            return words
+        found = S2_WORD.match(step, position)
+        if not found or (found.end() < len(step) and step[found.end()] not in " \t"):
+            return None
+        words.append(found.group())
+        position = found.end()
+
+
+def _s2_unquote(word):
+    return word[1:-1] if word[0] in "'\"" else word
+
+
+def _s2_folder(word, current):
+    """The real path that a `cd` or `git -C` word names, or None. A relative word must start with `.`, so that CDPATH cannot apply."""
+    target = _s2_unquote(word)
+    if not os.path.isabs(target):
+        if not current or not (target in (".", "..") or target.startswith(("./", "../"))):
+            return None  # a relative path means the row's cwd, not the audit's
+        target = os.path.join(current, target)
+    return os.path.realpath(target)
+
+
+def _s2_git_arguments(command, rest):
+    """True when `rest` holds only the options of S2_GIT_FLAGS and S2_GIT_VALUE_FLAGS, and for `log` a `-N` limit, `-n N` or a ref."""
+    position = 0
+    while command in S2_GIT_FLAGS and position < len(rest):
+        word = rest[position]
+        if word in S2_GIT_VALUE_FLAGS.get(command, ()) and position + 1 < len(rest) and _s2_unquote(rest[position + 1]) != "-":
+            position += 2
+        elif word in S2_GIT_FLAGS[command] or (command == "log" and S2_LOG_WORD.fullmatch(word)):
+            position += 1
+        elif command == "log" and word == "-n" and position + 1 < len(rest) and rest[position + 1].isdigit():
+            position += 2
+        else:
+            return False
+    return command in S2_GIT_FLAGS
+
+
+def _s2_step(step, root, current):
+    """(folder after the step, None) when the step is on the S2 list, else (None, the cause). The list: `cd <the worktree>` and
+    `git [-C <the worktree>] log|status|commit` with the options of `_s2_git_arguments`. Nothing else can change which tests run."""
+    words = _s2_words(step)
+    if not words:
+        return None, S2_SYNTAX_CAUSE
+    if words[0] == "cd" and len(words) == 2:
+        if _s2_folder(words[1], current) != root:
+            return None, "a `cd` before it goes to a folder other than the audited worktree"
+        return root, None
+    if words[0] == "git":
+        index = 1
+        if words[1:2] == ["-C"]:
+            if len(words) < 4 or _s2_folder(words[2], current) != root:
+                return None, "a `git -C` before it names a folder other than the audited worktree"
+            index = 3
+        elif not (current and _inside(os.path.realpath(current), root)):
+            return None, "a `git` step before it does not run in the audited worktree"
+        if _s2_git_arguments(words[index] if index < len(words) else "", words[index + 1:]):
+            return current, None
+    if re.fullmatch(r"[A-Za-z0-9_.-]{1,30}", words[0]):
+        return None, f"step '{words[0]}' before it is not allowed"
+    return None, S2_SYNTAX_CAUSE
+
+
+def _s2_after_cause(after):
+    after = after.lstrip(" \t")
+    for start, cause in (("||", "`||`"), ("|", "a pipe"), (";", "`;`"), ("&", "`&`"), ("\n", "a new line")):
+        if after.startswith(start):
+            return f"{cause} follows the declared command"
+    if re.match(r"[0-9]*[<>]", after):
+        return "a redirection follows the declared command"
+    return "more text follows the declared command"
+
+
+def _s2_chain(command, declared, root, cwd):
+    """(True, None) when `command` (without the redact_pre suffix) ends with the declared command as the last step of a chain of `&&`
+    steps that are all on the S2 list, and the chain runs it in the audited worktree; else (False, the cause). The exit code of such
+    a chain is the exit code of the declared command, because a failed step stops it."""
+    if not command.endswith(declared):
+        return False, _s2_after_cause(command[command.find(declared) + len(declared):])
+    before = command[:-len(declared)].rstrip(" \t")
+    current = cwd
+    if before:
+        if not before.endswith("&&"):
+            return False, "a word or a NAME=value prefix directly before it is not allowed"
+        for step in before[:-2].split("&&"):
+            current, cause = _s2_step(step, root, current)
+            if cause:
+                return False, cause
+    if not (current and _inside(os.path.realpath(current), root)):
+        return False, "it does not run in the audited worktree"
+    return True, None
+
+
 def check_s2(worktree, audited):
     """Returns (passed, evidence)."""
     try:
@@ -888,21 +995,12 @@ def check_s2(worktree, audited):
         return True, "no tests declared (`none`)"
     root = os.path.realpath(worktree)
 
-    def normalised(call):
+    def classified(call):
         command = call["command"].strip()
-        prefix = CD_PREFIX.match(command)
-        if prefix:
-            target = prefix.group(1).strip("'\"")
-            if not os.path.isabs(target) and call["cwd"]:
-                target = os.path.join(call["cwd"], target)  # a relative path means the row's cwd, not the audit's
-            if os.path.isabs(target) and os.path.realpath(target) == root:
-                command = command[prefix.end():].strip()
-        elif not (call["cwd"] and _inside(os.path.realpath(call["cwd"]), root)):
-            return None  # no `cd` prefix: the run counts only when its row cwd is inside the audited worktree
         # a foreground call that the model resent with the redact_pre suffix (stacked once per resend in transcripts from before redact_pre stopped stacking it); a background call never gets it
         while not call["background"] and command.endswith(FAILED_SUFFIX):
             command = command[:-len(FAILED_SUFFIX)].strip()
-        return command
+        return _s2_chain(command, declared, root, call["cwd"])
 
     def foreground_outcome(call_id, transcript):
         """None when a result or its stdout is missing or a result is an error; else False when a stdout ends with the
@@ -912,14 +1010,18 @@ def check_s2(worktree, audited):
             return None
         return FAILED_LINE not in transcript.last_lines[call_id]
 
-    edits, runs = [], []
+    edits, runs, refused = [], [], []
     for transcripts in audited:
         for transcript in transcripts:
             for call in transcript.calls:
                 if call["tool"] in EDIT_TOOLS and _inside(call["path"], root):
                     edits.append((call, transcript))
-                elif call["tool"] == "Bash" and declared in call["command"] and normalised(call) == declared:
-                    runs.append((call, transcript, transcripts[0]))
+                elif call["tool"] == "Bash" and declared in call["command"]:
+                    counts, cause = classified(call)
+                    if counts:
+                        runs.append((call, transcript, transcripts[0]))
+                    else:
+                        refused.append(cause)
     later = 0
     for run, transcript, main in runs:
         if not all(_is_after(run, transcript, edit, edit_transcript) for edit, edit_transcript in edits):
@@ -933,7 +1035,7 @@ def check_s2(worktree, audited):
         if outcome:
             return True, f"declared command ran after the last of {len(edits)} edits"
     if not runs:
-        return False, "the declared command did not run"
+        return False, "the declared command did not run" + (f" as declared: {refused[-1]}" if refused else "")
     if not later:
         return False, "the declared command ran only before the last edit"
     return False, "the declared command ran after the last edit but failed or did not finish"
