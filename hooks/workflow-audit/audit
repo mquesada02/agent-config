@@ -2894,16 +2894,81 @@ def _is_gated_pr_create(segment):
     return head is not None and (not _is_help(_arguments(segment, head)) or any(REDIRECTION.fullmatch(word) for word in head))
 
 
-def _is_dispatch(segment):
-    """A `worker-start` that needs a pre-dispatch record: one that is not a help-only command and has no `--retry-of` (the
-    flag at any word position), which can only restart a Task that was dispatched before. The two exemptions are for the plain form
-    only (`orca orchestration worker-start`, three words): the old gate denied a form with an option in it, and they do not allow it."""
+# The research branch name of hooks/worktree-branch/check_branch_name.py (keep the two in step).
+RESEARCH_BRANCH = re.compile(r"research/[a-z0-9]+(?:[.-][a-z0-9]+)*")
+# The options of the dispatch command that only describe the worker, so they are harmless next to `--worktree path:<p>` (from `orca orchestration
+# worker-start --help`). Any other option can change where the worker runs (`--on`, `--environment`, `--pairing-code`, `--repo`, `--run`,
+# `--parent`, `--from`, and `--terminal`, which gives the Task to an agent in its own worktree; `--deps` has no described effect): the local
+# branch of the path says nothing then, so the exemption is denied. Keep the lists in step with orca.
+RESEARCH_VALUE_OPTIONS = frozenset(f"--{name}" for name in (
+    "task", "spec", "spec-file", "task-title", "agent", "model", "effort", "comment", "display-name", "setup", "name", "timeout-ms"))
+RESEARCH_FLAGS = frozenset(("--keep-open", "--json"))
+# An absolute path of word characters and `. + @ % / -` only: bash expands no other word (no brace, glob, tilde, quote or `$`), so the gate and orca read one path.
+RESEARCH_PATH = re.compile(r"/[\w.+@%/-]*")
+
+
+def _worktree_path(arguments):
+    """The path of the one `--worktree path:<absolute path>` option in the arguments of a dispatch, else None. The arguments are read as
+    orca reads them: a value option takes the next word, so `--task --worktree path:/x` has no `--worktree` option. A second
+    `--worktree`, a `--` (orca may read the words after it as positional words), an option outside the two lists below (it may change
+    where the worker runs, as `--on` does), a value option with no value or with a value that starts with `-`, a positional word and a path that is not absolute or has a character outside `RESEARCH_PATH` (a shell could
+    expand it) give None."""
+    if "--" in arguments:
+        return None
+    found, position = [], 0
+    while position < len(arguments):
+        word = arguments[position]
+        if word == "--worktree" or word in RESEARCH_VALUE_OPTIONS:
+            # orca reads an option-looking word after a value option as an option (`--model --on srv` has a live `--on`)
+            if position + 1 >= len(arguments) or arguments[position + 1].startswith("-"):
+                return None
+            if word == "--worktree":
+                found.append(arguments[position + 1])
+            position += 2
+        elif word.startswith("--worktree="):
+            found.append(word[len("--worktree="):])
+            position += 1
+        elif word in RESEARCH_FLAGS:
+            position += 1
+        else:
+            return None  # another option, or a positional word that the gate does not know
+    if len(found) != 1 or not found[0].startswith("path:"):
+        return None
+    path = found[0][len("path:"):]
+    return path if RESEARCH_PATH.fullmatch(path) else None
+
+
+def _is_research_worktree(path):
+    """Whether `path` is the top of a git worktree that has a `research/*` branch checked out. Any git failure, a detached HEAD or a
+    folder inside another worktree gives False: the exemption fails closed."""
+    try:
+        top = _git_output(path, "rev-parse", "--show-toplevel", no_result=())
+        branch = _git_output(path, "symbolic-ref", "--short", "-q", "HEAD", no_result=(1,))
+    except Exception:
+        return False
+    return bool(top and branch and os.path.realpath(top) == os.path.realpath(path) and RESEARCH_BRANCH.fullmatch(branch))
+
+
+def _is_dispatch(segment, alone):
+    """A `worker-start` that needs a pre-dispatch record: one that is not a help-only command, has no `--retry-of` (the
+    flag at any word position), which can only restart a Task that was dispatched before, and does not start a worker in a worktree on
+    a `research/*` branch (a map in its research phase has no plan-review loops to audit; the branch reaches the base branch only through
+    the review loop, the audit and the PR). The exemptions are for the plain form only (`orca orchestration worker-start`, three words):
+    the old gate denied a form with an option in it, and they do not allow it. The research exemption also needs `alone` (the command
+    is this one segment: the gate reads the branch before the command runs, so another segment could change it first) and no shell
+    expansion in any word of the segment (it runs after the check and could change the branch) and no env or `NAME=` prefix."""
     head = _dispatch_head(segment)
     if head is None:
         return False
+    if len(head) != 3:
+        return True
     arguments = _arguments(segment, head)
-    exempt = _is_help(arguments) or any(word == "--retry-of" or word.startswith("--retry-of=") for word in arguments)
-    return not (exempt and len(head) == 3)
+    if _is_help(arguments) or any(word == "--retry-of" or word.startswith("--retry-of=") for word in arguments):
+        return False
+    if not alone or len(_command_words(segment)) != len(segment) or any(marker in word for word in segment for marker in ("$", "`", "<(", ">(")):
+        return True
+    path = _worktree_path(arguments)
+    return path is None or not _is_research_worktree(path)
 
 
 REDIRECTION = re.compile(r"(?:\{\w+\}|\d+|&)?[<>]+[|&]?(.*)", re.DOTALL)
@@ -3519,7 +3584,8 @@ def gate_reason(command, cwd, session_id=None):
         for form in GATED_FORMS:
             if form.denied and form.denied(segment):
                 return form.deny_reason
-    dispatches = sum(_is_dispatch(segment) for segment in segments)
+    alone = len(segments) == 1  # the research exemption of a dispatch holds only when no other segment can run before it
+    dispatches = sum(_is_dispatch(segment, alone) for segment in segments)
     pr_matches = sum(_is_pr_create(segment) for segment in segments)  # help-only ones too
     pr_creates = sum(_is_gated_pr_create(segment) for segment in segments)
     # Bodies of command substitutions (`$(...)`, backticks) are not parsed. More occurrences of the text than matching segments,
@@ -3562,7 +3628,7 @@ def gate_reason(command, cwd, session_id=None):
                 reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head(item)))
                 if reason:
                     return reason
-            elif _is_dispatch(item):
+            elif _is_dispatch(item, alone):
                 reason = _dispatch_reason(runtime_dir, dir_fd, session_id)
                 if reason:
                     return reason

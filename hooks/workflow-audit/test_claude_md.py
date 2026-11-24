@@ -120,6 +120,7 @@ class SectionSevenTest(RuleTextCase):
                        "It gives it the PR target (the base branch of the PR) with the worktree path and the map issue.",
                        "This replaces the manual step 4.1 evidence check", "A hook blocks `orchestration worker-start` until this audit passes",
                        "a plain `worker-start --retry-of` for a worker handover is exempt",
+                       "a plain `worker-start --worktree path:<absolute path>` into a worktree on a `research/*` branch (section 8)",
                        "A context-handoff successor of the main session runs the audit again before its next dispatch")
 
     def test_the_step_3_and_step_4_1_loops_share_one_worktree_until_the_pre_dispatch_audit_passes(self):
