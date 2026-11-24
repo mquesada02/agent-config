@@ -3568,16 +3568,16 @@ def _other_repo_target(cwd, words):
         if target_pair is None or origin_pair is None or target_pair.lower() == origin_pair.lower():
             return None
         return target_pair
-    except Exception:
+    except Exception:  # any failure means unsure: the caller keeps the reason that it has, so a denial never depends on this lookup
         return None
 
 
-def _pr_reason(runtime_dir, dir_fd, cwd, words, arguments):
+def _pr_reason(runtime_dir, dir_fd, cwd, head, arguments):
     """`_gate_reason`, where a denial of a PR that targets another repository says so: the checks that the gate makes (branch, record) are
     those of the working directory, so their reasons point at the wrong repository. It never changes whether the command is denied."""
     reason = _gate_reason(runtime_dir, dir_fd, cwd, arguments)
     if reason:
-        target = _other_repo_target(cwd, words)
+        target = _other_repo_target(cwd, head + arguments)
         if target:
             return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
                     f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
@@ -3772,7 +3772,7 @@ def gate_reason(command, cwd, session_id=None):
                     moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
                 head = _pr_head(item)
-                reason = _pr_reason(runtime_dir, dir_fd, current, head + _arguments(item, head), _arguments(item, head))
+                reason = _pr_reason(runtime_dir, dir_fd, current, head, _arguments(item, head))
                 if reason:
                     return reason
             elif _is_dispatch(item, alone):

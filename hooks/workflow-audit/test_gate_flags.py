@@ -141,6 +141,7 @@ class OtherRepositoryTest(GateTestCase):
         self.assert_denied(self.gate("gh pr create -R"), "no record")
 
     def test_an_origin_that_cannot_be_compared_keeps_the_usual_reason(self):
+        # The fixture origin is a local path, not a GitHub URL, so it has no owner/repo pair.
         self.start_branch("feature", "feat: a")
         self.assert_denied(self.gate("gh pr create -R org/other"), "no record")
 
