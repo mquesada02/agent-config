@@ -83,6 +83,14 @@ class SectionSixTest(RuleTextCase):
     def test_the_extension_bullet_follows_the_phase_commit_bullet(self):
         self.assertGreater(self.text.index("- `extension`:"), self.text.index("- `phase-commit`:"))
 
+    def test_one_answer_backs_one_extension_and_the_extension_amend_bullet_follows_the_extension_bullet(self):
+        self.assert_in(self.text, "One owner answer backs one `extension` event: ask one question per loop phase.")
+        bullet = re.search(r"^- `extension-amend`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "`--extension`", "`--quote`", "after the capped round and not after the amendment",
+                       "The loop, phase and rounds never change")
+        self.assertGreater(self.text.index("- `extension-amend`:"), self.text.index("- `extension`:"))
+        self.assertLess(self.text.index("- `extension-amend`:"), self.text.index("- `size-approval`:"))
+
     def test_the_session_that_got_the_approval_writes_the_extension_with_an_absolute_worktree_path(self):
         self.assert_in(self.text, "At a cap, the session that asked the user and got the approval writes the `extension` event "
                        "(for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) "
