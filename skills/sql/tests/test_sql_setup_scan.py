@@ -1,13 +1,19 @@
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(HERE)
 SCRIPT = os.path.join(SKILL_DIR, "scripts", "setup_scan.py")
+sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
+
+import extract  # noqa: E402
+import setup_scan  # noqa: E402
 
 TAGGED = """\
 import postgres from "postgres";
@@ -110,17 +116,33 @@ class OutputTest(ScanCase):
                 self.assertEqual(out, "")
                 self.assertEqual(len(err.strip().splitlines()), 1)
 
+    def scan_in_process(self):
+        """The result of `setup_scan.scan`, with each extractor call run in this process, not in a new one.
+
+        The cap tests need 1000 files. They check the cap of the scan, not the command line of the extractor, which
+        the other tests of this class run for real.
+        """
+        def run_in_process(command, **kwargs):
+            out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
+            with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
+                code = extract.main(command[2:])
+            return subprocess.CompletedProcess(command, code, out.buffer.getvalue().decode("utf-8"), err.getvalue())
+
+        self.addCleanup(os.chdir, os.getcwd())  # scan changes the folder
+        with mock.patch.object(subprocess, "run", run_in_process):
+            return setup_scan.scan(self.repo, None, None)
+
     def test_the_cap_is_1000_files_with_sql(self):
         for index in range(1001):
             self.write("f/%04d.sql" % index, "select 1;\n")
-        out = self.scan()
+        out = self.scan_in_process()
         self.assertEqual(len(out["files_with_sql"]), 1000)
         self.assertTrue(out["truncated"])
 
     def test_exactly_1000_files_is_not_truncated(self):
         for index in range(1000):
             self.write("f/%04d.sql" % index, "select 1;\n")
-        out = self.scan()
+        out = self.scan_in_process()
         self.assertEqual(len(out["files_with_sql"]), 1000)
         self.assertFalse(out["truncated"])
 
