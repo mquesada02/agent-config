@@ -3565,28 +3565,47 @@ def _repo_pair(value):
     return _github_pair(value)
 
 
+def _repo_values(words):
+    """The value of every `-R`/`--repo` word, read as `_branch_option` reads one; "" for a value that cannot be resolved."""
+    values, index = [], 0
+    while index < len(words):
+        word = words[index]
+        if word in ("-R", "--repo"):
+            values.append(words[index + 1] if index + 1 < len(words) else "")
+            index += 1
+        elif word.startswith("--repo="):
+            values.append(word[len("--repo="):])
+        elif word.startswith("-R"):
+            values.append(word[2:].removeprefix("="))
+        index += 1
+    return ["" if "$" in value or "`" in value else value for value in values]
+
+
 def _other_repo_reason(cwd, words):
     """The denial reason for a `-R`/`--repo` option that is not provably the origin repository of `cwd`; None when the command has no such
     option, or `cwd` is unresolved (`_gate_reason` denies that). Fails closed: a value or an origin that cannot be matched is denied."""
-    # A short flag cluster that reaches R (`-dR x/y`): pflag reads the value of R, this parser does not, so it is never allowed.
+    # This flat scan cannot read the options like pflag. A short flag cluster that reaches R (`-dR x/y`) is never allowed. Every -R/--repo
+    # word must match the origin: one of them can be the value of another option (`--body -Rx/y`) and the real one must not be hidden.
     cluster = next((word for word in words if CLUSTERED_R.match(word)), None)
-    value = cluster or _branch_option(words, "--repo", "-R")
-    if value is None or not isinstance(cwd, str):
+    values = [cluster] if cluster else _repo_values(words)
+    if not values or not isinstance(cwd, str):
         return None
-    target = origin = None
+    origin = None
     try:
-        target = _repo_pair(value) if value and not cluster else None
         url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
         origin = _github_pair(url) if url else None
     except Exception:  # fail closed: a lookup that failed leaves `origin` None, so the command is denied
         pass
-    if target and origin and target.lower() == origin.lower():
-        return None
-    if target and origin:
-        return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
-                f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
-    return (f"other repository: the -R value {_cut(value, 200)!r} cannot be matched to the repository of the working directory, and the "
-            "gate allows -R only for that repository. The owner opens this PR with `!`.")
+    for value in values:
+        target = _repo_pair(value) if value and not cluster else None
+        if target and origin and target.lower() == origin.lower():
+            continue
+        if target and origin:
+            return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
+                    f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
+        return (f"other repository: the -R value {_cut(value, 200)!r} cannot be matched to the repository of the working directory, and "
+                "the gate allows -R only for that repository. The owner opens this PR with `!`.")
+    return None
 
 
 def _pr_reason(runtime_dir, dir_fd, cwd, head, arguments):

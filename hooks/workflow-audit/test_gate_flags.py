@@ -139,6 +139,9 @@ class OtherRepositoryTest(GithubOriginCase):
                        "https://github.com/org/repo", "https://github.com/Org/Repo.git/", "git@github.com:org/repo.git", "ssh://git@github.com/ORG/REPO"):
             with self.subTest(target=target):
                 self.assert_allowed(self.gate(f"gh pr create -R {target}"))
+        for command in ("gh pr create -R org/repo -R Org/Repo.git", "gh pr create --repo org/repo --repo=org/repo --body -Rorg/repo"):
+            with self.subTest(command=command):
+                self.assert_allowed(self.gate(command))
 
     def test_a_passing_record_denies_a_target_that_cannot_be_matched(self):
         self.audited_github_branch()
@@ -148,6 +151,14 @@ class OtherRepositoryTest(GithubOriginCase):
                         "gh pr create -R org/repo -dR org/other"):  # a short flag cluster that reaches R: pflag reads its value, the gate does not
             with self.subTest(command=command):
                 self.assertIn("cannot be matched", self.assert_denied(self.gate(command), "other repository"))
+
+    def test_a_passing_record_denies_an_option_value_that_looks_like_the_repository_option(self):
+        # Every -R/--repo word must match the origin: one of them can be the value of another option, and then the real one is hidden.
+        self.audited_github_branch()
+        for command in ("gh pr create -R org/other --body -Rorg/repo", "gh pr create -R org/other --title --repo=org/repo",
+                        "gh pr create -R org/repo --body -Rorg/other"):
+            with self.subTest(command=command):
+                self.assertIn("org/other", self.assert_denied(self.gate(command), "other repository"))
 
     def test_an_origin_that_cannot_be_read_denies_a_target(self):
         self.start_branch("feature", "feat: a")  # the fixture origin is a local path: it has no owner/repo pair
