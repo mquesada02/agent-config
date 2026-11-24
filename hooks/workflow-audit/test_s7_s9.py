@@ -396,8 +396,28 @@ class S9SubstitutionTest(S9Case):
         self.assert_flagged(["echo $(rm -rf x)", "grep $(rm -rf x)", "echo `rm -rf x`", "echo `echo \\`rm -rf x\\``", "echo $(echo $(rm -rf x))",
                              "ls $(true) && rm -rf x", "FOO=$(rm -rf x) true"])
 
-    def test_a_double_quoted_substitution_body_is_not_read(self):
-        self.assert_clean(["git commit -m \"$(cat <<'EOF'\nfeat: x\ndo not rm -rf anything\nEOF\n)\"", "echo \"$(rm -rf x)\"", "echo '$(rm -rf x)'"])
+    def test_a_data_heredoc_in_a_double_quoted_substitution_and_a_single_quoted_text_are_clean(self):
+        self.assert_clean(["git commit -m \"$(cat <<'EOF'\nfeat: x\ndo not rm -rf anything\nEOF\n)\"", "echo '$(rm -rf x)'", "echo \"$(ls)\"",
+                           "echo \"a\\$(rm -rf x)\"", "echo \"$(echo \"x\")\""])
+
+    def test_a_recursive_delete_in_a_double_quoted_substitution_is_flagged(self):
+        self.assert_flagged(["echo \"$(rm -rf x)\"", "echo \"`rm -rf x`\"", "echo \"a$(rm -rf x)b\"", "echo \"$(echo \"$(rm -rf x)\")\"",
+                             "echo \"$(echo \"x\"; rm -rf y)\"", "echo \"`echo \\`rm -rf x\\``\"", "echo \"$(true)\" \"$(rm -rf x)\""])
+
+
+class S9ExpansionWordTest(S9Case):
+    def test_a_brace_expansion_in_a_word_of_rm_is_flagged(self):
+        self.assert_flagged(["rm -{r,f} d", "rm -r{,f} d", "git rm -r {a,b}", "rm {1..3}", "rm a{b,c}", "rm -{rf,x} d"])
+
+    def test_a_literal_brace_in_a_word_of_rm_is_clean(self):
+        self.assert_clean(["rm 'a{b,c}'", "rm \"a{b,c}\"", "rm a\\{b,c}", "rm {}", "find . -exec rm {} +", "rm 'a{b}'"])
+
+    def test_an_expanded_command_word_with_a_recursive_option_is_flagged(self):
+        self.assert_flagged(["$X -rf d", "git $X -r -f d", "$X -r d", "$X -R d", "$X --recursive d", "$X --rec d", "${X} -fr d", "$(echo rm) -rf d",
+                             "`echo rm` -rf d", "A=1 $X -rf d", "\"$X\" -rf d", "git -C d $X -rf d", "$X -{r,f} d", "$X -$Y d", "$X -r$Y d"])
+
+    def test_an_expanded_command_word_without_a_recursive_option_is_clean(self):
+        self.assert_clean(["$PY script.py", "git $X status", "$X -f d", "$X --force d", "$X --out=$D d", "$X -n 2 d", "git $X --cached d"])
 
     def test_an_unclosed_backtick_is_clean(self):
         self.assert_clean(["echo `rm -rf x"])
