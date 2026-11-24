@@ -3554,6 +3554,36 @@ def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
     return None
 
 
+def _other_repo_target(cwd, words):
+    """The `-R`/`--repo` target of a PR creation as `owner/repo`, when it is a different GitHub repository than the origin of `cwd`;
+    else None. None also means unsure: no option, a value that cannot be resolved, or an origin or target that is not a plain
+    `owner/repo` pair or a GitHub URL. The caller then keeps its own reason."""
+    try:
+        target = _branch_option(words, "--repo", "-R")
+        if not target or not isinstance(cwd, str):
+            return None
+        target_pair = _github_pair(target) if target.startswith(GITHUB_PREFIXES) else (target if GITHUB_NAME.fullmatch(target) else None)
+        url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
+        origin_pair = _github_pair(url) if url else None
+        if target_pair is None or origin_pair is None or target_pair.lower() == origin_pair.lower():
+            return None
+        return target_pair
+    except Exception:
+        return None
+
+
+def _pr_reason(runtime_dir, dir_fd, cwd, words, arguments):
+    """`_gate_reason`, where a denial of a PR that targets another repository says so: the checks that the gate makes (branch, record) are
+    those of the working directory, so their reasons point at the wrong repository. It never changes whether the command is denied."""
+    reason = _gate_reason(runtime_dir, dir_fd, cwd, arguments)
+    if reason:
+        target = _other_repo_target(cwd, words)
+        if target:
+            return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
+                    f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
+    return reason
+
+
 def _dispatch_reason(runtime_dir, dir_fd, session_id):
     """Why a `worker-start` is denied, or None when the session has a passing pre-dispatch record. Raises for a record that is not valid."""
     name = PRE_DISPATCH_NAME % session_id
@@ -3741,7 +3771,8 @@ def gate_reason(command, cwd, session_id=None):
                 if before not in PIPE_OPERATORS and after not in PIPE_OPERATORS | {"&"}:
                     moved[after_index] = _after_cd(current, words)
             elif _is_gated_pr_create(item):
-                reason = _gate_reason(runtime_dir, dir_fd, current, _arguments(item, _pr_head(item)))
+                head = _pr_head(item)
+                reason = _pr_reason(runtime_dir, dir_fd, current, head + _arguments(item, head), _arguments(item, head))
                 if reason:
                     return reason
             elif _is_dispatch(item, alone):

@@ -102,6 +102,49 @@ class PrSpellingTest(GateTestCase):
                 self.assert_allowed(self.gate(command))
 
 
+class OtherRepositoryTest(GateTestCase):
+    """A PR that targets another repository is denied with a reason that names it; no denial changes into an allow."""
+
+    def github_origin(self):
+        self.git("remote", "set-url", "origin", "https://github.com/Org/Repo.git")
+        self.git("remote", "set-url", "--push", "origin", self.origin)
+
+    def test_another_repository_is_named_in_every_option_form(self):
+        self.github_origin()
+        self.start_branch("feature", "feat: a")
+        for option in ("-R org/other", "--repo org/other", "--repo=org/other", "-Rorg/other", "-R https://github.com/org/other.git"):
+            for command in (f"gh {option} pr create", f"gh pr {option} create", f"gh pr create {option} --base main"):
+                with self.subTest(command=command):
+                    reason = self.assert_denied(self.gate(command), "other repository")
+                    self.assertIn("org/other", reason)
+                    self.assertNotIn("no record", reason)
+
+    def test_another_repository_is_named_instead_of_a_missing_branch(self):
+        self.github_origin()
+        reason = self.assert_denied(self.gate("gh pr create -R org/other --head nowhere"), "other repository")
+        self.assertIn("org/other", reason)
+
+    def test_the_working_directory_repository_gives_the_usual_reason(self):
+        self.github_origin()
+        self.start_branch("feature", "feat: a")
+        for target in ("Org/Repo", "org/repo", "ORG/REPO", "https://github.com/org/repo", "https://github.com/Org/Repo.git/", "git@github.com:org/repo.git"):
+            with self.subTest(target=target):
+                self.assert_denied(self.gate(f"gh pr create -R {target}"), "no record")
+        self.assert_denied(self.gate("gh pr create -R org/repo --head nowhere"), "push first")
+
+    def test_a_target_that_cannot_be_compared_keeps_the_usual_reason(self):
+        self.github_origin()
+        self.start_branch("feature", "feat: a")
+        for target in ("$REPO", "`echo x`", "github.com/org/other", "other", "https://example.com/org/other"):
+            with self.subTest(target=target):
+                self.assert_denied(self.gate(f"gh pr create -R {target}"), "no record")
+        self.assert_denied(self.gate("gh pr create -R"), "no record")
+
+    def test_an_origin_that_cannot_be_compared_keeps_the_usual_reason(self):
+        self.start_branch("feature", "feat: a")
+        self.assert_denied(self.gate("gh pr create -R org/other"), "no record")
+
+
 class ApiTest(GateTestCase):
     def test_a_call_that_opens_a_pull_request_is_denied(self):
         for command in API_DENIED:
