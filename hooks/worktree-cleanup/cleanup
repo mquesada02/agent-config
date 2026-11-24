@@ -7,7 +7,8 @@
 # It also passes when every file the branch changes is the same on origin/<base>, or when a merged PR's head contains the tip
 # (a squash-merged coordinator PR, #787); that PR's base is then used.
 # A merged PR at the tip takes precedence: its base is used and --base is ignored.
-# --base only feeds check 5, the merged check; it does not choose the switch target. The main checkout returns to origin/develop when it exists, else to the default branch (#869);
+# --base only feeds check 5, the merged check; it does not choose the switch target.
+# The main checkout returns to origin/develop when it exists, else to the default branch (#869);
 # every check that this switch and the pull need runs before the first action.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import os
