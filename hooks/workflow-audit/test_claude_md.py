@@ -1,10 +1,16 @@
 # Text tests of tickets #100, #164, #166, #489, #494, #574 and #577: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13, 14 and 16) and the test-command declaration of this repo.
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
+import runpy
 import shutil
+import sys
+import tempfile
 import unittest
+import unittest.mock
 
 from audit_support import HERE, AuditCase
 
@@ -481,6 +487,29 @@ class TestCommandDeclarationTest(unittest.TestCase):
         spec.loader.exec_module(runner)
         listed = [folder for group in runner.GROUPS for folder in group]
         self.assertEqual(sorted(listed), sorted(folders))  # a folder in no group, or in two groups, fails
+
+    def test_the_runner_starts_its_children_by_an_absolute_path_when_started_by_a_relative_path(self):
+        relative = os.path.relpath(os.path.join(REPO, "scripts", "run-tests.py"), tempfile.gettempdir())
+        previous = os.getcwd()
+        os.chdir(tempfile.gettempdir())
+        started = []
+
+        def fake_popen(argv, **options):
+            started.append(argv)
+            return unittest.mock.Mock(wait=lambda: 0)
+
+        try:
+            with unittest.mock.patch("subprocess.Popen", fake_popen), contextlib.redirect_stdout(io.StringIO()), \
+                    unittest.mock.patch.object(sys, "argv", [relative]):
+                with self.assertRaises(SystemExit) as raised:
+                    runpy.run_path(relative, run_name="__main__")  # __file__ stays the relative path, as in `python3 relative/run-tests.py`
+        finally:
+            os.chdir(previous)
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(len(started), 2)
+        for argv in started:
+            self.assertTrue(os.path.isabs(argv[1]), argv)
+            self.assertTrue(os.path.isfile(argv[1]), argv)
 
 
 class SectionSixteenTest(RuleTextCase):
