@@ -143,7 +143,9 @@ class OtherRepositoryTest(GithubOriginCase):
     def test_a_passing_record_denies_a_target_that_cannot_be_matched(self):
         self.audited_github_branch()
         for command in ("gh pr create -R $REPO", "gh pr create -R other", "gh pr create -R https://example.com/org/repo", "gh pr create -R org/..",
-                        "gh pr create -R org/repo/extra", "gh pr create -R", "gh pr create -R ''", "gh pr create -R ghe.example.com/org/repo"):
+                        "gh pr create -R org/repo/extra", "gh pr create -R", "gh pr create -R ''", "gh pr create -R ghe.example.com/org/repo",
+                        "gh pr create -dR org/other", "gh pr create -fRorg/other", "gh pr create -dR org/repo",
+                        "gh pr create -R org/repo -dR org/other"):  # a short flag cluster that reaches R: pflag reads its value, the gate does not
             with self.subTest(command=command):
                 self.assertIn("cannot be matched", self.assert_denied(self.gate(command), "other repository"))
 
