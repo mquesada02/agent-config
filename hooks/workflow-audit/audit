@@ -2282,11 +2282,16 @@ def _starts_process_substitution(items, index):
     return bool(items[index]) and items[index][-1].endswith(("<", ">")) and items[index + 1:index + 2] == ["("]
 
 
+def _s9_text(command):
+    """The command text that S9 reads: the data heredocs stripped, then the gates' join, as bash joins."""
+    return _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))
+
+
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
-    command = _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))  # the gates' join, as bash joins
+    command = _s9_text(command)
     try:
-        items = split_command(command, lambda body: _join_as_bash(strip_data_heredocs(body, S9_HEREDOC_READERS)))
+        items = split_command(command, _s9_text)
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
     return [kind for index, item in enumerate(items) if isinstance(item, list)
