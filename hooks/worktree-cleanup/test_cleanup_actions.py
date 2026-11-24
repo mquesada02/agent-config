@@ -98,6 +98,8 @@ class OwnWorktreeTest(CleanupCase):
 
 class RemoteBranchTest(CleanupCase):
     def test_a_protected_branch_skips_only_the_remote_delete(self):
+        # origin has develop, so the switch target is not the default branch that this test names as BRANCH (#869)
+        git("push", "-q", "origin", "main:refs/heads/develop", cwd=self.main, env=self.env)
         self.stub("gh repo view", json.dumps({"defaultBranchRef": {"name": self.BRANCH}}))
         result = self.run_cleanup(self.wt)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -148,16 +150,16 @@ class RemoteBranchTest(CleanupCase):
 
 
 class SwitchAndPullTest(CleanupCase):
-    def test_a_pull_that_cannot_fast_forward_exits_2(self):
+    def test_a_pull_that_cannot_fast_forward_is_refused_before_any_delete(self):
         other = os.path.join(self.root, "other")
         git("clone", "-q", self.remote, other, env=self.env)
         self.commit(other, "remote-only.txt")
         git("push", "-q", "origin", "main", cwd=other, env=self.env)
         self.commit(self.main, "local-only.txt")
         result = self.run_cleanup(self.wt)
-        self.assertEqual(result.returncode, 2)
-        self.assertTrue(self.starts(result, "Switch and pull"))
-        self.assertIn("Remote branch", self.starts(result, "Done steps")[0])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("local main and origin/main have diverged", self.starts(result, "Main checkout")[0])
+        self.assertTrue(self.remote_has(self.BRANCH))
         self.assertTrue(os.path.isdir(self.wt))
         self.assertEqual(self.rm_calls(), [])
 
