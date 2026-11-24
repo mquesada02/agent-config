@@ -684,7 +684,10 @@ class S2Test(TranscriptCase):
                                 ("git -C /other commit -q && make test", "git -C"), ("echo hi && make test", "step 'echo'"),
                                 ("git -c core.hooksPath=x commit && make test", "shell syntax"), ("git commit -c x && make test", "step 'git'"),
                                 ("git log -p && make test", "step 'git'"), ("git commit -q path && make test", "step 'git'"),
-                                ("git push && make test", "step 'git'"), ("cd {wt} && cd && make test", "step 'cd'")):
+                                ("git push && make test", "step 'git'"), ("git commit -F - && make test", "step 'git'"),
+                                ("git log -n '2' && make test", "step 'git'"), ("git -C && make test", "git -C"),
+                                ("cd '{wt}\x00' && make test", "other than the audited worktree"), ("make test\necho x", "a new line follows"),
+                                ("make test x", "more text follows"),("cd {wt} && cd && make test", "step 'cd'")):
             with self.subTest(command=template):
                 self.setUp()
                 rows = [self.run_row(template.format(wt=self.wt), "b1", 20), result_row("b1", 21)]

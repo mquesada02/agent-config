@@ -911,28 +911,40 @@ def _s2_folder(word, current):
         if not current or not (target in (".", "..") or target.startswith(("./", "../"))):
             return None  # a relative path means the row's cwd, not the audit's
         target = os.path.join(current, target)
-    return os.path.realpath(target)
+    try:
+        return os.path.realpath(target)
+    except ValueError:
+        return None  # a NUL byte in the word
+
+
+def _s2_in_worktree(current, root):
+    try:
+        return bool(current) and _inside(os.path.realpath(current), root)
+    except ValueError:
+        return False  # a NUL byte in the folder
 
 
 def _s2_git_arguments(command, rest):
     """True when `rest` holds only the options of S2_GIT_FLAGS and S2_GIT_VALUE_FLAGS, and for `log` a `-N` limit, `-n N` or a ref."""
+    if command not in S2_GIT_FLAGS:
+        return False
     position = 0
-    while command in S2_GIT_FLAGS and position < len(rest):
+    while position < len(rest):
         word = rest[position]
         if word in S2_GIT_VALUE_FLAGS.get(command, ()) and position + 1 < len(rest) and _s2_unquote(rest[position + 1]) != "-":
             position += 2
         elif word in S2_GIT_FLAGS[command] or (command == "log" and S2_LOG_WORD.fullmatch(word)):
             position += 1
-        elif command == "log" and word == "-n" and position + 1 < len(rest) and rest[position + 1].isdigit():
+        elif command == "log" and word == "-n" and position + 1 < len(rest) and re.fullmatch(r"[0-9]+", rest[position + 1]):
             position += 2
         else:
             return False
-    return command in S2_GIT_FLAGS
+    return True
 
 
 def _s2_step(step, root, current):
     """(folder after the step, None) when the step is on the S2 list, else (None, the cause). The list: `cd <the worktree>` and
-    `git [-C <the worktree>] log|status|commit` with the options of `_s2_git_arguments`. Nothing else can change which tests run."""
+    `git [-C <the worktree>] log|status|commit` with the options of `_s2_git_arguments`. No other step is allowed: a step can change which tests run or what the declared command does."""
     words = _s2_words(step)
     if not words:
         return None, S2_SYNTAX_CAUSE
@@ -946,7 +958,7 @@ def _s2_step(step, root, current):
             if len(words) < 4 or _s2_folder(words[2], current) != root:
                 return None, "a `git -C` before it names a folder other than the audited worktree"
             index = 3
-        elif not (current and _inside(os.path.realpath(current), root)):
+        elif not _s2_in_worktree(current, root):
             return None, "a `git` step before it does not run in the audited worktree"
         if _s2_git_arguments(words[index] if index < len(words) else "", words[index + 1:]):
             return current, None
@@ -980,7 +992,7 @@ def _s2_chain(command, declared, root, cwd):
             current, cause = _s2_step(step, root, current)
             if cause:
                 return False, cause
-    if not (current and _inside(os.path.realpath(current), root)):
+    if not _s2_in_worktree(current, root):
         return False, "it does not run in the audited worktree"
     return True, None
 
