@@ -438,6 +438,7 @@ class Transcript:
         self.versions = set()
         self.report_texts = []  # the text of the assistant rows and the message input of the SubagentHandback calls; only the quote check reads them
         self.models = set()  # the message.model of the assistant rows, None when it is not a string
+        self.model_events = []  # in row order: ("assistant", message.model or None) and ("fallback", row) for each system row with subtype model_fallback; only S7 reads them
         self.start = None    # the time of the first user or assistant row, None when it has no readable time
         self.start_seen = False
 
@@ -495,6 +496,8 @@ def _read_row(transcript, index, row):
                                       "field": "attachment.origin", "texts": [attachment["prompt"]]})
         return
     if kind == "system":
+        if row.get("subtype") == "model_fallback":
+            transcript.model_events.append(("fallback", row))
         return
     if not transcript.start_seen:
         transcript.start_seen = True
@@ -530,6 +533,7 @@ def _read_row(transcript, index, row):
     if kind == "assistant":
         model = message.get("model")
         transcript.models.add(model if isinstance(model, str) else None)
+        transcript.model_events.append(("assistant", model if isinstance(model, str) else None))
         if isinstance(content, list):
             transcript.report_texts.extend(_text_blocks(content))
     for block in blocks:
@@ -2048,36 +2052,58 @@ def _ledger_items(worktree, dir_fd, branch, remote_url, audited, agents, problem
 
 # ---- S7 and S9: models and safety, from the transcripts ----
 
-def _model_problem(transcript):
-    """None when every assistant row of the transcript (rows with the model <synthetic> aside) names a Sonnet model, else why not.
-    A model that is not Sonnet wins over a missing one."""
-    models = transcript.models - {SYNTHETIC_MODEL}
-    other = sorted(model for model in models if model is not None and "sonnet" not in model.lower())
+def _is_overload_fallback(row):
+    """True for the one fallback S7 accepts: Claude Code switched from a Sonnet model to another model because the first was overloaded."""
+    original, fallback = row.get("originalModel"), row.get("fallbackModel")
+    return (row.get("trigger") == "overloaded" and isinstance(original, str) and "sonnet" in original.lower()
+            and isinstance(fallback, str) and fallback != "" and fallback != SYNTHETIC_MODEL)
+
+
+def _model_check(transcript, allow_fallback):
+    """(problem, fallbacks): the problem is None when every assistant row of the transcript (rows with the model <synthetic> aside) names a Sonnet model, else why not.
+    A model that is not Sonnet wins over a missing one. With `allow_fallback`, an assistant row after a valid overload fallback row passes when its model is exactly
+    that row's fallbackModel; `fallbacks` lists the fallback models that such rows used. Any other fallback row ends the allowance."""
+    allowed, fallbacks, other, models = None, [], set(), transcript.models - {SYNTHETIC_MODEL}
+    for kind, value in transcript.model_events:
+        if kind == "fallback":
+            allowed = value["fallbackModel"] if allow_fallback and _is_overload_fallback(value) else None
+        elif value is not None and value != SYNTHETIC_MODEL and "sonnet" not in value.lower():
+            if value == allowed:
+                if value not in fallbacks:
+                    fallbacks.append(value)
+            else:
+                other.add(value)
     if other:
-        return "ran on " + ", ".join(repr(model[:MODEL_LIMIT]) for model in other)
+        return "ran on " + ", ".join(repr(model[:MODEL_LIMIT]) for model in sorted(other)), []
     if not models:
-        return "evidence unavailable: no assistant row with a model"
+        return "evidence unavailable: no assistant row with a model", []
     if None in models:
-        return "evidence unavailable: an assistant row without a string message.model"
-    return None
+        return "evidence unavailable: an assistant row without a string message.model", []
+    return None, fallbacks
+
+
+def _model_problem(transcript):
+    return _model_check(transcript, False)[0]
 
 
 def check_s7(audited, problem):
     """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
     if audited is None:
         return False, problem
-    failures, subagents, workers = [], 0, 0
+    failures, subagents, workers, fallbacks = [], 0, 0, []
     for transcripts in audited:
         is_worker = _is_worker(transcripts)
         workers += is_worker
         subagents += len(transcripts) - 1
         for transcript in (transcripts if is_worker else transcripts[1:]):
-            reason = _model_problem(transcript)
+            reason, used = _model_check(transcript, True)
             if reason:
                 failures.append(f"{transcript.name}: {reason}")
+            fallbacks += [f"{transcript.name}: automatic fallback on overload to {model[:MODEL_LIMIT]!r}" for model in used]
     if failures:
         return False, _truncate_lines(failures)
-    return True, f"{subagents} subagents and {workers} worker sessions on Sonnet models, {len(audited) - workers} main sessions exempt"
+    evidence = f"{subagents} subagents and {workers} worker sessions on Sonnet models, {len(audited) - workers} main sessions exempt"
+    return True, "\n".join([evidence, *fallbacks]) if fallbacks else evidence
 
 
 def _recursive_rm(arguments):
