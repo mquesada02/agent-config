@@ -584,8 +584,9 @@ def _read_row(transcript, index, row):
             transcript.calls.append(call)
     if answered:
         result = row.get("toolUseResult")
-        stdout = result.get("stdout") if isinstance(result, dict) and len(answered) == 1 else None
-        if isinstance(result, dict) and len(answered) == 1 and "timedOutAfterMs" in result and isinstance(result.get("backgroundTaskId"), str):
+        single = isinstance(result, dict) and len(answered) == 1
+        stdout = result.get("stdout") if single else None
+        if single and "timedOutAfterMs" in result and isinstance(result.get("backgroundTaskId"), str):
             transcript.moved.add(answered[0])
         for call_id in answered:
             transcript.last_lines.setdefault(call_id, []).append(stdout.rstrip().rsplit("\n", 1)[-1] if isinstance(stdout, str) else None)
