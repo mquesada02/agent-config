@@ -43,6 +43,7 @@ EVENT_KEYS = {
     "verdict": ("finding", "verifier", "result"),
     "status": ("finding", "status"),
     "extension": ("loop", "phase", "rounds", "quote"),
+    "extension-amend": ("extension", "quote"),
     "size-approval": ("lines", "quote"),
     "phase-commit": ("sha",),
     "link": ("source", "ticket"),
@@ -1093,6 +1094,7 @@ VALID_VALUE = {
     "result": lambda value: value in LEDGER_RESULTS,
     "status": lambda value: value in LEDGER_STATUSES,
     "rounds": lambda value: type(value) is int and 1 <= value <= MAX_EXTENSION_ROUNDS,
+    "extension": lambda value: type(value) is int and value >= 1,
     "lines": lambda value: type(value) is int and 1 <= value <= MAX_APPROVED_LINES,
     "quote": _plain_text(QUOTE_LIMIT, MIN_QUOTE),
     "raised": lambda value: value is True,
@@ -1142,6 +1144,8 @@ class Ledger:
         self.verdicts = []
         self.commits = []       # (position, event)
         self.extra_rounds = {}  # (loop, phase) -> the rounds that the extension events add to the cap
+        self.extensions = []    # the extension events in order: an extension-amend names one by its 1-based place here
+        self.extension_amends = {}  # extension number -> the extension-amend events for it in order; the latest one is in force
         self.link = None        # the link event, at most one
 
     def effective_cap(self, loop, phase):
@@ -1197,6 +1201,13 @@ class Ledger:
             if self.rounds.get(key, 0) < cap:
                 raise LedgerError(f"round {cap} of {key[0]} {key[1]} is not recorded: the cap is not reached")
             self.extra_rounds[key] = self.extra_rounds.get(key, 0) + event["rounds"]
+            self.extensions.append(event)
+        elif kind == "extension-amend":
+            if event["extension"] > len(self.extensions):
+                raise LedgerError(f"no extension {event['extension']}")
+            if len(_normalise(event["quote"])) < MIN_QUOTE:
+                raise LedgerError(f"the quote is under {MIN_QUOTE} characters after normalising")
+            self.extension_amends.setdefault(event["extension"], []).append(event)
         elif kind == "size-approval":
             if len(_normalise(event["quote"])) < MIN_QUOTE:
                 raise LedgerError(f"the quote is under {MIN_QUOTE} characters after normalising")
@@ -1256,6 +1267,9 @@ events and their flags (every flag is required for its event and refused for the
   status        --finding <id> --status
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
                 loop phase reached its cap, which is the base cap plus the rounds of its extensions)
+  extension-amend --extension <n> --quote <8 to 500 characters> (n is the place of an earlier extension event, counted from 1; the new
+                owner answer backs that extension in place of its own quote: S5 takes the latest amendment, and its answer must be after the
+                capped round and not after the amendment; loop, phase and rounds never change; one answer backs one event)
   size-approval --lines <1 to %d> --quote <8 to 500 characters> (the owner approved a small-task diff of about this many changed
                 lines; S5 finds the quote in real user input at or before the event; the auditor's L5 reads the latest one)
   phase-commit  --sha <40 hex>
@@ -1299,6 +1313,7 @@ def _ledger_event(argv):
     parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
     parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
     parser.add_argument("--rounds", type=int, action=Once)
+    parser.add_argument("--extension", type=int, action=Once, help="the number of the extension that an extension-amend backs again")
     parser.add_argument("--lines", type=int, action=Once)
     parser.add_argument("--quote", action=Once)
     parser.add_argument("--raised", action="store_const", const=True, default=None, help="a Blocking finding that the loop session raised")
@@ -1713,14 +1728,16 @@ def _real_input(audited):
 
 def _unbacked_extensions(ledger, extensions, units):
     """The S5 evidence lines of the extensions whose quote is not found in real user input (`units`, from `_real_input`). Each extension
-    takes the earliest unused block that is after the round at the cap in force before it and not after the extension."""
+    takes the earliest unused block that is after the round at the cap in force before it and not after the extension. An extension that
+    an extension-amend names is judged by its latest amendment instead: the new quote, and not after that amendment."""
     used, caps, failures = set(), {}, []
     for number, event in enumerate(extensions, 1):
         key = (event["loop"], event["phase"])
         cap = caps.get(key, PHASE_CAPS[event["phase"]])
         caps[key] = cap + event["rounds"]
         capped = next(round_event for _, round_event in ledger.round_events if (round_event["loop"], round_event["phase"]) == key and round_event["round"] == cap)
-        low, high, quote = _instant(capped["time"], "the ledger"), _instant(event["time"], "the ledger"), _normalise(event["quote"])
+        in_force = (ledger.extension_amends.get(number) or [event])[-1]
+        low, high, quote = _instant(capped["time"], "the ledger"), _instant(in_force["time"], "the ledger"), _normalise(in_force["quote"])
         found = next((position for position, (moment, text, _) in enumerate(units)
                       if position not in used and moment is not None and low < moment <= high and quote in text), None)
         if found is None:
@@ -2370,8 +2387,15 @@ def _pre_dispatch_arguments(argv):
 
 def _plan_review_view(ledger):
     """A new Ledger with the round, finding and extension events of the pre-dispatch loops and the status and finding-amend events of those findings."""
-    view, findings = Ledger(), set()
+    view, findings, extensions, count = Ledger(), set(), {}, 0  # extensions: the number of a kept extension -> its number in the view
     for event in ledger.events:
+        if event["kind"] == "extension":
+            count += 1
+            if event["loop"] in PRE_DISPATCH_LOOPS:
+                extensions[count] = len(extensions) + 1
+        elif event["kind"] == "extension-amend" and event["extension"] in extensions:
+            view.apply({**event, "extension": extensions[event["extension"]]})
+            continue
         if event["kind"] in ("round", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
             if event["kind"] == "finding":
                 findings.add(event["id"])
