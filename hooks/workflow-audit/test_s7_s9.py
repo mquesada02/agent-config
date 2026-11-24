@@ -335,6 +335,16 @@ class S9RmTest(S9Case):
         self.assert_clean(["rm x", "rm -f x", "rm -i x", "rm -- -r", "rm x -- -r", "rm -d dir", "rm -v x y", "ls -R", "find . -exec rm {} + -iregex a",
                            "find . -exec rm {} + -regex b", "git rm x", "git rm --cached x"])
 
+    def test_an_expansion_in_a_word_of_rm_fails(self):
+        self.assert_flagged(["git rm -r $F dir", "git rm -r $(echo -f) dir", "git rm -r `echo -f` dir", "rm $F dir", "rm ${F} dir",
+                             "rm \"$F\" dir", "rm 'a'$F dir", "rm $(true) x", "git rm -r $'-f' dir", "git rm -r dir <(echo -f)",
+                             "git rm -r <(echo -f) dir", "rm dir >(cat)", "bash -c 'git rm -r $F dir'", "eval git rm -r '$F' dir",
+                             "A=1 git rm -r $F dir"])
+
+    def test_a_word_of_rm_without_an_expansion_passes(self):
+        self.assert_clean(["git rm -r dir", "git rm -r 'a$b'", "rm 'a`b'", "git rm -r '$(echo -f)' dir", "rm \"a<(b)\" x",
+                           "git -C $D rm -r dir", "rm x # $F"])
+
     def test_commands_that_only_name_rm_are_skipped(self):
         self.assert_clean(["grep rm -r .", "echo rm -rf x", "man rm -r", "which rm -r", "type rm -r", "printf 'rm -rf'", "echo 'rm -rf x'",
                            "git commit -m 'rm -rf is banned'", "rg rm -r ."])
@@ -409,7 +419,6 @@ class S9SubstitutionTest(S9Case):
 
     def test_words_after_a_substitution_stay_in_the_segment(self):
         self.assert_flagged(["rm $(true) -rf x", "pytest $(true) -n 8"])
-        self.assert_clean(["rm $(true) x"])
 
 
 class S9CommentTest(S9Case):

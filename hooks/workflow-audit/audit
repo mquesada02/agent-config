@@ -2227,7 +2227,8 @@ def _nested_problems(text, depth):
     return _command_problems(text, depth + 1)
 
 
-def _segment_problems(words, depth):
+def _segment_problems(words, depth, process_substitution=False):
+    """What S9 finds in one segment. `process_substitution` is True when a `<(` or `>(` follows the segment: its words are the segments after it."""
     commands = _command_words(words)
     if commands and os.path.basename(commands[0]) in NAMING_ONLY_COMMANDS:
         return []
@@ -2240,8 +2241,11 @@ def _segment_problems(words, depth):
         if name not in ARGUMENT_COMMANDS:
             continue
         arguments = words[index + 1:]
-        if name == "rm" and (_forced_recursive_git_rm(arguments) if index == git_rm_index else _recursive_rm(arguments)):
-            found.append("recursive rm")
+        if name == "rm":
+            if _forced_recursive_git_rm(arguments) if index == git_rm_index else _recursive_rm(arguments):
+                found.append("recursive rm")
+            elif process_substitution or any(isinstance(argument, _ExpandingWord) for argument in arguments):
+                found.append("rm with a shell expansion in a word")  # the expansion may make a recursive or force option
         elif name == "docker" and "prune" in arguments:
             found.append("docker prune")
         elif name == "eval" and arguments:
@@ -2253,6 +2257,12 @@ def _segment_problems(words, depth):
     return found + _runner_problems(words)
 
 
+def _starts_process_substitution(items, index):
+    """Whether the segment at `index` ends in a `<(` or `>(`: the splitter keeps the `<` or `>` as the last word and `(` as the next item.
+    Bash replaces the whole `<(...)` by a word of the segment."""
+    return bool(items[index]) and items[index][-1].endswith(("<", ">")) and items[index + 1:index + 2] == ["("]
+
+
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
     command = _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))  # the gates' join, as bash joins
@@ -2260,7 +2270,8 @@ def _command_problems(command, depth=0):
         items = split_command(command)
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
-    return [kind for item in items if isinstance(item, list) for kind in _segment_problems(item, depth)]
+    return [kind for index, item in enumerate(items) if isinstance(item, list)
+            for kind in _segment_problems(item, depth, _starts_process_substitution(items, index))]
 
 
 def check_s9(audited, problem):
@@ -2884,33 +2895,50 @@ def _mask_substitutions(command):
     return "".join(masked), marker, substitutions
 
 
+class _ExpandingWord(str):
+    """A word that holds a shell expansion outside single quotes. Bash replaces it at run time, so its text does not show the words that it makes."""
+
+
+def _tokens(text):
+    lexer = shlex.shlex(text, posix=True, punctuation_chars="".join(sorted(SEPARATOR_CHARS)))
+    lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"  # a newline is a separator, not whitespace
+    lexer.commenters = ""  # shlex would drop the text after a `#`, even inside a word
+    return list(lexer)
+
+
+def _hide_single_quoted(text):
+    """The text with each `$` and backtick inside single quotes replaced by `_`: bash expands neither there. The tokens stay the same."""
+    return "".join(re.sub(r"[$`]", "_", text[start:end]) if kind == "single" else text[start:end] for kind, start, end, _ in _units(text))
+
+
 def split_command(command):
     """The command as a list of items: a list of words for each segment, and the separator token between segments as a string.
+    A word that holds a `$` or a backtick outside single quotes, or an unquoted substitution, is an `_ExpandingWord` (a str).
     A command substitution (`$(...)`, backticks) stays in the word that holds it. The body of each unquoted substitution follows the segment
     that holds it, before the segment's own separator, as a group: the string `(`, the items of the body, the string `)`.
     Raises ValueError for an unbalanced quote or substitution."""
     masked, marker, substitutions = _mask_substitutions(command)
     placeholder = re.compile(re.escape(marker) + r"([0-9]+)" + re.escape(marker))
-    lexer = shlex.shlex(masked, posix=True, punctuation_chars="".join(sorted(SEPARATOR_CHARS)))
-    lexer.whitespace_split = True
-    lexer.whitespace = " \t\r"  # a newline is a separator, not whitespace
-    lexer.commenters = ""  # shlex would drop the text after a `#`, even inside a word
-    items, words = [], []
+    items, words, expands = [], [], []
 
     def close_segment():
-        items.append([placeholder.sub(lambda found: substitutions[int(found.group(1))][0], word) for word in words])
+        restored = [placeholder.sub(lambda found: substitutions[int(found.group(1))][0], word) for word in words]
+        items.append([_ExpandingWord(word) if expanding else word for word, expanding in zip(restored, expands)])
         for word in words:
             for found in placeholder.finditer(word):
                 items.extend(["(", *split_command(substitutions[int(found.group(1))][1]), ")"])
         words.clear()
+        expands.clear()
 
-    for token in lexer:
+    for token, shown in zip(_tokens(masked), _tokens(_hide_single_quoted(masked)), strict=True):
         if token and set(token) <= SEPARATOR_CHARS:  # shlex joins adjacent separators into one token
             if words:
                 close_segment()
             items.append(token)
         else:
             words.append(token)
+            expands.append("$" in shown or "`" in shown or placeholder.search(shown) is not None)
     if words:
         close_segment()
     return items
