@@ -114,16 +114,23 @@ class HookOrderTest(AuditCase):
                 return True, output["permissionDecisionReason"]
         return False, ""
 
-    def combined(self, groups, command):
+    def group_verdicts(self, groups, command):
+        """The verdicts of the hooks of each group, in group order, from one run of each hook.
+
+        No hook keeps state between runs: each one reads its input, the settings and the record files, and the test
+        changes none of them while it runs. So the run of a hook here stands for its run in every order.
+        """
         stdin = json.dumps({"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
                             "tool_input": {"command": command}, "cwd": self.repo})
         verdicts = []
         for group in groups:
-            for entry in group["hooks"]:
-                argv = repo_argv(entry["command"])
-                if argv is not None:
-                    verdicts.append(self.verdict(self.run_hook(argv, stdin)))
-        reasons = sorted(reason for denied, reason in verdicts if denied)
+            verdicts.append([self.verdict(self.run_hook(argv, stdin)) for argv in
+                             (repo_argv(entry["command"]) for entry in group["hooks"]) if argv is not None])
+        return verdicts
+
+    def combined(self, order, verdicts):
+        """(denied, reasons) of the groups at the indexes of `order`, from the verdicts of `group_verdicts`."""
+        reasons = sorted(reason for index in order for denied, reason in verdicts[index] if denied)
         return bool(reasons), reasons
 
     def assert_same_in_every_order(self, command, denied, prefix):
@@ -131,9 +138,10 @@ class HookOrderTest(AuditCase):
         # the audit group, the aws guard, the Orca hook and the rewrite hook (the setup diff hook is a second command
         # of the subagent guard group, so it adds no group)
         self.assertGreaterEqual(len(groups), 4)
-        for order in itertools.permutations(groups):
-            with self.subTest(order=[group.get("matcher") for group in order]):
-                got_denied, reasons = self.combined(order, command)
+        verdicts = self.group_verdicts(groups, command)
+        for order in itertools.permutations(range(len(groups))):
+            with self.subTest(order=[groups[index].get("matcher") for index in order]):
+                got_denied, reasons = self.combined(order, verdicts)
                 self.assertEqual(got_denied, denied)
                 self.assertEqual(len(reasons), 1 if denied else 0, reasons)
                 if denied:

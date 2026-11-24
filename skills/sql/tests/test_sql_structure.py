@@ -1062,9 +1062,9 @@ class RepoFilesTest(unittest.TestCase):
                 self.assertIn(glob, by_path)
         self.assertIn("3.11", by_path["skills/sql/scripts/*"])
 
-    def test_the_declared_test_command_lists_the_tests_folder(self):
-        text = read(os.path.join(REPO, ".claude", "CLAUDE.md"))
-        self.assertIn("'skills/sql/tests'", text)
+    def test_the_test_runner_lists_the_tests_folder(self):
+        text = read(os.path.join(REPO, "scripts", "run-tests.py"))
+        self.assertIn('"skills/sql/tests"', text)
 
 
 if __name__ == "__main__":

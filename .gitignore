@@ -23,6 +23,7 @@
 !hooks/worktree-cleanup/
 !hooks/worktree-cleanup/**
 !scripts/
+!scripts/run-tests.py
 !scripts/update-orca-skills.sh
 !skills/
 !skills/**

@@ -1,4 +1,5 @@
 # Text tests of tickets #100, #164, #166, #489, #494, #574 and #577: the rules in CLAUDE.md (sections 6, 7, 8, 10, 11, 13, 14 and 16) and the test-command declaration of this repo.
+import importlib.util
 import json
 import os
 import re
@@ -462,11 +463,10 @@ class TestCommandDeclarationTest(unittest.TestCase):
         body = re.search(r"^### Test command\n(.*?)^```", read(PROJECT_CLAUDE_MD), re.DOTALL | re.MULTILINE).group(1).strip()
         self.assertEqual(len(re.findall(r"[.!?](?:\s|$)", body)), 1, body)
 
-    def test_the_command_is_one_unittest_run_in_one_process(self):
+    def test_the_command_is_the_two_process_runner_on_one_line(self):
         command = self.command()
         self.assertEqual(command.count("\n"), 0)
-        self.assertTrue(command.startswith("python3 -c "))
-        self.assertEqual(command.count("unittest.TextTestRunner()"), 1)
+        self.assertEqual(command, "python3 scripts/run-tests.py")
         self.assertNotIn("|", command.replace("||", ""))  # no pipe: a piped run does not count
 
     def test_the_command_covers_every_folder_that_holds_a_test_file(self):
@@ -476,8 +476,11 @@ class TestCommandDeclarationTest(unittest.TestCase):
                 if any(re.fullmatch(r"test_.*\.py", name) for name in names):
                     folders.add(os.path.relpath(folder, REPO))
         self.assertTrue(folders)
-        listed = set(re.findall(r"'([^']+)'", self.command()))
-        self.assertEqual(listed, folders)
+        spec = importlib.util.spec_from_file_location("run_tests", os.path.join(REPO, "scripts", "run-tests.py"))
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        listed = [folder for group in runner.GROUPS for folder in group]
+        self.assertEqual(sorted(listed), sorted(folders))  # a folder in no group, or in two groups, fails
 
 
 class SectionSixteenTest(RuleTextCase):

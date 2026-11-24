@@ -14,8 +14,8 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root (`~/.claude`). See
 
 ### Test command
 
-Run this command from the repo root to run every test file of the hook and skill folders in one process.
+Run this command from the repo root to run every test file of the hook and skill folders in 2 processes at the same time (the folder list is in `scripts/run-tests.py`).
 
 ```
-python3 -c "import sys, unittest; suite = unittest.TestSuite(); [suite.addTests(unittest.defaultTestLoader.discover(d, top_level_dir=d)) for d in ('hooks/bash-reader', 'hooks/context-handoff', 'hooks/forked-skills', 'hooks/redact-secrets', 'hooks/setup-diff-prompt', 'hooks/subagent-readonly', 'hooks/workflow-audit', 'hooks/worktree-branch', 'hooks/worktree-cleanup', 'skills/plan-review', 'skills/cicd-pipelines/tests', 'skills/sql/tests', 'skills/testing/tests')]; sys.exit(not unittest.TextTestRunner().run(suite).wasSuccessful())"
+python3 scripts/run-tests.py
 ```
