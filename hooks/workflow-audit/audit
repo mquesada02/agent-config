@@ -429,6 +429,7 @@ class Transcript:
         self.skipped = []    # (tool, row index) of the malformed calls that `_settle_malformed` proved rejected before they ran; only the digest reads them
         self.last_lines = {}  # tool_use_id -> list of the last toolUseResult.stdout lines, None when the row has none or more than one result
         self.notices = []    # texts that hold a task notification
+        self.moved = set()   # tool_use ids of foreground calls that the harness moved to the background after their timeout
         self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
         self.inputs = []     # dicts of the user rows and queued_command prompts that S5 reads: index, raw time, raw origin, field, texts
@@ -583,7 +584,10 @@ def _read_row(transcript, index, row):
             transcript.calls.append(call)
     if answered:
         result = row.get("toolUseResult")
-        stdout = result.get("stdout") if isinstance(result, dict) and len(answered) == 1 else None
+        single = isinstance(result, dict) and len(answered) == 1
+        stdout = result.get("stdout") if single else None
+        if single and "timedOutAfterMs" in result and isinstance(result.get("backgroundTaskId"), str):
+            transcript.moved.add(answered[0])
         for call_id in answered:
             transcript.last_lines.setdefault(call_id, []).append(stdout.rstrip().rsplit("\n", 1)[-1] if isinstance(stdout, str) else None)
         transcript.answered.append({"index": index, "time": row.get("timestamp"), "ids": answered,
@@ -1045,7 +1049,7 @@ def check_s2(worktree, audited):
         if not all(_is_after(run, transcript, edit, edit_transcript) for edit, edit_transcript in edits):
             continue
         later += 1
-        if run["background"]:
+        if run["background"] or run["id"] in transcript.moved:  # a moved call has no complete result: its notification of the same tool-use id decides
             texts = list(transcript.notices) + ([] if transcript is main else list(main.notices))
             outcome = _notification_exit(texts, run["id"])
         else:

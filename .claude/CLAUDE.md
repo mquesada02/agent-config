@@ -19,3 +19,5 @@ Run this command from the repo root to run every test file of the hook and skill
 ```
 python3 scripts/run-tests.py
 ```
+
+The full run can take longer than the 600 s foreground limit. Start this exact command with `run_in_background: true`, and wait for its completion notification.
