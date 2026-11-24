@@ -151,7 +151,7 @@ class TimeoutThroughTheChecksTest(unittest.TestCase):
     """A git timeout fails S5 with the note and S6 with the git message; the audit goes on (no exception reaches the caller)."""
 
     LEDGER = types.SimpleNamespace(
-        rounds={audit.FINAL_REVIEW: 4}, effective_cap=lambda loop, phase: 3, events=[],
+        rounds={audit.FINAL_REVIEW: 4}, effective_cap=lambda loop, phase: 3, events=[], extensions=[],
         commits=[(1, {"sha": "a" * 40}), (3, {"sha": "b" * 40})],
         round_events=[(2, {"loop": "code-review", "phase": "final", "round": 1}), (4, {"loop": "code-review", "phase": "final", "round": 4})])
 
