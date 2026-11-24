@@ -7,7 +7,7 @@
 # It also passes when every file the branch changes is the same on origin/<base>, or when a merged PR's head contains the tip
 # (a squash-merged coordinator PR, #787); that PR's base is then used.
 # A merged PR at the tip takes precedence: its base is used and --base is ignored.
-# The base only feeds check 5. The main checkout returns to origin/develop when it exists, else to the default branch (#869);
+# --base only feeds check 5, the merged check; it does not choose the switch target. The main checkout returns to origin/develop when it exists, else to the default branch (#869);
 # every check that this switch and the pull need runs before the first action.
 # Exit codes: 0 every step done; 1 usage error or refusal, nothing changed; 2 an action failed (done steps reported).
 import os
@@ -19,7 +19,8 @@ from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, anchor_worktree, bou
                        run_proof)
 
 DEVELOPMENT = "develop"
-USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
+USAGE = ("Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>\n"
+         "--base affects only the merged check (check 5). The main checkout returns to develop when origin has it, else to the default branch.")
 PROTECTED = (DEVELOPMENT, "main")
 SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
 DEFAULT_WAIT_INTERVAL = 1.0
@@ -206,7 +207,7 @@ def check_pushed(target, branch, tip, numbers):
         return [], False
     if sha:
         return [f"Pushed: {REMOTE} has {branch} at {sha[:12]}, not the local tip {tip[:12]}. "
-                f"The local branch is ahead of or differs from {REMOTE}: push it, or reset it to the {REMOTE} tip, then run cleanup again"], False
+                f"The local branch is ahead of or differs from {REMOTE}: push it (or ask the owner), then run cleanup again"], False
     if numbers is None:
         return [f"Pushed: {branch} is absent on {REMOTE} and check 5 failed, so no merged PR gives a pull ref to compare"], True
     if not numbers:
@@ -233,7 +234,9 @@ def switch_target(target, checkout, default):
     problem = fetch_base(target, branch)
     if problem:
         return None, [f"Main checkout: {problem}"]
-    elsewhere = checked_out_elsewhere(checkout, branch)
+    elsewhere, error = checked_out_elsewhere(checkout, branch)
+    if error:
+        return None, [f"Main checkout: git worktree list failed: {error}"]
     if elsewhere:
         return None, [f"Main checkout: {branch} is checked out in another worktree ({elsewhere})"]
     if git(checkout, "show-ref", "--verify", "--quiet", f"{BRANCH_PREFIX}{branch}").returncode == 0:
@@ -249,14 +252,17 @@ def switch_target(target, checkout, default):
 
 
 def checked_out_elsewhere(checkout, branch):
-    """The path of a worktree other than the main checkout that has the branch checked out, else None."""
+    """Return (path, error). The path is a worktree other than the main checkout that has the branch checked out, else None."""
     path = None
-    for line in git(checkout, "worktree", "list", "--porcelain").stdout.splitlines():
+    listing = git(checkout, "worktree", "list", "--porcelain")
+    if listing.returncode != 0:
+        return None, failure_text(listing)
+    for line in listing.stdout.splitlines():
         if line.startswith("worktree "):
             path = line[len("worktree "):]
         elif line == f"branch {BRANCH_PREFIX}{branch}" and os.path.realpath(path) != os.path.realpath(checkout):
-            return path
-    return None
+            return path, None
+    return None, None
 
 
 def check_main_checkout(checkout):

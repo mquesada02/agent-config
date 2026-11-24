@@ -1,5 +1,6 @@
 # The main checkout returns to the development branch, not to the PR base (#869).
 import os
+import shutil
 import unittest
 
 from cleanup_support import CleanupCase, git
@@ -117,8 +118,33 @@ class LocalTipRefusalTest(CleanupCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         line = self.starts(result, "Pushed")[0]
         self.assertIn("not the local tip", line)
-        self.assertIn("The local branch is ahead of or differs from origin: push it, or reset it to the origin tip, then run cleanup again", line)
+        self.assertIn("The local branch is ahead of or differs from origin: push it (or ask the owner), then run cleanup again", line)
+        self.assertNotIn("reset", line)
         self.assertTrue(os.path.isdir(self.wt))
+
+
+class WorktreeListFailureTest(CleanupCase):
+    def test_a_failed_worktree_list_of_the_main_checkout_refuses_before_any_action(self):
+        wrapper = os.path.join(self.bin, "git")
+        with open(wrapper, "w") as f:
+            f.write(f'#!/bin/sh\nif [ "$1 $2 $3 $4" = "-C {self.main} worktree list" ]; then\n'
+                    '  echo "fatal: list failed" >&2\n  exit 128\nfi\n'
+                    f'exec {shutil.which("git")} "$@"\n')
+        os.chmod(wrapper, 0o755)
+        result = self.run_cleanup(self.wt)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("git worktree list failed: fatal: list failed", self.starts(result, "Main checkout")[0])
+        self.assertTrue(self.remote_has(self.BRANCH))
+        self.assertTrue(self.local_has(self.BRANCH))
+        self.assertTrue(os.path.isdir(self.wt))
+        self.assertEqual(self.rm_calls(), [])
+
+
+class UsageTextTest(CleanupCase):
+    def test_the_usage_says_what_base_affects_and_where_the_switch_goes(self):
+        result = self.run_cleanup()
+        self.assertIn("--base affects only the merged check (check 5). The main checkout returns to develop when origin has it, "
+                      "else to the default branch.", result.stdout)
 
 
 if __name__ == "__main__":
