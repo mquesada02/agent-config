@@ -695,6 +695,16 @@ class S2Test(TranscriptCase):
                 self.assert_item(items, "S2", "fail", "did not run as declared: ")
                 self.assert_item(items, "S2", "fail", cause)
 
+    def test_a_dot_dot_after_a_symlink_into_the_worktree_does_not_count(self):
+        # bash applies `..` before it follows the link, so `cd <tmp>/l/..` ends in <tmp>, not in the worktree
+        for template in ("cd {tmp}/l/.. && make test", "cd '{tmp}/l/..' && make test", "git -C {tmp}/l/.. status && make test", "cd ./l/.. && make test"):
+            with self.subTest(command=template):
+                self.setUp()
+                os.mkdir(os.path.join(self.wt, "sub"))
+                os.symlink(os.path.join(self.wt, "sub"), os.path.join(self.tmp, "l"))
+                rows = [self.run_row(template.format(tmp=self.tmp), "b1", 20, cwd=self.tmp), result_row("b1", 21)]
+                self.assert_item(self.run_rows(*rows), "S2", "fail", "other than the audited worktree")
+
     def test_a_git_step_outside_the_worktree_does_not_count(self):
         rows = [bash_row("git log && make test", "b1", 20, cwd="/elsewhere"), result_row("b1", 21)]
         self.assert_item(self.run_rows(*rows), "S2", "fail", "does not run in the audited worktree")

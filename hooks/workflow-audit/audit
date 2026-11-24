@@ -907,8 +907,10 @@ def _s2_unquote(word):
 def _s2_folder(word, current):
     """The real path that a `cd` or `git -C` word names, or None. A relative word must start with `.`, so that CDPATH cannot apply."""
     target = _s2_unquote(word)
+    if ".." in target.split("/"):
+        return None  # bash applies `..` before it follows a link, realpath after: the two can name different folders
     if not os.path.isabs(target):
-        if not current or not (target in (".", "..") or target.startswith(("./", "../"))):
+        if not os.path.isabs(current or "") or not (target == "." or target.startswith("./")):
             return None  # a relative path means the row's cwd, not the audit's
         target = os.path.join(current, target)
     try:
@@ -919,7 +921,7 @@ def _s2_folder(word, current):
 
 def _s2_in_worktree(current, root):
     try:
-        return bool(current) and _inside(os.path.realpath(current), root)
+        return os.path.isabs(current or "") and _inside(os.path.realpath(current), root)
     except ValueError:
         return False  # a NUL byte in the folder
 
