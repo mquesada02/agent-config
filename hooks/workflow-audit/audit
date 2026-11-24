@@ -3554,36 +3554,41 @@ def _gate_reason(runtime_dir, dir_fd, cwd, arguments):
     return None
 
 
-def _other_repo_target(cwd, words):
-    """The `-R`/`--repo` target of a PR creation as `owner/repo`, when it is a different GitHub repository than the origin of `cwd`;
-    else None. None also means unsure: no option, a value that cannot be resolved, or an origin or target that is not a plain
-    `owner/repo` pair or a GitHub URL. The caller then keeps its own reason."""
-    try:
-        target = _branch_option(words, "--repo", "-R")
-        if not target or not isinstance(cwd, str):
-            return None
-        if target.startswith(GITHUB_PREFIXES):
-            target_pair = _github_pair(target)
-        else:  # a plain `owner/repo` may carry `.git` too
-            target_pair = target.removesuffix(".git") if GITHUB_NAME.fullmatch(target) else None
-        url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
-        origin_pair = _github_pair(url) if url else None
-        if target_pair is None or origin_pair is None or target_pair.lower() == origin_pair.lower():
-            return None
-        return target_pair
-    except Exception:  # any failure means unsure: the caller keeps the reason that it has, so a denial never depends on this lookup
+def _repo_pair(value):
+    """The `owner/repo` pair of a `-R`/`--repo` value: `owner/repo`, `github.com/owner/repo` or a GitHub URL, else None."""
+    if not value.startswith(GITHUB_PREFIXES):
+        host = "github.com/"
+        value = "https://" + host + (value[len(host):] if value.lower().startswith(host) else value)
+    return _github_pair(value)
+
+
+def _other_repo_reason(cwd, words):
+    """The denial reason for a `-R`/`--repo` option that is not provably the origin repository of `cwd`; None when the command has no such
+    option, or `cwd` is unresolved (`_gate_reason` denies that). Fails closed: a value or an origin that cannot be matched is denied."""
+    value = _branch_option(words, "--repo", "-R")
+    if value is None or not isinstance(cwd, str):
         return None
+    target = origin = None
+    try:
+        target = _repo_pair(value) if value else None
+        url = _git_output(cwd, "remote", "get-url", "origin", no_result=(2, 128))
+        origin = _github_pair(url) if url else None
+    except Exception:  # fail closed: a lookup that failed leaves `origin` None, so the command is denied
+        pass
+    if target and origin and target.lower() == origin.lower():
+        return None
+    if target and origin:
+        return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
+                f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
+    return (f"other repository: the -R value {_cut(value, 200)!r} cannot be matched to the repository of the working directory, and the "
+            "gate allows -R only for that repository. The owner opens this PR with `!`.")
 
 
 def _pr_reason(runtime_dir, dir_fd, cwd, head, arguments):
-    """Why a PR creation is denied, or None when it is allowed. A PR that targets another repository is always denied: the checks that
-    `_gate_reason` makes (branch, record) are those of the working directory, so no record can cover it. Anything unsure goes to
-    `_gate_reason`, which decides as before."""
-    target = _other_repo_target(cwd, head + arguments)
-    if target:
-        return (f"other repository: the PR targets {target}, not the repository of the working directory; the gate checks only the "
-                f"working directory, and no audit record can exist for {target}. The owner opens this PR with `!`.")
-    return _gate_reason(runtime_dir, dir_fd, cwd, arguments)
+    """Why a PR creation is denied, or None when it is allowed. A PR that targets another repository, or one that the gate cannot prove
+    targets the repository of the working directory, is always denied: the checks that `_gate_reason` makes (branch, record) are those
+    of the working directory, so no record can cover it."""
+    return _other_repo_reason(cwd, head + arguments) or _gate_reason(runtime_dir, dir_fd, cwd, arguments)
 
 
 def _dispatch_reason(runtime_dir, dir_fd, session_id):
