@@ -16,6 +16,7 @@ from ownership import (BRANCH_PREFIX, REMOTE, SKIP_COMMAND, anchor_worktree, bou
                        ancestor_problem, default_branch, failure_text, fetch_base, git, read_json, remote_ref_sha, row_worktree, run,
                        run_proof)
 
+DEVELOPMENT = "develop"
 USAGE = "Usage: cleanup [--skip-ownership] [--base <branch>] <worktree path>"
 PROTECTED = ("develop", "main")
 SETTLED_STATES = ("succeeded", "failed", "abandoned", "stopped")
@@ -202,7 +203,8 @@ def check_pushed(target, branch, tip, numbers):
     if sha == tip:
         return [], False
     if sha:
-        return [f"Pushed: {REMOTE} has {branch} at {sha[:12]}, not the local tip {tip[:12]}"], False
+        return [f"Pushed: {REMOTE} has {branch} at {sha[:12]}, not the local tip {tip[:12]}. "
+                f"The local branch is ahead of or differs from {REMOTE}: push it, or reset it to the {REMOTE} tip, then run cleanup again"], False
     if numbers is None:
         return [f"Pushed: {branch} is absent on {REMOTE} and check 5 failed, so no merged PR gives a pull ref to compare"], True
     if not numbers:
@@ -217,6 +219,42 @@ def check_pushed(target, branch, tip, numbers):
         else:
             problem = f"the pull ref of PR {number} is {(pull or 'absent')[:12]}, not the local tip {tip[:12]}"
     return [f"Pushed: {branch} is absent on {REMOTE} and {problem}"], True
+
+
+def switch_target(target, checkout, default):
+    """Return (branch, reasons). The main checkout returns to develop when origin has it, else to the default branch.
+    Every check that the switch and pull need runs here, because act() deletes the remote branch before it switches."""
+    sha, error = remote_ref_sha(target, f"{BRANCH_PREFIX}{DEVELOPMENT}")
+    if error:
+        return None, [f"Main checkout: could not read {REMOTE}/{DEVELOPMENT}: {error}"]
+    branch = DEVELOPMENT if sha else default
+    problem = fetch_base(target, branch)
+    if problem:
+        return None, [f"Main checkout: {problem}"]
+    elsewhere = checked_out_elsewhere(checkout, branch)
+    if elsewhere:
+        return None, [f"Main checkout: {branch} is checked out in another worktree ({elsewhere})"]
+    if git(checkout, "show-ref", "--verify", "--quiet", f"{BRANCH_PREFIX}{branch}").returncode == 0:
+        local, remote = f"{BRANCH_PREFIX}{branch}", f"refs/remotes/{REMOTE}/{branch}"
+        # pull --ff-only works when the local branch is behind origin, and does nothing when it is ahead; it fails on a divergence
+        results = [git(checkout, "merge-base", "--is-ancestor", *refs) for refs in ((local, remote), (remote, local))]
+        for result in results:
+            if result.returncode > 1:
+                return None, [f"Main checkout: git merge-base failed: {failure_text(result)}"]
+        if all(result.returncode == 1 for result in results):
+            return None, [f"Main checkout: local {branch} and {REMOTE}/{branch} have diverged, so pull --ff-only would fail"]
+    return branch, []
+
+
+def checked_out_elsewhere(checkout, branch):
+    """The path of a worktree other than the main checkout that has the branch checked out, else None."""
+    path = None
+    for line in git(checkout, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line == f"branch {BRANCH_PREFIX}{branch}" and os.path.realpath(path) != os.path.realpath(checkout):
+            return path
+    return None
 
 
 def check_main_checkout(checkout):
@@ -256,7 +294,8 @@ def delete_remote_branch(target, branch, protected, ref_absent):
 
 
 def switch_and_pull(checkout, base):
-    for args in (("switch", base), ("pull", "--ff-only")):
+    # pull names the remote branch, so a local branch without an upstream pulls too
+    for args in (("switch", base), ("pull", "--ff-only", REMOTE, base)):
         result = git(checkout, *args)
         if result.returncode != 0:
             raise ActionFailed(f"Switch and pull: git {args[0]} failed: {failure_text(result)}")
@@ -286,7 +325,7 @@ def delete_local_branch(checkout, branch):
     return "deleted"
 
 
-def act(target, facts, base, default, ref_absent, own, interval, limit):
+def act(target, facts, switch_to, default, ref_absent, own, interval, limit):
     branch, checkout = facts["branch"], facts["checkout"]
     done = []
 
@@ -296,8 +335,8 @@ def act(target, facts, base, default, ref_absent, own, interval, limit):
 
     try:
         step("Remote branch", delete_remote_branch(target, branch, branch in PROTECTED or branch == default, ref_absent))
-        switch_and_pull(checkout, base)
-        step("Switch and pull", f"{base} pulled with --ff-only")
+        switch_and_pull(checkout, switch_to)
+        step("Switch and pull", f"{switch_to} pulled with --ff-only")
         if own:
             say("Terminal closes: the worktree of this session is removed as the last step")
         remove_worktree(target)
@@ -352,12 +391,16 @@ def main(argv):
     reasons += merged
     pushed, ref_absent = check_pushed(target, facts["branch"], tip, numbers)
     reasons += pushed
+    switch_to = None
+    if default:
+        switch_to, switch_reasons = switch_target(target, facts["checkout"], default)
+        reasons += switch_reasons
     reasons += check_main_checkout(facts["checkout"])
     reasons += check_docker(target)
     if reasons:
         return refuse(reasons)
     own = not run_only and (anchor is None or anchor == record["id"])
-    return act(target, facts, base, default, ref_absent, own, interval, limit)
+    return act(target, facts, switch_to, default, ref_absent, own, interval, limit)
 
 
 if __name__ == "__main__":

@@ -415,6 +415,12 @@ class WorktreeCleanupRuleTest(RuleTextCase):
         self.assert_in(text, "is the only cleanup path", "On a refusal, fix the cause or ask the user")
         self.assert_not_in(text, "delete the remote branch, remove the worktree (section 10)")
 
+    def test_section_eight_says_the_command_switches_to_the_development_branch_not_the_pr_base(self):
+        """Issue #869: a stacked PR has a feature branch as its base, so the switch target is not the base."""
+        text = section(read(ROOT_CLAUDE_MD), 8)
+        self.assert_in(text, "switches the main checkout to the development branch (`develop` when the repo has one, else the default branch")
+        self.assert_not_in(text, "switches the main checkout to the **base** branch")
+
     def test_section_eight_says_to_finish_the_report_and_memory_update_after_the_command_in_its_paragraph(self):
         paragraph = next(part for part in section(read(ROOT_CLAUDE_MD), 8).split("\n\n") if self.COMMAND in part)
         self.assertIn(self.FINISH_FIRST, paragraph)
