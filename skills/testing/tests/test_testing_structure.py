@@ -56,9 +56,9 @@ class SkillFilesTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertRegex(name, TEST_FILE_NAMES)
 
-    def test_test_folder_is_in_the_declared_test_command(self):
-        text = read(os.path.join(helper.REPO, ".claude", "CLAUDE.md"))
-        self.assertIn("'skills/testing/tests'", text)
+    def test_test_folder_is_in_the_test_runner(self):
+        text = read(os.path.join(helper.REPO, "scripts", "run-tests.py"))
+        self.assertIn('"skills/testing/tests"', text)
 
 
 class CatalogTest(unittest.TestCase):

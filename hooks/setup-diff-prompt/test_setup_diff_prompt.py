@@ -610,10 +610,10 @@ class StructureTest(unittest.TestCase):
         ask = self.settings().get("permissions", {}).get("ask", [])
         self.assertEqual([rule for rule in ask if "setup_files.py" in rule], [])
 
-    def test_the_declared_test_command_lists_the_hook_folder(self):
-        with open(os.path.join(REPO, ".claude", "CLAUDE.md"), encoding="utf-8") as handle:
+    def test_the_test_runner_lists_the_hook_folder(self):
+        with open(os.path.join(REPO, "scripts", "run-tests.py"), encoding="utf-8") as handle:
             text = handle.read()
-        self.assertIn("'hooks/setup-diff-prompt'", text)
+        self.assertIn('"hooks/setup-diff-prompt"', text)
 
     def test_git_does_not_ignore_the_hook_files(self):
         for name in ("setup_diff_prompt.py", "test_setup_diff_prompt.py"):
