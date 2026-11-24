@@ -34,7 +34,7 @@ PHASE_CAPS = {"correctness": 5, "final": 3}  # rounds of a review loop phase; th
 LEDGER_PHASES = tuple(PHASE_CAPS)
 LEDGER_TYPES = ("Blocking", "Minor")
 LEDGER_RESULTS = ("confirmed", "rejected")
-LEDGER_STATUSES = ("fixed", "deferred", "rejected")
+LEDGER_STATUSES = ("fixed", "deferred", "rejected", "superseded")
 # The keys of each event after `kind` and `time`, in the order they are written.
 EVENT_KEYS = {
     "round": ("loop", "phase", "round", "reviewers"),
@@ -49,7 +49,7 @@ EVENT_KEYS = {
     "link": ("source", "ticket"),
 }
 # The keys that an event may hold besides its required ones, in the order they are written. An absent key means the default.
-OPTIONAL_KEYS = {"finding": ("quote", "raised"), "finding-amend": ("quote", "raised")}
+OPTIONAL_KEYS = {"finding": ("quote", "raised"), "finding-amend": ("quote", "raised"), "status": ("by",)}
 FLAG_NAMES = {"reviewers": "--reviewer", "source": "--from-branch"}  # the keys whose command flag is not --<key>
 MAX_SOURCE = 255
 MAX_TICKET = 64
@@ -1093,6 +1093,7 @@ VALID_VALUE = {
     "reason": _plain_text(REASON_LIMIT),
     "result": lambda value: value in LEDGER_RESULTS,
     "status": lambda value: value in LEDGER_STATUSES,
+    "by": _matches(FINDING_ID),
     "rounds": lambda value: type(value) is int and 1 <= value <= MAX_EXTENSION_ROUNDS,
     "extension": lambda value: type(value) is int and value >= 1,
     "lines": lambda value: type(value) is int and 1 <= value <= MAX_APPROVED_LINES,
@@ -1140,7 +1141,7 @@ class Ledger:
         self.events = []
         self.rounds = {}        # (loop, phase) -> highest round number
         self.round_events = []  # (position, event) in file order
-        self.findings = {}      # id -> {"event": the finding event, "status": latest status or None, "amendments": the finding-amend events in order}
+        self.findings = {}      # id -> {"event": the finding event, "status": latest status or None, "by": id that the latest status supersedes it with or None, "amendments": the finding-amend events in order}
         self.verdicts = []
         self.commits = []       # (position, event)
         self.extra_rounds = {}  # (loop, phase) -> the rounds that the extension events add to the cap
@@ -1158,6 +1159,21 @@ class Ledger:
         source = entry["amendments"][-1] if entry["amendments"] else entry["event"]
         return {"reason": source["reason"], "quote": source.get("quote"), "raised": "raised" in source}
 
+    def _check_superseding(self, finding_id, by):
+        """Refuse a superseded status unless finding `finding_id` is Minor (a mistyped finding) and finding `by` exists, is another finding,
+        is Blocking and is in the loop of `finding_id`. A Blocking finding is never superseded: that would close a Blocking defect with no fix."""
+        if self.findings[finding_id]["event"]["type"] != "Minor":
+            raise LedgerError(f"finding {finding_id} is not Minor: only a mistyped Minor finding is superseded")
+        replacement = self.findings.get(by)
+        if replacement is None:
+            raise LedgerError(f"no finding {by} to supersede {finding_id}")
+        if by == finding_id:
+            raise LedgerError(f"finding {finding_id} cannot supersede itself")
+        if replacement["event"]["type"] != "Blocking":
+            raise LedgerError(f"finding {by} is not Blocking: it cannot supersede {finding_id}")
+        if replacement["event"]["loop"] != self.findings[finding_id]["event"]["loop"]:
+            raise LedgerError(f"finding {by} is in another loop than {finding_id}: it cannot supersede it")
+
     def apply(self, event):
         _check_event_shape(event)
         kind, position = event["kind"], len(self.events)
@@ -1174,7 +1190,7 @@ class Ledger:
                 raise LedgerError(f"no round event for round {event['round']} of {event['loop']} {event['phase']}")
             if "raised" in event and event["type"] != "Blocking":
                 raise LedgerError(f"finding {event['id']} is raised but not Blocking: only a Blocking finding is raised")
-            self.findings[event["id"]] = {"event": event, "status": None, "amendments": []}
+            self.findings[event["id"]] = {"event": event, "status": None, "by": None, "amendments": []}
         elif kind == "finding-amend":
             finding = self.findings.get(event["id"])
             if finding is None:
@@ -1192,7 +1208,12 @@ class Ledger:
         elif kind == "status":
             if event["finding"] not in self.findings:
                 raise LedgerError(f"no finding {event['finding']}")
+            if ("by" in event) != (event["status"] == "superseded"):
+                raise LedgerError("a status event holds by if and only if its status is superseded")
+            if "by" in event:
+                self._check_superseding(event["finding"], event["by"])
             self.findings[event["finding"]]["status"] = event["status"]
+            self.findings[event["finding"]]["by"] = event.get("by")
         elif kind == "extension":
             key = (event["loop"], event["phase"])
             if len(_normalise(event["quote"])) < MIN_QUOTE:
@@ -1264,7 +1285,9 @@ events and their flags (every flag is required for its event and refused for the
                 loop or the amendment is raised; --raised is refused on a Minor finding and is never inherited; the latest amendment is in
                 force; type, loop, phase, round, location and status never change
   verdict       --finding <id> --verifier <agent id> --result
-  status        --finding <id> --status
+  status        --finding <id> --status [--by <id>]
+                --by is required for the status superseded and refused for the others: --finding must be a Minor finding, and the finding
+                named by --by must exist, be Blocking, be another finding and be in the loop of --finding; S3 needs it closed as fixed
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
                 loop phase reached its cap, which is the base cap plus the rounds of its extensions)
   extension-amend --extension <n> --quote <8 to 500 characters> (n is the place of an earlier extension event, counted from 1; the new
@@ -1312,6 +1335,7 @@ def _ledger_event(argv):
     parser.add_argument("--verifier", action=Once)
     parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
     parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
+    parser.add_argument("--by", action=Once, help="the Blocking finding that a superseded finding gives way to (status superseded)")
     parser.add_argument("--rounds", type=int, action=Once)
     parser.add_argument("--extension", type=int, action=Once, help="the number of the extension that an extension-amend backs again")
     parser.add_argument("--lines", type=int, action=Once)
@@ -1645,6 +1669,10 @@ def check_s3(ledger):
     capped = {event["loop"] for _, event in ledger.round_events
               if event["round"] >= ledger.effective_cap(event["loop"], event["phase"])}
     open_findings = [entry["event"] for entry in ledger.findings.values() if entry["status"] is None]
+    unfixed = [f"{entry['event']['id']} {entry['event']['loc']} (superseded by {entry['by']})" for entry in ledger.findings.values()
+               if entry["status"] == "superseded" and ledger.findings[entry["by"]]["status"] != "fixed"]
+    if unfixed:
+        return False, f"{len(unfixed)} superseded findings have no Blocking finding closed as fixed\n" + _truncate_lines(unfixed)
     blocked = [event for event in open_findings if event["loop"] not in capped]
     exempt = [event for event in open_findings if event["loop"] in capped]
     describe = lambda events: _truncate_lines([f"{event['id']} {event['loc']}" for event in events])

@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import unittest
+import unittest.mock
 
 from audit_support import HERE, AuditCase
 
@@ -114,19 +115,27 @@ class HookOrderTest(AuditCase):
                 return True, output["permissionDecisionReason"]
         return False, ""
 
-    def group_verdicts(self, groups, command):
-        """The verdicts of the hooks of each group, in group order, from one run of each hook.
-
-        No hook keeps state between runs: each one reads its input, the settings and the record files, and the test
-        changes none of them while it runs. So the run of a hook here stands for its run in every order.
-        """
-        stdin = json.dumps({"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-                            "tool_input": {"command": command}, "cwd": self.repo})
+    def run_groups(self, groups, stdin):
+        """The verdicts of the hooks of each group, in the order of `groups`, from one real run of each hook."""
         verdicts = []
         for group in groups:
             verdicts.append([self.verdict(self.run_hook(argv, stdin)) for argv in
                              (repo_argv(entry["command"]) for entry in group["hooks"]) if argv is not None])
         return verdicts
+
+    def group_verdicts(self, groups, command):
+        """The verdicts of the hooks of each group, in group order.
+
+        Every hook runs for real twice with the same input: once with the groups forward and once reversed. A hook
+        that keeps state between runs gives another verdict in one of the runs, and the test fails. So the
+        verdicts are the run of each hook, and the in-memory check covers every order of them.
+        """
+        stdin = json.dumps({"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                            "tool_input": {"command": command}, "cwd": self.repo})
+        forward = self.run_groups(groups, stdin)
+        reverse = self.run_groups(groups[::-1], stdin)[::-1]
+        self.assertEqual(forward, reverse, "a hook gave another verdict in the second run: it keeps state")
+        return forward
 
     def combined(self, order, verdicts):
         """(denied, reasons) of the groups at the indexes of `order`, from the verdicts of `group_verdicts`."""
@@ -165,6 +174,17 @@ class HookOrderTest(AuditCase):
             json.dump({"session_id": "s1", "map": 82, "remote_url": self.origin, "branch": "feature",
                        "time": "2026-10-16T00:00:00+00:00", "items": [], "result": "pass"}, handle)
         self.assert_same_in_every_order(WORKER_START, False, "")
+
+    def test_a_hook_whose_verdict_changes_on_its_second_run_fails_the_order_test(self):
+        calls = []
+
+        def stateful_hook(argv, stdin):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0 if len(calls) == 1 else 2, b"", b"denied on a later run")
+
+        with unittest.mock.patch.object(self, "run_hook", stateful_hook):
+            with self.assertRaisesRegex(AssertionError, "it keeps state"):
+                self.group_verdicts(self.bash_groups(), "ls")
 
     def test_a_plain_command_is_allowed_in_every_order(self):
         self.assert_same_in_every_order("ls", False, "")
