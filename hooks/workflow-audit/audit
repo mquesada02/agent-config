@@ -1005,6 +1005,8 @@ def _s2_chain(command, declared, root, cwd):
                 return False, cause
     if not _s2_in_worktree(current, root):
         return False, "it does not run in the audited worktree"
+    if os.path.realpath(current) != root:
+        return False, "it does not run in the root folder of the audited worktree"  # a run from a subfolder may run fewer tests
     return True, None
 
 
