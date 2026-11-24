@@ -213,6 +213,60 @@ class S7SessionTest(SafetyCase):
         self.assertEqual({json.loads(line)["version"] for line in text.splitlines()}, {VERSION})
 
 
+def fallback_row(trigger="overloaded", original=SONNET, fallback=OPUS, seconds=2, **extra):
+    row = {"type": "system", "subtype": "model_fallback", "timestamp": stamp(seconds), "version": VERSION,
+           "trigger": trigger, "originalModel": original, "fallbackModel": fallback}
+    row.update(extra)
+    return row
+
+
+class S7FallbackTest(SafetyCase):
+    def fallback_item(self, *rows):
+        return self.s7([user_row(PREAMBLE), text_row(SONNET, cwd=self.repo), *rows])
+
+    def test_rows_on_the_fallback_model_after_an_overload_fallback_pass_and_name_it(self):
+        item = self.fallback_item(fallback_row(), text_row(OPUS, seconds=3))
+        self.assert_item(item, "pass", "s1.jsonl: automatic fallback on overload to " + repr(OPUS))
+
+    def test_a_non_sonnet_row_before_the_fallback_row_fails(self):
+        self.assert_item(self.fallback_item(text_row(OPUS, seconds=1), fallback_row(), text_row(OPUS, seconds=3)), "fail", OPUS)
+
+    def test_a_fallback_with_another_trigger_fails(self):
+        self.assert_item(self.fallback_item(fallback_row(trigger="user"), text_row(OPUS, seconds=3)), "fail", OPUS)
+
+    def test_a_fallback_whose_original_model_is_not_sonnet_fails(self):
+        self.assert_item(self.fallback_item(fallback_row(original="claude-haiku-5-5"), text_row(OPUS, seconds=3)), "fail", OPUS)
+
+    def test_a_row_on_a_third_model_fails(self):
+        self.assert_item(self.fallback_item(fallback_row(), text_row(OPUS, seconds=3), text_row("claude-haiku-5-5", seconds=4)), "fail", "claude-haiku-5-5")
+
+    def test_a_fallback_row_with_a_missing_or_non_string_field_fails(self):
+        for field, value in (("trigger", None), ("originalModel", 7), ("fallbackModel", ""), ("fallbackModel", None), ("fallbackModel", "<synthetic>")):
+            self.setUp()
+            row = fallback_row()
+            row[field] = value
+            self.assert_item(self.fallback_item(row, text_row(OPUS, seconds=3)), "fail")
+
+    def test_a_row_with_another_subtype_is_not_a_fallback(self):
+        self.assert_item(self.fallback_item(fallback_row(subtype="informational"), text_row(OPUS, seconds=3)), "fail", OPUS)
+
+    def test_a_fallback_row_in_another_row_type_is_not_a_fallback(self):
+        self.assert_item(self.fallback_item(fallback_row(type="user"), text_row(OPUS, seconds=3)), "fail")
+
+    def test_a_later_invalid_fallback_row_ends_the_allowance(self):
+        rows = (fallback_row(), text_row(OPUS, seconds=3), fallback_row(trigger="user", seconds=4), text_row(OPUS, seconds=5))
+        self.assert_item(self.fallback_item(*rows), "fail", OPUS)
+
+    def test_a_later_fallback_to_another_model_ends_the_first_allowance(self):
+        rows = (fallback_row(), fallback_row(fallback="claude-haiku-5-5", seconds=3), text_row(OPUS, seconds=4))
+        self.assert_item(self.fallback_item(*rows), "fail", OPUS)
+
+    def test_a_fallback_in_a_subagent_passes_and_names_it(self):
+        rows = subagent_rows()
+        rows += [fallback_row(), text_row(OPUS, seconds=3)]
+        self.assert_item(self.s7(subagents={"a1": rows}), "pass", "agent-a1.jsonl: automatic fallback on overload")
+
+
 class S9Case(SafetyCase):
     CHUNK = 8  # the evidence shows at most 10 lines
 
