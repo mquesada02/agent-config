@@ -59,7 +59,9 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      Monitor filter both use it.
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
-   - The prose rule (issue 789): an unquoted YAML value (not an env pair, not a quoted value) of three or more
+   - The prose rule (issue 789): under a key whose only secret word is the plural `tokens` (a count or a cost, see
+     names_only_token_count; any other secret key keeps its mask, prose or not), an unquoted YAML value (not an env
+     pair, not a quoted value) of three or more
      words separated by spaces stays when each word has 1 to 19 characters of letters, digits and `.,;:!?()'/-`
      and at least one word has two or more characters. Any other unquoted value keeps its mask.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
@@ -183,6 +185,17 @@ def block_key(match, prefix=""):
 def is_secret_key(key):
     normal = key.lower().replace("_", "").replace("-", "")
     return any(word in normal for word in KEY_WORDS)
+
+
+def names_only_token_count(key):
+    """Whether the secret key `key` names only a count or a cost: its only secret word is the plural `tokens`.
+
+    Any other secret word in the key (`password_tokens`), or the singular `token`, makes it a secret key. Only under
+    a key that names only a count can a prose value stay (see PROSE).
+    """
+    normal = key.lower().replace("_", "").replace("-", "")
+    others = [word for word in KEY_WORDS if word != "token"]
+    return re.search("token(?!s)", normal) is None and not any(word in normal for word in others)
 
 
 def is_harmless(value):
@@ -327,7 +340,8 @@ def quoted_line_value(text, start):
 
 
 def plain_line_value(text, start, prose=False):
-    """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair), plain prose stays."""
+    """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair, under a key that
+    names only a count: see names_only_token_count), plain prose stays."""
     end = line_end(text, start)
     value = text[start:end]
     if is_harmless(value) or (prose and PROSE.fullmatch(value.strip()) is not None):
@@ -435,7 +449,7 @@ def key_step(text, match, prefix=""):
     elif start < len(text) and text[start] in "\"'":
         end, replacement = quoted_line_value(text, start)
     else:
-        end, replacement = plain_line_value(text, start, kind == "yaml")
+        end, replacement = plain_line_value(text, start, kind == "yaml" and names_only_token_count(key))
     if replacement is None:
         return skip
     stop = line_end(text, start)

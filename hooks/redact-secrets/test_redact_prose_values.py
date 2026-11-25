@@ -1,6 +1,7 @@
 """Tests of issue 789: an unquoted YAML value that is plain prose (three or more words, each shorter than 20
-characters of letters, digits and common punctuation) is not masked. Everything else keeps its mask. The names are
-joined from parts, so this file holds no secret-shaped text of its own.
+characters of letters, digits and common punctuation) is not masked, but only under a key whose only secret word is the
+plural `tokens` (a count or a cost). Under any other secret key a prose value stays masked. The names are joined from
+parts, so this file holds no secret-shaped text of its own.
 
 Seam 1 is `redact(text)` through the test kit (the PostToolUse hook). Seam 2 is the Monitor filter script.
 """
@@ -12,33 +13,44 @@ PASS = "Pass" + "word"
 TOKENS = "Tok" + "ens"
 VENDOR = "gh" + "p_abc123DEF456"
 LONG_WORD = "abc123def456" + "ghi789jkl"
+PROSE = "see the shared vault entry"
+PASSPHRASE = "correct horse battery staple"
 
 
 class ProseValueTest(unittest.TestCase):
     KEPT = (
         "- " + TOKENS + ": about 3 KB for the index at start.\n",
-        PASS + ": see the shared vault entry\n",
-        PASS.lower() + ": see the shared vault entry\nnext: 1\n",
-        "  - token: ask the on call engineer (see the wiki)\n",
-        PASS + ": a b see\n",
-        PASS + ": see the vault, ok\n",
-        "  nested:\n    " + PASS.lower() + ": see the shared vault entry\n",
+        "max_" + TOKENS.lower() + ": about 3 KB for the index at start.\nnext: 1\n",
+        "  - " + TOKENS.lower() + ": ask the on call engineer (see the wiki)\n",
+        TOKENS + ": a b see\n",
+        TOKENS + ": see the vault, ok\n",
+        "  nested:\n    " + TOKENS.lower() + ": " + PROSE + "\n",
     )
     MASKED = (
+        # a prose value under a secret key stays masked
+        (PASS + ": " + PROSE + "\n", PASS + ": ***\n"),
+        (PASS + ": " + PASSPHRASE + "\n", PASS + ": ***\n"),
+        ("Token: " + PROSE + "\n", "Token: ***\n"),
+        ("api_key: " + PROSE + "\n", "api_key: ***\n"),
+        ("secret: " + PROSE + "\n", "secret: ***\n"),
+        (PASS.lower() + "_" + TOKENS.lower() + ": " + PROSE + "\n", PASS.lower() + "_" + TOKENS.lower() + ": ***\n"),
+        ("secre" + TOKENS.lower() + ": " + PROSE + "\n", "secre" + TOKENS.lower() + ": ***\n"),
+        # a value that is no prose under a plural `tokens` key stays masked
         (PASS + ": hunter2\n", PASS + ": ***\n"),
         (TOKENS + ": " + LONG_WORD + "\n", TOKENS + ": ***\n"),
+        (TOKENS + ": two words\n", TOKENS + ": ***\n"),
+        (TOKENS + ": a b c\n", TOKENS + ": ***\n"),
+        (TOKENS + ": see the " + LONG_WORD + " vault\n", TOKENS + ": ***\n"),
+        (TOKENS + ": see the my_pass_word vault\n", TOKENS + ": ***\n"),
+        (TOKENS + ": see the x@y vault\n", TOKENS + ": ***\n"),
+        (TOKENS + ": see  the\tvault\n", TOKENS + ": ***\n"),
+        (TOKENS + ": see the vault # note\n", TOKENS + ": ***\n"),
+        (TOKENS + ": use " + VENDOR + " now\n", TOKENS + ": ***\n"),
         ("Token: " + VENDOR + "\n", "Token: ***\n"),
-        (PASS + ": hunter two\n", PASS + ": ***\n"),
-        (PASS + ": a b c\n", PASS + ": ***\n"),
-        (PASS + ": see the " + LONG_WORD + " vault\n", PASS + ": ***\n"),
-        (PASS + ": see the my_pass_word vault\n", PASS + ": ***\n"),
-        (PASS + ": see the x@y vault\n", PASS + ": ***\n"),
-        (PASS + ": see  the\tvault\n", PASS + ": ***\n"),
-        (PASS + ": see the vault # note\n", PASS + ": ***\n"),
-        ("Token: use " + VENDOR + " now\n", "Token: ***\n"),
-        ("TOKEN=see the shared vault\n", "TOKEN=***\n"),
-        (PASS + ': "see the shared vault"\n', PASS + ': "***"\n'),
-        ('{"' + PASS.lower() + '": "see the shared vault"}', '{"' + PASS.lower() + '": "***"}'),
+        # only an unquoted YAML value can be prose
+        (TOKENS.upper() + "=" + PROSE + "\n", TOKENS.upper() + "=***\n"),
+        (TOKENS + ': "' + PROSE + '"\n', TOKENS + ': "***"\n'),
+        ('{"' + TOKENS.lower() + '": "' + PROSE + '"}', '{"' + TOKENS.lower() + '": "***"}'),
     )
 
     def test_prose_value_stays(self):
