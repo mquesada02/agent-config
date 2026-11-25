@@ -254,48 +254,51 @@ class HookTest(unittest.TestCase):
                 self.assertIsNone(self.run_hook(command))
 
     def test_every_command_passes_without_an_agent_id(self):
-        for command in BLOCKED + WRAPPED + UNRESOLVABLE + LOCAL_BLOCKED + LOCAL_BLOCKED_WRAPPED + LOCAL_UNRESOLVABLE:
+        for command in BLOCKED + WRAPPED + UNRESOLVABLE:
             with self.subTest(command=command):
                 self.assertIsNone(self.run_hook(command, subagent=False, cwd=OUTSIDE))
+        for command in ("git checkout main", "git commit -m x", "git -C $DIR commit -m x"):  # the agent_id gate does not read the command
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_hook(command, subagent=False, cwd=OUTSIDE))
+
+    def local_reason(self, command, cwd):
+        """The reason of the rules for a command that runs in the directory `cwd`, in this process (a process per command is slow)."""
+        return hook.DenyRules(RULES.audit, cwd).command_reason(command)
 
     def test_a_local_git_write_in_a_shared_worktree_is_denied_for_a_subagent(self):
         for command in LOCAL_BLOCKED + LOCAL_BLOCKED_WRAPPED + LOCAL_UNRESOLVABLE:
             with self.subTest(command=command):
-                output = self.run_hook(command, cwd=OUTSIDE)
-                self.assertIsNotNone(output, command)
-                self.assertEqual(output["permissionDecision"], "deny")
-                self.assertIn("git show <ref>:<path>", output["permissionDecisionReason"])
+                self.assertTrue(self.local_reason(command, OUTSIDE), command)
+        output = self.run_hook("git checkout origin/main", cwd=OUTSIDE)
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("git show <ref>:<path>", output["permissionDecisionReason"])
 
     def test_the_reason_of_a_local_git_write_names_the_subcommand(self):
-        self.assertIn("git checkout changes a shared worktree", self.reason_of_in("git checkout origin/main", OUTSIDE))
-        self.assertIn("git worktree add changes a shared worktree", self.reason_of_in("git worktree add ../w", OUTSIDE))
-        self.assertIn("git commit acts on a directory that cannot be resolved", self.reason_of_in("git -C $DIR commit", OUTSIDE))
-
-    def reason_of_in(self, command, cwd):
-        output = self.run_hook(command, cwd=cwd)
-        self.assertIsNotNone(output, command)
-        return output["permissionDecisionReason"]
+        self.assertEqual(self.local_reason("git checkout origin/main", OUTSIDE), "git checkout changes a shared worktree")
+        self.assertEqual(self.local_reason("git worktree add ../w", OUTSIDE), "git worktree add changes a shared worktree")
+        self.assertEqual(self.local_reason("git -C $DIR commit", OUTSIDE), "git commit acts on a directory that cannot be resolved")
 
     def test_a_local_git_read_passes_in_a_shared_worktree(self):
         for command in LOCAL_READ:
             with self.subTest(command=command):
-                self.assertIsNone(self.run_hook(command, cwd=OUTSIDE))
+                self.assertIsNone(self.local_reason(command, OUTSIDE))
 
     def test_a_local_git_write_in_a_temp_repository_passes(self):
         for command in LOCAL_IN_TEMP:
             with self.subTest(command=command):
-                self.assertIsNone(self.run_hook(command, cwd=PROBE))
+                self.assertIsNone(self.local_reason(command, PROBE))
         for command in ("git init /tmp/probe && git -C /tmp/probe commit -m x", "cd /tmp/probe && git checkout -b x",
                         "cd /tmp/probe && bash -c 'git commit -m x'", "bash -c 'cd /tmp/probe && git reset --hard'",
                         "mkdir -p /tmp/p && cd /tmp/p && git init && git commit --allow-empty -m x", "echo $(cd /tmp/p && git stash)"):
             with self.subTest(command=command):
-                self.assertIsNone(self.run_hook(command, cwd=OUTSIDE))
+                self.assertIsNone(self.local_reason(command, OUTSIDE))
+        self.assertIsNone(self.run_hook("cd /tmp/probe && git commit -m x", cwd=OUTSIDE))
 
     def test_a_write_outside_temp_is_denied_even_when_the_session_directory_is_in_temp(self):
         for command in ("git -C /srv/project commit -m x", "git --work-tree=/srv/project checkout x", "git --git-dir /srv/project/.git reset",
                         "cd /srv/project && git commit -m x", "cd /tmp/p && cd .. && cd /srv/project && git commit -m x"):
             with self.subTest(command=command):
-                self.assertEqual(self.run_hook(command, cwd=PROBE)["permissionDecision"], "deny")
+                self.assertTrue(self.local_reason(command, PROBE), command)
 
     def test_a_link_in_temp_to_a_shared_worktree_does_not_count_as_temp(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -161,9 +161,9 @@ def gh_api_reason(words):
 def local_git_write(args):
     """The subcommand name of a git command that changes HEAD, the index or the working tree, else None. `args` start at the subcommand."""
     name, rest = args[0], args[1:]
-    names = positional(rest, ())
     if name in GIT_LOCAL_WRITE:
         return name
+    names = positional(rest, ())
     if name == "stash" and (not names or names[0] not in ("list", "show")):
         return name
     if name == "apply" and not {"--check", "--stat"} & set(rest):
@@ -180,7 +180,7 @@ def local_git_write(args):
 
 def resolve_directory(base, path):
     """The real path of `path` from the directory `base`, or None when `base` is unknown or a variable, a substitution or a pattern builds `path`."""
-    if base is None or path == "-" or UNRESOLVABLE_WORD.search(path):
+    if base is None or path is None or path == "-" or UNRESOLVABLE_WORD.search(path):
         return None
     return os.path.realpath(os.path.join(base, os.path.expanduser(path)))
 
@@ -219,7 +219,7 @@ class DenyRules:
         self.texts = {}  # nesting depth -> (the split items of the text being read, the directory where that text starts)
         self.directories = {}  # nesting depth -> the directory of the segment being read (None: a `cd` that cannot be resolved)
 
-    def git_reason(self, words, items, position, depth):
+    def git_reason(self, words, depth):
         rest = self.audit._git_command(words)
         if rest is None:
             return None
@@ -244,27 +244,28 @@ class DenyRules:
     def git_targets(self, words, directory):
         """The directories that a git command acts on (the current one, moved by each `-C`, and the `--git-dir` and `--work-tree` paths),
         or None when one cannot be resolved. A dashed program (`git-branch`) has no global options."""
-        targets, index = [directory], 1
+        paths, index = [], 1
         while os.path.basename(words[0]) == "git" and index < len(words) and words[index].startswith("-"):
             word = words[index]
             name, equals, value = word.partition("=")
             if word == "-C" or name in GIT_PATH_OPTIONS:
                 if not equals:
                     index += 1
-                    value = words[index] if index < len(words) else "-"  # "-" cannot be resolved
+                    value = words[index] if index < len(words) else None  # a missing value cannot be resolved
                 path = resolve_directory(directory, value)
                 if word == "-C":
-                    directory = targets[0] = path
+                    directory = path
                 else:
-                    targets.append(path)
+                    paths.append(path)
             elif word in self.audit.GIT_VALUE_OPTIONS:
                 index += 1
             index += 1
+        targets = [directory, *paths]
         return None if None in targets else targets
 
-    def segment_directory(self, items, position, depth):
-        """Record the directory of a segment: where its text starts, moved by each `cd` of the segments before it in the same text. A text
-        that a segment nests (`bash -c`, `eval`, a substitution) starts where that segment is."""
+    def segment_reason(self, words, items, position, depth):
+        """No reason of its own: it records the directory of a segment, which is where its text starts, moved by each `cd` of the segments
+        before it in the same text. A text that a segment nests (`bash -c`, `eval`, a substitution) starts where that segment is."""
         entry = self.texts.get(depth)
         if entry is None or entry[0] is not items:
             entry = self.texts[depth] = (items, self.directories.get(depth - 1, self.base) if depth else self.base)
@@ -280,10 +281,6 @@ class DenyRules:
     def first_word_reason(self, words):
         return unresolved_reason([os.path.basename(words[0])], "command word")
 
-    def segment_reason(self, words, items, position, depth):
-        self.segment_directory(items, position, depth)
-        return None
-
     def word_reason(self, words, index, items, position, depth):
         name = os.path.basename(words[index])
         rest = words[index + 1:]
@@ -294,7 +291,7 @@ class DenyRules:
         if name == "aws":
             return aws_reason(rest)
         if name == "git" or name in self.audit.DASHED_GIT:
-            return self.git_reason(words[index:], items, position, depth)
+            return self.git_reason(words[index:], depth)
         return None
 
     def depth_reason(self):
