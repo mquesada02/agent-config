@@ -10,9 +10,10 @@
 # substitution) counts. A command that the reader cannot split is denied (fail closed), as are a command or subcommand word that a variable or a
 # substitution builds.
 # Also denied (issue #738): a local git command that changes HEAD, the index or the working tree (`checkout`, `reset`, `commit`, ...; see
-# GIT_LOCAL_WRITE and `local_git_write`), unless every directory that it acts on (the session directory, moved by `cd` and `-C`, and the
+# GIT_LOCAL_WRITE and `local_git_write`), and a `git branch` write that deletes, moves or forces, and a `git tag` write that creates, deletes
+# or forces (they change refs), unless every directory that it acts on (the session directory, moved by `cd` and `-C`, and the
 # `--git-dir` and `--work-tree` paths) is under /tmp or the temp folder, where a verifier builds a probe repository. A directory that cannot
-# be resolved is denied.
+# be resolved is denied. A plain `git branch <name>` (a create) is not denied.
 # KNOWN GAP (accepted by the owner): a write hidden in a script that the subagent runs (`bash push.sh`) is not caught here. Nor is a
 # write made by a tool that is not on the deny-list (`kubectl`, `docker`, `python -c ...`). The `autoMode` rule in settings.json is the
 # second layer for those.
