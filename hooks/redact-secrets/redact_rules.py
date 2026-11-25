@@ -64,6 +64,12 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      pair, not a quoted value) of three or more
      words separated by spaces stays when each word has 1 to 19 characters of letters, digits and `.,;:!?()'/-`
      and at least one word has two or more characters. Any other unquoted value keeps its mask.
+   - The file-path rule (config issue 1030): an env or YAML key whose name ends in `_FILE` or `-FILE` (any case)
+     names a file, not a secret, so a value that looks like a path stays. A path starts with `/`, `~/`, `./`,
+     `../` or a drive letter with a slash or a backslash (`C:/`). A plain path ends at a space, a tab or the
+     line end; a quoted path is the whole text up to its closing quote on the line. The scan goes on at the start
+     of the value, so a key later on the line is still masked. Any other value of such a key (no path, or a quote
+     that does not close) is masked as before. JSON keys do not take this rule.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
 """
 import re
@@ -107,6 +113,10 @@ PROSE_WORD = r"[A-Za-z0-9.,;:!?()'/\-]{1,19}"
 PROSE = re.compile(r"(?=.*?\S\S)" + PROSE_WORD + r"(?: +" + PROSE_WORD + r"){2,}")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
+# The file-path rule: a key that names a file, and the start of a path (see file_path_value).
+FILE_KEY = re.compile(r"[_\-]file\Z", re.IGNORECASE)
+PATH_START = re.compile(r"(?:(?:~|\.\.?)?/|[A-Za-z]:[\\/])")
+PLAIN_PATH = re.compile(PATH_START.pattern + r"[^\s\"']*(?=[ \t]|\r?\n|\Z)")
 
 SHAPES = (
     (re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"), MASK),
@@ -204,6 +214,19 @@ def is_harmless(value):
 
 def line_end(text, start):
     return LINE_END.match(text, start).end()
+
+
+def file_path_value(key, text, start):
+    """Whether the env or YAML value at `start` is a path that the file-path rule keeps (see the module rules)."""
+    if FILE_KEY.search(key) is None:
+        return False
+    char = text[start : start + 1]
+    if char in ("'", '"'):
+        body = start + 1
+        limit = line_end(text, body)
+        close = find_plain_quote(text, body, limit) if char == '"' else text.find("'", body, limit)
+        return close > body and PATH_START.match(text, body, close) is not None
+    return PLAIN_PATH.match(text, start) is not None
 
 
 def find_plain_quote(text, start, limit):
@@ -414,9 +437,9 @@ def runs_to_line_end(text, start, stop, kind, replacement):
 def key_step(text, match, prefix=""):
     """What the key occurrence `match` does, as a Step(rule, end, replacement, to_line_end).
 
-    `rule` is `skip` (nothing is masked here: the key is no secret key, an unquoted YAML key that does not count, or a
-    value that the value guard keeps; the scan goes on at the start of the value), `value` (a value on the line is
-    replaced by `replacement` up to `end`; `to_line_end` says that it is masked to the line end, so a later key in it
+    `rule` is `skip` (nothing is masked here: the key is no secret key, an unquoted YAML key that does not count, a
+    value that the value guard keeps, or a path that the file-path rule keeps; the scan goes on at the start of the
+    value), `value` (a value on the line is replaced by `replacement` up to `end`; `to_line_end` says that it is masked to the line end, so a later key in it
     is swallowed), or a later-line state: `block` (a block scalar header), `empty_json` (a plain double-quoted key with
     an empty value), `empty` (another key with an empty value), `json_open` (an object or array that does not close on
     its line, for a JSON key written with plain or escaped quotes; it is masked like a `value`). A JSON key written
@@ -444,6 +467,8 @@ def key_step(text, match, prefix=""):
         return skip  # prose: an unquoted YAML key that does not count; its text stays
     elif kind == "json":
         end, replacement = json_dq_key_value_end(text, start)
+    elif file_path_value(key, text, start):
+        return skip  # the file-path rule: a path is no secret; the scan goes on at the start of the value
     elif start < len(text) and text[start] in "\"'":
         end, replacement = quoted_line_value(text, start)
     else:
