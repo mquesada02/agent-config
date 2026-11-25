@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "block_subagent_writes.py")
@@ -118,7 +119,7 @@ ALLOWED = (
     "git log --oneline -5",
     "git show HEAD",
     "git status",
-    "git commit -m 'push the change'",
+    "git -C /tmp/x commit -m 'push the change'",
     "git -C /tmp/x log",
     "terraform fmt -check",
     "terraform validate",
@@ -142,6 +143,49 @@ ALLOWED = (
     "echo $(git rev-parse HEAD)",
     "$HOME/.claude/hooks/tool arg",
     "[ -f x ] && echo ok",
+)
+
+
+# Local git writes (issue 738). The session directory is OUTSIDE (a shared worktree) or PROBE (a probe repository under /tmp).
+OUTSIDE = "/srv/project"
+PROBE = "/tmp/probe-repo"
+
+LOCAL_BLOCKED = (
+    "git checkout main", "git checkout origin/main", "git checkout -- file.txt", "git checkout -b new", "git switch main",
+    "git switch -c new", "git reset", "git reset --hard HEAD~1", "git stash", "git stash push -m x", "git stash -u", "git stash pop",
+    "git stash drop", "git stash apply", "git clean -fd", "git restore file.txt", "git restore --staged file.txt", "git commit -m x",
+    "git commit --amend", "git merge other", "git rebase main", "git cherry-pick abc123", "git revert abc123", "git am p.patch",
+    "git apply p.diff", "git apply --index p.diff", "git worktree add ../w", "git worktree remove w", "git branch -d x", "git branch -D x",
+    "git branch -m old new", "git branch -M new", "git branch -f x HEAD", "git branch --delete x", "git branch --force x HEAD",
+    "git branch -fd x", "git tag v1", "git tag -d v1", "git tag --delete v1", "git tag -a v1 -m msg", "git tag -f v1",
+    "git pull", "git pull origin main", "git stage file.txt", "git add -A", "git add file.txt", "git rm file.txt", "git rm --cached file.txt", "git mv a b",
+    "git update-ref -d refs/heads/x", "git update-ref HEAD abc123", "git update-index --add f", "git read-tree HEAD", "git checkout-index -a",
+    "git symbolic-ref HEAD refs/heads/x", "git symbolic-ref -d HEAD", "git symbolic-ref --delete HEAD", "git bisect start", "git bisect reset",
+    "git bisect good", "git bisect run make", "git sparse-checkout set a", "git sparse-checkout add a", "git sparse-checkout disable",
+    "git sparse-checkout init", "git sparse-checkout",
+    "git -c core.pager=cat checkout main", "git -C /srv/other reset --hard", "git -C /tmp/x -C /srv/project commit -m x",
+    "git -C /tmp/x/../../srv/project commit -m x", "git -C ../project2 checkout x", "git --git-dir=/srv/project/.git commit -m x",
+    "git --work-tree /srv/project checkout x", "git-worktree add ../w", "git-branch -D x",
+)
+LOCAL_BLOCKED_WRAPPED = (
+    "bash -c 'git checkout main'", "git status && git checkout main", "echo $(git reset --hard)", "true; git commit -m x",
+    "sudo git commit -m x", "cd /srv/project && git commit -m x", "cd /tmp/x && cd /srv/project && git commit -m x",
+    "cd /tmp/x; bash -c 'cd /srv/project && git commit -m x'", "cd /srv/project && bash -c 'git commit -m x'", "git log | git checkout x",
+)
+LOCAL_UNRESOLVABLE = ("git -C $DIR commit -m x", "git -C /tmp/x -C $DIR commit -m x", "cd $DIR && git commit -m x", "cd - && git commit -m x",
+                      "git --git-dir $DIR commit -m x", "git -C /tmp/* commit -m x", "cd $(pwd) && git commit -m x")
+LOCAL_READ = (
+    "git show origin/main:README.md", "git log --oneline -5", "git diff origin/main", "git status", "git ls-files", "git ls-tree HEAD",
+    "git cat-file -p HEAD", "git rev-parse HEAD", "git merge-base HEAD origin/main", "git grep -n x", "git blame file.txt", "git branch",
+    "git branch --list", "git branch -a", "git branch -vv", "git branch --show-current", "git worktree list", "git fetch origin",
+    "git stash list", "git stash show -p", "git apply --check p.diff", "git apply --stat p.diff", "git tag", "git tag -l 'v*'",
+    "git tag --list", "git tag --contains abc123", "git tag -n", "git symbolic-ref HEAD", "git symbolic-ref --short HEAD",
+    "git symbolic-ref -q HEAD", "git bisect log", "git bisect visualize", "git bisect view", "git sparse-checkout list", "git -C /srv/other log", "git -c core.pager=cat diff",
+)
+LOCAL_IN_TEMP = (
+    "git checkout main", "git commit -m x", "git reset --hard", "git stash", "git tag v1", "git branch -D x", "git -C /tmp/other commit -m x",
+    "git -C sub commit -m x", "git --git-dir=/tmp/x/.git --work-tree=/tmp/x checkout y", "git init . && git commit -m x",
+    "bash -c 'git commit -m x'", "cd /tmp/other && git commit -m x", "cd sub; git checkout x",
 )
 
 
@@ -218,7 +262,59 @@ class HookTest(unittest.TestCase):
     def test_every_command_passes_without_an_agent_id(self):
         for command in BLOCKED + WRAPPED + UNRESOLVABLE:
             with self.subTest(command=command):
-                self.assertIsNone(self.run_hook(command, subagent=False))
+                self.assertIsNone(self.run_hook(command, subagent=False, cwd=OUTSIDE))
+        for command in ("git checkout main", "git commit -m x", "git -C $DIR commit -m x"):  # the agent_id gate does not read the command
+            with self.subTest(command=command):
+                self.assertIsNone(self.run_hook(command, subagent=False, cwd=OUTSIDE))
+
+    def local_reason(self, command, cwd):
+        """The reason of the rules for a command that runs in the directory `cwd`, in this process (a process per command is slow)."""
+        return hook.DenyRules(RULES.audit, cwd).command_reason(command)
+
+    def test_a_local_git_write_in_a_shared_worktree_is_denied_for_a_subagent(self):
+        for command in LOCAL_BLOCKED + LOCAL_BLOCKED_WRAPPED + LOCAL_UNRESOLVABLE:
+            with self.subTest(command=command):
+                self.assertTrue(self.local_reason(command, OUTSIDE), command)
+        output = self.run_hook("git checkout origin/main", cwd=OUTSIDE)
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("git show <ref>:<path>", output["permissionDecisionReason"])
+
+    def test_the_reason_of_a_local_git_write_names_the_subcommand(self):
+        self.assertEqual(self.local_reason("git checkout origin/main", OUTSIDE), "git checkout changes a shared worktree")
+        self.assertEqual(self.local_reason("git worktree add ../w", OUTSIDE), "git worktree add changes a shared worktree")
+        self.assertEqual(self.local_reason("git -C $DIR commit", OUTSIDE), "git commit acts on a directory that cannot be resolved")
+
+    def test_a_local_git_read_passes_in_a_shared_worktree(self):
+        for command in LOCAL_READ:
+            with self.subTest(command=command):
+                self.assertIsNone(self.local_reason(command, OUTSIDE))
+
+    def test_a_local_git_write_in_a_temp_repository_passes(self):
+        for command in LOCAL_IN_TEMP:
+            with self.subTest(command=command):
+                self.assertIsNone(self.local_reason(command, PROBE))
+        for command in ("git init /tmp/probe && git -C /tmp/probe commit -m x", "cd /tmp/probe && git checkout -b x",
+                        "cd /tmp/probe && bash -c 'git commit -m x'", "bash -c 'cd /tmp/probe && git reset --hard'",
+                        "mkdir -p /tmp/p && cd /tmp/p && git init && git commit --allow-empty -m x", "echo $(cd /tmp/p && git stash)"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.local_reason(command, OUTSIDE))
+        self.assertIsNone(self.run_hook("cd /tmp/probe && git commit -m x", cwd=OUTSIDE))
+
+    def test_a_write_outside_temp_is_denied_even_when_the_session_directory_is_in_temp(self):
+        for command in ("git -C /srv/project commit -m x", "git --work-tree=/srv/project checkout x", "git --git-dir /srv/project/.git reset",
+                        "cd /srv/project && git commit -m x", "cd /tmp/p && cd .. && cd /srv/project && git commit -m x"):
+            with self.subTest(command=command):
+                self.assertTrue(self.local_reason(command, PROBE), command)
+
+    def test_a_link_in_temp_to_a_shared_worktree_does_not_count_as_temp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            link = os.path.join(folder, "link")
+            os.symlink(os.getcwd(), link)
+            self.assertEqual(self.run_hook(f"git -C {link} commit -m x", cwd=OUTSIDE)["permissionDecision"], "deny")
+
+    def test_a_hook_input_with_no_cwd_uses_the_directory_of_the_hook_process(self):
+        output = self.run_hook("git commit -m x")
+        self.assertEqual(output["permissionDecision"], "deny")
 
     def test_an_empty_agent_id_counts_as_a_main_session(self):
         self.assertIsNone(self.run_hook("git push", subagent=False, agent_id=""))

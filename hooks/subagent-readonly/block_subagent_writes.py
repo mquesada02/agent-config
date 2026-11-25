@@ -9,6 +9,10 @@
 # with the shared bash command reader of the workflow-audit gates, so a wrapped form (`bash -c`, `eval`, a pipeline, a `&&` chain, a
 # substitution) counts. A command that the reader cannot split is denied (fail closed), as are a command or subcommand word that a variable or a
 # substitution builds.
+# Also denied (issue #738): a local git command that changes HEAD, the index or the working tree (`checkout`, `reset`, `commit`, ...; see
+# GIT_LOCAL_WRITE and `local_git_write`), unless every directory that it acts on (the session directory, moved by `cd` and `-C`, and the
+# `--git-dir` and `--work-tree` paths) is under /tmp or the temp folder, where a verifier builds a probe repository. A directory that cannot
+# be resolved is denied.
 # KNOWN GAP (accepted by the owner): a write hidden in a script that the subagent runs (`bash push.sh`) is not caught here. Nor is a
 # write made by a tool that is not on the deny-list (`kubectl`, `docker`, `python -c ...`). The `autoMode` rule in settings.json is the
 # second layer for those.
@@ -17,12 +21,13 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 HOOKS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUDIT = os.path.join(HOOKS, "workflow-audit", "audit")
 SHARED = os.path.join(HOOKS, "bash-reader", "bash_reader.py")
-DENY_NOTICE = ("A subagent must not change remote state. Do not run this command. Report the need as a finding in your review "
-               "instead; the owner runs it.")
+DENY_NOTICE = ("A subagent must not change remote state or a shared worktree. Do not run this command. Report the need as a finding in "
+               "your review instead; the owner runs it. To read a file at a ref, use `git show <ref>:<path>`.")
 UNRESOLVABLE_WORD = re.compile(r"[$`*?]")
 
 
@@ -65,6 +70,18 @@ GH_WRITE_VERBS = {
                 "item-add", "item-archive", "item-create", "item-delete", "item-edit"},
 }
 GH_VALUE_OPTIONS = frozenset(("-R", "--repo", "--hostname"))
+# `git <subcommand>`: the subcommands that change HEAD, the index or the working tree of the repository that they run in (issue #738).
+# `stash`, `apply`, `symbolic-ref`, `bisect`, `sparse-checkout`, `worktree`, `branch` and `tag` have read forms, so `local_git_write` reads their arguments.
+GIT_LOCAL_WRITE = frozenset(("checkout", "switch", "reset", "clean", "restore", "commit", "merge", "rebase", "cherry-pick", "revert", "am",
+                             "pull", "add", "stage", "rm", "mv", "update-ref", "update-index", "read-tree", "checkout-index"))
+GIT_PATH_OPTIONS = ("--git-dir", "--work-tree")
+GIT_BRANCH_WRITE_LONG = frozenset(("--delete", "--move", "--force"))
+GIT_BRANCH_WRITE_SHORT = frozenset("dDmMf")
+GIT_TAG_VALUE_OPTIONS = frozenset(("-m", "-F", "-u", "--message", "--file", "--local-user", "--cleanup", "--sort", "--format",
+                                   "--points-at", "--contains", "--no-contains", "--merged", "--no-merged"))
+GIT_TAG_LIST_OPTIONS = frozenset(("-l", "--list", "--contains", "--no-contains", "--points-at", "--merged", "--no-merged"))
+# A local git write is allowed only in a repository under one of these folders (a probe repository of a verifier).
+TEMP_ROOTS = tuple({os.path.realpath("/tmp"), os.path.realpath(tempfile.gettempdir())})
 # `terraform [-chdir=...] <subcommand>`
 TERRAFORM_WRITE = {"apply", "destroy", "import", "force-unlock"}
 TERRAFORM_STATE_WRITE = {"rm", "mv", "push"}
@@ -142,6 +159,42 @@ def gh_api_reason(words):
     return None
 
 
+def local_git_write(args):
+    """The subcommand name of a git command that changes HEAD, the index or the working tree, else None. `args` start at the subcommand."""
+    name, rest = args[0], args[1:]
+    if name in GIT_LOCAL_WRITE:
+        return name
+    names = positional(rest, ())
+    if name == "stash" and (not names or names[0] not in ("list", "show")):
+        return name
+    if name == "symbolic-ref" and (len(names) > 1 or {"-d", "--delete"} & set(rest)):  # `git symbolic-ref HEAD` only reads
+        return name
+    if (name == "bisect" and names[:1] != ["log"] and names[:1] != ["visualize"] and names[:1] != ["view"]) or (
+            name == "sparse-checkout" and names[:1] != ["list"]):  # the other forms move HEAD or rewrite the working tree
+        return name
+    if name == "apply" and not {"--check", "--stat"} & set(rest):
+        return name
+    if name == "worktree" and names[:1] and names[0] in ("add", "remove"):
+        return f"{name} {names[0]}"
+    if name == "branch" and any(word in GIT_BRANCH_WRITE_LONG or (word.startswith("-") and not word.startswith("--")
+                                                                  and GIT_BRANCH_WRITE_SHORT & set(word[1:])) for word in rest):
+        return name
+    if name == "tag" and positional(rest, GIT_TAG_VALUE_OPTIONS) and not any(word.split("=")[0] in GIT_TAG_LIST_OPTIONS for word in rest):
+        return name
+    return None
+
+
+def resolve_directory(base, path):
+    """The real path of `path` from the directory `base`, or None when `base` is unknown or a variable, a substitution or a pattern builds `path`."""
+    if base is None or path is None or path == "-" or UNRESOLVABLE_WORD.search(path):
+        return None
+    return os.path.realpath(os.path.join(base, os.path.expanduser(path)))
+
+
+def under_temp(directory):
+    return any(directory == root or directory.startswith(root + os.sep) for root in TEMP_ROOTS)
+
+
 def terraform_reason(words):
     names = positional(words, ())[:2]
     reason = unresolved_reason(names, "terraform subcommand")
@@ -165,16 +218,70 @@ def aws_reason(words):
 
 
 class DenyRules:
-    def __init__(self, audit):
+    def __init__(self, audit, base=None):
         self.audit = audit
         self.walk = load_shared().Walk(audit, self)
+        self.base = os.path.realpath(base or os.getcwd())  # the directory of the session when the command starts
+        self.texts = {}  # nesting depth -> (the split items of the text being read, the directory where that text starts)
+        self.directories = {}  # nesting depth -> the directory of the segment being read (None: a `cd` that cannot be resolved)
 
-    def git_reason(self, words):
+    def git_reason(self, words, depth):
         rest = self.audit._git_command(words)
         if rest is None:
             return None
-        first = self.audit._words(rest[:1])
-        return unresolved_reason(first, "git subcommand") or ("git push changes the remote" if first == ["push"] else None)
+        args = self.audit._words(rest)
+        if not args:
+            return None
+        reason = unresolved_reason(args[:1], "git subcommand")
+        if reason:
+            return reason
+        if args[0] == "push":
+            return "git push changes the remote"
+        written = local_git_write(args)
+        if written is None:
+            return None
+        targets = self.git_targets(words, self.directories.get(depth))
+        if targets is None:
+            return f"git {written} acts on a directory that cannot be resolved"
+        if all(under_temp(target) for target in targets):
+            return None
+        return f"git {written} changes a shared worktree"
+
+    def git_targets(self, words, directory):
+        """The directories that a git command acts on (the current one, moved by each `-C`, and the `--git-dir` and `--work-tree` paths),
+        or None when one cannot be resolved. A dashed program (`git-branch`) has no global options."""
+        paths, index = [], 1
+        while os.path.basename(words[0]) == "git" and index < len(words) and words[index].startswith("-"):
+            word = words[index]
+            name, equals, value = word.partition("=")
+            if word == "-C" or name in GIT_PATH_OPTIONS:
+                if not equals:
+                    index += 1
+                    value = words[index] if index < len(words) else None  # a missing value cannot be resolved
+                path = resolve_directory(directory, value)
+                if word == "-C":
+                    directory = path
+                else:
+                    paths.append(path)
+            elif word in self.audit.GIT_VALUE_OPTIONS:
+                index += 1
+            index += 1
+        targets = [directory, *paths]
+        return None if None in targets else targets
+
+    def segment_reason(self, words, items, position, depth):
+        """No reason of its own: it records the directory of a segment, which is where its text starts, moved by each `cd` of the segments
+        before it in the same text. A text that a segment nests (`bash -c`, `eval`, a substitution) starts where that segment is."""
+        entry = self.texts.get(depth)
+        if entry is None or entry[0] is not items:
+            entry = self.texts[depth] = (items, self.directories.get(depth - 1, self.base) if depth else self.base)
+        directory = entry[1]
+        for item in items[:position]:
+            words = self.audit._command_words(item) if isinstance(item, list) else []
+            if words and os.path.basename(words[0]) in ("cd", "pushd"):
+                names = positional(words[1:], ())
+                directory = resolve_directory(directory, names[0] if names else "~")
+        self.directories[depth] = directory
 
     # The rules that the shared walk (hooks/bash-reader/bash_reader.py) asks of a hook.
     def first_word_reason(self, words):
@@ -190,7 +297,7 @@ class DenyRules:
         if name == "aws":
             return aws_reason(rest)
         if name == "git" or name in self.audit.DASHED_GIT:
-            return self.git_reason(words[index:])
+            return self.git_reason(words[index:], depth)
         return None
 
     def depth_reason(self):
@@ -255,7 +362,8 @@ def main():
     tool_input = data.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     try:
-        reason = (DenyRules(load_reader()).command_reason(command) if isinstance(command, str)
+        cwd = data.get("cwd")
+        reason = (DenyRules(load_reader(), cwd if isinstance(cwd, str) else None).command_reason(command) if isinstance(command, str)
                   else "the hook input holds no command text")
     except Exception as error:
         reason = f"the hook failed ({type(error).__name__})"
