@@ -129,7 +129,7 @@ class SectionSevenTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 7)
 
-    def test_the_every_ticket_rule_covers_only_the_tickets_of_step_4(self):
+    def test_the_full_ticket_steps_cover_only_the_tickets_of_step_4(self):
         self.assert_in(self.text,
                        "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. "
                        "A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.")
