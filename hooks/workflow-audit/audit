@@ -1967,10 +1967,20 @@ def _rebase_exempt_rounds(worktree, base_branch, ledger):
     return exempt
 
 
+def _has_reviewed_content(worktree, base_ref, reviewed, newest):
+    """True when the phase commit `newest` has the whole-branch patch-id of the reviewed phase commit `reviewed`. False when `newest` is unknown or
+    either patch-id does not exist."""
+    if not _is_known_commit(worktree, newest):
+        return False
+    reviewed_id = _branch_patch_id(worktree, base_ref, reviewed)
+    return reviewed_id is not None and reviewed_id == _branch_patch_id(worktree, base_ref, newest)
+
+
 def check_s6(worktree, ledger, base_branch):
     """Returns (passed, evidence). The reviewed phase-commit is the last one before the last final round of the section 6 loop: the content that
     a final round followed. It must be an ancestor of HEAD. After a rebase, the newest later phase-commit must be an ancestor of HEAD with the
-    whole-branch patch-id of the reviewed one. A phase-commit after the last final round has no final round after it."""
+    whole-branch patch-id of the reviewed one. A phase-commit after the last final round has no final round after it. When the reviewed one is an
+    ancestor of HEAD, the newest later phase-commit must still have its whole-branch patch-id."""
     final = max((position for position, event in ledger.round_events if event["loop"] == CODE_REVIEW and event["phase"] == "final"), default=None)
     if final is None:
         return True, "no section 6 final round"
@@ -1980,9 +1990,11 @@ def check_s6(worktree, ledger, base_branch):
     reviewed_position, reviewed_event = before[-1]
     sha = reviewed_event["sha"]
     known = _is_known_commit(worktree, sha)
-    if known and _is_ancestor_of_head(worktree, sha):
-        return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
     later = [event["sha"] for position, event in ledger.commits if position > reviewed_position]
+    if known and _is_ancestor_of_head(worktree, sha):
+        if later and not _has_reviewed_content(worktree, _base_ref(worktree, base_branch), sha, later[-1]):
+            return False, f"phase-commit {later[-1][:7]} has new content after the last final round"
+        return True, f"phase-commit {sha[:7]} is an ancestor of HEAD"
     if not later:
         if not known:
             return False, f"unknown commit {sha[:7]}"
