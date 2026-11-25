@@ -29,6 +29,11 @@ class BriefTextTest(unittest.TestCase):
     def l6_item(self):
         return self.full.split("- **L6.**", 1)[1].split("## Reading the ledger", 1)[0]
 
+    def test_l6_covers_only_the_tickets_of_step_4(self):
+        self.assertIn("This rule covers only the tickets of step 4 (made by `/mattpocock-skills:to-tickets` from a map). "
+                      "A single ticket filed to track a small task follows the small-task path: it is not judged as a ticket of step 4, "
+                      "and its code-review rounds are enough.", self.l6_item())
+
     def test_l1_judges_the_reason_in_force_and_s10_results_are_s_results(self):
         l1 = self.full.split("- **L1.**", 1)[1].split("- **L2.**", 1)[0]
         for phrase in ("reason in force", "latest amendment", "A raised finding (`\"raised\":true`) is judged as before","its quote"):
