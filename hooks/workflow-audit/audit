@@ -1111,8 +1111,9 @@ VALID_VALUE = {
     "ticket": _plain_text(MAX_TICKET),
 }
 # A finding quote has no raw minimum: the quote rule judges the normalised length, so that a short quote is `quote too short`.
+# The `by` of a round-retire is the replacing round: a number, not a finding id.
 KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT), ("finding-amend", "quote"): _plain_text(QUOTE_LIMIT),
-              ("round-retire", "by"): lambda value: type(value) is int and value >= 1}  # the replacing round: a number, not a finding id
+              ("round-retire", "by"): lambda value: type(value) is int and value >= 1}
 
 
 def _event_keys(kind):
@@ -1199,9 +1200,10 @@ class Ledger:
                 raise LedgerError(f"no round event for round {max(number, by)} of {key[0]} {key[1]}")
             if by <= number:
                 raise LedgerError(f"round {by} is not after round {number} of {key[0]} {key[1]}: it cannot replace it")
-            if (*key, number) in self.retired:
+            retired_key = (*key, number)
+            if retired_key in self.retired:
                 raise LedgerError(f"round {number} of {key[0]} {key[1]} is retired already")
-            self.retired[(*key, number)] = by
+            self.retired[retired_key] = by
         elif kind == "finding":
             if event["id"] in self.findings:
                 raise LedgerError(f"finding {event['id']} exists already")
@@ -2054,12 +2056,16 @@ def check_xc(ledger, agents, problem):
         transcript = agents.get(agent)
         return low is None or (transcript is not None and transcript.start is not None and transcript.start > low)
 
+    round_in_order = {}  # (loop, phase, round) -> True when every reviewer and verifier of that round is in order, judged by its own lower bound
+    for _, agent, low, owner in checks:
+        key = (owner["loop"], owner["phase"], owner["round"])
+        round_in_order[key] = round_in_order.get(key, True) and in_order(agent, low)
+
     def retired_in_order(round_event):
-        """True when round_event is retired and every reviewer and verifier of the round that replaces it is in order on its own.
-        The replacing round is judged by its own lower bound, never by a retire: a chain of retires cannot pass an out-of-order round."""
+        """True when round_event is retired and the round that replaces it is in order on its own. A retire never counts for the
+        replacing round: a chain of retires cannot pass an out-of-order round. A replacing round with no checks is not in order."""
         by = ledger.retired.get((round_event["loop"], round_event["phase"], round_event["round"]))
-        return by is not None and all(in_order(agent, low) for _, agent, low, owner in checks
-                                      if (owner["loop"], owner["phase"], owner["round"]) == (round_event["loop"], round_event["phase"], by))
+        return by is not None and round_in_order.get((round_event["loop"], round_event["phase"], by), False)
 
     failures = []
     for label, agent, low, round_event in checks:

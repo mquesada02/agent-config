@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from audit_support import EARLY, LATE, event, round_event, subagent_rows
+from audit_support import EARLY, LATE, event, finding_event, round_event, subagent_rows, verdict_event
 import test_pre_dispatch
 from test_ledger import LedgerCase
 from test_ledger_checks import LedgerChecksCase
@@ -128,7 +128,6 @@ class RoundRetireXcTest(LedgerChecksCase):
         self.assertNotIn("round 2", item["evidence"])
 
     def test_a_verifier_of_a_finding_of_the_retired_round_follows_the_retire(self):
-        from audit_support import finding_event, verdict_event
         events = [round_event(1), round_event(2, reviewers=["late"]), finding_event("I1", n=2), verdict_event("I1", "early"),
                   round_event(3, reviewers=["late2"])]
         self.assertIn("verifier early of I1: started before the previous round", self.xc(events)["evidence"])
