@@ -91,6 +91,15 @@ class SectionSixTest(RuleTextCase):
         self.assertGreater(self.text.index("- `extension-amend`:"), self.text.index("- `extension`:"))
         self.assertLess(self.text.index("- `extension-amend`:"), self.text.index("- `size-approval`:"))
 
+    def test_the_round_retire_bullet_follows_the_round_bullet_and_says_when_xc_skips_the_check(self):
+        bullet = re.search(r"^- `round-retire`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "`--loop`, `--phase`, `--round <n>` and `--by <m>`", "a later round of the same loop phase",
+                       "(exit 2, nothing written)", "when m is not after n, or when n is retired already",
+                       'XC then skips the "started before the previous round" check of round n only when round m passes that check on its own',
+                       "Every other XC check of round n still runs", "the cap of the phase still counts round n")
+        self.assertGreater(self.text.index("- `round-retire`:"), self.text.index("- `round`:"))
+        self.assertLess(self.text.index("- `round-retire`:"), self.text.index("- `finding`:"))
+
     def test_the_session_that_got_the_approval_writes_the_extension_with_an_absolute_worktree_path(self):
         self.assert_in(self.text, "At a cap, the session that asked the user and got the approval writes the `extension` event "
                        "(for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) "

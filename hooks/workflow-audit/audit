@@ -38,6 +38,7 @@ LEDGER_STATUSES = ("fixed", "deferred", "rejected", "superseded")
 # The keys of each event after `kind` and `time`, in the order they are written.
 EVENT_KEYS = {
     "round": ("loop", "phase", "round", "reviewers"),
+    "round-retire": ("loop", "phase", "round", "by"),
     "finding": ("id", "loop", "phase", "round", "loc", "type", "reason"),
     "finding-amend": ("id", "reason"),
     "verdict": ("finding", "verifier", "result"),
@@ -1110,7 +1111,8 @@ VALID_VALUE = {
     "ticket": _plain_text(MAX_TICKET),
 }
 # A finding quote has no raw minimum: the quote rule judges the normalised length, so that a short quote is `quote too short`.
-KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT), ("finding-amend", "quote"): _plain_text(QUOTE_LIMIT)}
+KIND_VALUE = {("finding", "quote"): _plain_text(QUOTE_LIMIT), ("finding-amend", "quote"): _plain_text(QUOTE_LIMIT),
+              ("round-retire", "by"): lambda value: type(value) is int and value >= 1}  # the replacing round: a number, not a finding id
 
 
 def _event_keys(kind):
@@ -1147,6 +1149,7 @@ class Ledger:
         self.events = []
         self.rounds = {}        # (loop, phase) -> highest round number
         self.round_events = []  # (position, event) in file order
+        self.retired = {}       # (loop, phase, round) -> the later round that replaces it (the round-retire events)
         self.findings = {}      # id -> {"event": the finding event, "status": latest status or None, "by": id that the latest status supersedes it with or None, "amendments": the finding-amend events in order}
         self.verdicts = []
         self.commits = []       # (position, event)
@@ -1189,6 +1192,16 @@ class Ledger:
                 raise LedgerError(f"round {event['round']} of {key[0]} {key[1]} does not follow round {self.rounds.get(key, 0)}")
             self.rounds[key] = event["round"]
             self.round_events.append((position, event))
+        elif kind == "round-retire":
+            key, number, by = (event["loop"], event["phase"]), event["round"], event["by"]
+            top = self.rounds.get(key, 0)
+            if number > top or by > top:
+                raise LedgerError(f"no round event for round {max(number, by)} of {key[0]} {key[1]}")
+            if by <= number:
+                raise LedgerError(f"round {by} is not after round {number} of {key[0]} {key[1]}: it cannot replace it")
+            if (*key, number) in self.retired:
+                raise LedgerError(f"round {number} of {key[0]} {key[1]} is retired already")
+            self.retired[(*key, number)] = by
         elif kind == "finding":
             if event["id"] in self.findings:
                 raise LedgerError(f"finding {event['id']} exists already")
@@ -1290,6 +1303,10 @@ events and their flags (every flag is required for its event and refused for the
                 loop, phase, round and type of that finding; --quote is required when that finding is a Blocking finding of a plan-review
                 loop or the amendment is raised; --raised is refused on a Minor finding and is never inherited; the latest amendment is in
                 force; type, loop, phase, round, location and status never change
+  round-retire  --loop --phase --round <n> --by <m> (retires the out-of-order round n; m is a later round of the same loop phase;
+                both rounds must exist, m must be after n and n must not be retired already; XC then skips only the
+                "started before the previous round" check of round n, and only when round m passes that check on its own;
+                the findings and the cap count of round n do not change)
   verdict       --finding <id> --verifier <agent id> --result
   status        --finding <id> --status [--by <id>]
                 --by is required for the status superseded and refused for the others: --finding must be a Minor finding, and the finding
@@ -1341,7 +1358,7 @@ def _ledger_event(argv):
     parser.add_argument("--verifier", action=Once)
     parser.add_argument("--result", choices=LEDGER_RESULTS, action=Once)
     parser.add_argument("--status", choices=LEDGER_STATUSES, action=Once)
-    parser.add_argument("--by", action=Once, help="the Blocking finding that a superseded finding gives way to (status superseded)")
+    parser.add_argument("--by", action=Once, help="the Blocking finding that a superseded finding gives way to (status superseded), or the later round that replaces a retired round (round-retire)")
     parser.add_argument("--rounds", type=int, action=Once)
     parser.add_argument("--extension", type=int, action=Once, help="the number of the extension that an extension-amend backs again")
     parser.add_argument("--lines", type=int, action=Once)
@@ -1363,6 +1380,8 @@ def _ledger_event(argv):
                      + (f" (not allowed: {', '.join(sorted(flag(key) for key in given - expected - optional))})" if given - expected - optional else ""))
     event = {"kind": args.event, "time": _now("milliseconds")}
     event.update({key: getattr(args, key) for key in _event_keys(args.event) if key in given})
+    if args.event == "round-retire" and re.fullmatch(r"[1-9][0-9]{0,8}", event["by"]):  # --by is a round number here; any other value stays a string and the shape check refuses it
+        event["by"] = int(event["by"])
     return args.worktree, event
 
 
@@ -2020,24 +2039,36 @@ def check_xc(ledger, agents, problem):
         index = events.index(round_event)
         return _instant(events[index - 1]["time"], "the ledger") if index else None
 
-    checks = []
+    checks = []  # (label, agent, lower bound, the round event that the agent belongs to)
     for events in by_loop.values():
         for event in events:
             for agent in event["reviewers"]:
-                checks.append((f"reviewer {agent} of {event['loop']} {event['phase']} round {event['round']}", agent, lower_bound(event)))
+                checks.append((f"reviewer {agent} of {event['loop']} {event['phase']} round {event['round']}", agent, lower_bound(event), event))
     for verdict in ledger.verdicts:
         finding = ledger.findings[verdict["finding"]]["event"]
         round_event = next(event for event in by_loop[finding["loop"]]
                            if event["phase"] == finding["phase"] and event["round"] == finding["round"])
-        checks.append((f"verifier {verdict['verifier']} of {finding['id']}", verdict["verifier"], lower_bound(round_event)))
+        checks.append((f"verifier {verdict['verifier']} of {finding['id']}", verdict["verifier"], lower_bound(round_event), round_event))
+
+    def in_order(agent, low):
+        transcript = agents.get(agent)
+        return low is None or (transcript is not None and transcript.start is not None and transcript.start > low)
+
+    def retired_in_order(round_event):
+        """True when round_event is retired and every reviewer and verifier of the round that replaces it is in order on its own.
+        The replacing round is judged by its own lower bound, never by a retire: a chain of retires cannot pass an out-of-order round."""
+        by = ledger.retired.get((round_event["loop"], round_event["phase"], round_event["round"]))
+        return by is not None and all(in_order(agent, low) for _, agent, low, owner in checks
+                                      if (owner["loop"], owner["phase"], owner["round"]) == (round_event["loop"], round_event["phase"], by))
+
     failures = []
-    for label, agent, low in checks:
+    for label, agent, low, round_event in checks:
         transcript = agents.get(agent)
         if transcript is None:
             failures.append(f"{label}: not a subagent of an audited transcript")
         elif not _is_sonnet(transcript):
             failures.append(f"{label}: not a Sonnet subagent")
-        elif low is not None:
+        elif low is not None and not retired_in_order(round_event):
             if transcript.start is None:
                 failures.append(f"{label}: evidence unavailable: no readable start time")
             elif not transcript.start > low:
@@ -2494,7 +2525,7 @@ def _plan_review_view(ledger):
         elif event["kind"] == "extension-amend" and event["extension"] in view_number:
             view.apply({**event, "extension": view_number[event["extension"]]})
             continue
-        if event["kind"] in ("round", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
+        if event["kind"] in ("round", "round-retire", "finding", "extension") and event["loop"] in PRE_DISPATCH_LOOPS:
             if event["kind"] == "finding":
                 findings.add(event["id"])
             view.apply(event)
