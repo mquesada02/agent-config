@@ -74,7 +74,8 @@ class SectionSixTest(RuleTextCase):
     def test_the_round_bullet_says_reviewer_ids_are_subagents_of_the_loop_session_and_a_round_is_written_after_its_reviewers_ran(self):
         bullet = re.search(r"^- `round`:.*$", self.text, re.MULTILINE).group(0)
         self.assert_in(bullet, "reviewer agent ids", "is a subagent of the loop session", "`audit ledger` refuses another id",
-                       "(exit 2, nothing written)", "write the `round` event only after its reviewers ran")
+                       "(exit 2, nothing written)", "write the `round` event only after its reviewers ran",
+                       "another registered session that touches the same worktree", "a successor may record the round of its predecessor's reviewers")
 
     def test_the_finding_bullet_names_quote_and_raised(self):
         bullet = re.search(r"^- `finding`:.*$", self.text, re.MULTILINE).group(0)

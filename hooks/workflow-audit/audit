@@ -1452,9 +1452,10 @@ def _open_ledger_dir(worktree):
     return dir_fd, branch, remote_url
 
 
-def _check_round_reviewers(dir_fd, reviewers):
-    """Refuse (nothing is written) a reviewer id that is not a subagent transcript of the current session.
-    Fails closed: it also refuses when the session or its registry entry cannot be found."""
+def _check_round_reviewers(dir_fd, worktree, reviewers):
+    """Refuse (nothing is written) a reviewer id that is not a subagent transcript of the current session or of another registered
+    session that touches the worktree (a context-handoff successor records the round of its predecessor's reviewers).
+    Fails closed: it also refuses when the session or its registry entry cannot be found, or when the other sessions cannot be read."""
     import stat
 
     runtime_dir = _runtime()
@@ -1472,17 +1473,27 @@ def _check_round_reviewers(dir_fd, reviewers):
     transcript = dict(sessions).get(session_id)
     if transcript is None:
         raise Refusal(f"session {session_id} is not in the registry, so no reviewer can be proven a subagent of it")
-    folder = _subagents_folder(transcript)
+    def is_subagent_file(main_transcript, reviewer):
+        try:
+            return stat.S_ISREG(os.lstat(f"{_subagents_folder(main_transcript)}/agent-{reviewer}.jsonl").st_mode)
+        except OSError:
+            return False
+
+    touching_agents = None  # read only for a reviewer that is not a subagent of the writing session
     for reviewer in reviewers:
         if not AGENT_ID.fullmatch(reviewer):
             raise Refusal(f"reviewer id {reviewer!r} is not a valid subagent id of session {session_id}")
-        try:
-            is_file = stat.S_ISREG(os.lstat(f"{folder}/agent-{reviewer}.jsonl").st_mode)
-        except OSError:
-            is_file = False
-        if not is_file:
-            raise Refusal(f"reviewer {reviewer} is not a subagent of session {session_id}: "
-                          f"no transcript file agent-{reviewer}.jsonl beside its main transcript")
+        if is_subagent_file(transcript, reviewer):
+            continue
+        if touching_agents is None:
+            try:
+                touching_agents = _audited_transcripts(worktree, dir_fd)[1]
+            except Unavailable:
+                touching_agents = {}  # fail closed: a registry or transcript that cannot be read proves no other session's subagent
+        if reviewer in touching_agents and any(is_subagent_file(path, reviewer) for _, path in sessions):
+            continue
+        raise Refusal(f"reviewer {reviewer} is not a subagent of session {session_id}: "
+                      f"no transcript file agent-{reviewer}.jsonl beside its main transcript")
 
 
 PLAN_REVIEW_LOOPS = tuple(loop for loop in LEDGER_LOOPS if loop != CODE_REVIEW)
@@ -1652,7 +1663,7 @@ def _ledger(argv):
     runtime_dir = _runtime()
     try:
         if event["kind"] == "round":
-            _check_round_reviewers(dir_fd, event["reviewers"])
+            _check_round_reviewers(dir_fd, worktree, event["reviewers"])
         if event["kind"] == "link":
             _check_link(worktree, dir_fd, branch, remote_url, name, event)
         if event["kind"] in ("finding", "finding-amend"):

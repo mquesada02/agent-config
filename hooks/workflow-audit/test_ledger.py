@@ -526,12 +526,30 @@ class RoundSubagentTest(LedgerCase):
                 self.assertIn("subagent", message)
         self.ok("round", *self.round_flags("rev1", "rev2"))
 
-    def test_a_subagent_of_another_registered_session_is_refused(self):
+    def test_a_subagent_of_another_registered_session_on_the_same_worktree_is_accepted(self):
         self.register_session("other-session", [], subagents={"other1": subagent_rows()})
+        self.ok("round", *self.round_flags("other1", "rev1"))
+        self.assertEqual(self.written()[0]["reviewers"], ["other1", "rev1"])
+
+    def test_a_subagent_of_a_session_registered_on_another_worktree_only_is_refused(self):
+        self.register_session("other-session", [], subagents={"other1": subagent_rows()}, touching=False)
         message = self.refused("round", *self.round_flags("other1"))
         self.assertIn("other1", message)
         self.assertIn("subagent", message)
         self.ok("round", *self.round_flags("rev1"), env={"CLAUDE_CODE_SESSION_ID": "default-session"})
+
+    def test_a_subagent_of_another_session_is_refused_when_that_session_cannot_be_read(self):
+        path = self.register_session("other-session", [], subagents={"other1": subagent_rows()})
+        os.remove(path)
+        os.mkdir(path)  # a folder in place of the main transcript: a read error that is not "missing"
+        message = self.refused("round", *self.round_flags("other1"))
+        self.assertIn("other1", message)
+        self.assertIn("subagent", message)
+        self.ok("round", *self.round_flags("rev1"))
+
+    def test_an_id_that_is_a_subagent_of_no_registered_session_is_refused_with_another_session_registered(self):
+        self.register_session("other-session", [], subagents={"other1": subagent_rows()})
+        self.assertIn("ghost", self.refused("round", *self.round_flags("rev1", "ghost")))
 
     def test_a_missing_or_invalid_session_variable_is_refused(self):
         for name, env in {"unset": self.NO_SESSION, "empty": {"CLAUDE_CODE_SESSION_ID": ""},
