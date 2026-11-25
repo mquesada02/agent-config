@@ -80,7 +80,7 @@ from collections import namedtuple
 KEY_WORDS = ("accesskey", "secret", "token", "password", "passwd", "privatekey", "apikey", "credential", "passphrase")
 # `pin` is a secret key word only as a whole key part (`pin`, `pin_code`, `userPin`), never inside `pinned`.
 KEY_PARTS = ("pin",)
-KEY_PART = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+KEY_PART_SPLIT = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 KEY_CHARS = r"[A-Za-z0-9_.\-]"
 MASK = "***"
 
@@ -197,11 +197,6 @@ def block_key(match, prefix=""):
     return key
 
 
-def match_key(match):
-    """The key name of a KEY_OCCURRENCE match."""
-    return match.group("jkey") or match.group("ekey") or match.group("ykey") or match.group("skey")
-
-
 def is_secret_key(key):
     """Whether `key` holds a word of KEY_WORDS, or a part of KEY_PARTS (split at non-letters and camelCase).
 
@@ -214,7 +209,10 @@ def is_secret_key(key):
 
 def has_key_part(key):
     """Whether `key` holds a part of KEY_PARTS. The value of such a key is masked even when it is a number."""
-    return any(part.lower() in KEY_PARTS for part in KEY_PART.findall(key))
+    lowered = key.lower()
+    if not any(part in lowered for part in KEY_PARTS):
+        return False  # cheap test first: the split below runs only when a key part occurs as letters
+    return any(part.lower() in KEY_PARTS for part in KEY_PART_SPLIT.findall(key))
 
 
 def is_token_count_key(key):
@@ -436,7 +434,7 @@ def empty_key_end(text, header_end, key_indent):
 
 
 # What one key occurrence does (see key_step) and the later-line state that a key opens (see scan_state).
-Step = namedtuple("Step", "rule end replacement to_line_end")
+Step = namedtuple("Step", "rule end replacement to_line_end mask_numbers", defaults=(False,))
 State = namedtuple("State", "rule value_start column mask_numbers")
 # The rules of a key that open a later-line state. `json_open` is an object or array that does not close on its
 # line; the other three need the lines after the key line.
@@ -469,8 +467,12 @@ def key_step(text, match, prefix=""):
     with escaped quotes opens the JSON open-object state but never a block or an empty-key state. `prefix` is the
     line prefix when the text is the rest of a line.
     """
-    key = match_key(match)
-    kind = "json" if match.group("jkey") is not None else "env" if match.group("ekey") is not None else "yaml"
+    if match.group("jkey") is not None:
+        key, kind = match.group("jkey"), "json"
+    elif match.group("ekey") is not None:
+        key, kind = match.group("ekey"), "env"
+    else:
+        key, kind = match.group("ykey") or match.group("skey"), "yaml"
     start = match.end()
     skip = Step("skip", start, None, False)
     if not is_secret_key(key):
@@ -480,9 +482,9 @@ def key_step(text, match, prefix=""):
     if kind == "json" and match.group("jq") != '"':
         end, replacement = json_value_end(text, start, match.group("jq"), mask_numbers)
     elif state_key is not None and BLOCK_HEADER.match(text, start):
-        return Step("block", start, None, False)
+        return Step("block", start, None, False, mask_numbers)
     elif state_key is not None and EMPTY_VALUE.match(text, start):
-        return Step("empty_json" if match.group("jq") == '"' else "empty", start, None, False)
+        return Step("empty_json" if match.group("jq") == '"' else "empty", start, None, False, mask_numbers)
     elif state_key is None and match.group("ykey") is not None:
         return skip  # prose: an unquoted YAML key that does not count; its text stays
     elif kind == "json":
@@ -500,7 +502,7 @@ def key_step(text, match, prefix=""):
         # a JSON key written with escaped quotes opens the JSON open-object state but never a block or an empty-key
         # state, as a plain double-quoted key does (matching_bracket skips a backslash and the next character)
         rule = "json_open" if matching_bracket(text, start, stop) < 0 else "value"
-        return Step(rule, end, replacement, False)
+        return Step(rule, end, replacement, False, mask_numbers)
     return Step("value", end, replacement, end == stop and runs_to_line_end(text, start, stop, kind, replacement))
 
 
@@ -518,7 +520,7 @@ def scan_state(text, pos, stop, prefix=""):
         step = key_step(text, match, prefix)
         if step.rule in STATE_RULES:
             line_start = text.rfind("\n", 0, match.start()) + 1
-            return State(step.rule, match.end(), match.start() - line_start, has_key_part(match_key(match)))
+            return State(step.rule, match.end(), match.start() - line_start, step.mask_numbers)
         pos = step.end if step.rule == "value" and not step.to_line_end else match.end()
 
 
@@ -598,7 +600,7 @@ def redact_keyed(text, prefix=""):
             state = scan_state(text, start, step.end, prefix) if step.to_line_end else None
         else:
             line_start = text.rfind("\n", 0, match.start()) + 1
-            state = State(step.rule, start, match.start() - line_start, has_key_part(match_key(match)))
+            state = State(step.rule, start, match.start() - line_start, step.mask_numbers)
         effect = None if state is None else state_effect(text, state, swallowed)
         if effect is not None:
             kept, pos, replacement = effect
