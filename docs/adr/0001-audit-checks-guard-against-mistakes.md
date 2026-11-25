@@ -6,4 +6,4 @@ The workflow audit items (S1 to S10, XC, L1 to L6) and the hook gates (PR gate, 
 
 - A review finding that needs a deliberately hidden form is Minor.
 - A natural form that a check misses is Blocking.
-- Every check still fails closed on input that it cannot read: it reports "evidence unavailable" and does not pass.
+- Every check must fail closed on input that it cannot read: it reports "evidence unavailable" and does not pass. A check that fails open on such input is a bug (Blocking).

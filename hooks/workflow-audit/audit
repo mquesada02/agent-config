@@ -2294,7 +2294,7 @@ def _find_continuation_problems(items):
     group (escaped or quoted) as separators, so the primaries after them are a segment of their own. Only a segment that starts with a
     primary continues the `find`; a separator other than `;`, `(` and `)` ends it. A group (`(` to `)`, also the body of a substitution)
     does not change the state that the `find` had before it."""
-    found, active, outer = [], False, []
+    found, active, active_before_group = [], False, []
     for item in items:
         if isinstance(item, list):
             if active and item and item[0].startswith(("-", "!")):
@@ -2303,9 +2303,9 @@ def _find_continuation_problems(items):
             else:
                 active = any(os.path.basename(word) == "find" for word in item)
         elif item == "(":
-            outer.append(active)
+            active_before_group.append(active)
         elif item == ")":
-            active = outer.pop() if outer else False
+            active = active_before_group.pop() if active_before_group else False
         else:
             active = active and item == ";"
     return found
