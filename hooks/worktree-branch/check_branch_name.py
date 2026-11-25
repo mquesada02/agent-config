@@ -123,15 +123,11 @@ class BranchRules:
 
     def orca_reason(self, words):
         """The deny reason of a command that starts with the program word `words[0]`, or None."""
-        if self.create_head(words) is not None:
-            return self.create_command_reason(words)
+        head = self.create_head(words)
+        if head is not None:
+            return self.create_reason(words[len(head):])
         head = self.start_head(words)
         return None if head is None else self.start_reason(words)
-
-    def create_command_reason(self, words):
-        """The deny reason of a create command that starts with `words[0]`, or None when it is no create command."""
-        head = self.create_head(words)
-        return None if head is None else self.create_reason(words[len(head):])
 
     # The rules that the shared walk (hooks/bash-reader/bash_reader.py) asks of a hook.
     def first_word_reason(self, words):
