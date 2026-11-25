@@ -203,7 +203,7 @@ class HookOrderTest(AuditCase):
                          for group in self.bash_groups() for entry in group["hooks"] if repo_argv(entry["command"])
                          for word in repo_argv(entry["command"]) if word.startswith(REPO))
         self.assertEqual(scripts, ["audit", "block-aws-credentials.py", "block_subagent_writes.py", "check_branch_name.py",
-                                   "redact_pre.py", "setup_diff_prompt.py"])
+                                   "deny_recursive_delete.py", "redact_pre.py", "setup_diff_prompt.py"])
 
 
 if __name__ == "__main__":

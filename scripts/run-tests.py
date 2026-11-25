@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(SCRIPT))
 GROUPS = (
     ("skills/sql/tests", "skills/cicd-pipelines/tests", "hooks/worktree-cleanup", "hooks/redact-secrets",
      "hooks/bash-reader", "hooks/forked-skills", "hooks/setup-diff-prompt", "hooks/subagent-readonly",
-     "hooks/worktree-branch", "skills/plan-review"),
+     "hooks/worktree-branch", "hooks/deny-recursive-delete", "skills/plan-review"),
     ("hooks/workflow-audit", "hooks/context-handoff", "skills/testing/tests"),
 )
 
