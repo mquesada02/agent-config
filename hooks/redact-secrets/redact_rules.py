@@ -59,6 +59,11 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      Monitor filter both use it.
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
+   - The prose rule (issue 789): under the key `tokens` alone (a count or a cost, see is_token_count_key; any other
+     secret key, `max_tokens` too, keeps its mask, prose or not), an unquoted YAML value (not an env
+     pair, not a quoted value) of three or more
+     words separated by spaces stays when each word has 1 to 19 characters of letters, digits and `.,;:!?()'/-`
+     and at least one word has two or more characters. Any other unquoted value keeps its mask.
    - The file-path rule (config issue 1030): an env or YAML key whose name ends in `_FILE` or `-FILE` (any case)
      names a file, not a secret, so a value that looks like a path stays. A path starts with `/`, `~/`, `./`,
      `../` or a drive letter with a slash or a backslash (`C:/`). A plain path ends at a space, a tab or the
@@ -98,6 +103,14 @@ NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 # A JSON token (number, true, false, null as the value guard reads them) and where it must end.
 JSON_TOKEN = re.compile(r"(?:" + NUMBER.pattern + r"|true|false|null)", re.IGNORECASE)
 JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
+# Plain prose (issue 789): three or more words separated by spaces, each word 1 to 19 characters of letters, digits and
+# common punctuation, and at least one word of two or more characters (`a b c` is no prose). A value with no space, a
+# long word or a character outside the set (`_`, `@`, `=`, `+`, ...) is not prose and stays masked. Only an unquoted
+# YAML value can be prose (see plain_line_value). The shape rules run after the keyed rules, so a known secret shape
+# is masked anyway.
+PROSE_WORD = r"[A-Za-z0-9.,;:!?()'/\-]{1,19}"
+# The lookahead `(?=.*?\S\S)` needs two characters in a row that are no space: one word of two or more characters.
+PROSE = re.compile(r"(?=.*?\S\S)" + PROSE_WORD + r"(?: +" + PROSE_WORD + r"){2,}")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
 # The file-path rule: a key that names a file, and the start of a path (see file_path_value).
@@ -182,6 +195,15 @@ def block_key(match, prefix=""):
 def is_secret_key(key):
     normal = key.lower().replace("_", "").replace("-", "")
     return any(word in normal for word in KEY_WORDS)
+
+
+def is_token_count_key(key):
+    """Whether `key` is exactly `tokens` (any case): a count or a cost, not a secret.
+
+    Any other word in the key (`api_tokens`, `max_tokens`) or the singular `token` keeps the key a secret key. Only
+    under this key can a prose value stay (see PROSE). The check is exact, so it fails closed.
+    """
+    return key.lower() == "tokens"
 
 
 def is_harmless(value):
@@ -338,9 +360,12 @@ def quoted_line_value(text, start):
     return end, char + MASK + char
 
 
-def plain_line_value(text, start):
+def plain_line_value(text, start, prose=False):
+    """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair, under a key that
+    is the key `tokens`: see is_token_count_key), plain prose stays."""
     end = line_end(text, start)
-    if is_harmless(text[start:end]):
+    value = text[start:end]
+    if is_harmless(value) or (prose and PROSE.fullmatch(value.strip()) is not None):
         return start, None
     return end, MASK
 
@@ -447,7 +472,7 @@ def key_step(text, match, prefix=""):
     elif start < len(text) and text[start] in "\"'":
         end, replacement = quoted_line_value(text, start)
     else:
-        end, replacement = plain_line_value(text, start)
+        end, replacement = plain_line_value(text, start, kind == "yaml" and is_token_count_key(key))
     if replacement is None:
         return skip
     stop = line_end(text, start)
