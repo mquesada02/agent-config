@@ -207,6 +207,7 @@ OTHER_MANIFESTS = (
 TS_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".cjs")
 TEST_FILE = re.compile(r"\.(?:test|spec)\.(?:js|ts|jsx|tsx|mjs|cjs|mts|cts)$")
 SCRIPT_FILE = re.compile(r"\.(?:js|ts|jsx|tsx|mjs|cjs|mts|cts)$")
+# File name stems of the node:test patterns in TS_FILE_PATTERNS (the test/ folder is checked apart).
 NODE_TEST_STEM = re.compile(r"^(?:test|test[-.].+|.+[.\-_]test)$")
 MAX_DEPTH = 8
 LOCKFILES = (
@@ -643,11 +644,11 @@ def scan_typescript(base):
         snapshots = snapshots or "__snapshots__" in dirs
         for name in names:
             snapshots = snapshots or name.endswith(".snap")
-            if TEST_FILE.search(name) or "__tests__" in parts:
+            is_test = TEST_FILE.search(name) or "__tests__" in parts
+            if is_test:
                 tops.add(parts[0] if parts else ".")
             if not imports and SCRIPT_FILE.search(name) and (
-                    TEST_FILE.search(name) or "__tests__" in parts or "test" in parts
-                    or NODE_TEST_STEM.match(os.path.splitext(name)[0])):
+                    is_test or "test" in parts or NODE_TEST_STEM.match(os.path.splitext(name)[0])):
                 text = read_text(os.path.join(current, name))
                 imports = text is not None and "node:test" in text
     return sorted(tops), imports, snapshots
