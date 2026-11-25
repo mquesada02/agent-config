@@ -101,6 +101,14 @@ class SectionSixTest(RuleTextCase):
         self.assert_in(step, "If the base branch moves after the quality-phase commit, rebase, record the rebased commit with a new "
                        "`phase-commit` event, and run one more final round when its patch-id differs.")
 
+    def test_a_cap_approval_is_asked_in_the_own_terminal_and_a_relayed_quote_is_repaired(self):
+        self.assert_in(self.text,
+                       "The session that asks the owner and writes the `extension` event asks in its own terminal with AskUserQuestion, "
+                       "also when the owner routes other questions through a coordinator. A relayed answer does not count for S5. "
+                       "The session may also tell its coordinator.",
+                       "If an extension was written with a relayed quote, ask again in the own terminal and write an `extension-amend` "
+                       "event with the new answer.")
+
     def test_the_audit_step_sits_between_the_report_and_the_caps(self):
         steps = re.findall(r"^(\d)\. (?:\*\*([^*]+)\.\*\*)?", self.text, re.MULTILINE)
         self.assertEqual([number for number, _ in steps], list("1234567"))
@@ -120,6 +128,11 @@ class SectionSixTest(RuleTextCase):
 class SectionSevenTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 7)
+
+    def test_the_every_ticket_rule_covers_only_the_tickets_of_step_4(self):
+        self.assert_in(self.text,
+                       "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. "
+                       "A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.")
 
     def test_the_worker_pushes_and_reports_the_branch_and_the_worktree(self):
         self.assert_in(self.text, "5.6. Push the branch.", "the branch name and the worktree path in the `worker_done` report",
