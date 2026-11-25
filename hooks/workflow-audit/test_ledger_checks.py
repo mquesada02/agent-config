@@ -384,7 +384,21 @@ class S6LaterPhaseCommitTest(LedgerChecksCase):
         self.check(self.items(self.events(newest)), "S6", "pass", f"phase-commit {self.reviewed[:7]} is an ancestor of HEAD")
 
     def test_an_unknown_newer_phase_commit_fails(self):
-        self.check(self.items(self.events("b" * 40)), "S6", "fail", "bbbbbbb")
+        self.check(self.items(self.events("b" * 40)), "S6", "fail", "unknown commit bbbbbbb")
+
+    def test_a_missing_base_ref_is_evidence_unavailable(self):
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.check(self.items(self.events(newest)), "S6", "fail", "evidence unavailable: no such ref origin/main")
+
+    def test_the_newest_of_two_later_phase_commits_decides(self):
+        self.git("commit", "-q", "--allow-empty", "-m", "chore: no change")
+        same = self.git("rev-parse", "HEAD")
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        events = self.events(same) + [phase_commit_event(newest)]
+        self.check(self.items(events), "S6", "fail", f"phase-commit {newest[:7]} has new content after the last final round")
 
     def test_a_final_round_after_the_newer_phase_commit_passes(self):
         newest = self.commit("feat: new content", name="new.txt")
