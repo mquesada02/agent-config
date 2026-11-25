@@ -572,7 +572,8 @@ class S9RunnerTest(S9Case):
 class S9UnsplittableTest(S9Case):
     def test_a_command_that_cannot_be_split_and_names_a_trigger_word_is_unavailable(self):
         for command in ("rm -rf \"x", "echo 'a' && rm -rf 'x", "docker system prune 'x", "pytest -n 4 'x", "cargo test -j 4 'x",
-                        "go test -p 4 'x", "playwright test 'x", "cat <<EOF\ndon't\nrm x\nEOF"):
+                        "go test -p 4 'x", "playwright test 'x", "cat <<EOF\ndon't\nrm x\nEOF", "rm -rf x\necho 'oops",
+                        "find . -delete\necho \"oops", "find . -delete \"oops"):
             with self.subTest(command=command):
                 self.setUp()
                 self.register_session("s1", [self.edit(), bash_row(command, "b1", 2)])
@@ -580,7 +581,8 @@ class S9UnsplittableTest(S9Case):
                 self.assert_item(item, "fail", "s1.jsonl: row 2: evidence unavailable: cannot split the command")
 
     def test_a_command_that_cannot_be_split_and_names_no_trigger_word_is_ignored(self):
-        self.assert_clean(["cat <<EOF\ndon't stop\nEOF", "echo \"x", "cargo build 'x", "go build 'x", "docker ps 'x", "ls --rm 'x"])
+        self.assert_clean(["cat <<EOF\ndon't stop\nEOF", "echo \"x", "cargo build 'x", "go build 'x", "docker ps 'x", "ls --rm 'x",
+                           "find . -name a 'x", "find . -delete-me 'x"])
 
     def test_a_trigger_word_inside_another_word_is_not_a_trigger(self):
         self.assert_clean(["echo 'x --rm \"", "ls karma 'x", "echo rmdir 'x"])

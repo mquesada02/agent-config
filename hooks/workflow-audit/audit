@@ -158,7 +158,7 @@ VITEST_VARIABLE = re.compile(r"(VITEST_MAX_(?:THREADS|FORKS))=(.*)", re.DOTALL)
 # Whole words in a command that cannot be split: delimited by whitespace, quotes, ; & | ( ) or the ends of the text.
 _WORD_START, _WORD_END = r"""(?<![^\s'";&|()])""", r"""(?![^\s'";&|()])"""
 UNSPLITTABLE_TRIGGER = re.compile(
-    _WORD_START + "(?:" + "|".join(map(re.escape, ("rm", "prune", *(name for name in RUNNER_FLAGS if name not in SUBCOMMAND_RUNNERS)))) + ")"
+    _WORD_START + "(?:" + "|".join(map(re.escape, ("rm", "prune", "-delete", *(name for name in RUNNER_FLAGS if name not in SUBCOMMAND_RUNNERS)))) + ")"
     + _WORD_END + "|" + _WORD_START + "(?:" + "|".join(map(re.escape, sorted(SUBCOMMAND_RUNNERS))) + r")(?:[ \t]+[^\s;&|()]+)*?[ \t]+test"
     + _WORD_END)
 
