@@ -358,6 +358,55 @@ class S6LastReviewedTest(LedgerChecksCase):
         self.check(items, "S6", "fail", f"rebased phase-commit {self.tip[:7]} has a different patch-id than phase-commit {self.second[:7]}")
 
 
+class S6LaterPhaseCommitTest(LedgerChecksCase):
+    """The reviewed phase commit is an ancestor of HEAD, and a newer phase commit follows the last final round."""
+
+    def setUp(self):
+        super().setUp()
+        self.reviewed = self.tip
+
+    def events(self, newest):
+        return [round_event(), phase_commit_event(self.reviewed), round_event(1, **FINAL), phase_commit_event(newest)]
+
+    def push_tip(self):
+        self.git("push", "-q", "--force", "origin", "feature")
+        self.tip = self.git("rev-parse", "HEAD")
+
+    def test_a_newer_phase_commit_with_new_content_fails(self):
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        self.check(self.items(self.events(newest)), "S6", "fail", f"phase-commit {newest[:7]} has new content after the last final round")
+
+    def test_a_newer_phase_commit_with_the_same_whole_branch_patch_id_passes(self):
+        self.git("commit", "-q", "--allow-empty", "-m", "chore: no change")
+        newest = self.git("rev-parse", "HEAD")
+        self.push_tip()
+        self.check(self.items(self.events(newest)), "S6", "pass", f"phase-commit {self.reviewed[:7]} is an ancestor of HEAD")
+
+    def test_an_unknown_newer_phase_commit_fails(self):
+        self.check(self.items(self.events("b" * 40)), "S6", "fail", "unknown commit bbbbbbb")
+
+    def test_a_missing_base_ref_is_evidence_unavailable(self):
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.check(self.items(self.events(newest)), "S6", "fail", "evidence unavailable: no such ref origin/main")
+
+    def test_the_newest_of_two_later_phase_commits_decides(self):
+        self.git("commit", "-q", "--allow-empty", "-m", "chore: no change")
+        same = self.git("rev-parse", "HEAD")
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        events = self.events(same) + [phase_commit_event(newest)]
+        self.check(self.items(events), "S6", "fail", f"phase-commit {newest[:7]} has new content after the last final round")
+
+    def test_a_final_round_after_the_newer_phase_commit_passes(self):
+        newest = self.commit("feat: new content", name="new.txt")
+        self.push_tip()
+        events = self.events(newest) + [round_event(2, **FINAL)]
+        self.check(self.items(events), "S6", "pass", f"phase-commit {newest[:7]} is an ancestor of HEAD")
+
+
 class LinkIsolationTest(LedgerChecksCase):
     def test_a_link_between_the_phase_commit_and_the_final_round_does_not_replace_the_phase_commit(self):
         parent = self.git("rev-parse", "HEAD~1")
