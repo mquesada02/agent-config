@@ -2229,15 +2229,31 @@ def _nested_problems(text, depth):
     return _command_problems(text, depth + 1)
 
 
+def _looks_recursive(word):
+    """Whether a word is, or may expand to, a recursive option of `rm`: `-r`, `-R`, a short group that holds one, `--recursive` or an abbreviation.
+    For an expanding word, only its text before the first expansion counts, and what an expansion may add is taken as a possible `r`."""
+    expands = isinstance(word, _ExpandingWord)
+    text = re.split(r"[${`]", word, maxsplit=1)[0] if expands else word
+    if text.startswith("--"):
+        option = text.split("=", 1)[0]
+        return "--recursive".startswith(option) and (len(option) >= 3 or expands)
+    return re.fullmatch(r"-[A-Za-z0-9]*", text) is not None and (expands or re.search("[rR]", text) is not None)
+
+
 def _segment_problems(words, depth, process_substitution=False):
     """What S9 finds in one segment. `process_substitution` is True when a `<(` or `>(` follows the segment: its words are the segments after it."""
     commands = _command_words(words)
     if commands and os.path.basename(commands[0]) in NAMING_ONLY_COMMANDS:
         return []
+    found = []
+    git = _git_command(words)
+    # The command word, or the subcommand word of `git`, may expand to `rm`: an option that looks recursive after it is then a recursive rm.
+    for heads in (commands, _words(git) if git else []):
+        if heads and isinstance(heads[0], _ExpandingWord) and any(_looks_recursive(word) for word in heads[1:]):
+            found.append("expanded command word with a recursive option")
     git_rm = _git_subcommand(words, "rm") if "rm" in words else None
     # The index of the `rm` subcommand of a `git` command in `words`: `_git_subcommand` counts from the first word of `commands`.
     git_rm_index = git_rm[0][0] + len(words) - len(commands) if git_rm else None
-    found = []
     for index, word in enumerate(words):
         name = os.path.basename(word)
         if name not in ARGUMENT_COMMANDS:
@@ -2266,11 +2282,16 @@ def _starts_process_substitution(items, index):
     return bool(items[index]) and items[index][-1].endswith(("<", ">")) and items[index + 1:index + 2] == ["("]
 
 
+def _s9_text(command):
+    """The command text that S9 reads: the data heredocs stripped, then the gates' join, as bash joins."""
+    return _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))
+
+
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
-    command = _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))  # the gates' join, as bash joins
+    command = _s9_text(command)
     try:
-        items = split_command(command)
+        items = split_command(command, _s9_text)
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
     return [kind for index, item in enumerate(items) if isinstance(item, list)
@@ -2875,16 +2896,45 @@ def _paren_end(text, index):
     raise ValueError("No closing parenthesis")
 
 
-def _mask_substitutions(command):
+def _mask_substitutions(command, quoted_body=None):
     """The command with each unquoted substitution replaced by a placeholder: a marker, the number of the substitution and the marker again.
     A comment (an unquoted `#` at the start of a word) is dropped up to its newline. Returns the masked text, the marker and the list of
-    (text of the substitution, text of its body). A backtick body is unescaped as bash does."""
+    (text of the substitution, text of its body). A backtick body is unescaped as bash does. The gates leave a substitution inside double
+    quotes alone. S9 passes `quoted_body`, a function from the body of such a substitution to the text to read: it masks them too."""
     marker = next((chr(code) for code in range(0xE000, 0xF900) if chr(code) not in command), None)  # a private-use character that the command lacks
     if marker is None:
         raise ValueError("No free placeholder character")
     masked, substitutions = [], []
-    for kind, start, end, _ in _units(command):
+
+    def mask(start, end, body):
+        masked.append(f"{marker}{len(substitutions)}{marker}")
+        substitutions.append((command[start:end], body))
+
+    # With `quoted_body`, a double-quoted text ends where bash ends it (after its substitutions, not at their quotes: `in_body`).
+    for kind, start, end, _ in _units(command, in_body=quoted_body is not None):
         if kind == "comment":
+            continue
+        if kind == "double" and quoted_body:  # bash runs a substitution inside double quotes too
+            masked.append('"')
+            index = start + 1
+            while index < end - 1:
+                if command[index] == "\\":
+                    masked.append(command[index:index + 2])
+                    index += 2
+                    continue
+                if command.startswith("$(", index):
+                    after = _paren_end(command, index + 2)
+                    body = command[index + 2:after - 1]
+                elif command[index] == "`":
+                    after = _backtick_end(command, index + 1) + 1
+                    body = re.sub(r"\\([`\\$])", r"\1", command[index + 1:after - 1])
+                else:
+                    masked.append(command[index])
+                    index += 1
+                    continue
+                mask(index, after, quoted_body(body))
+                index = after
+            masked.append(command[end - 1:end])
             continue
         if kind == "paren":
             body = command[start + 2:end - 1]
@@ -2893,9 +2943,11 @@ def _mask_substitutions(command):
         else:
             masked.append(command[start:end])
             continue
-        masked.append(f"{marker}{len(substitutions)}{marker}")
-        substitutions.append((command[start:end], body))
+        mask(start, end, body)
     return "".join(masked), marker, substitutions
+
+
+BRACE_EXPANSION = re.compile(r"\{[^}]*(?:,|\.\.)")  # an unquoted `{` before an unquoted comma or `..`, in the text of `_hide_quoted_braces`
 
 
 class _ExpandingWord(str):
@@ -2915,13 +2967,20 @@ def _hide_single_quoted(text):
     return "".join(re.sub(r"[$`]", "_", text[start:end]) if kind == "single" else text[start:end] for kind, start, end, _ in _units(text))
 
 
-def split_command(command):
+def _hide_quoted_braces(text):
+    """The text with each `{`, `,` and `.` that is quoted or escaped replaced by `_`: bash makes a brace expansion only from an unquoted `{`
+    that holds an unquoted comma or `..` (`{}` is a literal)."""
+    return "".join(re.sub(r"[{,.]", "_", text[start:end]) if kind in ("single", "double", "escape") else text[start:end]
+                   for kind, start, end, _ in _units(text))
+
+
+def split_command(command, quoted_body=None):
     """The command as a list of items: a list of words for each segment, and the separator token between segments as a string.
-    A word that holds a `$` or a backtick outside single quotes, or an unquoted substitution, is an `_ExpandingWord` (a str).
-    A command substitution (`$(...)`, backticks) stays in the word that holds it. The body of each unquoted substitution follows the segment
+    A word that holds a `$` or a backtick outside single quotes, an unquoted brace expansion or an unquoted substitution is an `_ExpandingWord`
+    (a str). A command substitution (`$(...)`, backticks) stays in the word that holds it. The body of each masked substitution follows the segment
     that holds it, before the segment's own separator, as a group: the string `(`, the items of the body, the string `)`.
-    Raises ValueError for an unbalanced quote or substitution."""
-    masked, marker, substitutions = _mask_substitutions(command)
+    `quoted_body` is for `_mask_substitutions`. Raises ValueError for an unbalanced quote or substitution."""
+    masked, marker, substitutions = _mask_substitutions(command, quoted_body)
     placeholder = re.compile(re.escape(marker) + r"([0-9]+)" + re.escape(marker))
     items, words = [], []  # words: (token, whether it expands) pairs
 
@@ -2930,16 +2989,16 @@ def split_command(command):
                       for word, expands in words])
         for word, _ in words:
             for found in placeholder.finditer(word):
-                items.extend(["(", *split_command(substitutions[int(found.group(1))][1]), ")"])
+                items.extend(["(", *split_command(substitutions[int(found.group(1))][1], quoted_body), ")"])
         words.clear()
 
-    for token, shown in zip(_tokens(masked), _tokens(_hide_single_quoted(masked)), strict=True):
+    for token, shown, braced in zip(_tokens(masked), _tokens(_hide_single_quoted(masked)), _tokens(_hide_quoted_braces(masked)), strict=True):
         if token and set(token) <= SEPARATOR_CHARS:  # shlex joins adjacent separators into one token
             if words:
                 close_segment()
             items.append(token)
         else:
-            words.append((token, "$" in shown or "`" in shown or placeholder.search(shown) is not None))
+            words.append((token, "$" in shown or "`" in shown or BRACE_EXPANSION.search(braced) is not None or placeholder.search(shown) is not None))
     if words:
         close_segment()
     return items
