@@ -4,8 +4,10 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
 1. A PEM private-key block is replaced as a whole (first, so no later rule leaves its body lines).
    A BEGIN line with no END line makes everything from it to the end of the text one ***.
 2. Keyed formats, tried in this order on each occurrence: JSON, env, YAML. The key name must contain
-   ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY or CREDENTIAL, ignoring case, _ and -.
-   Only the value becomes ***; a number, true/false, null or empty value stays (value guard).
+   ACCESS_KEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE_KEY, API_KEY, CREDENTIAL or PASSPHRASE, ignoring case, _
+   and -, or hold the whole key part PIN (split at non-letters and camelCase: `pin_code`, `userPin`, not `pinned`).
+   Only the value becomes ***; a number, true/false, null or empty value stays (value guard). Under a PIN key
+   part a number is masked too (true/false, null and empty stay).
    - The position rule (spec 334, tickets 347 and 348): the same-line masking of an unquoted YAML key (`key: value`,
      not in quotes) applies only where the key counts, at a line start position or at a flow-mapping position. A
      key that does not count is prose: its text stays and the scan goes on after it. The empty-key rule and the
@@ -75,7 +77,10 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
 import re
 from collections import namedtuple
 
-KEY_WORDS = ("accesskey", "secret", "token", "password", "passwd", "privatekey", "apikey", "credential")
+KEY_WORDS = ("accesskey", "secret", "token", "password", "passwd", "privatekey", "apikey", "credential", "passphrase")
+# `pin` is a secret key word only as a whole key part (`pin`, `pin_code`, `userPin`), never inside `pinned`.
+KEY_PARTS = ("pin",)
+KEY_PART = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 KEY_CHARS = r"[A-Za-z0-9_.\-]"
 MASK = "***"
 
@@ -192,9 +197,24 @@ def block_key(match, prefix=""):
     return key
 
 
+def match_key(match):
+    """The key name of a KEY_OCCURRENCE match."""
+    return match.group("jkey") or match.group("ekey") or match.group("ykey") or match.group("skey")
+
+
 def is_secret_key(key):
+    """Whether `key` holds a word of KEY_WORDS, or a part of KEY_PARTS (split at non-letters and camelCase).
+
+    The rules also call it with a whole line (the cheap test of later_line_state): it may match more than a key,
+    never less.
+    """
     normal = key.lower().replace("_", "").replace("-", "")
-    return any(word in normal for word in KEY_WORDS)
+    return any(word in normal for word in KEY_WORDS) or has_key_part(key)
+
+
+def has_key_part(key):
+    """Whether `key` holds a part of KEY_PARTS. The value of such a key is masked even when it is a number."""
+    return any(part.lower() in KEY_PARTS for part in KEY_PART.findall(key))
 
 
 def is_token_count_key(key):
@@ -206,10 +226,13 @@ def is_token_count_key(key):
     return key.lower() == "tokens"
 
 
-def is_harmless(value):
-    """The value guard: a number, true/false in any case, null, or empty."""
+def is_harmless(value, mask_numbers=False):
+    """The value guard: a number, true/false in any case, null, or empty. With `mask_numbers` (the key holds a part
+    of KEY_PARTS: a PIN is a number) a number is no longer harmless."""
     value = value.strip()
-    return value == "" or value.lower() in ("true", "false", "null") or NUMBER.fullmatch(value) is not None
+    if value == "" or value.lower() in ("true", "false", "null"):
+        return True
+    return not mask_numbers and NUMBER.fullmatch(value) is not None
 
 
 def line_end(text, start):
@@ -275,7 +298,7 @@ def matching_bracket(text, start, limit=None):
     return -1
 
 
-def json_value_end(text, start, quote):
+def json_value_end(text, start, quote, mask_numbers=False):
     """Return (end, replacement) of the JSON value at `start`, or (start, None) when it stays."""
     if text.startswith('"', start) or text.startswith('\\"', start):
         value_quote = '\\"' if text.startswith('\\"', start) else '"'
@@ -284,7 +307,7 @@ def json_value_end(text, start, quote):
         close = find_escaped_quote(text, body, limit) if value_quote == '\\"' else find_plain_quote(text, body, limit)
         end = limit if close < 0 else close + len(value_quote)
         inner = text[body : limit if close < 0 else close]
-        if is_harmless(inner):
+        if is_harmless(inner, mask_numbers):
             return start, None
         return end, value_quote + MASK + value_quote
     if text.startswith(("{", "["), start):
@@ -294,7 +317,7 @@ def json_value_end(text, start, quote):
             return start, None
         return end, quote + MASK + quote
     end = BAREWORD.match(text, start).end()
-    if is_harmless(text[start:end]):
+    if is_harmless(text[start:end], mask_numbers):
         return start, None
     return end, quote + MASK + quote
 
@@ -334,7 +357,7 @@ def next_json_value(text, header_end):
     return -1
 
 
-def json_dq_key_value_end(text, start):
+def json_dq_key_value_end(text, start, mask_numbers=False):
     """Like json_value_end for a plain double-quoted key, but an unquoted value of more than one word is
     masked to the end of the line (a YAML plain value)."""
     if text[start : start + 1] not in ('"', "{", "["):
@@ -344,10 +367,10 @@ def json_dq_key_value_end(text, start):
             after += 1
         if after < len(text) and text[after] not in ",}]\r\n":
             return line_end(text, start), MASK
-    return json_value_end(text, start, '"')
+    return json_value_end(text, start, '"', mask_numbers)
 
 
-def quoted_line_value(text, start):
+def quoted_line_value(text, start, mask_numbers=False):
     """Env and YAML quoted value at `start`: return (end, replacement) or (start, None) when it stays."""
     char = text[start]
     body = start + 1
@@ -355,17 +378,17 @@ def quoted_line_value(text, start):
     close = find_plain_quote(text, body, limit) if char == '"' else text.find("'", body, limit)
     end = limit if close < 0 else close + 1
     inner = text[body : limit if close < 0 else close]
-    if is_harmless(inner):
+    if is_harmless(inner, mask_numbers):
         return start, None
     return end, char + MASK + char
 
 
-def plain_line_value(text, start, prose=False):
+def plain_line_value(text, start, prose=False, mask_numbers=False):
     """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair, under a key that
     is the key `tokens`: see is_token_count_key), plain prose stays."""
     end = line_end(text, start)
     value = text[start:end]
-    if is_harmless(value) or (prose and PROSE.fullmatch(value.strip()) is not None):
+    if is_harmless(value, mask_numbers) or (prose and PROSE.fullmatch(value.strip()) is not None):
         return start, None
     return end, MASK
 
@@ -414,7 +437,7 @@ def empty_key_end(text, header_end, key_indent):
 
 # What one key occurrence does (see key_step) and the later-line state that a key opens (see scan_state).
 Step = namedtuple("Step", "rule end replacement to_line_end")
-State = namedtuple("State", "rule value_start column")
+State = namedtuple("State", "rule value_start column mask_numbers")
 # The rules of a key that open a later-line state. `json_open` is an object or array that does not close on its
 # line; the other three need the lines after the key line.
 STATE_RULES = ("block", "empty", "empty_json", "json_open")
@@ -446,19 +469,16 @@ def key_step(text, match, prefix=""):
     with escaped quotes opens the JSON open-object state but never a block or an empty-key state. `prefix` is the
     line prefix when the text is the rest of a line.
     """
-    if match.group("jkey") is not None:
-        key, kind = match.group("jkey"), "json"
-    elif match.group("ekey") is not None:
-        key, kind = match.group("ekey"), "env"
-    else:
-        key, kind = match.group("ykey") or match.group("skey"), "yaml"
+    key = match_key(match)
+    kind = "json" if match.group("jkey") is not None else "env" if match.group("ekey") is not None else "yaml"
     start = match.end()
     skip = Step("skip", start, None, False)
     if not is_secret_key(key):
         return skip
+    mask_numbers = has_key_part(key)
     state_key = block_key(match, prefix)
     if kind == "json" and match.group("jq") != '"':
-        end, replacement = json_value_end(text, start, match.group("jq"))
+        end, replacement = json_value_end(text, start, match.group("jq"), mask_numbers)
     elif state_key is not None and BLOCK_HEADER.match(text, start):
         return Step("block", start, None, False)
     elif state_key is not None and EMPTY_VALUE.match(text, start):
@@ -466,13 +486,13 @@ def key_step(text, match, prefix=""):
     elif state_key is None and match.group("ykey") is not None:
         return skip  # prose: an unquoted YAML key that does not count; its text stays
     elif kind == "json":
-        end, replacement = json_dq_key_value_end(text, start)
+        end, replacement = json_dq_key_value_end(text, start, mask_numbers)
     elif file_path_value(key, text, start):
         return skip  # the file-path rule: a path is no secret; the scan goes on at the start of the value
     elif start < len(text) and text[start] in "\"'":
-        end, replacement = quoted_line_value(text, start)
+        end, replacement = quoted_line_value(text, start, mask_numbers)
     else:
-        end, replacement = plain_line_value(text, start, kind == "yaml" and is_token_count_key(key))
+        end, replacement = plain_line_value(text, start, kind == "yaml" and is_token_count_key(key), mask_numbers)
     if replacement is None:
         return skip
     stop = line_end(text, start)
@@ -498,7 +518,7 @@ def scan_state(text, pos, stop, prefix=""):
         step = key_step(text, match, prefix)
         if step.rule in STATE_RULES:
             line_start = text.rfind("\n", 0, match.start()) + 1
-            return State(step.rule, match.end(), match.start() - line_start)
+            return State(step.rule, match.end(), match.start() - line_start, has_key_part(match_key(match)))
         pos = step.end if step.rule == "value" and not step.to_line_end else match.end()
 
 
@@ -514,8 +534,7 @@ def later_line_state(line, prefix=""):
     """
     if ":" not in line:
         return None
-    normal = line.lower().replace("_", "").replace("-", "")
-    if not any(word in normal for word in KEY_WORDS):
+    if not is_secret_key(line):
         return None  # no secret key name in the line (a cheap test: the filter calls this for every line)
     text = PEM_BLOCK.sub(MASK, line) if "-----BEGIN" in line else line
     return scan_state(text, 0, len(text), prefix)
@@ -545,7 +564,7 @@ def state_effect(text, state, swallowed):
     value = next_json_value(text, header_end) if state.rule == "empty_json" else -1
     if value >= 0:
         # a JSON value on a later line: masked as one value, the text between stays
-        end, replacement = json_value_end(text, value, '"')
+        end, replacement = json_value_end(text, value, '"', state.mask_numbers)
         kept = text[header_end if swallowed else start : value]
         return kept, end if replacement is not None else value, replacement
     end = empty_key_end(text, header_end, state.column)
@@ -579,7 +598,7 @@ def redact_keyed(text, prefix=""):
             state = scan_state(text, start, step.end, prefix) if step.to_line_end else None
         else:
             line_start = text.rfind("\n", 0, match.start()) + 1
-            state = State(step.rule, start, match.start() - line_start)
+            state = State(step.rule, start, match.start() - line_start, has_key_part(match_key(match)))
         effect = None if state is None else state_effect(text, state, swallowed)
         if effect is not None:
             kept, pos, replacement = effect
