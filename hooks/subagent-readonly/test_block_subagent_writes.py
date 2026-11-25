@@ -158,6 +158,11 @@ LOCAL_BLOCKED = (
     "git apply p.diff", "git apply --index p.diff", "git worktree add ../w", "git worktree remove w", "git branch -d x", "git branch -D x",
     "git branch -m old new", "git branch -M new", "git branch -f x HEAD", "git branch --delete x", "git branch --force x HEAD",
     "git branch -fd x", "git tag v1", "git tag -d v1", "git tag --delete v1", "git tag -a v1 -m msg", "git tag -f v1",
+    "git pull", "git pull origin main", "git add -A", "git add file.txt", "git rm file.txt", "git rm --cached file.txt", "git mv a b",
+    "git update-ref -d refs/heads/x", "git update-ref HEAD abc123", "git update-index --add f", "git read-tree HEAD", "git checkout-index -a",
+    "git symbolic-ref HEAD refs/heads/x", "git symbolic-ref -d HEAD", "git symbolic-ref --delete HEAD", "git bisect start", "git bisect reset",
+    "git bisect good", "git bisect run make", "git sparse-checkout set a", "git sparse-checkout add a", "git sparse-checkout disable",
+    "git sparse-checkout init", "git sparse-checkout",
     "git -c core.pager=cat checkout main", "git -C /srv/other reset --hard", "git -C /tmp/x -C /srv/project commit -m x",
     "git -C /tmp/x/../../srv/project commit -m x", "git -C ../project2 checkout x", "git --git-dir=/srv/project/.git commit -m x",
     "git --work-tree /srv/project checkout x", "git-worktree add ../w", "git-branch -D x",
@@ -174,7 +179,8 @@ LOCAL_READ = (
     "git cat-file -p HEAD", "git rev-parse HEAD", "git merge-base HEAD origin/main", "git grep -n x", "git blame file.txt", "git branch",
     "git branch --list", "git branch -a", "git branch -vv", "git branch --show-current", "git worktree list", "git fetch origin",
     "git stash list", "git stash show -p", "git apply --check p.diff", "git apply --stat p.diff", "git tag", "git tag -l 'v*'",
-    "git tag --list", "git tag --contains abc123", "git tag -n", "git -C /srv/other log", "git -c core.pager=cat diff",
+    "git tag --list", "git tag --contains abc123", "git tag -n", "git symbolic-ref HEAD", "git symbolic-ref --short HEAD",
+    "git symbolic-ref -q HEAD", "git bisect log", "git bisect visualize", "git bisect view", "git sparse-checkout list", "git -C /srv/other log", "git -c core.pager=cat diff",
 )
 LOCAL_IN_TEMP = (
     "git checkout main", "git commit -m x", "git reset --hard", "git stash", "git tag v1", "git branch -D x", "git -C /tmp/other commit -m x",

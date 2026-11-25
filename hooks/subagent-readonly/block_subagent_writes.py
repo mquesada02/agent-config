@@ -71,8 +71,9 @@ GH_WRITE_VERBS = {
 }
 GH_VALUE_OPTIONS = frozenset(("-R", "--repo", "--hostname"))
 # `git <subcommand>`: the subcommands that change HEAD, the index or the working tree of the repository that they run in (issue #738).
-# `stash`, `apply`, `worktree`, `branch` and `tag` have read forms, so `local_git_write` reads their arguments.
-GIT_LOCAL_WRITE = frozenset(("checkout", "switch", "reset", "clean", "restore", "commit", "merge", "rebase", "cherry-pick", "revert", "am"))
+# `stash`, `apply`, `symbolic-ref`, `bisect`, `sparse-checkout`, `worktree`, `branch` and `tag` have read forms, so `local_git_write` reads their arguments.
+GIT_LOCAL_WRITE = frozenset(("checkout", "switch", "reset", "clean", "restore", "commit", "merge", "rebase", "cherry-pick", "revert", "am",
+                             "pull", "add", "rm", "mv", "update-ref", "update-index", "read-tree", "checkout-index"))
 GIT_PATH_OPTIONS = ("--git-dir", "--work-tree")
 GIT_BRANCH_WRITE_LONG = frozenset(("--delete", "--move", "--force"))
 GIT_BRANCH_WRITE_SHORT = frozenset("dDmMf")
@@ -165,6 +166,11 @@ def local_git_write(args):
         return name
     names = positional(rest, ())
     if name == "stash" and (not names or names[0] not in ("list", "show")):
+        return name
+    if name == "symbolic-ref" and (len(names) > 1 or {"-d", "--delete"} & set(rest)):  # `git symbolic-ref HEAD` only reads
+        return name
+    if (name == "bisect" and names[:1] != ["log"] and names[:1] != ["visualize"] and names[:1] != ["view"]) or (
+            name == "sparse-checkout" and names[:1] != ["list"]):  # the other forms move HEAD or rewrite the working tree
         return name
     if name == "apply" and not {"--check", "--stat"} & set(rest):
         return name
