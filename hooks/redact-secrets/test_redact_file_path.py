@@ -1,3 +1,8 @@
+"""Tests of the file-path rule of redact_rules (config issue 1030).
+
+Two seams: `redact` runs the whole PostToolUse hook on a Bash output (end to end), and `redact_text` calls the
+rules module directly (faster, and it shows the rule on its own).
+"""
 import unittest
 
 from redact_rules import redact as redact_text
@@ -22,7 +27,7 @@ class FilePathRuleTest(unittest.TestCase):
     def test_quoted_path_with_a_space_stays(self):
         for quote in ('"', "'"):
             with self.subTest(quote=quote):
-                text = "API_TOKEN_FILE=" + quote + "/my dir/b.token" + quote + " next\n"
+                text = f"API_TOKEN_FILE={quote}/my dir/b.token{quote} next\n"
                 self.assertEqual(redact_text(text), text)
 
     def test_yaml_path_stays(self):
