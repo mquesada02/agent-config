@@ -275,6 +275,41 @@ class TypeScriptFactsTest(DetectCase):
         self.repo.put("a.test.js", 'import test from "node:test";\n')
         self.assert_fact(self.facts("typescript")["runner"]["name"], "node:test", "detected")
 
+    def test_node_test_import_in_the_test_folder(self):
+        self.repo.put("package.json", "{}")
+        self.repo.put("test/a.js", 'import test from "node:test";\n')
+        facts = self.facts("typescript")
+        self.assert_fact(facts["runner"]["name"], "node:test", "detected")
+        self.assert_fact(facts["commands"]["test"], "node --test", "detected")
+
+    def test_node_test_import_in_a_named_test_file(self):
+        self.repo.put("package.json", "{}")
+        self.repo.put("src/test-a.js", 'import test from "node:test";\n')
+        self.assert_fact(self.facts("typescript")["runner"]["name"], "node:test", "detected")
+
+    def test_node_test_import_outside_test_files_is_ignored(self):
+        self.repo.put("package.json", "{}")
+        self.repo.put("src/a.js", 'import test from "node:test";\n')
+        self.assert_fact(self.facts("typescript")["runner"]["name"], None, "unknown")
+
+    def test_unsupported_package_manager_name_never_reaches_a_command(self):
+        for field in ("x; echo hi@1.0.0", "x; echo hi", "deno@2.0.0"):
+            with self.subTest(field=field):
+                self.repo.put("package.json", json.dumps(
+                    {"packageManager": field, "devDependencies": {"vitest": "1"}, "scripts": {"typecheck": "tsc"}}))
+                self.repo.put("tsconfig.json", "{}")
+                facts = self.facts("typescript")
+                self.assert_fact(facts["runner"]["package_manager"], "npm", "default")
+                self.assert_fact(facts["commands"]["test"], "npx vitest run", "detected")
+                self.assert_fact(facts["commands"]["typecheck"], "npm run typecheck", "detected")
+
+    def test_unsupported_package_manager_name_falls_back_to_the_lockfile(self):
+        self.repo.put("package.json", '{"packageManager": "deno@2.0.0", "devDependencies": {"vitest": "1"}}')
+        self.repo.put("pnpm-lock.yaml", "")
+        facts = self.facts("typescript")
+        self.assert_fact(facts["runner"]["package_manager"], "pnpm", "detected")
+        self.assert_fact(facts["commands"]["test"], "pnpm exec vitest run", "detected")
+
     def test_both_runners_follow_the_test_script(self):
         self.repo.put("package.json", '{"devDependencies": {"vitest": "1", "jest": "29"}, "scripts": {"test": "jest"}}')
         self.assert_fact(self.facts("typescript")["runner"]["name"], "jest", "detected")
