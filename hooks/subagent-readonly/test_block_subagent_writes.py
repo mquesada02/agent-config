@@ -451,5 +451,17 @@ class ReaderCharacterizationTest(unittest.TestCase):
         self.assertEqual(RULES.audit._join_as_bash("ls \\\n  -l"), "ls   -l")
 
 
+class ScopeTextTest(unittest.TestCase):
+    def test_the_hook_header_and_the_readme_name_the_branch_and_tag_writes(self):
+        with open(HOOK, encoding="utf-8") as handle:
+            header = handle.read().split("import importlib.util", 1)[0]
+        readme_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "README.md")
+        with open(readme_path, encoding="utf-8") as handle:
+            readme = handle.read()
+        self.assertIn("a `git branch` write that deletes, moves or forces, and a `git tag` write that creates, deletes", header)
+        self.assertIn("A plain `git branch <name>` (a create) is not denied.", header)
+        self.assertIn("plus `git branch` writes that delete, move or force and `git tag` writes that create, delete or force", readme)
+
+
 if __name__ == "__main__":
     unittest.main()

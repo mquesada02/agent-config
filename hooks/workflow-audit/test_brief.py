@@ -117,7 +117,7 @@ class BriefTextTest(unittest.TestCase):
 
     def test_the_full_variant_says_round_reviewer_ids_are_checked_at_write_time_and_xc_checks_them_later(self):
         reading = self.full.split("## Reading the ledger", 1)[1].split("## Reading the sessions", 1)[0]
-        for phrase in ("checked when the event is written", "not a subagent of the writing session", "XC still checks them later",
+        for phrase in ("checked when the event is written", "not a subagent of the writing session or of another registered session of the same worktree", "XC still checks them later",
                        "Judge no new item for this write-time check"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, reading)
