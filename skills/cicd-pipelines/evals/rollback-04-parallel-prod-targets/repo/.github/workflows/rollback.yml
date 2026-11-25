@@ -19,6 +19,7 @@ jobs:
       group: deploy-${{ inputs.environment }}
       cancel-in-progress: false
     strategy:
+      max-parallel: 1
       matrix:
         function: [example-api, example-worker]
     permissions:

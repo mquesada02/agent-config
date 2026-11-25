@@ -26,9 +26,9 @@ How a rollback workflow (`rollback.yml`) goes back to an older release: a dispat
 
 ### ROLLBACK-04
 - **Severity:** suggestion
-- **Rule:** A prod rollback of several targets deploys them one at a time, so that a bad rollback stops early. A target is a prod target when its job has `environment: prod`, or when its job takes the environment from a choice input whose `options` include `prod`. Several targets are a matrix with more than one value, or several rollback jobs. A matrix sets `max-parallel: 1`. Several jobs are chained with `needs`. The fix does not set `fail-fast`, because GRAPH-04 owns that key.
-- **Check:** judgement: a rollback has several prod targets and its matrix has no `max-parallel: 1`, or its jobs are not chained with `needs`.
-- **Fix:** Add `max-parallel: 1` under `strategy:` of the rollback matrix, or chain the rollback jobs of the targets with `needs`.
+- **Rule:** A prod rollback of several targets deploys them one at a time, so that a bad rollback stops early. A target is a prod target when its job has `environment: prod`, or when its job takes the environment from a choice input whose `options` include `prod`. Several targets are a matrix with more than one value, or several rollback jobs. Each target has its own rollback job, and the jobs are chained with `needs`. A matrix over several prod targets is a finding, also with `max-parallel: 1`: every leg uses the group `deploy-<env>` of ROLLBACK-06, and a concurrency group keeps one running and one pending job, so a third leg replaces the pending one and is dropped. The fix does not set `fail-fast`, because GRAPH-04 owns that key.
+- **Check:** judgement: a rollback has several prod targets and they are a matrix, or its jobs are not chained with `needs`.
+- **Fix:** Give each prod target its own rollback job, with no matrix, and chain the jobs with `needs`.
 
 ### ROLLBACK-05
 - **Severity:** suggestion

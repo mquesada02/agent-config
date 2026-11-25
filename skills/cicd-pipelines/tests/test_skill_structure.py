@@ -357,9 +357,21 @@ class RollbackRules(unittest.TestCase):
     def test_rollback_04_defines_the_prod_target_and_leaves_fail_fast_to_graph_04(self):
         rule = self.rollback["ROLLBACK-04"]["Rule"]
         for text in ("`environment: prod`", "`options` include `prod`", "a matrix with more than one value",
-                     "`max-parallel: 1`", "chained with `needs`", "GRAPH-04 owns that key"):
+                     "chained with `needs`", "GRAPH-04 owns that key"):
             self.assertIn(text, rule)
         self.assertNotIn("fail-fast: false", self.rollback["ROLLBACK-04"]["Fix"])
+
+    def test_rollback_04_offers_chained_jobs_and_no_matrix_for_several_prod_targets(self):
+        fields = self.rollback["ROLLBACK-04"]
+        for text in ("A matrix over several prod targets is a finding, also with `max-parallel: 1`",
+                     "one running and one pending job", "a third leg replaces the pending one and is dropped"):
+            self.assertIn(text, fields["Rule"])
+        self.assertIn("they are a matrix", fields["Check"])
+        self.assertIn("its own rollback job, with no matrix", fields["Fix"])
+        self.assertIn("chain the jobs with `needs`", fields["Fix"])
+        self.assertNotIn("max-parallel: 1", fields["Fix"])
+        self.assertIn("`deploy-<env>`", self.rollback["ROLLBACK-06"]["Rule"])
+        self.assertIn("`cancel-in-progress: false`", self.rollback["ROLLBACK-06"]["Rule"])
 
     def test_rollback_05_has_exactly_three_finding_forms_and_passes_an_unset_cloudformation_rollback(self):
         rule = self.rollback["ROLLBACK-05"]["Rule"]
@@ -491,10 +503,17 @@ class PublishRules(unittest.TestCase):
     def test_publish_01_holds_the_trusted_publishing_versions_and_names_the_registry_url_conflict(self):
         rule = self.publish["PUBLISH-01"]["Rule"]
         for text in ("`permissions: id-token: write`", "GitHub-hosted runner", "Node 22.14.0 or later", "npm 11.5.1 or later",
-                     "`NPM_TOKEN`", "A version below 22.14.0 is a finding", "A major `24` or later passes both checks",
+                     "`NPM_TOKEN`", "A version below 22.14.0 is a finding", "A major `24` or later, and an exact version `24.5.0` or later, pass both checks",
                      "`lts/*`, a `node-version-file`", "The sources conflict on `registry-url`",
                      "the semantic-release recipe says not to set it", "The rule takes no side",
                      "does not affect Changesets"):
+            self.assertIn(text, rule)
+
+    def test_publish_01_treats_an_exact_node_24_below_24_5_0_as_an_npm_finding(self):
+        rule = self.publish["PUBLISH-01"]["Rule"]
+        for text in ("24.5.0 is the first Node 24 release that bundles npm 11.5.1",
+                     "an exact version from `24.0.0` up to, but not including, `24.5.0`, pass the Node check, "
+                     "and it is a finding for the npm check unless a step"):
             self.assertIn(text, rule)
 
     def test_publish_02_wants_a_frozen_install_and_no_cache(self):
@@ -630,6 +649,11 @@ class ProtectRules(unittest.TestCase):
                      "every fact that could show it is `detected`", "A comment that holds none of these phrases is not read"):
             self.assertIn(text, rule)
         self.assertIn("(a file edit, no mark)", self.protect["PROTECT-07"]["Fix"])
+
+    def test_protect_07_checks_a_ruleset_comment_with_the_word_tag_against_a_tag_ruleset(self):
+        rule = self.protect["PROTECT-07"]["Rule"]
+        self.assertIn("a line that holds `ruleset` and the word `tag` needs an active tag ruleset", rule)
+        self.assertIn("`ruleset` without the word `tag`, both `rulesets` and `classic_protection`", rule)
 
     def test_protect_08_is_a_judgement_on_repo_wide_role_arns_and_app_keys(self):
         rule = self.protect["PROTECT-08"]["Rule"]
