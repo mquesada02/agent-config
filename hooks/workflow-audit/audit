@@ -874,7 +874,7 @@ def _declared_command(worktree):
     blocks, ci_lines = sections[0]
     if len(blocks) != 1 or not blocks[0]:
         raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs exactly one non-empty fenced block, found {len(blocks)}")
-    if len(ci_lines) > 1 or ci_lines and not ci_lines[0]:
+    if len(ci_lines) > 1 or "" in ci_lines:
         raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs at most one non-empty '{CI_CHECK_PREFIX.strip()}' line, found {len(ci_lines)}")
     return blocks[0], (ci_lines[0] if ci_lines else None)
 
@@ -1051,7 +1051,7 @@ def _s2_ci(worktree, branch, remote_url, check_name):
     return True, f"CI check {check_name!r} succeeded on the audited HEAD {head}"
 
 
-def check_s2(worktree, audited, branch=None, remote_url=None):
+def check_s2(worktree, audited, branch, remote_url):
     """Returns (passed, evidence). A declared CI check is a second way to pass, tried only when the local runs do not pass."""
     try:
         declared, ci_check = _declared_command(worktree)
