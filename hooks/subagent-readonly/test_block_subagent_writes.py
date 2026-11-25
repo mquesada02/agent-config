@@ -158,7 +158,7 @@ LOCAL_BLOCKED = (
     "git apply p.diff", "git apply --index p.diff", "git worktree add ../w", "git worktree remove w", "git branch -d x", "git branch -D x",
     "git branch -m old new", "git branch -M new", "git branch -f x HEAD", "git branch --delete x", "git branch --force x HEAD",
     "git branch -fd x", "git tag v1", "git tag -d v1", "git tag --delete v1", "git tag -a v1 -m msg", "git tag -f v1",
-    "git pull", "git pull origin main", "git add -A", "git add file.txt", "git rm file.txt", "git rm --cached file.txt", "git mv a b",
+    "git pull", "git pull origin main", "git stage file.txt", "git add -A", "git add file.txt", "git rm file.txt", "git rm --cached file.txt", "git mv a b",
     "git update-ref -d refs/heads/x", "git update-ref HEAD abc123", "git update-index --add f", "git read-tree HEAD", "git checkout-index -a",
     "git symbolic-ref HEAD refs/heads/x", "git symbolic-ref -d HEAD", "git symbolic-ref --delete HEAD", "git bisect start", "git bisect reset",
     "git bisect good", "git bisect run make", "git sparse-checkout set a", "git sparse-checkout add a", "git sparse-checkout disable",

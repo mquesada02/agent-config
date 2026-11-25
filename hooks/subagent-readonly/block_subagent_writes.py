@@ -73,7 +73,7 @@ GH_VALUE_OPTIONS = frozenset(("-R", "--repo", "--hostname"))
 # `git <subcommand>`: the subcommands that change HEAD, the index or the working tree of the repository that they run in (issue #738).
 # `stash`, `apply`, `symbolic-ref`, `bisect`, `sparse-checkout`, `worktree`, `branch` and `tag` have read forms, so `local_git_write` reads their arguments.
 GIT_LOCAL_WRITE = frozenset(("checkout", "switch", "reset", "clean", "restore", "commit", "merge", "rebase", "cherry-pick", "revert", "am",
-                             "pull", "add", "rm", "mv", "update-ref", "update-index", "read-tree", "checkout-index"))
+                             "pull", "add", "stage", "rm", "mv", "update-ref", "update-index", "read-tree", "checkout-index"))
 GIT_PATH_OPTIONS = ("--git-dir", "--work-tree")
 GIT_BRANCH_WRITE_LONG = frozenset(("--delete", "--move", "--force"))
 GIT_BRANCH_WRITE_SHORT = frozenset("dDmMf")
