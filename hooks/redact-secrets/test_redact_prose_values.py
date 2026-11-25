@@ -1,6 +1,6 @@
 """Tests of issue 789: an unquoted YAML value that is plain prose (three or more words, each shorter than 20
-characters of letters, digits and common punctuation) is not masked, but only under a key whose only secret word is the
-plural `tokens` (a count or a cost). Under any other secret key a prose value stays masked. The names are joined from
+characters of letters, digits and common punctuation) is not masked, but only under the key `tokens` (a count or a
+cost, any case, no other word in the key). Under any other secret key a prose value stays masked. The names are joined from
 parts, so this file holds no secret-shaped text of its own.
 
 Seam 1 is `redact(text)` through the test kit (the PostToolUse hook). Seam 2 is the Monitor filter script.
@@ -20,7 +20,7 @@ PASSPHRASE = "correct horse battery staple"
 class ProseValueTest(unittest.TestCase):
     KEPT = (
         "- " + TOKENS + ": about 3 KB for the index at start.\n",
-        "max_" + TOKENS.lower() + ": about 3 KB for the index at start.\nnext: 1\n",
+        TOKENS.upper() + ": about 3 KB for the index at start.\nnext: 1\n",
         "  - " + TOKENS.lower() + ": ask the on call engineer (see the wiki)\n",
         TOKENS + ": a b see\n",
         TOKENS + ": see the vault, ok\n",
@@ -35,7 +35,10 @@ class ProseValueTest(unittest.TestCase):
         ("secret: " + PROSE + "\n", "secret: ***\n"),
         (PASS.lower() + "_" + TOKENS.lower() + ": " + PROSE + "\n", PASS.lower() + "_" + TOKENS.lower() + ": ***\n"),
         ("secre" + TOKENS.lower() + ": " + PROSE + "\n", "secre" + TOKENS.lower() + ": ***\n"),
-        # a value that is no prose under a plural `tokens` key stays masked
+        ("api_" + TOKENS.lower() + ": " + PASSPHRASE + "\n", "api_" + TOKENS.lower() + ": ***\n"),
+        ("auth_" + TOKENS.lower() + ": " + PROSE + "\n", "auth_" + TOKENS.lower() + ": ***\n"),
+        ("max_" + TOKENS.lower() + ": " + PROSE + "\n", "max_" + TOKENS.lower() + ": ***\n"),
+        # a value that is no prose under the `tokens` key stays masked
         (PASS + ": hunter2\n", PASS + ": ***\n"),
         (TOKENS + ": " + LONG_WORD + "\n", TOKENS + ": ***\n"),
         (TOKENS + ": two words\n", TOKENS + ": ***\n"),
