@@ -2428,6 +2428,15 @@ def _command_problems(command, depth=0):
             for kind in _segment_problems(item, depth, _starts_process_substitution(items, index))] + _find_continuation_problems(items)
 
 
+# The kinds of `_segment_problems` that are a recursive delete. The deny hook of hooks/deny-recursive-delete reads them through `recursive_delete_problems`.
+RECURSIVE_DELETE_KINDS = frozenset(("recursive rm", "rm with a shell expansion in a word", "expanded command word with a recursive option", "find -delete"))
+
+
+def recursive_delete_problems(command):
+    """What S9 finds in a command text that is a recursive delete: `_command_problems` without the other kinds (docker prune, runner flags, evidence unavailable)."""
+    return [kind for kind in dict.fromkeys(_command_problems(command)) if kind in RECURSIVE_DELETE_KINDS]
+
+
 def check_s9(audited, problem):
     """Returns (passed, evidence). `audited` is None when the transcripts cannot be read, with the reason in `problem`."""
     if audited is None:

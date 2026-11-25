@@ -8,6 +8,8 @@
 !hooks/bash-reader/*.py
 !hooks/context-handoff/
 !hooks/context-handoff/*.py
+!hooks/deny-recursive-delete/
+!hooks/deny-recursive-delete/*.py
 !hooks/forked-skills/
 !hooks/forked-skills/*.py
 !hooks/subagent-readonly/
