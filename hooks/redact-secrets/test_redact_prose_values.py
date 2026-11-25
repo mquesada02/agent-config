@@ -21,6 +21,8 @@ class ProseValueTest(unittest.TestCase):
         PASS.lower() + ": see the shared vault entry\nnext: 1\n",
         "  - token: ask the on call engineer (see the wiki)\n",
         PASS + ": a b see\n",
+        PASS + ": see the vault, ok\n",
+        "  nested:\n    " + PASS.lower() + ": see the shared vault entry\n",
     )
     MASKED = (
         (PASS + ": hunter2\n", PASS + ": ***\n"),
@@ -32,6 +34,7 @@ class ProseValueTest(unittest.TestCase):
         (PASS + ": see the my_pass_word vault\n", PASS + ": ***\n"),
         (PASS + ": see the x@y vault\n", PASS + ": ***\n"),
         (PASS + ": see  the\tvault\n", PASS + ": ***\n"),
+        (PASS + ": see the vault # note\n", PASS + ": ***\n"),
         ("Token: use " + VENDOR + " now\n", "Token: ***\n"),
         ("TOKEN=see the shared vault\n", "TOKEN=***\n"),
         (PASS + ': "see the shared vault"\n', PASS + ': "***"\n'),

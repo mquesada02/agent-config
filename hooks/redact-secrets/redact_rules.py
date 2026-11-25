@@ -101,6 +101,7 @@ JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
 # YAML value can be prose (see plain_line_value). The shape rules run after the keyed rules, so a known secret shape
 # is masked anyway.
 PROSE_WORD = r"[A-Za-z0-9.,;:!?()'/\-]{1,19}"
+# The lookahead `(?=.*?\S\S)` needs two characters in a row that are no space: one word of two or more characters.
 PROSE = re.compile(r"(?=.*?\S\S)" + PROSE_WORD + r"(?: +" + PROSE_WORD + r"){2,}")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
@@ -328,7 +329,8 @@ def quoted_line_value(text, start):
 def plain_line_value(text, start, prose=False):
     """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair), plain prose stays."""
     end = line_end(text, start)
-    if is_harmless(text[start:end]) or (prose and PROSE.fullmatch(text[start:end].strip()) is not None):
+    value = text[start:end]
+    if is_harmless(value) or (prose and PROSE.fullmatch(value.strip()) is not None):
         return start, None
     return end, MASK
 
