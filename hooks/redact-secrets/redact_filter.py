@@ -197,6 +197,7 @@ class LineFilter:
         self.pem_prefix = ""  # the line prefix of the rest after the END line of a PEM block (held or dropped)
         self.held_head = ""  # the joined line before the held key line: a PEM block that ended before it
         self.held_origin = ""  # the line prefix of the joined line (held_head and the held key line)
+        self.mask_numbers = False  # the held key holds a part of KEY_PARTS: a number value is masked
         self.pem_in_value = False  # past the held-line cap: the BEGIN marker stands in a masked keyed value
         # the key column of the block scalar header line that holds the BEGIN marker of the held block (None: no
         # block state), kept to the END line of the last block, where the block state starts
@@ -267,6 +268,7 @@ class LineFilter:
                 self.held_head = head
                 self.held_origin = prefix
                 self.key_indent = state.column
+                self.mask_numbers = state.mask_numbers
                 return ""
         return redact_rules.redact(head + body, prefix) + ending
 
@@ -460,7 +462,7 @@ class LineFilter:
                 self.handler = self.json_drop
                 self.depth = depth
                 return shown[:start] + '"' + redact_rules.MASK + '"' + ending
-        end, replacement = redact_rules.json_value_end(shown, start, '"')
+        end, replacement = redact_rules.json_value_end(shown, start, '"', self.mask_numbers)
         if replacement is None:
             return self.normal_line(shown + ending)
         return shown[:start] + replacement + self.normal_line(shown[end:] + ending, shown[:end])
