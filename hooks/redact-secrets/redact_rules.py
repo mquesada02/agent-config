@@ -59,6 +59,12 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      Monitor filter both use it.
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
+   - The file-path rule (config issue 1030): an env or YAML key whose name ends in `_FILE` or `-FILE` (any case)
+     names a file, not a secret, so a value that looks like a path stays. A path starts with `/`, `~/`, `./`,
+     `../` or a drive letter with a slash or a backslash (`C:/`). A plain path ends at a space, a tab or the line end; a quoted path
+     is the whole text up to its closing quote on the line. The scan goes on at the start of the value, so a key
+     later on the line is still masked. Any other value of such a key (no path, or a quote that does not close)
+     is masked as before. JSON keys do not take this rule.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
 """
 import re
@@ -94,6 +100,10 @@ JSON_TOKEN = re.compile(r"(?:" + NUMBER.pattern + r"|true|false|null)", re.IGNOR
 JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
+# The file-path rule: a key that names a file, and the start of a path (see file_path_value).
+FILE_KEY = re.compile(r"[_\-]file\Z", re.IGNORECASE)
+PATH_START = r"(?:(?:~|\.\.?)?/|[A-Za-z]:[\\/])"
+PLAIN_PATH = re.compile(PATH_START + r"[^\s\"']*(?=[ \t]|\r?\n|\Z)")
 
 SHAPES = (
     (re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"), MASK),
@@ -182,6 +192,18 @@ def is_harmless(value):
 
 def line_end(text, start):
     return LINE_END.match(text, start).end()
+
+
+def file_path_value(key, text, start):
+    """Whether the env or YAML value at `start` is a path that the file-path rule keeps (see the module rules)."""
+    if FILE_KEY.search(key) is None:
+        return False
+    char = text[start : start + 1]
+    if char in ("'", '"'):
+        limit = line_end(text, start + 1)
+        close = text.find(char, start + 1, limit)
+        return close > start + 1 and re.fullmatch(PATH_START + r".*", text[start + 1 : close]) is not None
+    return PLAIN_PATH.match(text, start) is not None
 
 
 def find_plain_quote(text, start, limit):
@@ -419,6 +441,8 @@ def key_step(text, match, prefix=""):
         return skip  # prose: an unquoted YAML key that does not count; its text stays
     elif kind == "json":
         end, replacement = json_dq_key_value_end(text, start)
+    elif file_path_value(key, text, start):
+        return skip  # the file-path rule: a path is no secret; the scan goes on at the start of the value
     elif start < len(text) and text[start] in "\"'":
         end, replacement = quoted_line_value(text, start)
     else:
