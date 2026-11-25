@@ -12,6 +12,7 @@ HOOKS = os.path.dirname(FOLDER)
 HOOK = os.path.join(FOLDER, "deny_recursive_delete.py")
 S9_TESTS = os.path.join(HOOKS, "workflow-audit", "test_s7_s9.py")
 sys.path.insert(0, FOLDER)
+sys.dont_write_bytecode = True
 import deny_recursive_delete as hook  # noqa: E402
 
 # Every recursive-delete form that S9 reports, each with its own wrapper or quoting.
@@ -112,8 +113,7 @@ class ProcessTest(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stdout), (0, ""))
 
     def test_a_hook_that_cannot_load_the_reader_allows_the_call(self):
-        root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, root)
+        root = self.enterContext(tempfile.TemporaryDirectory())
         os.makedirs(os.path.join(root, "hooks", "deny-recursive-delete"))  # the audit script and the shared reader are missing
         copy = os.path.join(root, "hooks", "deny-recursive-delete", "deny_recursive_delete.py")
         shutil.copy(HOOK, copy)
