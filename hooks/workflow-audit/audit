@@ -132,6 +132,7 @@ S2_SYNTAX_CAUSE = "a step before it holds shell syntax that S2 does not accept (
 FAILED_LINE = "command-failed"
 FAILED_SUFFIX = " || echo " + FAILED_LINE
 TEST_COMMAND_HEADING = "### Test command"
+CI_CHECK_PREFIX = "CI check: "  # a line of the test command section, outside the fence, that names the one CI check S2 accepts
 DECLARATION_FILES = (".claude/CLAUDE.md", "CLAUDE.md", "AGENTS.md")
 MAX_LINK_HOPS = 40  # the links S2 follows to reach a declaration file, as the kernel limits a path lookup
 # S7: a worker session is a session whose main transcript has a user text row that holds both phrases of the Orca dispatch preamble.
@@ -832,7 +833,8 @@ def _declaration_text(worktree, path):
 
 
 def _sections(text):
-    """The fenced blocks (trimmed content) of each `### Test command` section in a markdown text."""
+    """The fenced blocks (trimmed content) and the `CI check: <name>` lines outside a fence of each `### Test command` section in a
+    markdown text, as one `(blocks, ci lines)` pair per section."""
     sections, current, fence, block = [], None, None, None
     for line in text.splitlines():
         ticks = re.match(r"`{3,}", line)
@@ -840,24 +842,26 @@ def _sections(text):
             if ticks and len(ticks.group()) >= fence:
                 fence = None
                 if current is not None:
-                    current.append("\n".join(block).strip())
+                    current[0].append("\n".join(block).strip())
             elif current is not None:
                 block.append(line)
             continue
         if ticks:
             fence, block = len(ticks.group()), []
         elif line.rstrip() == TEST_COMMAND_HEADING:
-            current = []
+            current = ([], [])
             sections.append(current)
         elif re.match(r"#{1,6} ", line):
             current = None
+        elif current is not None and line.startswith(CI_CHECK_PREFIX):
+            current[1].append(line[len(CI_CHECK_PREFIX):].strip())
     if fence is not None and current is not None:
-        current.append("\n".join(block).strip())  # a fence that is never closed runs to the end of the file
+        current[0].append("\n".join(block).strip())  # a fence that is never closed runs to the end of the file
     return sections
 
 
 def _declared_command(worktree):
-    """The declared test command, or "none". Raises ValueError for a declaration problem."""
+    """(the declared test command or "none", the declared CI check name or None). Raises ValueError for a declaration problem."""
     sections, seen = [], set()
     for path in DECLARATION_FILES:
         found = _declaration_text(worktree, path)
@@ -867,9 +871,12 @@ def _declared_command(worktree):
             sections += _sections(text)
     if len(sections) != 1:
         raise ValueError(f"expected exactly one '{TEST_COMMAND_HEADING}' section in {', '.join(DECLARATION_FILES)}, found {len(sections)}")
-    if len(sections[0]) != 1 or not sections[0][0]:
-        raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs exactly one non-empty fenced block, found {len(sections[0])}")
-    return sections[0][0]
+    blocks, ci_lines = sections[0]
+    if len(blocks) != 1 or not blocks[0]:
+        raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs exactly one non-empty fenced block, found {len(blocks)}")
+    if len(ci_lines) > 1 or "" in ci_lines:
+        raise ValueError(f"the '{TEST_COMMAND_HEADING}' section needs at most one non-empty '{CI_CHECK_PREFIX.strip()}' line, found {len(ci_lines)}")
+    return blocks[0], (ci_lines[0] if ci_lines else None)
 
 
 def _is_after(run, run_transcript, edit, edit_transcript):
@@ -1010,12 +1017,55 @@ def _s2_chain(command, declared, root, cwd):
     return True, None
 
 
-def check_s2(worktree, audited):
-    """Returns (passed, evidence)."""
+def _s2_ci(worktree, branch, remote_url, check_name):
+    """(True, evidence) when the one open PR of `branch` has HEAD as its head SHA and every check run named exactly `check_name` on it
+    is completed with the conclusion success (at least one); else (False, the cause). Runs `gh` once. Never raises: every error, a
+    timeout, a missing check, another SHA and a run that is pending, skipped, neutral or failed means "does not count"."""
+    import subprocess  # imported here: the hook's common path never runs gh
+
+    pair = _github_pair(remote_url or "")
+    if pair is None or not branch:
+        return False, "no owner/repo pair or no branch can be derived"
     try:
-        declared = _declared_command(worktree)
+        head = _git_output(worktree, "rev-parse", "HEAD")
+        result = subprocess.run(["gh", "pr", "list", "--repo", pair, "--head", branch, "--state", "open", "--json", "headRefOid,statusCheckRollup"],
+                                cwd=worktree, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=GIT_TIMEOUT_SECONDS)
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as problem:
+        return False, f"cannot ask gh: {_cut(str(problem), 200)}"
+    if result.returncode != 0:
+        return False, f"gh exited with status {result.returncode}"
+    try:
+        pulls = json.loads(result.stdout)
+    except (ValueError, RecursionError):
+        pulls = None
+    if not (isinstance(pulls, list) and len(pulls) == 1 and isinstance(pulls[0], dict)):
+        return False, "gh did not show exactly one open PR for the branch"
+    if not head or pulls[0].get("headRefOid") != head:
+        return False, "the PR head is not the audited HEAD"
+    rollup = pulls[0].get("statusCheckRollup")
+    runs = [entry for entry in rollup if isinstance(entry, dict) and entry.get("name") == check_name] if isinstance(rollup, list) else []
+    if not runs:
+        return False, f"the PR has no check named {check_name!r}"
+    if not all(entry.get("status") == "COMPLETED" and entry.get("conclusion") == "SUCCESS" for entry in runs):
+        return False, f"a run of the check {check_name!r} is not completed with success"
+    return True, f"CI check {check_name!r} succeeded on the audited HEAD {head}"
+
+
+def check_s2(worktree, audited, branch, remote_url):
+    """Returns (passed, evidence). A declared CI check is a second way to pass, tried only when the local runs do not pass."""
+    try:
+        declared, ci_check = _declared_command(worktree)
     except ValueError as problem:
         return False, str(problem)
+    passed, evidence = _s2_local(worktree, audited, declared)
+    if passed or ci_check is None:
+        return passed, evidence
+    ci_passed, ci_evidence = _s2_ci(worktree, branch, remote_url, ci_check)
+    return (True, ci_evidence) if ci_passed else (False, f"{evidence}; the CI path does not count: {ci_evidence}")
+
+
+def _s2_local(worktree, audited, declared):
+    """Returns (passed, evidence) of the local runs of the declared command."""
     if declared == "none":
         return True, "no tests declared (`none`)"
     root = os.path.realpath(worktree)
@@ -2397,21 +2447,21 @@ def _now(timespec="seconds"):
     return datetime.now(timezone.utc).isoformat(timespec=timespec)
 
 
-def _transcript_items(worktree, dir_fd):
+def _transcript_items(worktree, dir_fd, branch, remote_url):
     """(the S1 and S2 items, the audited transcripts, the subagent map, the reason they cannot be read). Evidence that cannot be read
     fails both items with "evidence unavailable"; the transcripts and the map are then None."""
     try:
         audited, agents = _audited_transcripts(worktree, dir_fd)
     except Unavailable as problem:
         return [_s_item(name, False, str(problem)) for name in ("S1", "S2")], None, None, problem
-    items = [_check_item(name, check, worktree, audited) for name, check in (("S1", check_s1), ("S2", check_s2))]
+    items = [_check_item("S1", check_s1, worktree, audited), _check_item("S2", check_s2, worktree, audited, branch, remote_url)]
     return items, audited, agents, None
 
 
 def _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch):
     """(the items S1 to S10 and XC in record order, the audited transcripts, the reason they cannot be read).
     The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
-    items, audited, agents, problem = _transcript_items(worktree, dir_fd)
+    items, audited, agents, problem = _transcript_items(worktree, dir_fd, branch, remote_url)
     ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, agents, problem, base_branch)
     items += ledger_items
     items.append(_check_item("S7", check_s7, audited, str(problem)))
