@@ -59,6 +59,9 @@ Pure module, no I/O. Rules (spec #277, ticket spec #281):
      Monitor filter both use it.
    - An unquoted value of more than one word after a plain double-quoted key (`"key": a b`, `"key": 42 b`)
      is masked to the end of the line. One word keeps the JSON mask.
+   - The prose rule (issue 789): an unquoted YAML value (not an env pair, not a quoted value) of three or more
+     words separated by spaces stays when each word has 1 to 19 characters of letters, digits and `.,;:!?()'/-`
+     and at least one word has two or more characters. Any other unquoted value keeps its mask.
 3. Shapes with no key name: AWS key IDs, JWTs, URL passwords and vendor tokens.
 """
 import re
@@ -92,6 +95,13 @@ NUMBER = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 # A JSON token (number, true, false, null as the value guard reads them) and where it must end.
 JSON_TOKEN = re.compile(r"(?:" + NUMBER.pattern + r"|true|false|null)", re.IGNORECASE)
 JSON_TOKEN_END = re.compile(r"[ \t]*(?:[,}\]]|\r?\n|\Z)")
+# Plain prose (issue 789): three or more words separated by spaces, each word 1 to 19 characters of letters, digits and
+# common punctuation, and at least one word of two or more characters (`a b c` is no prose). A value with no space, a
+# long word or a character outside the set (`_`, `@`, `=`, `+`, ...) is not prose and stays masked. Only an unquoted
+# YAML value can be prose (see plain_line_value). The shape rules run after the keyed rules, so a known secret shape
+# is masked anyway.
+PROSE_WORD = r"[A-Za-z0-9.,;:!?()'/\-]{1,19}"
+PROSE = re.compile(r"(?=.*?\S\S)" + PROSE_WORD + r"(?: +" + PROSE_WORD + r"){2,}")
 BAREWORD = re.compile(r"[^,}\]\s]*")
 LINE_END = re.compile(r"[^\r\n]*")
 
@@ -315,9 +325,10 @@ def quoted_line_value(text, start):
     return end, char + MASK + char
 
 
-def plain_line_value(text, start):
+def plain_line_value(text, start, prose=False):
+    """An unquoted value to the line end. With `prose` (an unquoted YAML value, not an env pair), plain prose stays."""
     end = line_end(text, start)
-    if is_harmless(text[start:end]):
+    if is_harmless(text[start:end]) or (prose and PROSE.fullmatch(text[start:end].strip()) is not None):
         return start, None
     return end, MASK
 
@@ -422,7 +433,7 @@ def key_step(text, match, prefix=""):
     elif start < len(text) and text[start] in "\"'":
         end, replacement = quoted_line_value(text, start)
     else:
-        end, replacement = plain_line_value(text, start)
+        end, replacement = plain_line_value(text, start, kind == "yaml")
     if replacement is None:
         return skip
     stop = line_end(text, start)
