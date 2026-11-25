@@ -465,6 +465,28 @@ class S9DockerTest(S9Case):
                            "grep prune notes.txt", "git remote prune origin"])
 
 
+class S9FindDeleteTest(S9Case):
+    def test_find_delete_fails(self):
+        self.assert_flagged(["find . -name t -delete", "sudo find x -delete", "xargs find -delete", "find x -type f -delete -print"])
+
+    def test_find_delete_after_exec_terminator_fails(self):
+        self.assert_flagged(["find x -exec chmod 644 {} \\; -delete", "find x -exec chmod 644 {} ';' -delete",
+                             'find x -exec chmod 644 {} ";" -delete', "find x -exec a {} \\; -exec b {} \\; -delete",
+                             "find x -exec rm {} \\; -o -delete", "find x -exec echo $(date) {} \\; -delete",
+                             "sudo find x -execdir chmod 644 {} \\; -delete"])
+
+    def test_find_delete_after_parentheses_fails(self):
+        self.assert_flagged(["find . \\( -name a \\) -delete", "find . -type f \\( -name a -o -name b \\) -delete",
+                             "find . \\( -name a -o -delete \\)", "find . -exec echo {} \\; \\( -delete \\)",
+                             "find . \\( -exec echo {} \\; \\) -delete"])
+
+    def test_find_exec_rm_stays_flagged(self):
+        self.assert_flagged(["find . -name t -exec rm -rf {} +", "find . -name t -exec rm -rf {} \\;"])
+
+    def test_other_find_commands_pass(self):
+        self.assert_clean(["find . -name t -print", "find . -name '*.pyc'", "echo find x -delete", "grep -delete notes.txt"])
+
+
 class S9RunnerTest(S9Case):
     FLAGS = [("pytest", "-n"), ("pytest", "--numprocesses"), ("python3 -m pytest", "-n"), ("py.test", "-n"),
              ("vitest run", "--maxWorkers"), ("vitest", "--max-workers"), ("jest", "--maxWorkers"), ("jest", "-w"),

@@ -140,7 +140,7 @@ MODEL_LIMIT = 40
 # S9. A segment whose command word is one of these only names a word.
 NAMING_ONLY_COMMANDS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "man", "which", "type", "whereis", "echo", "printf"))
 SHELLS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
-ARGUMENT_COMMANDS = frozenset(("rm", "docker", "eval")) | SHELLS  # the words whose arguments S9 reads
+ARGUMENT_COMMANDS = frozenset(("rm", "docker", "eval", "find")) | SHELLS  # the words whose arguments S9 reads
 SHELL_COMMAND_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 MAX_SHELL_DEPTH = 3
 RM_RECURSIVE_OPTION = re.compile(r"-[fiIdv]*[rR][fiIrRdv]*")  # only letters that are options of rm, so that find's -regex is not one
@@ -2267,6 +2267,8 @@ def _segment_problems(words, depth, process_substitution=False):
                 found.append("rm with a shell expansion in a word")  # the expansion may make a recursive or force option
         elif name == "docker" and "prune" in arguments:
             found.append("docker prune")
+        elif name == "find" and "-delete" in arguments:
+            found.append("find -delete")
         elif name == "eval" and arguments:
             found += _nested_problems(" ".join(arguments), depth)
         elif name in SHELLS:
@@ -2287,6 +2289,28 @@ def _s9_text(command):
     return _join_as_bash(strip_data_heredocs(command, S9_HEREDOC_READERS))
 
 
+def _find_continuation_problems(items):
+    """The `-delete` words of a `find` command that the splitter cut: it reads the `;` that ends an `-exec` and the `\\(` and `\\)` of a
+    group (escaped or quoted) as separators, so the primaries after them are a segment of their own. Only a segment that starts with a
+    primary continues the `find`; a separator other than `;`, `(` and `)` ends it. A group (`(` to `)`, also the body of a substitution)
+    does not change the state that the `find` had before it."""
+    found, active, outer = [], False, []
+    for item in items:
+        if isinstance(item, list):
+            if active and item and item[0].startswith(("-", "!")):
+                if "-delete" in item:
+                    found.append("find -delete")
+            else:
+                active = any(os.path.basename(word) == "find" for word in item)
+        elif item == "(":
+            outer.append(active)
+        elif item == ")":
+            active = outer.pop() if outer else False
+        else:
+            active = active and item == ";"
+    return found
+
+
 def _command_problems(command, depth=0):
     """What S9 finds in one command text: a list of kinds, those that start with "evidence unavailable" are not violations."""
     command = _s9_text(command)
@@ -2295,7 +2319,7 @@ def _command_problems(command, depth=0):
     except Exception:  # as the gate does: a ValueError, or a RecursionError for very deep nesting
         return ["evidence unavailable: cannot split the command"] if UNSPLITTABLE_TRIGGER.search(command) else []
     return [kind for index, item in enumerate(items) if isinstance(item, list)
-            for kind in _segment_problems(item, depth, _starts_process_substitution(items, index))]
+            for kind in _segment_problems(item, depth, _starts_process_substitution(items, index))] + _find_continuation_problems(items)
 
 
 def check_s9(audited, problem):
