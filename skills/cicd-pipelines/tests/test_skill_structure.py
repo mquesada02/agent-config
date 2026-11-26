@@ -1331,12 +1331,18 @@ class EvalReadme(unittest.TestCase):
         self.assertEqual([], self.unmatched_cases(text, cases))
 
     def test_every_case_folder_is_in_one_group_row(self):
+        cases = self.case_folders()
         text = read(os.path.join(SKILL, "evals", "README.md"))
-        self.assertEqual([], self.multi_row_cases(text, self.case_folders()))
+        self.assertTrue(cases)
+        self.assertTrue(self.group_rows(text))
+        self.assertEqual([], self.multi_row_cases(text, cases))
 
     def test_every_group_glob_matches_a_case_folder(self):
+        cases = self.case_folders()
         text = read(os.path.join(SKILL, "evals", "README.md"))
-        self.assertEqual([], self.unmatched_globs(text, self.case_folders()))
+        self.assertTrue(cases)
+        self.assertTrue(self.group_globs(text))
+        self.assertEqual([], self.unmatched_globs(text, cases))
 
     def test_a_case_folder_in_no_group_row_is_reported(self):
         table = "## Run the groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n| A | `deploy-*` | x |\n"
