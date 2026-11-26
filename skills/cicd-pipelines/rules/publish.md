@@ -22,7 +22,7 @@ How the publish job of a release workflow publishes a package to npm: trusted pu
 
 ### PUBLISH-03
 - **Severity:** required
-- **Rule:** A monorepo with two or more published packages (the `monorepo` fact, and at least two `package_kind` entries with the value published) publishes in dependency order, with a tool that does this: `changeset publish`, `pnpm -r publish` (also `pnpm publish -r` and `--recursive`), or `changesets/action` whose `publish:` input is one of them. A loop, a matrix or `npm publish --workspaces` is a finding.
+- **Rule:** A monorepo with two or more published packages (the `monorepo` fact, and at least two `package_kind` entries with the value published) publishes in dependency order, with a tool that does this: `changeset publish`, `pnpm -r publish` (also `pnpm publish -r` and `--recursive`), or `changesets/action` whose `publish:` input is one of them. A runner such as `pnpm exec changeset publish` or `npx changeset publish` is the same tool. A `run <script>` command is not read, so it is a finding. A loop, a matrix or `npm publish --workspaces` is a finding.
 - **Check:** mechanical: the publish step of a monorepo with two or more published packages is one of the listed tool forms.
 - **Fix:** Publish with `changeset publish` or `pnpm -r publish` in one step, and remove the loop or the matrix.
 

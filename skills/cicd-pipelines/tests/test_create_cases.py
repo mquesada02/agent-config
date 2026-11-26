@@ -387,7 +387,7 @@ class CdCases(unittest.TestCase):
             if "text=npm ci" in asserts[WF + "release.yml"]:
                 release = (re.sub(r"      - name: Set up pnpm\n        uses: pnpm/action-setup@.*\n", "", release, count=1)
                            .replace("pnpm install --frozen-lockfile", "npm ci")
-                           .replace("publish: pnpm run release", "publish: npm run release"))
+                           .replace("publish: pnpm exec changeset publish", "publish: npx changeset publish"))
             files = {WF + "ci.yml": filled(name, cd_form),
                      WF + "deploy.yml": fill(read(DEPLOY)),
                      WF + "rollback.yml": fill(read(ROLLBACK)),
