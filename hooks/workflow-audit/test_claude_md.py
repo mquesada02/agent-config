@@ -321,10 +321,10 @@ class DeferredMinorsFilingRuleTest(RuleTextCase):
         self.rule = self.section8[start:self.section8.index("After merging, run", start)]
 
     def test_section_six_step_four_points_to_the_post_merge_step(self):
-        step_4 = section(self.root, 6)
-        self.assert_in(step_4, "Leave them unfixed in this task, because fixing them would reopen the review. "
+        section_6 = section(self.root, 6)
+        self.assert_in(section_6, "Leave them unfixed in this task, because fixing them would reopen the review. "
                        "After the merge, the filer that section 8 names files them as an issue.\n5.")
-        self.assert_not_in(step_4, "the main session for its own task, the coordinator for a worker's PR")
+        self.assert_not_in(section_6, "the main session for its own task, the coordinator for a worker's PR")
 
     def test_the_audit_step_copies_the_done_report_numbers_from_the_ledger(self):
         self.assert_in(section(self.root, 6), "It lists the deferred Minor findings. Copy the round counts of each loop phase, "
