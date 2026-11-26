@@ -95,7 +95,7 @@ ROLLBACK cases: `rollback-01-...` to `rollback-06-...` (one bad fixture for each
 - `rollback-01-no-rollback-workflow` has no `rollback.yml`. ROLLBACK-01 is tested with a missing file only: its trigger, tag-ref and free-text version parts are covered by the rule text.
 - `rollback-02-rollback-builds`: the rollback job installs and builds.
 - `rollback-03-run-artifact-only`: the `package` job of `deploy.yml` stores the zip only with `actions/upload-artifact`. The deploy and rollback scripts stay as they are.
-- `rollback-04-parallel-prod-targets`: a matrix of two functions with no `max-parallel`.
+- `rollback-04-parallel-prod-targets`: a matrix of two functions with `max-parallel: 1` under the shared group `deploy-${{ inputs.environment }}`. The matrix is the finding, not the missing `max-parallel`.
 - `rollback-05-native-rollback-disabled`: the rollback step is `aws cloudformation deploy` with `--disable-rollback`.
 - `rollback-06-other-concurrency-group`: the rollback group is `rollback-${{ inputs.environment }}`.
 
