@@ -2,6 +2,7 @@
 
 They prove the digest check, the version check and the staging-record check, and the success paths.
 """
+import os
 import unittest
 
 from fake_cli import SHA, Sandbox
@@ -45,6 +46,17 @@ class DeployAndVerify(unittest.TestCase):
         self.assertEqual(run.code, 1)
         self.assertIn("::error::", run.out + run.err)
         self.assertEqual(len(run.called("curl")), 3)
+
+    def test_a_large_body_with_the_sha_at_the_start_passes_the_version_check(self):
+        # GNU `grep -q` exits at the first match. This fake `grep` does the same after the first 64 bytes, so the
+        # test does not depend on which `grep` the host has. The body is larger than the 64 KiB pipe buffer.
+        fake_grep = os.path.join(self.box.bin, "grep")
+        with open(fake_grep, "w", encoding="utf-8") as handle:
+            handle.write('#!/usr/bin/env bash\nchunk="$(head -c 64)"\ncase "$chunk" in *"${@: -1}"*) exit 0 ;; esac\nexit 1\n')
+        os.chmod(fake_grep, 0o755)
+        run = self.box.run(DEPLOY, *ARGS, FAKE_BODY=SHA + "x" * 100000, VERIFY_TRIES="1")
+        self.assertEqual(run.code, 0, run.err)
+        self.assertEqual(len(run.called("curl")), 1)
 
     def test_a_failing_endpoint_fails_the_version_check(self):
         run = self.box.run(DEPLOY, *ARGS, FAKE_CURL_FAIL="1", VERIFY_TRIES="2")

@@ -52,7 +52,8 @@ esac
 
 # The version check: an old version that answers 200 must not pass.
 for _ in $(seq "$tries"); do
-  if curl -fsS "$version_url" | grep -qF "$sha"; then
+  # Read the whole body first: a match must not close a pipe early, because pipefail would then report curl's status.
+  if body="$(curl -fsS "$version_url")" && grep -qF "$sha" <<< "$body"; then
     exit 0
   fi
   sleep "$pause"
