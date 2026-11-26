@@ -154,6 +154,11 @@ class DenyTest(unittest.TestCase):
     def test_an_apostrophe_in_an_earlier_comment_does_not_deny_a_plain_last_line(self):
         self.assertEqual(rewritten(run_pre(bash_pre_event("# don't\nls")))["command"], "# don't\nls" + SUFFIX)
 
+    def test_a_comment_after_an_operator_or_at_the_command_start_is_denied(self):
+        for command in ("#x", "echo a;#c", "echo a|#c", "(#c", "echo a &&#c"):
+            with self.subTest(command=command):
+                self.assert_denied(command, "comment on the last line")
+
     def test_a_comment_after_a_line_continuation_is_denied(self):
         self.assert_denied("echo a \\\n# c", "comment on the last line")
 
