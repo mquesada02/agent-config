@@ -514,8 +514,14 @@ class PublishRules(unittest.TestCase):
     def test_publish_01_treats_an_exact_node_24_below_24_5_0_as_an_npm_finding(self):
         rule = self.publish["PUBLISH-01"]["Rule"]
         for text in ("24.5.0 is the first Node 24 release that bundles npm 11.5.1",
-                     "an exact version from `24.0.0` up to, but not including, `24.5.0`, pass the Node check, "
+                     "an exact version or a `<major>.<minor>` from `24.0` up to, but not including, `24.5`, pass the Node check, "
                      "and it is a finding for the npm check unless a step"):
+            self.assertIn(text, rule)
+
+    def test_publish_01_reads_a_v_prefix_and_a_major_minor_version(self):
+        rule = self.publish["PUBLISH-01"]["Rule"]
+        for text in ("`<major>.x` or `<major>.<minor>`", "A leading `v` (`v24.5.0`) is dropped before the version is read",
+                     "`<major>.<minor>` resolves to the latest release of that minor line, so `24.4` resolves below 24.5.0"):
             self.assertIn(text, rule)
 
     def test_publish_02_wants_a_frozen_install_and_no_cache(self):
@@ -654,8 +660,13 @@ class ProtectRules(unittest.TestCase):
 
     def test_protect_07_checks_a_ruleset_comment_with_the_word_tag_against_a_tag_ruleset(self):
         rule = self.protect["PROTECT-07"]["Rule"]
-        self.assertIn("a line that holds `ruleset` and the word `tag` needs an active tag ruleset", rule)
-        self.assertIn("`ruleset` without the word `tag`, both `rulesets` and `classic_protection`", rule)
+        self.assertIn("a line that holds `ruleset` and the word `tag` or `tags` (case does not matter) needs an active tag ruleset", rule)
+        self.assertIn("`ruleset` without the word `tag` or `tags`, both `rulesets` and `classic_protection`", rule)
+
+    def test_protect_07_checks_a_ruleset_comment_that_names_a_tag_and_a_branch_against_both_rulesets(self):
+        rule = self.protect["PROTECT-07"]["Rule"]
+        self.assertIn("when that same line also names a branch (`branch`, `main` or the default branch name) "
+                      "it also needs an active branch ruleset or `classic_protection.protected: true`", rule)
 
     def test_protect_08_is_a_judgement_on_repo_wide_role_arns_and_app_keys(self):
         rule = self.protect["PROTECT-08"]["Rule"]
