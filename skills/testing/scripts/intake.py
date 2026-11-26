@@ -207,6 +207,8 @@ OTHER_MANIFESTS = (
 TS_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".cjs")
 TEST_FILE = re.compile(r"\.(?:test|spec)\.(?:js|ts|jsx|tsx|mjs|cjs|mts|cts)$")
 SCRIPT_FILE = re.compile(r"\.(?:js|ts|jsx|tsx|mjs|cjs|mts|cts)$")
+# File name stems of the node:test patterns in TS_FILE_PATTERNS (the test/ folder is checked apart).
+NODE_TEST_STEM = re.compile(r"^(?:test|test[-.].+|.+[.\-_]test)$")
 MAX_DEPTH = 8
 LOCKFILES = (
     ("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("package-lock.json", "npm"),
@@ -642,11 +644,13 @@ def scan_typescript(base):
         snapshots = snapshots or "__snapshots__" in dirs
         for name in names:
             snapshots = snapshots or name.endswith(".snap")
-            if TEST_FILE.search(name) or "__tests__" in parts:
+            is_test = TEST_FILE.search(name) or "__tests__" in parts
+            if is_test:
                 tops.add(parts[0] if parts else ".")
-                if SCRIPT_FILE.search(name) and not imports:
-                    text = read_text(os.path.join(current, name))
-                    imports = text is not None and "node:test" in text
+            if not imports and SCRIPT_FILE.search(name) and (
+                    is_test or "test" in parts or NODE_TEST_STEM.match(os.path.splitext(name)[0])):
+                text = read_text(os.path.join(current, name))
+                imports = text is not None and "node:test" in text
     return sorted(tops), imports, snapshots
 
 
@@ -664,7 +668,7 @@ def typescript_facts(repo, root):
 
     field = pkg.get("packageManager")
     manager_name = field.split("@")[0] if isinstance(field, str) else ""
-    if manager_name:
+    if manager_name in EXEC:
         manager = fact(manager_name, "detected", "package.json packageManager")
     else:
         manager = None
@@ -673,7 +677,7 @@ def typescript_facts(repo, root):
             if any(os.path.isfile(os.path.join(folder, lockfile)) for folder in folders):
                 manager = fact(name, "detected", lockfile)
                 break
-        manager = manager or fact("npm", "default", "no packageManager field and no lockfile")
+        manager = manager or fact("npm", "default", "no supported packageManager field and no lockfile")
     pm = manager["value"]
     prefix = EXEC.get(pm, "npx")
 
