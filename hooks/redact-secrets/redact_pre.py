@@ -38,6 +38,8 @@ HEREDOC = re.compile(r"(?<!<)<<(?!<)")
 # Longest first, so `&&` is named before `&` and `||` before `|`.
 ENDINGS = ("&&", "||", ";", "&", "\\", "|")
 COMMENT = re.compile(r"^\s*#|\s#")
+# A `#` starts a comment only at the start of a word: after the line start, whitespace or a shell operator.
+WORD_START_BEFORE = " \t\r\n;&|()<>"
 TRAILING = " \t\r\n"
 
 ADVICE = {
@@ -45,6 +47,60 @@ ADVICE = {
     "ending": "remove the trailing operator or put a command after it",
     "comment": "remove the comment or move it to its own earlier line",
 }
+
+
+def last_line_has_comment(command):
+    """True when the last line of the command holds a real shell comment.
+
+    It scans the whole command, because a quote can open on an earlier line. It tracks single quotes, double
+    quotes, `$'...'` strings and backslash escapes. A `#` is a comment only at the start of a word outside every
+    quote. It fails closed: when it cannot be sure (a quote still open at the end, or a command substitution
+    `$(`, a backtick or a `${` anywhere outside single quotes), the result of the plain COMMENT pattern stands.
+    """
+    last_line_start = command.rfind("\n") + 1
+    fallback = COMMENT.search(command[last_line_start:]) is not None
+    state = None  # None (unquoted), "'", '"' or "$'"
+    escaped = -1
+    i = 0
+    while i < len(command):
+        char = command[i]
+        if state == "'":
+            if char == "'":
+                state = None
+        elif state == "$'":
+            if char == "\\":
+                i += 1
+            elif char == "'":
+                state = None
+        elif state == '"':
+            if char == "\\":
+                i += 1
+            elif char == '"':
+                state = None
+            elif char == "`" or command.startswith(("$(", "${"), i):
+                return fallback
+        elif char == "\\":
+            i += 1
+            # the escaped character is part of a word, so it does not end one (a line continuation does)
+            escaped = i if command[i:i + 1] != "\n" else -1
+        elif char == "'":
+            state = "'"
+        elif char == '"':
+            state = '"'
+        elif command.startswith("$'", i):
+            state = "$'"
+            i += 1
+        elif char == "`" or command.startswith(("$(", "${"), i):
+            return fallback
+        elif char == "#" and (i == 0 or (command[i - 1] in WORD_START_BEFORE and escaped != i - 1)):
+            if i >= last_line_start:
+                return True
+            # a comment on an earlier line: its quotes are not quotes, so skip to the end of that line
+            i = command.index("\n", i) - 1
+        i += 1
+    if state is not None:
+        return fallback
+    return False
 
 
 def unsafe_cause(command):
@@ -55,7 +111,7 @@ def unsafe_cause(command):
     for ending in ENDINGS:
         if last_line.endswith(ending):
             return "last line ends with `%s`" % ending, ADVICE["ending"]
-    if COMMENT.search(last_line):
+    if last_line_has_comment(command):
         return "comment on the last line", ADVICE["comment"]
     return None
 

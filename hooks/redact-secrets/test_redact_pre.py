@@ -76,6 +76,21 @@ class RewriteTest(unittest.TestCase):
         self.assertEqual(self.command_after("echo a#b"), "echo a#b" + SUFFIX)
         self.assertEqual(self.command_after("echo ${#x}"), "echo ${#x}" + SUFFIX)
 
+    def test_a_hash_inside_a_closed_quote_is_safe(self):
+        for command in (
+            'gh issue create --title "Findings from PR #12" --body-file body.md',
+            'git commit -m "fix: thing" -m "Refs #42"',
+            "echo 'a #b'",
+            "echo $'a #b'",
+            "echo $'a \\' #b'",
+            'echo "a \\" #b"',
+            "echo a\\ #b",
+            'echo "a\n #b"',
+            "echo $#",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.command_after(command), command + SUFFIX)
+
     def test_a_comment_on_an_earlier_line_is_safe(self):
         self.assertEqual(self.command_after("# note\nls"), "# note\nls" + SUFFIX)
 
@@ -129,8 +144,27 @@ class DenyTest(unittest.TestCase):
         self.assert_denied("ls\n# done", "comment on the last line")
         self.assert_denied("ls\n   # done", "comment on the last line")
 
-    def test_a_quoted_hash_after_a_space_is_a_deliberate_false_deny(self):
-        self.assert_denied("echo \"a #b\"", "comment on the last line")
+    def test_a_comment_after_a_quote_that_spans_lines_is_denied(self):
+        self.assert_denied("echo \"a\nb\" # c", "comment on the last line")
+
+    def test_an_apostrophe_in_an_earlier_comment_does_not_hide_the_last_line_comment(self):
+        self.assert_denied("# don't\necho a # it's", "comment on the last line")
+        self.assert_denied("echo a # don't\necho b # it's", "comment on the last line")
+
+    def test_an_apostrophe_in_an_earlier_comment_does_not_deny_a_plain_last_line(self):
+        self.assertEqual(rewritten(run_pre(bash_pre_event("# don't\nls")))["command"], "# don't\nls" + SUFFIX)
+
+    def test_a_comment_after_a_line_continuation_is_denied(self):
+        self.assert_denied("echo a \\\n# c", "comment on the last line")
+
+    def test_an_unclosed_quote_with_a_hash_is_denied(self):
+        self.assert_denied("echo \"a #b", "comment on the last line")
+        self.assert_denied("echo 'a #b", "comment on the last line")
+
+    def test_a_hash_inside_a_substitution_is_denied(self):
+        self.assert_denied("echo $(x # y)", "comment on the last line")
+        self.assert_denied("echo `x # y`", "comment on the last line")
+        self.assert_denied("echo \"$(x # y)\"", "comment on the last line")
 
     def test_a_trailing_comment_is_denied(self):
         self.assert_denied("ls # done", "comment on the last line")
