@@ -988,7 +988,7 @@ def _s2_step(step, root, current):
 
 def _s2_after_cause(after):
     after = after.lstrip(" \t")
-    for start, cause in (("||", "`||`"), ("|", "a pipe"), (";", "`;`"), ("&", "`&`"), ("\n", "a new line")):
+    for start, cause in (("||", "`||`"), ("|", "a pipe"), (";", "`;`"), ("&&", "`&&`"), ("&", "`&`"), ("\n", "a new line")):
         if after.startswith(start):
             return f"{cause} follows the declared command"
     if re.match(r"[0-9]*[<>]", after):

@@ -695,7 +695,7 @@ class S2Test(TranscriptCase):
         for template, cause in (("FOO=1 make test", "NAME=value prefix"), ("cd {wt} && FOO=1 make test", "NAME=value prefix"),
                                 ("git log; make test", "directly before"), ("git log & make test", "directly before"),
                                 ("make test | tail -3", "a pipe follows"), ("make test; echo", "`;` follows"), ("make test || true", "`||` follows"),
-                                ("make test &", "`&` follows"), ("make test 2>&1", "a redirection follows"),
+                                ("make test &", "`&` follows"), ("make test && python3 extra.py", "`&&` follows"), ("make test 2>&1", "a redirection follows"),
                                 ("git log || true && make test", "shell syntax"), ("git log $(id) && make test", "shell syntax"),
                                 ("git log `id` && make test", "shell syntax"), ("cd ~ && make test", "shell syntax"),
                                 ("git commit --template=x && make test", "shell syntax"), ("git commit -m \"$x\" && make test", "shell syntax"),
