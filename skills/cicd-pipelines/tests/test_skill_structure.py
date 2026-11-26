@@ -1110,23 +1110,24 @@ class ReviewSteps(unittest.TestCase):
         contract = read(os.path.join(SKILL, "review.md"))
         examples = re.findall(r"^\s*- `(Intake: [^`]*)`$", contract, re.MULTILINE)
         self.assertEqual(len(examples), 2)
-        several, none = examples
-        self.assertTrue(several.endswith(")."))
-        self.assertGreater(len(re.findall(r"\w+ \([^)]*\)", several.split("Defaults:")[1])), 1)
-        self.assertTrue(none.endswith("Defaults: none."))
+        with_defaults, no_defaults = examples
+        self.assertTrue(with_defaults.endswith(")."))
+        self.assertGreater(len(re.findall(r"\w+ \([^)]*\)", with_defaults.split("Defaults:")[1])), 1)
+        self.assertTrue(no_defaults.endswith("Defaults: none."))
         self.assertIn("stays on one line, also when it is long", contract)
         base = make_report()
         fixture_line = "Intake: pnpm, single package, private repo (2 vCPU). Defaults: none."
         self.assertIn(fixture_line, base)
-        for example in examples:
-            report = TempReport(base.replace(fixture_line, example))
+
+        def grade_with(intake_line):
+            report = TempReport(base.replace(fixture_line, intake_line))
             self.addCleanup(report.cleanup)
-            code, out, _ = run_script("grade_report.py", [report.path])
+            return run_script("grade_report.py", [report.path])
+
+        for example in examples:
+            code, out, _ = grade_with(example)
             self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), out)
-        broken = several.replace(" Defaults:", "\nDefaults:")
-        report = TempReport(base.replace(fixture_line, broken))
-        self.addCleanup(report.cleanup)
-        code, out, _ = run_script("grade_report.py", [report.path])
+        code, out, _ = grade_with(with_defaults.replace(" Defaults:", "\nDefaults:"))
         self.assertEqual(code, 1, out)
         self.assertIn("FAIL defaults:", out)
 
