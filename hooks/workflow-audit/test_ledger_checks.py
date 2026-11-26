@@ -122,7 +122,7 @@ class S3Test(LedgerChecksCase):
                                      env={"CLAUDE_CODE_SESSION_ID": "default-session"}, cwd=self.main).returncode, 0)
         self.assertEqual(self.ledger("finding", "--id", "I1", *loop, "--round", "1", "--loc", "a.py:1", "--type", "Minor",
                                      "--reason", "r", env={"CLAUDE_CODE_SESSION_ID": "session-b"}).returncode, 0)
-        self.assertEqual(self.ledger("status", "--finding", "I1", "--status", "fixed",
+        self.assertEqual(self.ledger("status", "--finding", "I1", "--status", "fixed", "--loop", "code-review",
                                      env={"CLAUDE_CODE_SESSION_ID": "session-c"}, cwd=self.root).returncode, 0)
         self.check(self.items(), "S3", "pass", "3 events, 1 findings, none open")
 
