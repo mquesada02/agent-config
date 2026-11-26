@@ -1,3 +1,4 @@
+import fnmatch
 import glob
 import json
 import os
@@ -1284,6 +1285,40 @@ class EvalReadme(unittest.TestCase):
         self.assertIn('--allow-tools "Bash(python3 *scripts/intake.py*)" '
                       '"Bash(python3 *scripts/check_pins.py*)"', text)
         self.assertNotIn("Bash(gh api", text)
+
+    @staticmethod
+    def group_globs(text):
+        """The `--case` globs of the group table: the backticked words of the second column."""
+        start = text.index("## Run the CD groups")
+        end = text.find("\n## ", start + 1)
+        section = text[start:end if end != -1 else len(text)]
+        globs = []
+        for line in section.splitlines():
+            cells = line.split("|")
+            if line.startswith("| ") and len(cells) > 3 and "`" in cells[2] and cells[1].strip() != "Group":
+                globs += re.findall(r"`([^`]+)`", cells[2])
+        return globs
+
+    @staticmethod
+    def unmatched_cases(text, cases):
+        globs = EvalReadme.group_globs(text)
+        return [c for c in cases if not any(fnmatch.fnmatchcase(c, g) for g in globs)]
+
+    def test_every_case_folder_is_in_a_group_row(self):
+        cases = sorted(p for p in os.listdir(os.path.join(SKILL, "evals"))
+                       if os.path.isdir(os.path.join(SKILL, "evals", p)))
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        self.assertTrue(cases)
+        self.assertTrue(self.group_globs(text))
+        self.assertEqual([], self.unmatched_cases(text, cases))
+
+    def test_a_case_folder_in_no_group_row_is_reported(self):
+        table = "## Run the CD groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n| A | `deploy-*` | x |\n"
+        self.assertEqual(["zzz-01"], self.unmatched_cases(table, ["deploy-01", "zzz-01"]))
+
+    def test_a_missing_group_table_fails(self):
+        with self.assertRaises(ValueError):
+            self.group_globs("no table here")
 
 
 if __name__ == "__main__":
