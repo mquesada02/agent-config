@@ -52,7 +52,7 @@ class DeployAndVerify(unittest.TestCase):
         # test does not depend on which `grep` the host has. The body is larger than the 64 KiB pipe buffer.
         fake_grep = os.path.join(self.box.bin, "grep")
         with open(fake_grep, "w", encoding="utf-8") as handle:
-            handle.write('#!/usr/bin/env bash\nchunk="$(head -c 64)"\ncase "$chunk" in *"$2"*) exit 0 ;; esac\nexit 1\n')
+            handle.write('#!/usr/bin/env bash\nchunk="$(head -c 64)"\ncase "$chunk" in *"${@: -1}"*) exit 0 ;; esac\nexit 1\n')
         os.chmod(fake_grep, 0o755)
         run = self.box.run(DEPLOY, *ARGS, FAKE_BODY=SHA + "x" * 100000, VERIFY_TRIES="1")
         self.assertEqual(run.code, 0, run.err)
