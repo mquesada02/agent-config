@@ -492,9 +492,12 @@ class ProtectionApprovalCases(unittest.TestCase):
     def test_each_case_has_its_files_and_its_name(self):
         for name in PROTECT_CASES:
             for part in ("prompt.md", "case.yaml", "expect.json", "scaffold.sh", "repo", "graders", "history.jsonl",
-                         os.path.join("repo", "rows", "row1.json"), os.path.join("repo", "rows", "row2.json"),
+                         os.path.join("repo", "rows", "row1.json"),
                          os.path.join("repo", "intake.json"), os.path.join("repo", ".github", "workflows", "deploy.yml")):
                 self.assertTrue(os.path.exists(case_path(name, part)), f"{name} has no {part}")
+            # Only the yes case has a second row: the no case ends the run after row 1.
+            self.assertEqual(os.path.exists(case_path(name, "repo", "rows", "row2.json")),
+                             name == "protect-approve-yes", name)
             text = read(case_path(name, "case.yaml"))
             self.assertRegex(text, rf"(?m)^name:\s*{re.escape(name)}\s*$")
             self.assertRegex(text, r"(?m)^\s*history_file:\s*history\.jsonl\s*$")
@@ -522,10 +525,18 @@ class ProtectionApprovalCases(unittest.TestCase):
             self.assertEqual(lines[2]["message"]["content"], "all")
             report = lines[1]["message"]["content"][0]["text"]
             self.assertIn("PROTECT-01 🔒", report)
-            self.assertIn("PROTECT-04 🔒", report)
             question = lines[3]["message"]["content"][0]["text"]
             self.assertIn("Write row 1 (PROTECT-01), write 1 of 1? Reply `yes` or `no`.", question)
             self.assertIn("```diff", question)
+            # The yes case has a second row that remains. The no case has none, so a `no` ends the run.
+            if name == "protect-approve-yes":
+                self.assertIn("PROTECT-04 🔒", report)
+                self.assertIn("Rows that remain: 2 (PROTECT-04, row file `rows/row2.json`).", question)
+            else:
+                self.assertNotIn("PROTECT-04", report)
+                self.assertIn("1 required", report)
+                self.assertNotIn("Rows that remain", question)
+                self.assertNotIn("row2", question)
 
     def test_the_history_diff_shows_the_whole_proposed_ruleset(self):
         for name in PROTECT_CASES:
@@ -602,7 +613,7 @@ class ProtectionApprovalCases(unittest.TestCase):
             "protection_rules": [{"id": 1, "type": "wait_timer", "wait_timer": 0}],
             "deployment_branch_policy": row2["seen"]["deployment_branch_policy"]}}])
         for name in PROTECT_CASES:
-            for file in ("row1.json", "row2.json"):
+            for file in ("row1.json", "row2.json") if name == "protect-approve-yes" else ("row1.json",):
                 done = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "protect_write.py"), "--show",
                                        case_path(name, "repo", "rows", file)], env=box.env(),
                                       capture_output=True, text=True)
