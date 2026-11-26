@@ -172,10 +172,14 @@ claude plugin eval skills/cicd-pipelines --case '<glob>' --no-publish -j 2 --run
 | PROTECT | `protect-0*` | The review run above. The glob leaves out `protect-approve-*`. |
 | Candidates | `fx-cd-*` | The review run above. |
 | Clean CD | `clean-cd` | The review run above. |
-| Triggers | `trigger-cd-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
+| Triggers | `trigger-cd-*` and `trigger-edit-workflow` | The review run above, once for each glob, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | General triggers | `trigger-general-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | Protection approval | `protect-approve-*` | The command of "Protection approval cases". |
-| Create | `create-cd-*` | The command of "Create cases", with this `--case` glob. |
+| CI review | `cost-*`, `graph-*`, `maint-*`, `merge-*`, `mono-*`, `name-*`, `sec-*`, `tool-*` and `fx-*` | The review run above, once for each glob. |
+| Clean CI | `clean` | The review run above. |
+| General | `general-review-*` and `general-clash-*` | The review run above, once for each glob. |
+| Approval | `approve-*` | The command of "Approval cases". |
+| Create | `create-*` and `general-create-*` | The command of "Create cases", with each `--case` glob. The general case grants `Write` and `Edit` the same way. |
 
 After each review run, grade it: `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results folder>/result.json`. After the create run, also run `scripts/grade_create_results.py`. Both read the result file and the kept traces.
 
