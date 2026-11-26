@@ -69,8 +69,27 @@ class VariableProgramWordTest(unittest.TestCase):
     def test_any_segment_with_a_variable_word_before_create_is_denied(self):
         self.assertIsNotNone(reason(f"ls $X {CREATE}"))
 
-    def test_variable_word_before_dispatch_is_not_covered(self):
-        self.assertIsNone(reason(f"$X {START_WORDS} --worktree new-child"))
+    def test_variable_word_before_dispatch_gets_the_worker_start_rules(self):
+        for program in self.PROGRAMS:
+            for value in ("new-child", "new-top-level"):
+                with self.subTest(program=program, value=value):
+                    self.assertIn("worker-start", reason(f"{program} {START_WORDS} --worktree {value}") or "")
+            with self.subTest(program=program, case="path"):
+                self.assertIsNone(reason(f"{program} {START_WORDS} --worktree path:/w/x"))
+        self.assertIn("worker-start", reason(f"$X {START_WORDS} --worktree $Y") or "")
+        self.assertIsNone(reason(f"grep $X {START_WORDS} --worktree new-child"))
+        self.assertIsNotNone(reason(f"ls $X {START_WORDS} --worktree new-child"))
+        self.assertIsNone(reason(f"$X {START_WORDS} --task t"))
+        for wrapper in WRAPPERS:
+            with self.subTest(wrapper=wrapper):
+                self.assertIsNotNone(reason(wrapper.format(f"$X {START_WORDS} --worktree new-child")))
+                self.assertIsNone(reason(wrapper.format(f"$X {START_WORDS} --worktree path:/w/x")))
+
+    def test_hook_run_variable_word_before_dispatch(self):
+        for form in ('"$ORCA"', "$ORCA"):
+            deny = run_hook(f"{form} {START_WORDS} --worktree new-child --name x")
+            self.assertEqual(deny["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIsNone(run_hook(f"$X {START_WORDS} --worktree path:/w/x"))
 
     def test_unreadable_text_after_a_variable_word_is_denied(self):
         self.assertIsNotNone(reason(f"$X {CREATE} 'unclosed"))
