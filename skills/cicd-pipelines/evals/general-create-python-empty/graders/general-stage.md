@@ -1,5 +1,4 @@
 ---
 type: regex
-pattern: '^\s*\d+\.\s.*\bGEN-\d\d\b'
-flags: m
+pattern: '^(?![\s\S]*\n[ \t]*\d+\.\s(?![^\n]*\bFollows\s+GEN-\d\d\b))[\s\S]*\n[ \t]*\d+\.\s'
 ---

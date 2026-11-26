@@ -259,7 +259,7 @@ The general-mode cases check the fallback for a repo with an uncovered part (see
 | `general-create-python-empty` | Empty repo (only `intake.json`), and the request asks for a Python pipeline | The general create plan: `General guidance:` on line 1, a numbered stage plan where each stage names a GEN id, and the last line `The skill edits no file in general mode.` No file is written. |
 
 - `general-report.md` (a `regex` grader on `^General guidance:`) marks a general review. `grade_eval_results.py` scores each case that has it, as it scores each case that has `section-summary`. The clash case and the create case have no marker, so the script does not score them: their replies are not reports.
-- The create case has 3 `regex` graders: `general-line-1.md` (`^General guidance:`), `general-stage.md` (a numbered line that names a GEN id) and `general-last-line.md` (the last line of the reply). A model run judges the rest of the plan.
+- The create case has 3 `regex` graders: `general-line-1.md` (`^General guidance:`), `general-stage.md` (every numbered line holds `Follows GEN-NN`; `grade_rule_ids.py REPLY --plan rules/general.md` also checks that each id is an entry of `rules/general.md`) and `general-last-line.md` (the last line of the reply). A model run judges the rest of the plan.
 - An `expect-GEN-NN.md` grader finds the id in the first cell of a row (`^\|\s*GEN-NN\s*\|`), because the general table has no `#` column.
 - The `no-edit.md`, `no-write.md` and `no-shell-write.md` graders of a general case match any path, not only `.github/workflows`, because general mode writes no file.
 - `no-fallback.md` (a `regex` grader with `match: not_contains` on `General guidance:`) is in the clash case and in `clean`: a covered repo must not use the fallback.

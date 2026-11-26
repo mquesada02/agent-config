@@ -20,7 +20,8 @@ CLASH = "general-clash-rust-node"
 CREATE = "general-create-python-empty"
 ALL_CASES = (*GENERAL_REVIEW, CLASH, CREATE)
 CREATE_GRADERS = {"general-line-1.md": ("^General guidance:", "m"),
-                  "general-stage.md": (r"^\s*\d+\.\s.*\bGEN-\d\d\b", "m"),
+                  "general-stage.md": (r"^(?![\s\S]*\n[ \t]*\d+\.\s(?![^\n]*\bFollows\s+GEN-\d\d\b))"
+                                       r"[\s\S]*\n[ \t]*\d+\.\s", None),
                   "general-last-line.md": (r"The skill edits no file in general mode\.\s*$", None)}
 GEN_IDS = {rule_id for _, rule_id, _ in general_rules()}
 SKILL_MD = read(os.path.join(SKILL, "SKILL.md"))
@@ -205,6 +206,9 @@ class GeneralCaseGraders(unittest.TestCase):
         self.assertTrue(stage.search(good))
         self.assertTrue(last.search(good))
         self.assertIsNone(stage.search("1. Checkout: get the code.\n"))
+        one_bad = good.replace("2. Test: run pytest. Follows GEN-05, GEN-17.", "2. Test: run pytest.")
+        self.assertIsNone(stage.search(one_bad))
+        self.assertIsNone(stage.search(good.replace("Follows GEN-05.", "See GEN-05.")))
         self.assertIsNone(line1.search("Here is a plan. General guidance: x"))
         self.assertIsNone(last.search(good + "Then the normal flow follows.\n"))
 

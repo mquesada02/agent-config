@@ -1,9 +1,17 @@
 import os
+import re
 import unittest
 
 from report_fixtures import TempReport, general_row, make_general_report, make_report, row, run_script
+from skill_files import RULES, SKILL, frontmatter
 
 SCRIPT = "grade_rule_ids.py"
+GENERAL_RULES = os.path.join(RULES, "general.md")
+STAGE_GRADER = os.path.join(SKILL, "evals", "general-create-python-empty", "graders", "general-stage.md")
+PLAN = ("General guidance: this repo uses Python with no CI system yet.\n\n"
+        "1. Checkout: get the code. Follows GEN-05.\n"
+        "2. Test: run pytest. Follows GEN-05, GEN-17.\n\n"
+        "The skill edits no file in general mode.\n")
 
 
 class GradeRuleIds(unittest.TestCase):
@@ -126,6 +134,50 @@ class GradeRuleIds(unittest.TestCase):
         text = "| # | Rule | Where |\n|---|---|---|\n| 1 |\n"
         code, out, _ = self.grade(text, "--forbid", "1")
         self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def plan(self, text):
+        return self.grade(text, "--plan", GENERAL_RULES)
+
+    def test_a_good_create_plan_passes(self):
+        code, out, _ = self.plan(PLAN)
+        self.assertEqual((code, self.last_line(out)), (0, "PASS"), out)
+
+    def test_a_plan_with_a_stage_that_has_no_id_fails(self):
+        code, out, _ = self.plan(PLAN.replace("2. Test: run pytest. Follows GEN-05, GEN-17.", "2. Test: run pytest."))
+        self.assertEqual((code, self.last_line(out)), (1, "FAIL"), out)
+        self.assertIn("FAIL plan:stage 2:", out)
+
+    def test_a_plan_with_an_unknown_id_fails(self):
+        code, out, _ = self.plan(PLAN.replace("GEN-17", "GEN-99"))
+        self.assertEqual((code, self.last_line(out)), (1, "FAIL"), out)
+        self.assertIn("FAIL plan:GEN-99:", out)
+
+    def test_a_plan_with_an_id_outside_follows_fails(self):
+        code, out, _ = self.plan(PLAN.replace("Follows GEN-05.", "See GEN-05."))
+        self.assertEqual((code, self.last_line(out)), (1, "FAIL"), out)
+
+    def test_a_plan_with_no_numbered_line_fails(self):
+        code, out, _ = self.plan("General guidance: x\n")
+        self.assertEqual((code, self.last_line(out)), (1, "FAIL"), out)
+
+    def test_a_rules_file_with_no_entry_fails_closed(self):
+        rules = TempReport("no entries here\n")
+        self.addCleanup(rules.cleanup)
+        code, out, _ = self.grade(PLAN, "--plan", rules.path)
+        self.assertEqual((code, self.last_line(out)), (1, "FAIL"), out)
+
+    def test_an_unreadable_rules_file_is_a_usage_error(self):
+        code, _, err = self.grade(PLAN, "--plan", os.path.join("no", "such", "rules.md"))
+        self.assertEqual(code, 2)
+        self.assertIn("rules file", err)
+
+    def test_the_regex_grader_and_the_script_agree_on_the_format(self):
+        stage = re.compile(frontmatter(STAGE_GRADER)["pattern"])
+        bad = PLAN.replace("2. Test: run pytest. Follows GEN-05, GEN-17.", "2. Test: run pytest.")
+        for text, passes in ((PLAN, True), (bad, False), (PLAN.replace("Follows GEN-05.", "See GEN-05."), False),
+                             (PLAN.replace("GEN-05, GEN-17", "GEN-05 and GEN-17"), True)):
+            code, _, _ = self.plan(text)
+            self.assertEqual((bool(stage.search(text)), code == 0), (passes, passes), text)
 
     def test_an_unreadable_report_is_a_usage_error(self):
         code, _, err = run_script(SCRIPT, [os.path.join("no", "such", "report.md")])
