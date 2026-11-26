@@ -156,7 +156,7 @@ The 10 `fx-cd-*` cases are the multi-rule candidates of the sample catalog. Nine
 
 Neither case has a marker grader, so `grade_eval_results.py` does not score them.
 
-## Run the CD groups
+## Run the groups
 
 Run each group by hand, from the repo root. Put the results outside the repo, and never commit them. Use the review run of "Run" for the review groups, and change only `--case`:
 
@@ -175,7 +175,7 @@ claude plugin eval skills/cicd-pipelines --case '<glob>' --no-publish -j 2 --run
 | Triggers | `trigger-cd-*` and `trigger-edit-workflow` | The review run above, once for each glob, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | General triggers | `trigger-general-*` | The review run above, with no `--allow-tools`: the cases allow `Read`, `Glob`, `Grep` and `Skill`. |
 | Protection approval | `protect-approve-*` | The command of "Protection approval cases". |
-| CI review | `cost-*`, `graph-*`, `maint-*`, `merge-*`, `mono-*`, `name-*`, `sec-*`, `tool-*` and `fx-*` | The review run above, once for each glob. |
+| CI review | `cost-*`, `graph-*`, `maint-*`, `merge-*`, `mono-*`, `name-*`, `sec-*`, `tool-*`, `fx-duplicate-build`, `fx-inline-tests`, `fx-no-limits`, `fx-paths-required`, `fx-sequential-quality`, `fx-suite-list` and `fx-token-in-run` | The review run above, once for each glob or name. The `fx-cd-*` cases are in the Candidates row. |
 | Clean CI | `clean` | The review run above. |
 | General | `general-review-*` and `general-clash-*` | The review run above, once for each glob. |
 | Approval | `approve-*` | The command of "Approval cases". |

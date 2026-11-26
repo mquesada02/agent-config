@@ -1287,34 +1287,75 @@ class EvalReadme(unittest.TestCase):
         self.assertNotIn("Bash(gh api", text)
 
     @staticmethod
-    def group_globs(text):
-        """The `--case` globs of the group table: the backticked words of the second column."""
-        start = text.index("## Run the CD groups")
+    def group_rows(text):
+        """The `--case` globs of each row of the group table: the backticked words of the second column."""
+        start = text.index("## Run the groups")
         end = text.find("\n## ", start + 1)
         section = text[start:end if end != -1 else len(text)]
-        globs = []
+        rows = []
         for line in section.splitlines():
             cells = line.split("|")
             if line.startswith("| ") and len(cells) > 3 and "`" in cells[2] and cells[1].strip() != "Group":
-                globs += re.findall(r"`([^`]+)`", cells[2])
-        return globs
+                rows.append(re.findall(r"`([^`]+)`", cells[2]))
+        return rows
+
+    @staticmethod
+    def group_globs(text):
+        return [g for row in EvalReadme.group_rows(text) for g in row]
 
     @staticmethod
     def unmatched_cases(text, cases):
         globs = EvalReadme.group_globs(text)
         return [c for c in cases if not any(fnmatch.fnmatchcase(c, g) for g in globs)]
 
+    @staticmethod
+    def multi_row_cases(text, cases):
+        rows = EvalReadme.group_rows(text)
+        return [c for c in cases
+                if sum(any(fnmatch.fnmatchcase(c, g) for g in row) for row in rows) > 1]
+
+    @staticmethod
+    def unmatched_globs(text, cases):
+        return [g for g in EvalReadme.group_globs(text)
+                if not any(fnmatch.fnmatchcase(c, g) for c in cases)]
+
+    def case_folders(self):
+        return sorted(p for p in os.listdir(os.path.join(SKILL, "evals"))
+                      if os.path.isdir(os.path.join(SKILL, "evals", p)))
+
     def test_every_case_folder_is_in_a_group_row(self):
-        cases = sorted(p for p in os.listdir(os.path.join(SKILL, "evals"))
-                       if os.path.isdir(os.path.join(SKILL, "evals", p)))
+        cases = self.case_folders()
         text = read(os.path.join(SKILL, "evals", "README.md"))
         self.assertTrue(cases)
         self.assertTrue(self.group_globs(text))
         self.assertEqual([], self.unmatched_cases(text, cases))
 
+    def test_every_case_folder_is_in_one_group_row(self):
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        self.assertEqual([], self.multi_row_cases(text, self.case_folders()))
+
+    def test_every_group_glob_matches_a_case_folder(self):
+        text = read(os.path.join(SKILL, "evals", "README.md"))
+        self.assertEqual([], self.unmatched_globs(text, self.case_folders()))
+
     def test_a_case_folder_in_no_group_row_is_reported(self):
-        table = "## Run the CD groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n| A | `deploy-*` | x |\n"
+        table = "## Run the groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n| A | `deploy-*` | x |\n"
         self.assertEqual(["zzz-01"], self.unmatched_cases(table, ["deploy-01", "zzz-01"]))
+
+    def test_a_case_folder_in_two_group_rows_is_reported(self):
+        table = ("## Run the groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n"
+                 "| A | `fx-*` | x |\n| B | `fx-cd-*` | x |\n")
+        self.assertEqual(["fx-cd-a"], self.multi_row_cases(table, ["fx-cd-a", "fx-b"]))
+
+    def test_two_globs_of_one_row_that_match_one_case_are_not_reported(self):
+        table = ("## Run the groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n"
+                 "| A | `fx-*` and `fx-cd-*` | x |\n")
+        self.assertEqual([], self.multi_row_cases(table, ["fx-cd-a"]))
+
+    def test_a_glob_that_matches_no_case_folder_is_reported(self):
+        table = ("## Run the groups\n\n| Group | `--case` glob | Run |\n|---|---|---|\n"
+                 "| A | `deploy-*` and `gone-*` | x |\n")
+        self.assertEqual(["gone-*"], self.unmatched_globs(table, ["deploy-01"]))
 
     def test_a_missing_group_table_fails(self):
         with self.assertRaises(ValueError):
