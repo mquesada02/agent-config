@@ -18,7 +18,7 @@ ROUND = ("--loop", "code-review", "--phase", "correctness", "--round", "1", "--r
 FINDING = ("--id", "I1", "--loop", "code-review", "--phase", "correctness", "--round", "1", "--loc", "a.py:3",
            "--type", "Blocking", "--reason", "it breaks")
 VERDICT = ("--finding", "I1", "--verifier", "ver1", "--result", "confirmed")
-STATUS = ("--finding", "I1", "--status", "fixed")
+STATUS = ("--finding", "I1", "--status", "fixed", "--loop", "code-review")
 
 
 def finding_flags(finding_id, loop="code-review", number="1", kind="Blocking"):
@@ -84,7 +84,7 @@ class AppendTest(LedgerCase):
         self.assertEqual(events[1], {"kind": "finding", "id": "I1", "loop": "code-review", "phase": "correctness", "round": 1,
                                      "loc": "a.py:3", "type": "Blocking", "reason": "it breaks"})
         self.assertEqual(events[2], {"kind": "verdict", "finding": "I1", "verifier": "ver1", "result": "confirmed"})
-        self.assertEqual(events[3], {"kind": "status", "finding": "I1", "status": "fixed"})
+        self.assertEqual(events[3], {"kind": "status", "finding": "I1", "status": "fixed", "loop": "code-review"})
         self.assertEqual(events[4], {"kind": "phase-commit", "sha": SHA})
 
     def test_the_time_has_millisecond_precision(self):
@@ -237,7 +237,27 @@ class ReplayRuleTest(LedgerCase):
         self.refused("status", *STATUS)
         self.first_round_and_finding()
         self.ok("status", *STATUS)
-        self.ok("status", "--finding", "I1", "--status", "deferred")
+        self.ok("status", "--finding", "I1", "--status", "deferred", "--loop", "code-review")
+
+    def test_a_status_holds_the_loop_of_its_finding(self):
+        self.first_round_and_finding()
+        self.ok("status", *STATUS)
+        self.assertEqual(self.written()[-1]["loop"], "code-review")
+
+    def test_a_status_of_another_loop_is_refused_and_names_both_loops(self):
+        self.first_round_and_finding()
+        message = self.refused("status", "--finding", "I1", "--status", "deferred", "--loop", "plan-review-3")
+        self.assertIn("code-review", message)
+        self.assertIn("plan-review-3", message)
+
+    def test_a_status_without_a_loop_is_refused(self):
+        self.first_round_and_finding()
+        self.assertIn("--loop", self.refused("status", "--finding", "I1", "--status", "fixed"))
+
+    def test_an_old_status_line_without_a_loop_replays(self):
+        self.write_ledger("feature", [round_event(), finding_event("I1"), status_event("I1", "fixed")])
+        self.assertEqual(self.audit("ledger", "show", "--worktree", self.repo).returncode, 0)
+        self.ok("status", "--finding", "I1", "--status", "deferred", "--loop", "code-review")
 
     def test_an_invalid_line_in_the_ledger_refuses_every_append(self):
         self.write_ledger("feature", [round_event(), "{not json"])

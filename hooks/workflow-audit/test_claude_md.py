@@ -63,6 +63,11 @@ class SectionSixTest(RuleTextCase):
                        "- `round`:", "- `finding`:", "- `finding-amend`:", "- `verdict`:", "- `status`:", "- `extension`:",
                        "- `phase-commit`:")
 
+    def test_the_status_bullet_names_the_required_loop_and_the_refusal_of_another_loop(self):
+        bullet = re.search(r"^- `status`:.*$", self.text, re.MULTILINE).group(0)
+        self.assert_in(bullet, "`--finding`, `--status` and `--loop`", "`--loop` is required", "must be the loop of `--finding`",
+                       "refuses a status event of another loop (exit 2, nothing written)")
+
     def test_the_finding_amend_bullet_names_the_repair_the_quote_rule_and_the_unchanged_fields(self):
         bullet = re.search(r"^- `finding-amend`:.*$", self.text, re.MULTILINE).group(0)
         self.assert_in(bullet, "`--id`", "`--reason`", "`--quote`", "`--raised`", "repairs the reason of an existing finding",
