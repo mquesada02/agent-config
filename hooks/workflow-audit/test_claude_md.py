@@ -127,7 +127,10 @@ class SectionSixTest(RuleTextCase):
 
     def test_the_audit_step_names_the_brief_the_push_the_pr_and_the_fail_rule(self):
         self.assert_in(self.text, "Before you tell the user that the task is done", "write the draft done report to your scratchpad",
-                       "Push the branch", "~/.claude/hooks/workflow-audit/auditor-brief.md",
+                       "After your last commit, run the declared test command alone, exactly as written, in the root folder of the worktree. "
+                       "Nothing goes before it except allowed `cd` or `git` steps joined by `&&`, and nothing goes after it. "
+                       "A background run (`run_in_background`) with no redirect counts. Push the branch.",
+                       "~/.claude/hooks/workflow-audit/auditor-brief.md",
                        "Give it the worktree path, the path of the draft done report, the path of the verdict file and the PR target "
                        "(the base branch of the PR).",
                        "`audit check`", "`audit record`", "open the PR with `gh pr create`",
