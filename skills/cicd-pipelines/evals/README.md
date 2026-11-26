@@ -199,9 +199,10 @@ Then run `python3 skills/cicd-pipelines/scripts/grade_eval_results.py <results f
 
 ## Protection approval cases
 
-`protect-approve-yes` and `protect-approve-no` test the protection write step of the fix flow. They are not review cases. The recorded history ends at the `--show` output of two protection rows and the step 2 question. The prompt is the reply (`yes` or `no`).
+`protect-approve-yes` and `protect-approve-no` test the protection write step of the fix flow. They are not review cases. Each case has its own recorded history, which ends at the `--show` output of the open protection rows and the step 2 question. The prompt is the reply (`yes` or `no`).
 
-- **Rows.** The row files are in `repo/rows/`: `row1.json` (a `POST` of a ruleset) and `row2.json` (a `PUT` of the prod environment). The sandbox has no GitHub credentials. So `--apply` of row 1 fails at its first read and stops all later writes.
+- **Rows.** `protect-approve-yes` has two rows in `repo/rows/`: `row1.json` (a `POST` of a ruleset) and `row2.json` (a `PUT` of the prod environment). The sandbox has no GitHub credentials. So `--apply` of row 1 fails at its first read and stops all later writes.
+- **The `no` case.** `protect-approve-no` has one row (`row1.json`, PROTECT-01) and its question lists no remaining row. So `no` is the answer to the last open row: the run ends, and the final message holds `## Applied` with a `not written` bullet. After a `no` on a row with later rows, the skill shows the next row question instead.
 - **Graders.** Each case has `gh-api-no-write.md` and its own graders for the apply call count and for the report of the stopped and not written rows.
 - **Run.** Run them by hand:
 
