@@ -538,7 +538,7 @@ class ProtectionApprovalCases(unittest.TestCase):
                 self.assertNotIn("Rows that remain", question)
                 self.assertNotIn("row2", question)
 
-    def test_only_the_yes_intake_has_a_prod_environment_with_no_reviewers(self):
+    def test_prod_reviewers_differ_between_the_yes_and_no_intakes(self):
         # The no report holds PROTECT-01 only, so its intake must not also give PROTECT-04.
         for name, reviewers in {"protect-approve-yes": False, "protect-approve-no": True}.items():
             with open(case_path(name, "repo", "intake.json"), encoding="utf-8") as handle:
