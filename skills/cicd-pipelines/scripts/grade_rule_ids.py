@@ -82,10 +82,16 @@ def main(argv):
     try:
         report = read_report(args.report)
         tokens = rule_tokens(report)
-        known = set(RULE_ENTRY.findall(read_report(args.plan))) if args.plan else None
     except (OSError, UnicodeDecodeError) as error:
         print(f"cannot read the report: {error}", file=sys.stderr)
         return 2
+    known = None
+    if args.plan:
+        try:
+            known = set(RULE_ENTRY.findall(read_report(args.plan)))
+        except (OSError, UnicodeDecodeError) as error:
+            print(f"cannot read the rules file: {error}", file=sys.stderr)
+            return 2
     failures = [f"FAIL expect:{rule}: not found in the Rule column"
                 for rule in args.expect if rule not in tokens]
     failures += [f"FAIL forbid:{rule}: found in the Rule column"

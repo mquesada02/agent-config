@@ -169,12 +169,13 @@ class GradeRuleIds(unittest.TestCase):
     def test_an_unreadable_rules_file_is_a_usage_error(self):
         code, _, err = self.grade(PLAN, "--plan", os.path.join("no", "such", "rules.md"))
         self.assertEqual(code, 2)
-        self.assertTrue(err.strip())
+        self.assertIn("rules file", err)
 
     def test_the_regex_grader_and_the_script_agree_on_the_format(self):
         stage = re.compile(frontmatter(STAGE_GRADER)["pattern"])
         bad = PLAN.replace("2. Test: run pytest. Follows GEN-05, GEN-17.", "2. Test: run pytest.")
-        for text, passes in ((PLAN, True), (bad, False), (PLAN.replace("Follows GEN-05.", "See GEN-05."), False)):
+        for text, passes in ((PLAN, True), (bad, False), (PLAN.replace("Follows GEN-05.", "See GEN-05."), False),
+                             (PLAN.replace("GEN-05, GEN-17", "GEN-05 and GEN-17"), True)):
             code, _, _ = self.plan(text)
             self.assertEqual((bool(stage.search(text)), code == 0), (passes, passes), text)
 
