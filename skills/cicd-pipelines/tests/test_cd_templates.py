@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from fake_cli import trash
-from skill_files import SKILL, read
+from skill_files import SKILL, read, rule_entries
 
 TEMPLATES = os.path.join(SKILL, "templates")
 DEPLOY = read(os.path.join(TEMPLATES, "deploy.yml"))
@@ -103,6 +103,14 @@ class ReleaseTemplate(unittest.TestCase):
     def test_the_release_has_one_workflow_group_with_no_cancel(self):
         self.assertRegex(RELEASE, r"(?m)^concurrency:\n  group: release\n  cancel-in-progress: false\n")
         self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: read\n")
+
+    def test_the_publish_input_is_a_command_that_publish_03_accepts(self):
+        rule = dict(rule_entries(os.path.join(SKILL, "rules", "publish.md")))["PUBLISH-03"]["Rule"]
+        inputs = re.findall(r"(?m)^\s+publish: (.+)$", RELEASE)
+        self.assertEqual(len(inputs), 1)
+        self.assertRegex(inputs[0], r"^(pnpm exec|npx) changeset publish$")
+        self.assertIn("`pnpm exec changeset publish`", rule)
+        self.assertIn("`npx changeset publish`", rule)
 
 
 class EveryCdFile(unittest.TestCase):

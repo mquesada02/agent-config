@@ -42,7 +42,7 @@ jobs:
       - name: Open the version PR or publish
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          publish: pnpm run release
+          publish: pnpm exec changeset publish
           createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
