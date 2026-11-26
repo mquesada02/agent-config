@@ -154,7 +154,7 @@
       },
       {
         "name": "prod",
-        "reviewers": false,
+        "reviewers": true,
         "wait_timer": 0,
         "branch_policy": "custom",
         "admin_bypass": false
