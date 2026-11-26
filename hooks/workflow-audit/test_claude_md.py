@@ -319,7 +319,8 @@ class DeferredMinorsFilingRuleTest(RuleTextCase):
 
     def test_section_six_step_four_points_to_the_post_merge_step(self):
         self.assert_in(section(self.root, 6), "Leave them unfixed in this task, because fixing them would reopen the review. "
-                       "After the merge, the session files them as an issue (section 8).")
+                       "After the merge, the filer that section 8 names files them as an issue: "
+                       "the main session for its own task, the coordinator for a worker's PR.")
 
     def test_the_step_names_who_files_for_a_main_session_task_and_for_a_worker_pr(self):
         self.assert_in(self.rule, "the session that ran the section 6 review loop files it",
