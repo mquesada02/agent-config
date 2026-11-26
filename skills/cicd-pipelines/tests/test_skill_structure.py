@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import unittest
 
+from report_fixtures import TempReport, make_report, run_script
 from skill_files import LEVELS, PREFIXES, SKILL, all_rules, frontmatter, level, read, rule_entries, rule_files
 
 FIELDS = ("Severity", "Rule", "Check", "Fix")
@@ -1104,6 +1105,31 @@ class ReviewSteps(unittest.TestCase):
         self.assertIn("`default`", self.text)
         self.assertIn("`unknown`", self.text)
         self.assertIn("offline", self.text)
+
+    def test_section_2_gives_two_example_intake_lines_that_the_grader_accepts(self):
+        contract = read(os.path.join(SKILL, "review.md"))
+        examples = re.findall(r"^\s*- `(Intake: [^`]*)`$", contract, re.MULTILINE)
+        self.assertEqual(len(examples), 2)
+        with_defaults, no_defaults = examples
+        self.assertTrue(with_defaults.endswith(")."))
+        self.assertGreater(len(re.findall(r"\w+ \([^)]*\)", with_defaults.split("Defaults:")[1])), 1)
+        self.assertTrue(no_defaults.endswith("Defaults: none."))
+        self.assertIn("stays on one line, also when it is long", contract)
+        base = make_report()
+        fixture_line = "Intake: pnpm, single package, private repo (2 vCPU). Defaults: none."
+        self.assertIn(fixture_line, base)
+
+        def grade_with(intake_line):
+            report = TempReport(base.replace(fixture_line, intake_line))
+            self.addCleanup(report.cleanup)
+            return run_script("grade_report.py", [report.path])
+
+        for example in examples:
+            code, out, _ = grade_with(example)
+            self.assertEqual((code, out.strip().splitlines()[-1]), (0, "PASS"), out)
+        code, out, _ = grade_with(with_defaults.replace(" Defaults:", "\nDefaults:"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL defaults:", out)
 
     def test_it_keeps_the_name_09_row_and_the_flag_mark(self):
         self.assertIn("name-09 row", self.text)

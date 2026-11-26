@@ -84,6 +84,10 @@ The report is your final message. The title line is `# cicd-pipelines review: <s
 
 1. The line `**Result: N critical, N required, N suggestions.**` right after the title line. The `N` are integers. Each count is the number of rows of that severity.
 2. A line that starts exactly with `Intake:` (the word and the colon, with no other word between them). It lists the facts and the defaults that you used, and it ends with `Defaults:` followed by each default that the review used (a fact with the status `default`, with its default value), or `Defaults: none.`. The line always ends with this `Defaults:` part, also when the repo facts are complete.
+
+   The whole `Intake:` line stays on one line, also when it is long. `Defaults:` is the last part of that same line: never put a line break before it. Two example lines:
+   - `Intake: pnpm, single package, private repo (2 vCPU). Defaults: plan (reviewers available), aws_variables (none), release_tool (none).`
+   - `Intake: pnpm, single package, private repo (2 vCPU). Defaults: none.`
 3. A line that starts `Required checks`. When the checks are read, it is ``Required checks (branch protection + rulesets, read-only): `A`, `B`.`` (or `none`). When they are not readable, it is `Required checks: unreadable (<source text of the fact>). Every current job name may be required.`
 4. The line `Tools:` and one bullet for each tool:
    - `- actionlint: on PATH (1.7.0)`
