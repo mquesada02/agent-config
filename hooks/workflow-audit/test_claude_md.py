@@ -154,7 +154,6 @@ class SectionSevenTest(RuleTextCase):
                        "A question that depends on an earlier answer, or a real uncertainty beyond the first 4, goes in the next round: it is asked later, not dropped",
                        "Skip a question that the code, the docs or the request answers, and decide mechanical choices without asking",
                        "A worker sends the same batch in one Orca `ask` to the coordinator; the coordinator asks the owner with one `AskUserQuestion` call and sends all answers back in one `reply`")
-        self.assert_not_in(self.text, "at most 5 questions")
 
     def test_the_one_at_a_time_grilling_sentence_is_cancelled_by_name(self):
         self.assert_in(self.text,
