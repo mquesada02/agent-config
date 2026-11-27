@@ -86,6 +86,10 @@ class S3Test(LedgerChecksCase):
                 self.check(items, "S3", "pass", "none open")
                 self.check(items, "S5", "pass", "none past a cap")
 
+    def test_a_spec_loop_finding_left_open_before_the_cap_round_still_fails_s3(self):
+        events = [round_event(n, loop="plan-review-3") for n in range(1, 5)] + [finding_event("P1", loop="plan-review-3", n=4, quote="the line")]
+        self.check(self.items(events), "S3", "fail", "1 findings have no status")
+
     def test_a_final_round_at_the_cap_lets_findings_of_any_phase_of_that_loop_stay_open(self):
         events = ([round_event(1), finding_event("I1", kind="Minor")]
                   + [round_event(n, **FINAL) for n in range(1, 4)])
