@@ -51,12 +51,35 @@ class S11PassTest(S11Case):
     def test_a_ledger_with_no_section_6_final_round_passes(self):
         self.assert_item(self.s11([], [round_event(loop="plan-review-3")]), "pass", "no section 6 final round")
 
+    def test_a_call_in_the_window_of_a_later_phase_commit_passes(self):
+        events = final_loop() + [phase_commit_event(SHA, time=at(40)), round_event(2, phase="final", time=at(60))]
+        item = self.s11([skill_row(50)], events)
+        self.assert_item(item, "pass", "1 /simplify calls after the phase-commit at 2026-10-15T12:00:40")
+
+    def test_a_rebase_ledger_with_a_call_only_in_the_first_window_passes(self):
+        events = final_loop() + [phase_commit_event(SHA, time=at(40)), round_event(2, phase="final", time=at(60))]
+        self.assert_item(self.s11([skill_row(20)], events), "pass", "1 /simplify calls after the phase-commit at 2026-10-15T12:00:10")
+
 
 class S11FailTest(S11Case):
     def test_no_call_fails_and_names_the_window(self):
         item = self.s11([], final_loop())
-        self.assert_item(item, "fail", "no /simplify call after the first phase-commit at 2026-10-15T12:00:10")
-        self.assertIn("before the first final round at 2026-10-15T12:00:30", item["evidence"])
+        self.assert_item(item, "fail", "no /simplify call after the phase-commit at 2026-10-15T12:00:10")
+        self.assertIn("before the final round at 2026-10-15T12:00:30", item["evidence"])
+
+    def test_no_call_names_every_window(self):
+        events = final_loop() + [phase_commit_event(SHA, time=at(40)), round_event(2, phase="final", time=at(60))]
+        item = self.s11([], events)
+        self.assert_item(item, "fail", "after the phase-commit at 2026-10-15T12:00:10")
+        self.assertIn("after the phase-commit at 2026-10-15T12:00:40", item["evidence"])
+
+    def test_a_call_after_a_later_phase_commit_with_no_final_round_fails(self):
+        events = final_loop() + [phase_commit_event(SHA, time=at(40))]
+        self.assert_item(self.s11([skill_row(50)], events), "fail", "no /simplify call")
+
+    def test_a_call_after_the_last_final_round_fails(self):
+        events = final_loop() + [phase_commit_event(SHA, time=at(40)), round_event(2, phase="final", time=at(60))]
+        self.assert_item(self.s11([skill_row(70)], events), "fail", "no /simplify call")
 
     def test_a_call_before_the_phase_commit_fails(self):
         self.assert_item(self.s11([skill_row(5), slash_row(6)], final_loop()), "fail", "no /simplify call")
