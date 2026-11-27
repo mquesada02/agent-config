@@ -125,12 +125,12 @@ The loop session also keeps a copy of the entries in the scratchpad, and gives t
 **Grilling in batches** (steps 1, 2 and 5.1): grilling sends one batch per round, in one `AskUserQuestion` call. A batch holds at most 4 questions, ranked with the most important first. Each question puts its recommended answer first, with "(Recommended)" in its label, and the owner accepts it by choosing that option. A question that depends on an earlier answer, or a real uncertainty beyond the first 4, goes in the next round: it is asked later, not dropped. Skip a question that the code, the docs or the request answers, and decide mechanical choices without asking. A worker sends the same batch in one Orca `ask` to the coordinator; the coordinator asks the owner with one `AskUserQuestion` call and sends all answers back in one `reply`. This rule cancels the grilling skill sentence "Ask the questions one at a time, waiting for feedback on each question before continuing.", so a plugin update cannot bring it back. It covers only grilling: caps, failed audits, size approvals and extensions keep their own rules.
 
 **Rulings** (steps 5.1 to 5.5, and the main session when it runs a ticket of step 4 itself; other sessions keep the rules of sections 1 and 6): the worker decides each choice that the spec, the map, the ticket or the repo already settles. It does not ask or grill for that choice. For each such decision it writes one line `Ruling: <what>, <why>, <cost if wrong>`, and it lists every ruling in its `worker_done` report. The coordinator passes the list to the owner with the PR report. The worker sends an `ask` only when one of these holds:
-1. The action is irreversible.
-2. The action is security-sensitive.
-3. The action has an effect outside the worktree.
-4. The spec is so broken that every path is a guess.
-5. The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.
-6. The spec has several defensible readings that change what gets built (section 1: "present them - don't pick silently").
+- (1) The action is irreversible.
+- (2) The action is security-sensitive.
+- (3) The action has an effect outside the worktree.
+- (4) The spec is so broken that every path is a guess.
+- (5) The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.
+- (6) The spec has several defensible readings that change what gets built (section 1: "present them - don't pick silently").
 Review caps and failed audits still stop the worker, as section 6 steps 5 and 6 say. This rule narrows section 1 ("If uncertain, ask."), section 6 item 7 and the step 5.1 grilling for these workers: they no longer ask or grill for what the spec and the repo settle.
 
 **Exception:** for small tasks (estimated under ~150 changed lines, tests included), skip steps 1–5: implement directly, then run the section 6 review loop. Judge this once, for the whole task, before step 1. When the user approves a larger task for this path, the session asks with AskUserQuestion, with the approved line count in the question, and writes a `size-approval` event (section 6) with the approved size and the chosen answer as the quote. Once tickets exist, every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.

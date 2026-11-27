@@ -169,10 +169,10 @@ class SectionSevenTest(RuleTextCase):
 
     def test_rulings_rule_lists_the_six_ask_conditions(self):
         self.assert_in(self.text, "The worker sends an `ask` only when one of these holds:",
-                       "1. The action is irreversible.", "2. The action is security-sensitive.",
-                       "3. The action has an effect outside the worktree.", "4. The spec is so broken that every path is a guess.",
-                       "5. The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.",
-                       "6. The spec has several defensible readings that change what gets built (section 1: \"present them - don't pick silently\").",
+                       "- (1) The action is irreversible.", "- (2) The action is security-sensitive.",
+                       "- (3) The action has an effect outside the worktree.", "- (4) The spec is so broken that every path is a guess.",
+                       "- (5) The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.",
+                       "- (6) The spec has several defensible readings that change what gets built (section 1: \"present them - don't pick silently\").",
                        "Review caps and failed audits still stop the worker, as section 6 steps 5 and 6 say")
 
     def test_rulings_rule_narrows_sections_1_and_6_and_step_5_1(self):
