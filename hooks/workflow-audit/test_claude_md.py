@@ -111,7 +111,7 @@ class SectionSixTest(RuleTextCase):
         self.assert_in(paragraph,
                        "The loop session puts these rules in the brief of every code-review reviewer (this section and section 7 step 5.5)",
                        "The Standards axis and the Spec axis are two reviewers in every round, also on a small diff. Do not merge them.",
-                       "A reviewer reports no note that no written rule backs (`CLAUDE.md`, an ADR in `docs/adr/` or a repo doc).",
+                       "A reviewer reports no note that no written rule backs (`CLAUDE.md`, including the Blocking types of this section, an ADR in `docs/adr/`, a repo doc, or the spec of the task).",
                        "The Standards axis reports broken written rules only.",
                        "A Blocking finding keeps its evidence rule above.",
                        "A reviewer reports every finding that a written rule backs. No number limits Minor or Blocking findings.",
