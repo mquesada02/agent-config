@@ -147,6 +147,19 @@ class SectionSevenTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 7)
 
+    def test_grilling_asks_in_ranked_batches_with_a_recommended_answer(self):
+        self.assert_in(self.text, "grilling sends one batch per round, in one `AskUserQuestion` call",
+                       "A batch holds at most 4 questions, ranked with the most important first",
+                       "Each question puts its recommended answer first, with \"(Recommended)\" in its label",
+                       "A question that depends on an earlier answer, or a real uncertainty beyond the first 4, goes in the next round: it is asked later, not dropped",
+                       "Skip a question that the code, the docs or the request answers, and decide mechanical choices without asking",
+                       "A worker sends the same batch in one Orca `ask` to the coordinator; the coordinator asks the owner with one `AskUserQuestion` call and sends all answers back in one `reply`")
+
+    def test_the_one_at_a_time_grilling_sentence_is_cancelled_by_name(self):
+        self.assert_in(self.text,
+                       "This rule cancels the grilling skill sentence \"Ask the questions one at a time, waiting for feedback on each question before continuing.\"",
+                       "It covers only grilling: caps, failed audits, size approvals and extensions keep their own rules")
+
     def test_the_full_ticket_steps_cover_only_the_tickets_of_step_4(self):
         self.assert_in(self.text,
                        "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. "
