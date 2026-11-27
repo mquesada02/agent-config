@@ -93,6 +93,12 @@ Roles. The agent that reports a finding never fixes it, so a second agent checks
   3. Apply the smallest fix.
   4. Run the affected tests.
 
+Reviewer rules. The loop session puts these rules in the brief of every code-review reviewer (this section and section 7 step 5.5):
+- **Two reviewers stay.** The Standards axis and the Spec axis are two reviewers in every round, also on a small diff. Do not merge them.
+- **Written rules only.** A reviewer reports no note that no written rule backs (`CLAUDE.md`, including the Blocking types of this section, an ADR in `docs/adr/`, a repo doc, or the spec of the task). The Standards axis reports broken written rules only. Example: "this name is long" is skipped; a broken rule of `CLAUDE.md` is reported. A Blocking finding keeps its evidence rule above.
+- **No cap on findings.** A reviewer reports every finding that a written rule backs. No number limits Minor or Blocking findings.
+- **Not run.** A reviewer that fails or returns no report is "not run", never a reviewer with zero findings. The loop session starts it again before it writes the `round` event. The `round` event lists only reviewers that reported.
+
 Ledger: the loop session keeps one findings ledger per task. It writes the ledger only through `python3 -I ~/.claude/hooks/workflow-audit/audit ledger <event> --worktree <path> ...` (the `audit ledger` command), which rejects a malformed event at once. The event kinds are:
 - `round`: each review round, with its loop, phase, round number and reviewer agent ids. Each reviewer id is a subagent of the loop session, or of another registered session that touches the same worktree (a successor may record the round of its predecessor's reviewers); `audit ledger` refuses another id (exit 2, nothing written), so write the `round` event only after its reviewers ran.
 - `round-retire`: retires an out-of-order round n (a round whose reviewer started before the previous `round` event of its loop), with `--loop`, `--phase`, `--round <n>` and `--by <m>`, where round m is a later round of the same loop phase that you ran in the correct order. `audit ledger` refuses it (exit 2, nothing written) when round n or round m is missing, when m is not after n, or when n is retired already. XC then skips the "started before the previous round" check of round n only when round m passes that check on its own. Every other XC check of round n still runs, the findings of round n stay on the ledger, and the cap of the phase still counts round n. Without a `round-retire` event an out-of-order round cannot be repaired.

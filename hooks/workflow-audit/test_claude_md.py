@@ -106,6 +106,20 @@ class SectionSixTest(RuleTextCase):
         self.assertGreater(self.text.index("- `round-retire`:"), self.text.index("- `round`:"))
         self.assertLess(self.text.index("- `round-retire`:"), self.text.index("- `finding`:"))
 
+    def test_the_reviewer_rules_keep_two_reviewers_skip_unwritten_taste_set_no_cap_and_mark_a_failed_reviewer_not_run(self):
+        paragraph = re.search(r"^Reviewer rules\..*?(?=^Ledger:)", self.text, re.DOTALL | re.MULTILINE).group(0)
+        self.assert_in(paragraph,
+                       "The loop session puts these rules in the brief of every code-review reviewer (this section and section 7 step 5.5)",
+                       "The Standards axis and the Spec axis are two reviewers in every round, also on a small diff. Do not merge them.",
+                       "A reviewer reports no note that no written rule backs (`CLAUDE.md`, including the Blocking types of this section, an ADR in `docs/adr/`, a repo doc, or the spec of the task).",
+                       "The Standards axis reports broken written rules only.",
+                       "A Blocking finding keeps its evidence rule above.",
+                       "A reviewer reports every finding that a written rule backs. No number limits Minor or Blocking findings.",
+                       'A reviewer that fails or returns no report is "not run", never a reviewer with zero findings.',
+                       "The loop session starts it again before it writes the `round` event. The `round` event lists only reviewers that reported.")
+        self.assertGreater(self.text.index("Reviewer rules."), self.text.index("- **Fixer**"))
+        self.assertLess(self.text.index("Reviewer rules."), self.text.index("Ledger: the loop session"))
+
     def test_the_session_that_got_the_approval_writes_the_extension_with_an_absolute_worktree_path(self):
         self.assert_in(self.text, "At a cap, the session that asked the user and got the approval writes the `extension` event "
                        "(for a worker, the coordinator), with `--worktree` as an absolute path (never `~` or `$HOME`) "
