@@ -148,7 +148,8 @@ class SectionSevenTest(RuleTextCase):
         self.text = section(read(ROOT_CLAUDE_MD), 7)
 
     def test_grilling_asks_in_ranked_batches_with_a_recommended_answer(self):
-        self.assert_in(self.text, "grilling sends one batch per round, in one `AskUserQuestion` call",
+        self.assert_in(self.text, "**Grilling in batches** (steps 1, 2 and 5.1):",
+                       "grilling sends one batch per round, in one `AskUserQuestion` call",
                        "A batch holds at most 4 questions, ranked with the most important first",
                        "Each question puts its recommended answer first, with \"(Recommended)\" in its label",
                        "A question that depends on an earlier answer, or a real uncertainty beyond the first 4, goes in the next round: it is asked later, not dropped",
