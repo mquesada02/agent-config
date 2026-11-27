@@ -161,6 +161,31 @@ class SectionSevenTest(RuleTextCase):
     def setUp(self):
         self.text = section(read(ROOT_CLAUDE_MD), 7)
 
+    def test_the_steps_are_authorized_in_advance_and_the_next_step_starts_at_once(self):
+        self.assert_in(self.text, "**Steps are authorized in advance**: the owner authorizes every step of sections 6, 7 and 8 in advance",
+                       "including the outward-facing ones: issues, comments, PRs, pushes, worker dispatch, and the post-merge issue filing and cleanup",
+                       "After a step ends, the session starts the next step at once, in the same turn",
+                       "The session does not end a turn by asking the owner to continue")
+
+    def test_the_advance_authorization_lists_the_stops(self):
+        self.assert_in(self.text, "The session stops only at a stop that this file defines:",
+                       "a question for the owner (grilling, an `ask`, an ask condition of the \"Rulings\" rule)", "a cap", "a failed audit",
+                       "the stops of section 8 before a merge command (a merge conflict, a failed CI run, and no CI run within about 10 minutes)",
+                       "a `!` command that the owner must run (for example a merge that auto mode blocks)",
+                       "confirmation before a destructive action, "
+                       "and every other place where this file says to stop or to ask the owner (for example sections 10, 11, 14 and 16)")
+
+    def test_the_advance_authorization_lets_the_cleanup_command_run_without_asking(self):
+        self.assert_in(self.text, "The post-merge cleanup command (`~/.claude/hooks/worktree-cleanup/cleanup`) is not a destructive action for this rule: "
+                       "it is the authorized cleanup path of sections 8 and 13, so the session runs it without asking")
+
+    def test_a_next_action_line_names_an_owner_action_only_at_a_stop(self):
+        self.assert_in(self.text, "A \"next action\" line for the owner (for example from an output style) names an owner action only when one of those stops applies; "
+                       "otherwise the session does the next step itself")
+
+    def test_the_advance_authorization_excludes_merges_and_denied_actions(self):
+        self.assert_in(self.text, "This authorization does not cover a merge, a destructive action, a force push, or any action that a hook or the permission mode denies")
+
     def test_grilling_asks_in_ranked_batches_with_a_recommended_answer(self):
         self.assert_in(self.text, "**Grilling in batches** (steps 1, 2 and 5.1):",
                        "grilling sends one batch per round, in one `AskUserQuestion` call",
