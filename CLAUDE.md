@@ -13,7 +13,7 @@ Correctness comes before simplicity. Correctness means a sound design: no hidden
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
+- State your assumptions explicitly. If uncertain, ask. (Narrowed for the workers of section 7 "Rulings".)
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
@@ -116,13 +116,22 @@ The loop session also keeps a copy of the entries in the scratchpad, and gives t
 4. **Report.** List the deferred Minor findings for the user. Leave them unfixed in this task, because fixing them would reopen the review. After the merge, the filer that section 8 names files them as an issue.
 5. **Audit.** Before you tell the user that the task is done, write the draft done report to your scratchpad. It lists the deferred Minor findings. Copy the round counts of each loop phase, the finding ids and the status of each finding (fixed, deferred, superseded, rejected) in it from `audit ledger show`; do not write them from memory. After your last commit, run the declared test command alone, exactly as written, in the root folder of the worktree. Nothing goes before it except allowed `cd` or `git` steps joined by `&&`, and nothing goes after it. A background run (`run_in_background`) with no redirect counts. Push the branch. Then start the auditor subagent (Sonnet, section 9) with the brief `~/.claude/hooks/workflow-audit/auditor-brief.md`. Give it the worktree path, the path of the draft done report, the path of the verdict file and the PR target (the base branch of the PR). The subagent runs `audit check`, judges L1 to L6 and runs `audit record`. On a pass, open the PR with `gh pr create` (section 8), then report done. On a fail, report each failed item with its evidence and ask the user. Do not fix the failed items yourself. The user can override a failed audit by running `! gh pr create` themselves. A worker of section 7 step 5 does not run this step: the coordinator audits it. A task outside a git repo is not audited.
 6. At any cap, stop. Send the user the open findings and the round counts, and ask how to continue.
-7. If you're unsure of anything, ask the user.
+7. If you're unsure of anything, ask the user. (Narrowed for the workers of section 7 "Rulings".)
 
 ## 7. General workflow for any task
 
 **Note**: _grilling_ refers to the /mattpocock-skills:grilling skill, already included in the /mattpocock-skills:wayfinder skill.
 
 **Grilling in batches** (steps 1, 2 and 5.1): grilling sends one batch per round, in one `AskUserQuestion` call. A batch holds at most 4 questions, ranked with the most important first. Each question puts its recommended answer first, with "(Recommended)" in its label, and the owner accepts it by choosing that option. A question that depends on an earlier answer, or a real uncertainty beyond the first 4, goes in the next round: it is asked later, not dropped. Skip a question that the code, the docs or the request answers, and decide mechanical choices without asking. A worker sends the same batch in one Orca `ask` to the coordinator; the coordinator asks the owner with one `AskUserQuestion` call and sends all answers back in one `reply`. This rule cancels the grilling skill sentence "Ask the questions one at a time, waiting for feedback on each question before continuing.", so a plugin update cannot bring it back. It covers only grilling: caps, failed audits, size approvals and extensions keep their own rules.
+
+**Rulings** (steps 5.1 to 5.5, and the main session when it runs a ticket of step 4 itself; other sessions keep the rules of sections 1 and 6): the worker decides each choice that the spec, the map, the ticket or the repo already settles. It does not ask or grill for that choice. For each such decision it writes one line `Ruling: <what>, <why>, <cost if wrong>`, and it lists every ruling in its `worker_done` report. The coordinator passes the list to the owner with the PR report. The worker sends an `ask` only when one of these holds:
+1. The action is irreversible.
+2. The action is security-sensitive.
+3. The action has an effect outside the worktree.
+4. The spec is so broken that every path is a guess.
+5. The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.
+6. The spec has several defensible readings that change what gets built (section 1: "present them - don't pick silently").
+Review caps and failed audits still stop the worker, as section 6 steps 5 and 6 say. This rule narrows section 1 ("If uncertain, ask."), section 6 item 7 and the step 5.1 grilling for these workers: they no longer ask or grill for what the spec and the repo settle.
 
 **Exception:** for small tasks (estimated under ~150 changed lines, tests included), skip steps 1–5: implement directly, then run the section 6 review loop. Judge this once, for the whole task, before step 1. When the user approves a larger task for this path, the session asks with AskUserQuestion, with the approved line count in the question, and writes a `size-approval` event (section 6) with the approved size and the chosen answer as the quote. Once tickets exist, every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.
 
@@ -145,7 +154,7 @@ This loop differs from section 6 on purpose in two ways. It has no `/simplify`: 
 4.1. Review the tickets with `/plan-review tickets` (its inputs: the general spec and the ticket issues, each as a link). Run the same plan-review loop as in step 3. The main section 7 session applies every fix in the tracker (edits to the ticket issues and their blocking edges, and any creation, split, merge or closing of ticket issues), before any dispatch.
 The step 3 and step 4.1 plan-review loops run in one worktree, because the audit reads only the ledger of the worktree that it names. The cleanup of that worktree waits until the pre-dispatch audit passes.
 5. For each one of the created tickets, create its worktree as section 10 says (`orca worktree create --branch <type>/<description> --parent-worktree <your own worktree>`), then dispatch an Orca worker (see section 11) into it with `worker-start --worktree path:<that path>`. The worker executes each of these steps:
-5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed.
+5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed (only on an ask condition of the section 7 "Rulings" rule).
 5.2. run /mattpocock-skills:to-spec to generate a specialized spec of that ticket.
 5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3. The worker applies every fix to the spec issue body.
 5.4. After the plan-review loop ends, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.

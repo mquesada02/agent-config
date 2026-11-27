@@ -161,6 +161,26 @@ class SectionSevenTest(RuleTextCase):
                        "This rule cancels the grilling skill sentence \"Ask the questions one at a time, waiting for feedback on each question before continuing.\"",
                        "It covers only grilling: caps, failed audits, size approvals and extensions keep their own rules")
 
+    def test_rulings_rule_states_its_scope_the_ruling_form_and_the_worker_done_list(self):
+        self.assert_in(self.text, "**Rulings** (steps 5.1 to 5.5, and the main session when it runs a ticket of step 4 itself; other sessions keep the rules of sections 1 and 6):",
+                       "the worker decides each choice that the spec, the map, the ticket or the repo already settles. It does not ask or grill for that choice",
+                       "`Ruling: <what>, <why>, <cost if wrong>`", "it lists every ruling in its `worker_done` report",
+                       "The coordinator passes the list to the owner with the PR report")
+
+    def test_rulings_rule_lists_the_six_ask_conditions(self):
+        self.assert_in(self.text, "The worker sends an `ask` only when one of these holds:",
+                       "1. The action is irreversible.", "2. The action is security-sensitive.",
+                       "3. The action has an effect outside the worktree.", "4. The spec is so broken that every path is a guess.",
+                       "5. The choice would add a temporary fix or workaround, add hidden coupling or weaken security (section 0), so it is an ask, not a ruling.",
+                       "6. The spec has several defensible readings that change what gets built (section 1: \"present them - don't pick silently\").",
+                       "Review caps and failed audits still stop the worker, as section 6 steps 5 and 6 say")
+
+    def test_rulings_rule_narrows_sections_1_and_6_and_step_5_1(self):
+        self.assert_in(self.text, "This rule narrows section 1 (\"If uncertain, ask.\"), section 6 item 7 and the step 5.1 grilling for these workers",
+                       "5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed (only on an ask condition of the section 7 \"Rulings\" rule).")
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 1), "If uncertain, ask. (Narrowed for the workers of section 7 \"Rulings\".)")
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 6), "7. If you're unsure of anything, ask the user. (Narrowed for the workers of section 7 \"Rulings\".)")
+
     def test_the_full_ticket_steps_cover_only_the_tickets_of_step_4(self):
         self.assert_in(self.text,
                        "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. "
