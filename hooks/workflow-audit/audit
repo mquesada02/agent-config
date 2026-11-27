@@ -2199,23 +2199,31 @@ def check_s10(dir_fd, ledger, remote_url):
 
 
 def check_s11(audited, ledger, problem):
-    """Returns (passed, evidence): section 6 step 2 ran /simplify. An audited transcript holds a Skill call of the simplify skill or a /simplify
-    slash command after the first phase-commit event and before the first final round of the section 6 loop. `audited` is None when the
-    transcripts cannot be read, with the reason in `problem`. A ledger with no section 6 final round has no such step to check."""
-    final = min((_instant(event["time"], "the ledger") for _, event in ledger.round_events
-                 if event["loop"] == CODE_REVIEW and event["phase"] == "final"), default=None)
-    if final is None:
+    """Returns (passed, evidence): section 6 step 2 ran /simplify. The window of a phase-commit event runs from its time to the first section 6
+    final round after it; a phase-commit event with no final round after it has no window. An audited transcript must hold a Skill call of the
+    simplify skill or a /simplify slash command in at least one window (a later phase-commit event repairs a window that missed the call).
+    `audited` is None when the transcripts cannot be read, with the reason in `problem`. A ledger with no section 6 final round has no such step."""
+    finals = sorted(_instant(event["time"], "the ledger") for _, event in ledger.round_events
+                    if event["loop"] == CODE_REVIEW and event["phase"] == "final")
+    if not finals:
         return True, "no section 6 final round"
     if audited is None:
         return False, problem
-    if not ledger.commits:
-        return False, "no phase-commit event before the first final round of the section 6 loop"
-    start = _instant(ledger.commits[0][1]["time"], "the ledger")
-    window = f"after the first phase-commit at {start.isoformat()} and before the first final round at {final.isoformat()}"
-    calls = sum(start < moment < final for transcripts in audited for transcript in transcripts for moment in transcript.simplifies)
-    if not calls:
-        return False, f"no /simplify call {window}"
-    return True, f"{calls} /simplify calls {window}"
+    windows = []
+    for _, commit in ledger.commits:
+        start = _instant(commit["time"], "the ledger")
+        final = next((moment for moment in finals if moment > start), None)
+        if final is not None:
+            windows.append((start, final))
+    if not windows:
+        return False, "no phase-commit event before a final round of the section 6 loop"
+    moments = [moment for transcripts in audited for transcript in transcripts for moment in transcript.simplifies]
+    names = [f"after the phase-commit at {start.isoformat()} and before the final round at {final.isoformat()}" for start, final in windows]
+    for (start, final), name in zip(windows, names):
+        calls = sum(start < moment < final for moment in moments)
+        if calls:
+            return True, f"{calls} /simplify calls {name}"
+    return False, "no /simplify call " + "; no /simplify call ".join(names)
 
 
 def _s_item(name, passed, evidence):

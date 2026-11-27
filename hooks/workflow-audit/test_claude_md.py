@@ -130,6 +130,12 @@ class SectionSixTest(RuleTextCase):
         self.assert_in(step, "If the base branch moves after the quality-phase commit, rebase, record the rebased commit with a new "
                        "`phase-commit` event, and run one more final round when its patch-id differs.")
 
+    def test_the_quality_phase_step_has_the_simplify_repair(self):
+        step = re.search(r"^2\. \*\*Quality phase \(once\)\.\*\*.*?^3\. ", self.text, re.MULTILINE | re.DOTALL).group(0)
+        self.assert_in(step, "(audit check S11 needs this call between a `phase-commit` event and the first final round after it)",
+                       "To repair a skipped or misordered /simplify: write a new `phase-commit` event for the current HEAD, "
+                       "check that the write succeeded, call /simplify, then run a final round (step 3) on the diff since that commit.")
+
     def test_a_cap_approval_is_asked_in_the_own_terminal_and_a_relayed_quote_is_repaired(self):
         self.assert_in(self.text,
                        "The session that asks the owner and writes the `extension` event asks in its own terminal with AskUserQuestion, "
