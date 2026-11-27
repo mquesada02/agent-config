@@ -2204,26 +2204,26 @@ def check_s11(audited, ledger, problem):
     simplify skill or a /simplify slash command in at least one window (a later phase-commit event repairs a window that missed the call).
     `audited` is None when the transcripts cannot be read, with the reason in `problem`. A ledger with no section 6 final round has no such step."""
     finals = sorted(_instant(event["time"], "the ledger") for _, event in ledger.round_events
-                    if event["loop"] == CODE_REVIEW and event["phase"] == "final")
+                    if (event["loop"], event["phase"]) == FINAL_REVIEW)
     if not finals:
         return True, "no section 6 final round"
     if audited is None:
         return False, problem
-    windows = []
+    moments = [moment for transcripts in audited for transcript in transcripts for moment in transcript.simplifies]
+    misses = []
     for _, commit in ledger.commits:
         start = _instant(commit["time"], "the ledger")
         final = next((moment for moment in finals if moment > start), None)
-        if final is not None:
-            windows.append((start, final))
-    if not windows:
-        return False, "no phase-commit event before a final round of the section 6 loop"
-    moments = [moment for transcripts in audited for transcript in transcripts for moment in transcript.simplifies]
-    names = [f"after the phase-commit at {start.isoformat()} and before the final round at {final.isoformat()}" for start, final in windows]
-    for (start, final), name in zip(windows, names):
+        if final is None:
+            continue
+        window = f"after the phase-commit at {start.isoformat()} and before the final round at {final.isoformat()}"
         calls = sum(start < moment < final for moment in moments)
         if calls:
-            return True, f"{calls} /simplify calls {name}"
-    return False, "no /simplify call " + "; no /simplify call ".join(names)
+            return True, f"{calls} /simplify calls {window}"
+        misses.append(f"no /simplify call {window}")
+    if not misses:
+        return False, "no phase-commit event before a final round of the section 6 loop"
+    return False, "; ".join(misses)
 
 
 def _s_item(name, passed, evidence):
