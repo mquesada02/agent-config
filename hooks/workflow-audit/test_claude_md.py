@@ -172,7 +172,8 @@ class SectionSevenTest(RuleTextCase):
                        "a question for the owner (grilling, an `ask`, an ask condition of the \"Rulings\" rule)", "a cap", "a failed audit",
                        "the stops of section 8 before a merge command (a merge conflict, a failed CI run, and no CI run within about 10 minutes)",
                        "a `!` command that the owner must run (for example a merge that auto mode blocks)",
-                       "confirmation before a destructive action")
+                       "confirmation before a destructive action, "
+                       "and every other place where this file says to stop or to ask the owner (for example sections 10, 11, 14 and 16)")
 
     def test_the_advance_authorization_lets_the_cleanup_command_run_without_asking(self):
         self.assert_in(self.text, "The post-merge cleanup command (`~/.claude/hooks/worktree-cleanup/cleanup`) is not a destructive action for this rule: "
