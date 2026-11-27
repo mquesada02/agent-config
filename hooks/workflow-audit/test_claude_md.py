@@ -230,8 +230,21 @@ class SectionSevenTest(RuleTextCase):
 
     def test_the_full_ticket_steps_cover_only_the_tickets_of_step_4(self):
         self.assert_in(self.text,
-                       "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5 in full, even a small one. "
+                       "every ticket of step 4 (the tickets that `/mattpocock-skills:to-tickets` made from a map) runs steps 5.1 to 5.5, even a small one, "
+                       "except that steps 5.2 and 5.3 run only when the ticket changes or adds a decision that the general spec does not hold (step 5.1). "
                        "A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.")
+
+    def test_tickets_carry_the_detail_and_steps_5_2_and_5_3_are_conditional(self):
+        self.assert_in(self.text,
+                       "Each ticket carries its acceptance criteria, each one testable, and links to the general spec sections that it implements.",
+                       "A ticket without testable acceptance criteria or without its spec links is a Blocking finding of `plan-review-4.1`.",
+                       "The worker executes each of these steps, except that steps 5.2 and 5.3 run only on the condition of step 5.1:",
+                       "Then decide whether the ticket changes or adds a decision that the general spec does not hold. "
+                       "If not, skip steps 5.2 and 5.3, write the ruling `Ruling: skip steps 5.2 and 5.3, <why>, <cost if wrong>` "
+                       "and list it in the `worker_done` report. If yes, run steps 5.2 and 5.3.",
+                       "The ticket spec holds only the new or changed decisions and links to the general spec for the rest.",
+                       "When steps 5.2 and 5.3 were skipped, implement the ticket from its acceptance criteria and the linked general spec sections.")
+        self.assertLess(self.text.index("4. /mattpocock-skills:to-tickets"), self.text.index("4.1. Review the tickets"))
 
     def test_the_worker_pushes_and_reports_the_branch_and_the_worktree(self):
         self.assert_in(self.text, "5.6. Push the branch.", "the branch name, the worktree path and the list of rulings in the `worker_done` report",

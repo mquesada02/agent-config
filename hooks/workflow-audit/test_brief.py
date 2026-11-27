@@ -34,6 +34,15 @@ class BriefTextTest(unittest.TestCase):
                       "A single ticket filed to track a small task follows the small-task path: it is not judged as a ticket of step 4, "
                       "and its code-review rounds are enough.", self.l6_item())
 
+    def test_l6_passes_a_ticket_with_the_spec_form_or_the_skip_ruling_form(self):
+        item = self.l6_item()
+        for phrase in ("Form (a): the spec link and the plan-review rounds exist",
+                       "Form (b): the draft done report holds the ruling `Ruling: skip steps 5.2 and 5.3, <why>, <cost if wrong>` "
+                       "and the ticket's links to the general spec sections.",
+                       "A ticket with no plan-review rounds in either place and without form (b) fails."):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, item)
+
     def test_l1_judges_the_reason_in_force_and_s10_results_are_s_results(self):
         l1 = self.full.split("- **L1.**", 1)[1].split("- **L2.**", 1)[0]
         for phrase in ("reason in force", "latest amendment", "A raised finding (`\"raised\":true`) is judged as before","its quote"):
