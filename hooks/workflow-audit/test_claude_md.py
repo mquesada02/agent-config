@@ -164,7 +164,7 @@ class SectionSevenTest(RuleTextCase):
     def test_rulings_rule_states_its_scope_the_ruling_form_and_the_worker_done_list(self):
         self.assert_in(self.text, "**Rulings** (steps 5.1 to 5.5, and the main session when it runs a ticket of step 4 itself; other sessions keep the rules of sections 1 and 6):",
                        "the worker decides each choice that the spec, the map, the ticket or the repo already settles. It does not ask or grill for that choice",
-                       "`Ruling: <what>, <why>, <cost if wrong>`", "it lists every ruling in its `worker_done` report",
+                       "`Ruling: <what>, <why>, <cost if wrong>`", "it lists every ruling in its `worker_done` report (a main session: in its done report and the PR body)",
                        "The coordinator passes the list to the owner with the PR report")
 
     def test_rulings_rule_lists_the_six_ask_conditions(self):
