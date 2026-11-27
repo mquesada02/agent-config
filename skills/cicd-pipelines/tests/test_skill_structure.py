@@ -663,10 +663,17 @@ class ProtectRules(unittest.TestCase):
         self.assertIn("a line that holds `ruleset` and the word `tag` or `tags` (case does not matter) needs an active tag ruleset", rule)
         self.assertIn("`ruleset` without the word `tag` or `tags`, both `rulesets` and `classic_protection`", rule)
 
-    def test_protect_07_checks_a_ruleset_comment_that_names_a_tag_and_a_branch_against_both_rulesets(self):
+    def test_protect_07_checks_a_ruleset_comment_that_names_a_tag_and_a_branch_against_both_rulesets_and_needs_both_facts(self):
         rule = self.protect["PROTECT-07"]["Rule"]
-        self.assertIn("when that same line also names a branch (`branch`, `main` or the default branch name) "
+        self.assertIn("when that same line also names a branch as a word (`branch` or `branches`, `main` or the default branch name) "
                       "it also needs an active branch ruleset or `classic_protection.protected: true`", rule)
+        self.assertIn("for a line that holds `ruleset`, the word `tag` or `tags` and a branch, "
+                      "both `rulesets` and `classic_protection` too", rule)
+
+    def test_protect_07_names_the_plural_branches_like_the_plural_tags(self):
+        rule = self.protect["PROTECT-07"]["Rule"]
+        self.assertIn("the word `tag` or `tags`", rule)
+        self.assertIn("(`branch` or `branches`,", rule)
 
     def test_protect_08_is_a_judgement_on_repo_wide_role_arns_and_app_keys(self):
         rule = self.protect["PROTECT-08"]["Rule"]
