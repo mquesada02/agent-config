@@ -77,6 +77,15 @@ class S3Test(LedgerChecksCase):
         self.check(items, "S3", "pass", "stopped at cap: 2 open findings")
         self.assertIn("I1 a.py:1", items["S3"]["evidence"])
 
+    def test_a_spec_loop_whose_cap_round_findings_are_fixed_with_no_later_round_passes_s3_and_s5(self):
+        for loop, phase, cap in (("plan-review-3", "correctness", 5), ("plan-review-5.3", "final", 3)):
+            with self.subTest(loop=loop, phase=phase):
+                events = [round_event(n, loop=loop, phase=phase) for n in range(1, cap + 1)]
+                events += [finding_event("P1", loop=loop, phase=phase, n=cap, quote="the line"), status_event("P1", loop=loop)]
+                items = self.items(events)
+                self.check(items, "S3", "pass", "none open")
+                self.check(items, "S5", "pass", "none past a cap")
+
     def test_a_final_round_at_the_cap_lets_findings_of_any_phase_of_that_loop_stay_open(self):
         events = ([round_event(1), finding_event("I1", kind="Minor")]
                   + [round_event(n, **FINAL) for n in range(1, 4)])
