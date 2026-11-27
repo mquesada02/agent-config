@@ -185,6 +185,31 @@ class SectionSevenTest(RuleTextCase):
     def test_the_plan_review_loop_names_finding_amend_as_the_repair_of_a_missing_quote(self):
         self.assert_in(self.text, "repairs a finding whose reason lacks its quote with `finding-amend`")
 
+    def test_the_spec_cap_rule_turns_the_cap_round_findings_into_edge_case_rows(self):
+        rule = self.text[self.text.index("Spec cap rule"):self.text.index("This loop differs from section 6")]
+        self.assert_in(rule, "the spec loops `plan-review-3` and `plan-review-5.3`, in phase (a) and in phase (c)",
+                       "the ticket loop `plan-review-4.1` is not covered",
+                       "at the cap round of such a phase", "one row of an \"Edge cases\" table in the spec",
+                       "an input or state, the expected result and the finding id", "marks each one fixed in the ledger",
+                       "runs no further round of that phase and asks no owner question",
+                       "After the cap of (a), the loop goes on to (b) and (c). After the cap of (c), the loop ends.")
+
+    def test_a_finding_that_is_not_a_testable_row_still_asks_the_owner(self):
+        self.assert_in(self.text, "A confirmed Blocking finding that cannot be stated as a testable row",
+                       "a contradiction with a decision on the map, or a requirement that no test can check",
+                       "the session stops and asks the user, as in (d)",
+                       "The owner can still approve extra rounds with an `extension` event")
+
+    def test_the_implementation_adds_one_test_per_row_and_a_missing_test_is_a_spec_mismatch(self):
+        self.assert_in(self.text, "adds one test per row of the table",
+                       "a missing test for a row is a spec mismatch, so it is Blocking")
+
+    def test_steps_a_c_and_d_point_to_the_spec_cap_rule(self):
+        self.assertEqual(self.text.count("apply the spec cap rule below"), 2)
+        self.assert_in(self.text, "and the rows that the spec cap rule added to the Edge cases table",
+                       "except where the spec cap rule ends the phase")
+        self.assertLess(self.text.index("(d) When the loop ends"), self.text.index("Spec cap rule (the spec loops"))
+
     def test_the_manual_evidence_checks_are_gone(self):
         self.assert_not_in(self.text, "checks evidence for each step", "checks the following evidence for the step 4.1 review",
                            "A worker's claim without evidence counts as not done")
