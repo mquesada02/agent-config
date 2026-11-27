@@ -179,6 +179,8 @@ class SectionSevenTest(RuleTextCase):
         self.assert_in(self.text, "This rule narrows section 1 (\"If uncertain, ask.\"), section 6 item 7 and the step 5.1 grilling for these workers",
                        "5.1. run /mattpocock-skills:wayfinder to get an overview of the map, grilling the user again if needed (only on an ask condition of the section 7 \"Rulings\" rule).")
         self.assert_in(section(read(ROOT_CLAUDE_MD), 1), "If uncertain, ask. (Narrowed for the workers of section 7 \"Rulings\".)")
+        self.assert_in(section(read(ROOT_CLAUDE_MD), 1),
+                       "If something is unclear, stop. Name what's confusing. Ask. (Narrowed for the workers of section 7 \"Rulings\".)")
         self.assert_in(section(read(ROOT_CLAUDE_MD), 6), "7. If you're unsure of anything, ask the user. (Narrowed for the workers of section 7 \"Rulings\".)")
 
     def test_the_full_ticket_steps_cover_only_the_tickets_of_step_4(self):
@@ -187,7 +189,7 @@ class SectionSevenTest(RuleTextCase):
                        "A single ticket filed to track a small task is not a ticket of step 4: it follows the small-task path.")
 
     def test_the_worker_pushes_and_reports_the_branch_and_the_worktree(self):
-        self.assert_in(self.text, "5.6. Push the branch.", "the branch name and the worktree path in the `worker_done` report",
+        self.assert_in(self.text, "5.6. Push the branch.", "the branch name, the worktree path and the list of rulings in the `worker_done` report",
                        "Do not open the PR")
 
     def test_the_coordinator_audits_on_worker_done_and_opens_the_pr_after_a_pass(self):

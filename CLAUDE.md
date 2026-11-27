@@ -16,7 +16,7 @@ Before implementing:
 - State your assumptions explicitly. If uncertain, ask. (Narrowed for the workers of section 7 "Rulings".)
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- If something is unclear, stop. Name what's confusing. Ask. (Narrowed for the workers of section 7 "Rulings".)
 
 ## 2. Simplicity First
 
@@ -159,7 +159,7 @@ The step 3 and step 4.1 plan-review loops run in one worktree, because the audit
 5.3. Review the spec with `/plan-review spec ticket` (its inputs: the spec, the ticket and the map). Run the same plan-review loop as in step 3. The worker applies every fix to the spec issue body.
 5.4. After the plan-review loop ends, run /mattpocock-skills:implement to implement the spec. Do not go off-topic of the spec; you only have to implement it on this step.
 5.5. Review the implementation of the spec with subagents using the axes from /mattpocock-skills:code-review. Use the same logic described on section 6 of this document.
-5.6. Push the branch. Put the branch name and the worktree path in the `worker_done` report. Do not open the PR: the coordinator opens it after the audit.
+5.6. Push the branch. Put the branch name, the worktree path and the list of rulings in the `worker_done` report. Do not open the PR: the coordinator opens it after the audit.
 
 After starting step 5, the original session acts as a **coordinator** of the Orca workers it dispatched.
 When a `worker_done` arrives, the coordinator audits the ticket as in section 6 step 5, on the branch and the worktree that the worker reported. This replaces the manual evidence check. After a pass, the coordinator opens the PR with `gh pr create`. On a fail, it reports each failed item with its evidence to the user and asks. After each `worker_done`, the coordinator also runs `~/.claude/hooks/worktree-cleanup/list-owned`, a read-only list of the worktrees that it owns and of the orphans. It never claims an orphan: the owner removes it with the `cleanup --skip-ownership` command that the list shows.
