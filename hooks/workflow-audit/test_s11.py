@@ -2,7 +2,7 @@
 import os
 import unittest
 
-from audit_support import HERE, VERSION, AuditCase, call_row, edit_row, phase_commit_event, round_event, stamp
+from audit_support import HERE, AuditCase, call_row, edit_row, owner_row, phase_commit_event, round_event, stamp
 
 SHA = "a" * 40
 SLASH = "<command-message>simplify</command-message>\n<command-name>/simplify</command-name>"
@@ -23,7 +23,7 @@ def skill_row(seconds, skill="simplify", call_id="s1"):
 
 
 def slash_row(seconds, content=SLASH):
-    return {"type": "user", "timestamp": stamp(seconds), "version": VERSION, "message": {"role": "user", "content": content}}
+    return owner_row(content, seconds)
 
 
 class S11Case(AuditCase):
@@ -76,13 +76,11 @@ class S11FailTest(S11Case):
 
 
 class S11DocsTest(unittest.TestCase):
-    def test_the_adr_and_the_brief_name_s11(self):
-        root = os.path.dirname(os.path.dirname(HERE))
-        for path in ("docs/adr/0001-audit-checks-guard-against-mistakes.md", "hooks/workflow-audit/auditor-brief.md"):
-            with self.subTest(path=path), open(os.path.join(root, path), encoding="utf-8") as handle:
-                text = handle.read()
-                self.assertIn("S1 to S11", text)
-                self.assertNotIn("S1 to S10", text)
+    def test_the_adr_names_s11(self):  # the brief is pinned by test_brief
+        with open(os.path.join(os.path.dirname(os.path.dirname(HERE)), "docs/adr/0001-audit-checks-guard-against-mistakes.md"), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("S1 to S11", text)
+        self.assertNotIn("S1 to S10", text)
 
 
 if __name__ == "__main__":
