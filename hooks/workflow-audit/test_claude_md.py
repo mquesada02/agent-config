@@ -170,8 +170,13 @@ class SectionSevenTest(RuleTextCase):
     def test_the_advance_authorization_lists_the_stops(self):
         self.assert_in(self.text, "The session stops only at a stop that this file defines:",
                        "a question for the owner (grilling, an `ask`, an ask condition of the \"Rulings\" rule)", "a cap", "a failed audit",
+                       "the stops of section 8 before a merge command (a merge conflict, a failed CI run, and no CI run within about 10 minutes)",
                        "a `!` command that the owner must run (for example a merge that auto mode blocks)",
                        "confirmation before a destructive action")
+
+    def test_the_advance_authorization_lets_the_cleanup_command_run_without_asking(self):
+        self.assert_in(self.text, "The post-merge cleanup command (`~/.claude/hooks/worktree-cleanup/cleanup`) is not a destructive action for this rule: "
+                       "it is the authorized cleanup path of sections 8 and 13, so the session runs it without asking")
 
     def test_a_next_action_line_names_an_owner_action_only_at_a_stop(self):
         self.assert_in(self.text, "A \"next action\" line for the owner (for example from an output style) names an owner action only when one of those stops applies; "
