@@ -50,7 +50,8 @@ EVENT_KEYS = {
     "link": ("source", "ticket"),
 }
 # The keys that an event may hold besides its required ones, in the order they are written. An absent key means the default.
-OPTIONAL_KEYS = {"finding": ("quote", "raised"), "finding-amend": ("quote", "raised"), "status": ("by",)}
+OPTIONAL_KEYS = {"finding": ("quote", "raised"), "finding-amend": ("quote", "raised"), "status": ("by", "loop")}
+# A status event written before it named its loop has no `loop` key and still replays; the writer (`_ledger_event`) requires it.
 FLAG_NAMES = {"reviewers": "--reviewer", "source": "--from-branch"}  # the keys whose command flag is not --<key>
 MAX_SOURCE = 255
 MAX_TICKET = 64
@@ -1280,6 +1281,9 @@ class Ledger:
         elif kind == "status":
             if event["finding"] not in self.findings:
                 raise LedgerError(f"no finding {event['finding']}")
+            loop = self.findings[event["finding"]]["event"]["loop"]
+            if "loop" in event and event["loop"] != loop:
+                raise LedgerError(f"finding {event['finding']} is in the loop {loop}, not in the loop {event['loop']}")
             if ("by" in event) != (event["status"] == "superseded"):
                 raise LedgerError("a status event holds by if and only if its status is superseded")
             if "by" in event:
@@ -1361,7 +1365,8 @@ events and their flags (every flag is required for its event and refused for the
                 "started before the previous round" check of round n, and only when round m passes that check on its own;
                 the findings and the cap count of round n do not change)
   verdict       --finding <id> --verifier <agent id> --result
-  status        --finding <id> --status [--by <id>]
+  status        --finding <id> --status --loop [--by <id>]
+                --loop is required and must be the loop of --finding, else the event is refused and nothing is written
                 --by is required for the status superseded and refused for the others: --finding must be a Minor finding, and the finding
                 named by --by must exist, be Blocking, be another finding and be in the loop of --finding; S3 needs it closed as fixed
   extension     --loop --phase --rounds <1 to 5> --quote <8 to 500 characters> (the owner approved extra rounds; allowed once the
@@ -1431,6 +1436,8 @@ def _ledger_event(argv):
                      + (f", and may have {flags(optional)}" if optional else "")
                      + (f" (missing {flags(expected - given)})" if expected - given else "")
                      + (f" (not allowed: {', '.join(sorted(flag(key) for key in given - expected - optional))})" if given - expected - optional else ""))
+    if args.event == "status" and args.loop is None:
+        parser.error("a status event needs --loop: the loop of --finding")
     event = {"kind": args.event, "time": _now("milliseconds")}
     event.update({key: getattr(args, key) for key in _event_keys(args.event) if key in given})
     if args.event == "round-retire" and re.fullmatch(r"[1-9][0-9]{0,8}", event["by"]):  # --by is a round number here; any other value stays a string and the shape check refuses it

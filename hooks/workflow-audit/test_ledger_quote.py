@@ -323,7 +323,7 @@ class FlagTest(QuoteCase):
     def test_quote_and_raised_are_refused_on_other_events(self):
         self.refused("round", "--loop", PLAN, "--phase", "correctness", "--round", "1", "--reviewer", "rev1", "--raised")
         self.refused("round", "--loop", PLAN, "--phase", "correctness", "--round", "1", "--reviewer", "rev1", "--quote", QUOTE)
-        self.refused("status", "--finding", "P1", "--status", "fixed", "--quote", QUOTE)
+        self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN, "--quote", QUOTE)
 
     def test_the_refusal_keeps_needs_exactly_and_names_the_optional_flags(self):
         self.round()
@@ -357,34 +357,34 @@ class FlagTest(QuoteCase):
 class ShapeAndReplayTest(QuoteCase):
     def test_an_old_finding_line_without_quote_and_raised_replays(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"), finding_event("P1", PLAN, kind="Blocking")])
-        self.ok("status", "--finding", "P1", "--status", "fixed")
+        self.ok("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN)
 
     def test_a_raised_key_with_any_value_but_true_is_refused(self):
         for value in (False, 1, "true", None, "yes"):
             with self.subTest(value=value):
                 self.write_ledger("feature", [round_event(1, PLAN, "correctness"),
                                               finding_event("P1", PLAN, quote=QUOTE, raised=value)])
-                self.assertIn("raised", self.refused("status", "--finding", "P1", "--status", "fixed"))
+                self.assertIn("raised", self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN))
 
     def test_a_raised_key_on_a_minor_finding_line_is_a_ledger_error(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"),
                                       finding_event("P1", PLAN, kind="Minor", quote=QUOTE, raised=True)])
-        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed"))
+        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN))
 
     def test_an_unknown_key_on_a_finding_line_is_still_refused(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"), finding_event("P1", PLAN, extra="x")])
-        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed"))
+        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN))
 
     def test_a_quote_key_on_a_status_line_is_still_refused(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"), finding_event("P1", PLAN),
                                       {"kind": "status", "time": EARLY, "finding": "P1", "status": "fixed", "quote": QUOTE}])
-        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed"))
+        self.assertIn("invalid line", self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN))
 
     def test_a_ledger_replay_reads_no_transcript(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness", ("ghost",)),
                                       {**finding_event("P1", PLAN, quote=QUOTE), "reason": REASON}])
         os.unlink(os.path.join(self.runtime, "sessions.jsonl"))
-        self.ok("status", "--finding", "P1", "--status", "fixed")
+        self.ok("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN)
         self.assertEqual(self.audit("ledger", "show", "--worktree", self.repo).returncode, 0)
 
 

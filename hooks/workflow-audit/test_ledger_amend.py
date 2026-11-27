@@ -179,7 +179,7 @@ class AmendLoopsTest(AmendCase):
 class InForceTest(AmendCase):
     def test_the_latest_amendment_is_in_force_and_status_and_type_stay(self):
         self.finding()
-        self.ok("status", "--finding", "P1", "--status", "deferred")
+        self.ok("status", "--finding", "P1", "--status", "deferred", "--loop", PLAN)
         self.ok("finding-amend", *aflags())
         self.ok("finding-amend", *aflags(reason=f"{REASON} {QUOTE}", quote=QUOTE))
         ledger = load_audit()._replay(self.raw())
@@ -215,12 +215,12 @@ class ReplayTest(AmendCase):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness", ("ghost",)), {**finding_event("P1", PLAN, quote=QUOTE), "reason": REASON},
                                       event("finding-amend", id="P1", reason=REASON2, quote=QUOTE2)])
         os.unlink(os.path.join(self.runtime, "sessions.jsonl"))
-        self.ok("status", "--finding", "P1", "--status", "fixed")
+        self.ok("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN)
         self.assertEqual(self.audit("ledger", "show", "--worktree", self.repo).returncode, 0)
 
     def bad(self, line):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"), finding_event("P1", PLAN), line])
-        return self.refused("status", "--finding", "P1", "--status", "fixed")
+        return self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN)
 
     def amend_line(self, **extra):
         return event("finding-amend", **{"id": "P1", "reason": "r", **extra})
@@ -231,7 +231,7 @@ class ReplayTest(AmendCase):
     def test_a_raised_amend_line_of_a_minor_finding_is_a_ledger_error(self):
         self.write_ledger("feature", [round_event(1, PLAN, "correctness"), finding_event("P1", PLAN, kind="Minor"),
                                       self.amend_line(raised=True)])
-        self.assertIn("only a Blocking finding is raised", self.refused("status", "--finding", "P1", "--status", "fixed"))
+        self.assertIn("only a Blocking finding is raised", self.refused("status", "--finding", "P1", "--status", "fixed", "--loop", PLAN))
 
     def test_a_raised_key_with_any_value_but_true_is_refused(self):
         for value in (False, 1, "true", None):

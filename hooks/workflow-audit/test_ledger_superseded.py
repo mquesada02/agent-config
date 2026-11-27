@@ -18,11 +18,11 @@ class SupersededWriteTest(LedgerCase):
         self.ok("finding", "--id", "A", "--type", "Minor", *FLAGS)
         self.ok("finding", "--id", "B", "--type", "Blocking", *FLAGS)
 
-    def supersede(self, finding="A", by="B"):
-        return ("--finding", finding, "--status", "superseded", "--by", by)
+    def supersede(self, finding="A", by="B", loop="code-review"):
+        return ("--finding", finding, "--status", "superseded", "--by", by, "--loop", loop)
 
     def test_a_superseded_status_names_a_blocking_finding_and_both_stay_on_the_ledger(self):
-        self.ok("status", "--finding", "B", "--status", "fixed")
+        self.ok("status", "--finding", "B", "--status", "fixed", "--loop", "code-review")
         self.ok("status", *self.supersede())
         events = self.written()
         self.assertEqual({key: events[-1][key] for key in ("kind", "finding", "status", "by")},
@@ -47,15 +47,19 @@ class SupersededWriteTest(LedgerCase):
         self.ok("round", "--loop", "plan-review-3", "--phase", "correctness", "--round", "1", "--reviewer", "rev1")
         self.ok("finding", "--id", "P", "--type", "Minor", "--loop", "plan-review-3", "--phase", "correctness", "--round", "1",
                 "--loc", "a.py:3", "--reason", "it breaks")
-        self.assertIn("another loop", self.refused("status", *self.supersede(finding="P")))
+        self.assertIn("another loop", self.refused("status", *self.supersede(finding="P", loop="plan-review-3")))
 
     def test_by_without_superseded_and_superseded_without_by_are_refused(self):
-        self.assertIn("by if and only if", self.refused("status", "--finding", "A", "--status", "deferred", "--by", "B"))
-        self.assertIn("by if and only if", self.refused("status", "--finding", "A", "--status", "superseded"))
+        self.assertIn("by if and only if", self.refused("status", "--finding", "A", "--status", "deferred", "--by", "B", "--loop", "code-review"))
+        self.assertIn("by if and only if", self.refused("status", "--finding", "A", "--status", "superseded", "--loop", "code-review"))
+
+    def test_a_superseded_status_of_another_loop_than_its_finding_is_refused(self):
+        self.assertIn("plan-review-3", self.refused("status", "--finding", "A", "--status", "superseded", "--by", "B",
+                                                    "--loop", "plan-review-3"))
 
     def test_a_later_status_clears_the_replacement(self):
         self.ok("status", *self.supersede())
-        self.ok("status", "--finding", "A", "--status", "deferred")
+        self.ok("status", "--finding", "A", "--status", "deferred", "--loop", "code-review")
         self.assertNotIn("by", self.written()[-1])
 
 
