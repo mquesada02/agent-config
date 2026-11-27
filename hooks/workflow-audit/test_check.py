@@ -8,7 +8,7 @@ from audit_support import (EARLY, VERSION, AuditCase, bash_row, call_row, edit_r
 
 PLAN = "plan-review-5.3"
 DIGEST_MARKER = "--- digest ---"
-S_LINE = re.compile(r"(S10|S[1-9]|XC) (pass|fail)")
+S_LINE = re.compile(r"(S1[01]|S[1-9]|XC) (pass|fail)")
 
 
 def without_s10(lines):
@@ -56,7 +56,7 @@ class OutputTest(CheckCase):
         self.start_branch("feature", "feat: a")
         lines, _, _ = self.parts(self.check())
         ids = [S_LINE.fullmatch(line).group(1) for line in lines if S_LINE.fullmatch(line)]
-        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10"])
+        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "S11"])
         self.assertTrue(all(S_LINE.fullmatch(line).group(2) == "pass" for line in lines if S_LINE.fullmatch(line)))
         self.assertEqual(lines[-1], "result pass")
 
