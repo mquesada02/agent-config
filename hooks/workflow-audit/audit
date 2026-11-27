@@ -4,8 +4,8 @@
 #   audit ledger link --worktree <path> --from-branch <branch> --ticket <id>   append a link to the ledger of an earlier branch of the ticket, after six checks
 #   audit ledger show --worktree <path>           print every event of the findings ledger, in order; writes nothing
 #   audit sessions show --worktree <path>         print every block of the audited sessions, with no size cap; writes no file
-#   audit check --worktree <path> --base <branch>  print S1-S10, XC and a transcript digest of at most 28 KB; writes no file
-#   audit record --worktree <path> --base <branch> --llm <file>   re-run S1-S10 and XC, read L1-L6, write <sha>.json for the pushed tip
+#   audit check --worktree <path> --base <branch>  print S1-S11, XC and a transcript digest of at most 28 KB; writes no file
+#   audit record --worktree <path> --base <branch> --llm <file>   re-run S1-S11 and XC, read L1-L6, write <sha>.json for the pushed tip
 #   (--base is the PR target: S8 and the digest commits are the commits since the merge base of HEAD and origin/<branch>)
 #   audit hook pre-tool-use                       deny `gh pr create` without a passing record for the pushed tip
 #   audit hook session-start                      register the session (id, transcript path, start time)
@@ -121,6 +121,8 @@ TESTED_MAJOR_MINOR = frozenset(tuple(version.split(".")[:2]) for version in TEST
 READ_KINDS = frozenset(("user", "assistant", "system", "attachment"))
 EDIT_TOOLS = frozenset(("Edit", "Write", "NotebookEdit"))
 LAUNCH_FIELDS = {"Agent": ("description", "subagent_type", "model"), "Skill": ("skill",)}  # the input keys that the digest shows
+SIMPLIFY_SKILL = "simplify"
+SIMPLIFY_COMMAND = "<command-name>/simplify</command-name>"  # what Claude Code writes in the user row of a /simplify slash command
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 # S2 words of a step before the declared command: a quoted text with no expansion, `&`, `;`, `|`, `<`, `>` or newline in it, or a bare word.
 S2_WORD = re.compile(r"""'[^'&;|<>\n]*'|"[^"$`\\!&;|<>\n]*"|[A-Za-z0-9_./:@+,-]+""")
@@ -436,6 +438,7 @@ class Transcript:
         self.moved = set()   # tool_use ids of foreground calls that the harness moved to the background after their timeout
         self.prompts = []    # texts of the user rows, never of a tool_result block or a compaction summary
         self.launches = []   # (Agent or Skill, the fields the digest shows) of the tool_use blocks; never read by an S item
+        self.simplifies = []  # the times of the Skill calls of the simplify skill and of the /simplify slash commands; only S11 reads them
         self.inputs = []     # dicts of the user rows and queued_command prompts that S5 reads: index, raw time, raw origin, field, texts
         self.asks = {}       # AskUserQuestion tool_use id -> the question texts of the call; only S5 reads them
         self.answered = []   # dicts of the user rows with a tool_result block: index, raw time, tool_use ids, raw toolUseResult.answers; only S5 reads them
@@ -532,6 +535,8 @@ def _read_row(transcript, index, row):
                 transcript.prompts.extend(texts)
     else:
         raise Unavailable(f"unknown content shape in {where}")
+    if kind == "user" and not is_summary and any(SIMPLIFY_COMMAND in text for text in texts):
+        transcript.simplifies.append(_instant(row.get("timestamp"), where))
     if kind == "user" and not is_summary:
         transcript.inputs.append({"index": index, "time": row.get("timestamp"), "origin": row.get("origin", ABSENT), "field": "origin", "texts": texts})
     answered = []
@@ -555,6 +560,8 @@ def _read_row(transcript, index, row):
             name, tool_input = block["name"], block["input"]
             if name == "SubagentHandback" and isinstance(tool_input.get("message"), str):
                 transcript.report_texts.append(tool_input["message"])
+            if name == "Skill" and tool_input.get("skill") == SIMPLIFY_SKILL:
+                transcript.simplifies.append(_instant(row.get("timestamp"), where))
             if name in LAUNCH_FIELDS:
                 transcript.launches.append((name, [tool_input.get(key) if isinstance(tool_input.get(key), str) else None for key in LAUNCH_FIELDS[name]]))
                 continue
@@ -2191,6 +2198,26 @@ def check_s10(dir_fd, ledger, remote_url):
     return True, f"{judged} findings judged, {checked} with a quote checked"
 
 
+def check_s11(audited, ledger, problem):
+    """Returns (passed, evidence): section 6 step 2 ran /simplify. An audited transcript holds a Skill call of the simplify skill or a /simplify
+    slash command after the first phase-commit event and before the first final round of the section 6 loop. `audited` is None when the
+    transcripts cannot be read, with the reason in `problem`. A ledger with no section 6 final round has no such step to check."""
+    final = min((_instant(event["time"], "the ledger") for _, event in ledger.round_events
+                 if event["loop"] == CODE_REVIEW and event["phase"] == "final"), default=None)
+    if final is None:
+        return True, "no section 6 final round"
+    if audited is None:
+        return False, problem
+    if not ledger.commits:
+        return False, "no phase-commit event before the first final round of the section 6 loop"
+    start = _instant(ledger.commits[0][1]["time"], "the ledger")
+    window = f"after the first phase-commit at {start.isoformat()} and before the first final round at {final.isoformat()}"
+    calls = sum(start < moment < final for transcripts in audited for transcript in transcripts for moment in transcript.simplifies)
+    if not calls:
+        return False, f"no /simplify call {window}"
+    return True, f"{calls} /simplify calls {window}"
+
+
 def _s_item(name, passed, evidence):
     return {"id": name, "kind": "S", "result": "pass" if passed else "fail", "evidence": _cut(evidence)}
 
@@ -2524,7 +2551,7 @@ def _transcript_items(worktree, dir_fd, branch, remote_url):
 
 
 def _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch):
-    """(the items S1 to S10 and XC in record order, the audited transcripts, the reason they cannot be read).
+    """(the items S1 to S11 and XC in record order, the audited transcripts, the reason they cannot be read).
     The transcripts are None when they cannot be read. `base_result` is the (base, why) pair of `_commit_base`."""
     items, audited, agents, problem = _transcript_items(worktree, dir_fd, branch, remote_url)
     ledger_items, ledger, s3_evidence = _ledger_items(worktree, dir_fd, branch, remote_url, audited, agents, problem, base_branch)
@@ -2534,6 +2561,7 @@ def _run_items(worktree, dir_fd, branch, remote_url, base_result, base_branch):
     items.append({"id": "S8", "kind": "S", "result": "pass" if passed else "fail", "evidence": evidence})
     items.append(_check_item("S9", check_s9, audited, str(problem)))
     items.append(_s_item("S10", False, s3_evidence) if ledger is None else _check_item("S10", check_s10, dir_fd, ledger, remote_url))
+    items.append(_s_item("S11", False, s3_evidence) if ledger is None else _check_item("S11", check_s11, audited, ledger, str(problem)))
     return items, audited, problem
 
 

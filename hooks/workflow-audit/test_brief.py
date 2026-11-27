@@ -53,7 +53,7 @@ class BriefTextTest(unittest.TestCase):
                 self.assertIn(phrase, sessions)
 
     def test_the_brief_names_s10_in_its_item_lists(self):
-        for phrase in ("the results of S1 to S10 and XC", "`record` re-runs S1 to S10 itself", "It runs S3, S5, S7, S10 and the cross-check itself",
+        for phrase in ("the results of S1 to S11 and XC", "`record` re-runs S1 to S11 itself", "It runs S3, S5, S7, S10 and the cross-check itself",
                        "the `round`, `finding`, `finding-amend` and `status` events"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.text)

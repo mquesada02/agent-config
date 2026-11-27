@@ -187,10 +187,10 @@ class S10OrderTest(S10Case):
     def test_check_and_record_list_s10_after_s9(self):
         self.put(round_event(loop="code-review"))
         names = [line.split()[0] for line in self.check_lines() if line[:1] in "SX" and len(line.split()) == 2]
-        self.assertEqual(names, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10"])
+        self.assertEqual(names, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "S11"])
         self.record()
         ids = [item["id"] for item in self.read_record(self.git("rev-parse", "HEAD"))["items"]]
-        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "L1", "L2", "L3", "L4", "L5", "L6"])
+        self.assertEqual(ids, ["S1", "S2", "S3", "S4", "S5", "S6", "XC", "S7", "S8", "S9", "S10", "S11", "L1", "L2", "L3", "L4", "L5", "L6"])
 
     def test_an_unusable_ledger_fails_s10_in_check_and_record(self):
         self.put(round_event(loop="code-review"), "{not json")
@@ -203,8 +203,9 @@ class S10OrderTest(S10Case):
     def test_the_header_comments_name_s10(self):
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit"), encoding="utf-8") as handle:
             header = handle.read().split("import json", 1)[0]
-        self.assertEqual(header.count("S1-S10"), 2)
+        self.assertEqual(header.count("S1-S11"), 2)
         self.assertNotIn("S1-S9", header)
+        self.assertNotIn("S1-S10", header)
 
 
 class S10PreDispatchTest(PreDispatchCase):
